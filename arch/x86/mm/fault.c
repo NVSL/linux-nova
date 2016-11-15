@@ -1386,7 +1386,8 @@ good_area:
 	if (error_code & PF_WRITE) {
 		/* write, present and write, not present: */
 		if (unlikely(!(vma->vm_flags & VM_WRITE))) {
-			if (vma->vm_ops && vma->vm_ops->dax_cow) {
+			if (vma->original_write && vma->vm_ops &&
+					vma->vm_ops->dax_cow) {
 				up_read(&mm->mmap_sem);
 				vma->vm_ops->dax_cow(vma);
 				down_read(&mm->mmap_sem);

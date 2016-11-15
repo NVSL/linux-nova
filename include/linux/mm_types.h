@@ -358,6 +358,9 @@ struct vm_area_struct {
 	struct mempolicy *vm_policy;	/* NUMA policy for the VMA */
 #endif
 	struct vm_userfaultfd_ctx vm_userfaultfd_ctx;
+
+	/* Flag for NOVA DAX cow */
+	int original_write;
 };
 
 struct core_thread {
