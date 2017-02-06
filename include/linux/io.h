@@ -86,6 +86,8 @@ void devm_ioremap_release(struct device *dev, void *res);
 
 void *devm_memremap(struct device *dev, resource_size_t offset,
 		size_t size, unsigned long flags);
+void *devm_memremap_ro(struct device *dev, resource_size_t offset,
+		size_t size, unsigned long flags);
 void devm_memunmap(struct device *dev, void *addr);
 
 void *__devm_memremap_pages(struct device *dev, struct resource *res);
