@@ -389,6 +389,8 @@ struct vm_operations_struct {
 	 */
 	struct page *(*find_special_page)(struct vm_area_struct *vma,
 					  unsigned long addr);
+	/* For NOVA DAX-mmap protection */
+	int (*dax_cow)(struct vm_area_struct * area);
 };
 
 struct mmu_gather;

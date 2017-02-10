@@ -1382,6 +1382,18 @@ retry:
 	 * we can handle it..
 	 */
 good_area:
+
+	if (error_code & PF_WRITE) {
+		/* write, present and write, not present: */
+		if (unlikely(!(vma->vm_flags & VM_WRITE))) {
+			if (vma->vm_ops && vma->vm_ops->dax_cow) {
+				up_read(&mm->mmap_sem);
+				vma->vm_ops->dax_cow(vma);
+				down_read(&mm->mmap_sem);
+			}
+		}
+	}
+
 	if (unlikely(access_error(error_code, vma))) {
 		bad_area_access_error(regs, error_code, address, vma);
 		return;
