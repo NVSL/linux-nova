@@ -271,6 +271,7 @@ unsigned long change_protection(struct vm_area_struct *vma, unsigned long start,
 
 	return pages;
 }
+EXPORT_SYMBOL(change_protection);
 
 int
 mprotect_fixup(struct vm_area_struct *vma, struct vm_area_struct **pprev,
