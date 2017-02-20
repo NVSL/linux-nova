@@ -1388,7 +1388,7 @@ good_area:
 		if (vma->original_write && vma->vm_ops &&
 					vma->vm_ops->dax_cow) {
 			up_read(&mm->mmap_sem);
-			vma->vm_ops->dax_cow(vma);
+			vma->vm_ops->dax_cow(vma, address);
 			down_read(&mm->mmap_sem);
 		}
 	}
