@@ -57,6 +57,8 @@ config FS_DAX_PMD
 	depends on ZONE_DEVICE
 	depends on TRANSPARENT_HUGEPAGE
 
+source "fs/nova/Kconfig"
+
 endif # BLOCK
 
 # Posix ACL utility routines
