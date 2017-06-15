@@ -95,6 +95,8 @@ nfs/
 	- nfs-related documentation.
 nilfs2.txt
 	- info and mount options for the NILFS2 filesystem.
+nova.txt
+	- info on the NOVA filesystem.
 ntfs.txt
 	- info and mount options for the NTFS filesystem (Windows NT).
 ocfs2.txt

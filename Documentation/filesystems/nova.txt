@@ -1,0 +1,172 @@
+The NOVA Filesystem
+===================
+
+NOVA is a DAX file system designed to maximize performance on hybrid DRAM and
+non-volatile main memory (NVMM) systems while providing strong consistency
+guarantees. NOVA adapts conventional log-structured file system techniques to
+exploit the fast random access that NVMs provide. In particular, it maintains
+separate logs for each inode to improve concurrency, and stores file data
+outside the log to minimize log size and reduce garbage collection costs. NOVA's
+logs provide metadata, data, and mmap atomicity and focus on simplicity and
+reliability, keeping complex metadata structures in DRAM to accelerate lookup
+operations.
+
+The main NOVA features include:
+
+  * POSIX semantics
+  * Directly access (DAX) byte-addressable NVMM without page caching
+  * Per-CPU NVMM pool to maximize concurrency
+  * Strong consistency guarantees with 8-byte atomic stores
+  * Full filesystem snapshot with DAX-mmap support
+  * Checksums on metadata and file data (crc32c)
+  * Full metadata replication and RAID-5 parity per file page
+  * Online filesystem integrity check and corruption recovery
+
+Filesystem Design
+=================
+NOVA divides NVMM into five regions. NOVA's 512 B superblock contains global
+file system information and the recovery inode. The recovery inode represents a
+special file that stores recovery information (e.g., the list of unallocated
+NVMM pages). NOVA divides its inode tables into per-CPU stripes. It also
+provides per-CPU journals for complex file operations that involve multiple
+inodes. The rest of the available NVMM stores logs and file data.
+
+NOVA is log-structured and stores a separate log for each inode to maximize
+concurrency and provide atomicity for operations that affect a single file. The
+logs only store metadata and comprise a linked list of 4 KB pages. Log entries
+are small – between 32 and 64 bytes. Logs are generally non-contiguous, and log
+pages may reside anywhere in NVMM.
+
+NOVA keeps read-only copies of most file metadata in DRAM during normal
+operations, eliminating the need to access metadata in NVMM during reads.
+
+NOVA uses copy-on-write to provide atomic updates for file data and appends
+metadata about the write to the log. For operations that affect multiple inodes
+NOVA uses lightweight, fixed-length journals – one per core.
+
+NOVA divides the allocatable NVMM into multiple regions, one region per CPU
+core. A per-core allocator manages each of the regions, minimizing contention
+during memory allocation.
+
+After a system crash, NOVA must scan all the logs to rebuild the memory
+allocator state. Since, there are many logs, NOVA aggressively parallelizes the
+scan.
+
+Source File Structure
+=====================
+  * nova_def.h
+    Defines NOVA inode, super block structures and constant macros.
+
+  * nova.h
+    Defines NOVA entry structures, DRAM data structures, macro functions,
+    function prototypes, and commonly used inline functions.
+
+  * balloc.c
+    NOVA's block allocator implementation. NOVA divides NVMM into pools, one per
+    CPU, and keeps lists of free NVMM pages in DRAM. NOVA uses a red-black tree
+    to keep the free list sorted by address, allowing for efficient merging and
+    providing O(logn) deallocation.
+
+  * bbuild.c
+    Implements recovery routines to restore the in-use inode list, the NVMM
+    allocator information, and the snapshot table.
+
+  * checksum.c
+    Contains checksum-related functions to compute and verify checksums on NOVA
+    data structures and file pages, and also performs recovery actions when
+    corruptions are detected.
+
+  * dax.c
+    Implements DAX read/write functions to access file data. NOVA uses
+    copy-on-write to modify file pages by default, unless inplace data update is
+    enabled at mount-time. There are also functions to update and verify the
+    file data integrity information.
+
+  * dir.c
+    Contains functions to create, update, and remove NOVA dentries.
+
+  * file.c
+    Implements file-related operations such as open, fallocate, llseek, fsync,
+    and flush.
+
+  * gc.c
+    NOVA's garbage collection functions. NOVA collects stale data pages
+    immediately during write operations, and NOVA uses two different garbage
+    collection (GC) techniques to reclaim dead entries: Fast GC emphasizes speed
+    over thoroughness and it does not require any copying. If the live entries
+    account for less than 50% of the log space, NOVA applies thorough GC after
+    fast GC finishes, by moving live entries to new log pages.
+
+  * inode.c
+    Creates, reads, and frees NOVA inode tables and inodes.
+
+  * ioctl.c
+    Implements some ioctl commands to call NOVA's internal functions.
+
+  * journal.c
+    For operations that affect multiple inodes NOVA uses lightweight,
+    fixed-length journals – one per core. This file contains functions to
+    create and manage the lite journals.
+
+  * log.c
+    Functions to manipulate NOVA inode logs, including log page allocation, log
+    entry creation, commit, modification, and deletion.
+
+  * mprotect.h
+    Implements inline functions to enable/disable writing to different NOVA
+    data structures.
+
+  * mprotect.c
+    When write protection is enabled, NVMM is mapped read-only into the kernel's
+    address space. This file implements functions to enable/disable writes to
+    NVMM via the WriteProtect Enable (WP) bit in the per-core CR0 control
+    register.
+
+  * namei.c
+    Functions to create/remove files, directories, and links. It also looks for
+    the NOVA inode number for a given path name.
+
+  * parity.c
+    Functions to compute file page parity bits. Each file page is striped in to
+    equally sized segments (or strips), and one parity strip is calculated using
+    RAID-5 method. A function to restore a broken data strip is also implemented
+    in this file.
+
+  * perf.h
+    Header file for function performance measurements. It defines function IDs
+    and call prototypes.
+
+  * perf.c
+    Measures primitive functions' performance, including memory copy functions
+    for DRAM and NVMM, checksum functions, and XOR parity functions.
+
+  * rebuild.c
+    When mounting NOVA after a crash, rebuilds NOVA inodes from its logs. There
+    are also functions to re-calculate checksums and parity bits for file pages
+    that were mmapped during the crash.
+
+  * snapshot.h
+    Defines NOVA snapshot entry in NVMM and DRAM data structures that are
+    relevant to managing snapshots.
+
+  * snapshot.c
+    Implements functions to create, delete and manage NOVA snapshots.
+
+  * stats.h
+    Defines data structures and macros that are relevant to gather NOVA usage
+    statistics.
+
+  * stats.c
+    Implements routines to gather and print NOVA usage statistics.
+
+  * super.c
+    This file implements entry points for NOVA mounting and unmounting,
+    initializing or recovering the NOVA super block and other global file system
+    information.
+
+  * symlink.c
+    Implements functions to create and read symbolic links in the filesystem.
+
+  * sysfs.c
+    Implements sysfs entries to take user inputs for taking snapshots, printing
+    NOVA statistics, and measuring function's performance.
