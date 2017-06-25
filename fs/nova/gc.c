@@ -27,61 +27,73 @@ static bool curr_log_entry_invalid(struct super_block *sb,
 	struct nova_link_change_entry *linkc_entry;
 	struct nova_mmap_entry *mmap_entry;
 	struct nova_snapshot_info_entry *sn_entry;
-	void *addr;
+	char entry_copy[NOVA_MAX_ENTRY_LEN];
+	void *addr, *entryc;
 	u8 type;
 	bool ret = true;
 
 	addr = (void *)nova_get_block(sb, curr_p);
-	type = nova_get_entry_type(addr);
+
+	/* FIXME: this check might hurt performance for workloads that
+	 * frequently invokes gc */
+	if (metadata_csum == 0)
+		entryc = addr;
+	else {
+		entryc = entry_copy;
+		if (!nova_verify_entry_csum(sb, addr, entryc))
+			return true;
+	}
+
+	type = nova_get_entry_type(entryc);
 	switch (type) {
-		case SET_ATTR:
-			setattr_entry = (struct nova_setattr_logentry *)addr;
-			if (setattr_entry->invalid == 0)
-				ret = false;
-			*length = sizeof(struct nova_setattr_logentry);
-			break;
-		case LINK_CHANGE:
-			linkc_entry = (struct nova_link_change_entry *)addr;
-			if (linkc_entry->invalid == 0)
-				ret = false;
-			*length = sizeof(struct nova_link_change_entry);
-			break;
-		case FILE_WRITE:
-			entry = (struct nova_file_write_entry *)addr;
-			if (entry->num_pages != entry->invalid_pages)
-				ret = false;
-			*length = sizeof(struct nova_file_write_entry);
-			break;
-		case DIR_LOG:
-			dentry = (struct nova_dentry *)addr;
-			if (dentry->invalid == 0)
-				ret = false;
-			if (sih->last_dentry == curr_p)
-				ret = false;
-			*length = le16_to_cpu(dentry->de_len);
-			break;
-		case MMAP_WRITE:
-			mmap_entry = (struct nova_mmap_entry *)addr;
-			if (mmap_entry->invalid == 0)
-				ret = false;
-			*length = sizeof(struct nova_mmap_entry);
-			break;
-		case SNAPSHOT_INFO:
-			sn_entry = (struct nova_snapshot_info_entry *)addr;
-			if (sn_entry->deleted == 0)
-				ret = false;
-			*length = sizeof(struct nova_snapshot_info_entry);
-			break;
-		case NEXT_PAGE:
-			/* No more entries in this page */
-			*length = PAGE_SIZE - ENTRY_LOC(curr_p);;
-			break;
-		default:
-			nova_dbg("%s: unknown type %d, 0x%llx\n",
-						__func__, type, curr_p);
-			NOVA_ASSERT(0);
-			*length = PAGE_SIZE - ENTRY_LOC(curr_p);;
-			break;
+	case SET_ATTR:
+		setattr_entry = (struct nova_setattr_logentry *) entryc;
+		if (setattr_entry->invalid == 0)
+			ret = false;
+		*length = sizeof(struct nova_setattr_logentry);
+		break;
+	case LINK_CHANGE:
+		linkc_entry = (struct nova_link_change_entry *) entryc;
+		if (linkc_entry->invalid == 0)
+			ret = false;
+		*length = sizeof(struct nova_link_change_entry);
+		break;
+	case FILE_WRITE:
+		entry = (struct nova_file_write_entry *) entryc;
+		if (entry->num_pages != entry->invalid_pages)
+			ret = false;
+		*length = sizeof(struct nova_file_write_entry);
+		break;
+	case DIR_LOG:
+		dentry = (struct nova_dentry *) entryc;
+		if (dentry->invalid == 0)
+			ret = false;
+		if (sih->last_dentry == curr_p)
+			ret = false;
+		*length = le16_to_cpu(dentry->de_len);
+		break;
+	case MMAP_WRITE:
+		mmap_entry = (struct nova_mmap_entry *) entryc;
+		if (mmap_entry->invalid == 0)
+			ret = false;
+		*length = sizeof(struct nova_mmap_entry);
+		break;
+	case SNAPSHOT_INFO:
+		sn_entry = (struct nova_snapshot_info_entry *) entryc;
+		if (sn_entry->deleted == 0)
+			ret = false;
+		*length = sizeof(struct nova_snapshot_info_entry);
+		break;
+	case NEXT_PAGE:
+		/* No more entries in this page */
+		*length = PAGE_SIZE - ENTRY_LOC(curr_p);
+		break;
+	default:
+		nova_dbg("%s: unknown type %d, 0x%llx\n",
+					__func__, type, curr_p);
+		NOVA_ASSERT(0);
+		*length = PAGE_SIZE - ENTRY_LOC(curr_p);
+		break;
 	}
 
 	return ret;
@@ -244,41 +256,38 @@ static int nova_gc_assign_new_entry(struct super_block *sb,
 	addr = (void *)nova_get_block(sb, curr_p);
 	type = nova_get_entry_type(addr);
 	switch (type) {
-		case SET_ATTR:
-			sih->last_setattr = new_curr;
-			break;
-		case LINK_CHANGE:
-			sih->last_link_change = new_curr;
-			break;
-		case MMAP_WRITE:
-			ret = nova_gc_assign_mmap_entry(sb, sih, curr_p,
-							new_curr);
-			break;
-		case SNAPSHOT_INFO:
-			ret = nova_gc_assign_snapshot_entry(sb, sih, addr,
-							curr_p, new_curr);
-			break;
-		case FILE_WRITE:
-			new_addr = (void *)nova_get_block(sb, new_curr);
-			old_entry = (struct nova_file_write_entry *)addr;
-			new_entry = (struct nova_file_write_entry *)new_addr;
-			ret = nova_gc_assign_file_entry(sb, sih, old_entry,
-							new_entry);
-			break;
-		case DIR_LOG:
-			new_addr = (void *)nova_get_block(sb, new_curr);
-			old_dentry = (struct nova_dentry *)addr;
-			new_dentry = (struct nova_dentry *)new_addr;
-			if (sih->last_dentry == curr_p)
-				sih->last_dentry = new_curr;
-			ret = nova_gc_assign_dentry(sb, sih, old_dentry,
-							new_dentry);
-			break;
-		default:
-			nova_dbg("%s: unknown type %d, 0x%llx\n",
-						__func__, type, curr_p);
-			NOVA_ASSERT(0);
-			break;
+	case SET_ATTR:
+		sih->last_setattr = new_curr;
+		break;
+	case LINK_CHANGE:
+		sih->last_link_change = new_curr;
+		break;
+	case MMAP_WRITE:
+		ret = nova_gc_assign_mmap_entry(sb, sih, curr_p, new_curr);
+		break;
+	case SNAPSHOT_INFO:
+		ret = nova_gc_assign_snapshot_entry(sb, sih, addr,
+						curr_p, new_curr);
+		break;
+	case FILE_WRITE:
+		new_addr = (void *)nova_get_block(sb, new_curr);
+		old_entry = (struct nova_file_write_entry *)addr;
+		new_entry = (struct nova_file_write_entry *)new_addr;
+		ret = nova_gc_assign_file_entry(sb, sih, old_entry, new_entry);
+		break;
+	case DIR_LOG:
+		new_addr = (void *)nova_get_block(sb, new_curr);
+		old_dentry = (struct nova_dentry *)addr;
+		new_dentry = (struct nova_dentry *)new_addr;
+		if (sih->last_dentry == curr_p)
+			sih->last_dentry = new_curr;
+		ret = nova_gc_assign_dentry(sb, sih, old_dentry, new_dentry);
+		break;
+	default:
+		nova_dbg("%s: unknown type %d, 0x%llx\n",
+					__func__, type, curr_p);
+		NOVA_ASSERT(0);
+		break;
 	}
 
 	return ret;
@@ -651,10 +660,11 @@ int nova_inode_log_fast_gc(struct super_block *sb,
 		while (next_log_page(sb, alter_curr) > 0)
 			alter_curr = next_log_page(sb, alter_curr);
 
-		alter_curr_page = (struct nova_inode_log_page *)nova_get_block(sb,
-								alter_curr);
+		alter_curr_page = (struct nova_inode_log_page *)
+						nova_get_block(sb, alter_curr);
 		nova_memunlock_block(sb, curr_page);
-		nova_set_next_page_address(sb, alter_curr_page, alter_new_block, 1);
+		nova_set_next_page_address(sb, alter_curr_page,
+						alter_new_block, 1);
 		nova_memlock_block(sb, curr_page);
 	}
 
@@ -666,7 +676,8 @@ int nova_inode_log_fast_gc(struct super_block *sb,
 	pi->alter_log_head = alter_possible_head;
 	nova_update_inode_checksum(pi);
 	if (replica_metadata && sih->alter_pi_addr) {
-		alter_pi = (struct nova_inode *)nova_get_block(sb, sih->alter_pi_addr);
+		alter_pi = (struct nova_inode *)nova_get_block(sb,
+						sih->alter_pi_addr);
 		memcpy_to_pmem_nocache(alter_pi, pi, sizeof(struct nova_inode));
 	}
 	nova_memlock_inode(sb, pi);

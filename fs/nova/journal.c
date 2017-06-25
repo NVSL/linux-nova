@@ -35,7 +35,8 @@
 
 /**************************** Lite journal ******************************/
 
-static inline void nova_print_lite_transaction(struct nova_lite_journal_entry *entry)
+static inline void
+nova_print_lite_transaction(struct nova_lite_journal_entry *entry)
 {
 	nova_dbg("Entry %p: Type %llu, data1 0x%llx, data2 0x%llx\n, "
 			"checksum %u\n", entry, entry->type,
@@ -48,7 +49,8 @@ static inline int nova_update_journal_entry_csum(struct super_block *sb,
 	u32 crc = 0;
 
 	crc = nova_crc32c(~0, (__u8 *)entry,
-			(sizeof(struct nova_lite_journal_entry) - sizeof(__le32)));
+			(sizeof(struct nova_lite_journal_entry)
+			 - sizeof(__le32)));
 
 	entry->csum = cpu_to_le32(crc);
 	nova_flush_buffer(entry, sizeof(struct nova_lite_journal_entry), 0);
@@ -61,7 +63,8 @@ static inline int nova_check_entry_integrity(struct super_block *sb,
 	u32 crc = 0;
 
 	crc = nova_crc32c(~0, (__u8 *)entry,
-			(sizeof(struct nova_lite_journal_entry) - sizeof(__le32)));
+			(sizeof(struct nova_lite_journal_entry)
+			 - sizeof(__le32)));
 
 	if (entry->csum == cpu_to_le32(crc))
 		return 0;
@@ -81,7 +84,7 @@ static inline u64 next_lite_journal(u64 curr_p)
 }
 
 static int nova_check_journal_entries(struct super_block *sb,
-	struct ptr_pair *pair)
+	struct journal_ptr_pair *pair)
 {
 	struct nova_lite_journal_entry *entry;
 	u64 temp;
@@ -89,7 +92,8 @@ static int nova_check_journal_entries(struct super_block *sb,
 
 	temp = pair->journal_head;
 	while (temp != pair->journal_tail) {
-		entry = (struct nova_lite_journal_entry *)nova_get_block(sb, temp);
+		entry = (struct nova_lite_journal_entry *)nova_get_block(sb,
+									temp);
 		ret = nova_check_entry_integrity(sb, entry);
 		if (ret) {
 			nova_dbg("Entry %p checksum failure\n", entry);
@@ -142,21 +146,20 @@ static void nova_undo_lite_journal_entry(struct super_block *sb,
 	type = le64_to_cpu(entry->type);
 
 	switch (type) {
-		case JOURNAL_INODE:
-			nova_recover_journal_inode(sb, entry);
-			break;
-		case JOURNAL_ENTRY:
-			nova_recover_journal_entry(sb, entry);
-			break;
-		default:
-			nova_dbg("%s: unknown data type %llu\n",
-					__func__, type);
-			break;
+	case JOURNAL_INODE:
+		nova_recover_journal_inode(sb, entry);
+		break;
+	case JOURNAL_ENTRY:
+		nova_recover_journal_entry(sb, entry);
+		break;
+	default:
+		nova_dbg("%s: unknown data type %llu\n", __func__, type);
+		break;
 	}
 }
 
 static int nova_recover_lite_journal(struct super_block *sb,
-	struct ptr_pair *pair)
+	struct journal_ptr_pair *pair)
 {
 	struct nova_lite_journal_entry *entry;
 	u64 temp;
@@ -164,7 +167,8 @@ static int nova_recover_lite_journal(struct super_block *sb,
 	nova_memunlock_journal(sb);
 	temp = pair->journal_head;
 	while (temp != pair->journal_tail) {
-		entry = (struct nova_lite_journal_entry *)nova_get_block(sb, temp);
+		entry = (struct nova_lite_journal_entry *)nova_get_block(sb,
+									temp);
 		nova_undo_lite_journal_entry(sb, entry);
 		temp = next_lite_journal(temp);
 	}
@@ -245,7 +249,7 @@ static u64 nova_append_inode_journal(struct super_block *sb,
 	}
 
 	if (is_dir)
-      		return nova_journal_inode_tail(sb, curr_p, pi);
+		return nova_journal_inode_tail(sb, curr_p, pi);
 
 	if (new_inode) {
 		curr_p = nova_append_entry_journal(sb, curr_p,
@@ -275,7 +279,7 @@ u64 nova_create_inode_transaction(struct super_block *sb,
 	struct inode *inode, struct inode *dir, int cpu,
 	int new_inode, int invalidate)
 {
-	struct ptr_pair *pair;
+	struct journal_ptr_pair *pair;
 	u64 temp;
 
 	pair = nova_get_journal_pointers(sb, cpu);
@@ -304,7 +308,7 @@ u64 nova_create_rename_transaction(struct super_block *sb,
 	struct inode *new_dir, struct nova_dentry *father_entry,
 	int invalidate_new_inode, int cpu)
 {
-	struct ptr_pair *pair;
+	struct journal_ptr_pair *pair;
 	u64 temp;
 
 	pair = nova_get_journal_pointers(sb, cpu);
@@ -344,7 +348,7 @@ u64 nova_create_rename_transaction(struct super_block *sb,
 u64 nova_create_logentry_transaction(struct super_block *sb,
 	void *entry, enum nova_entry_type type, int cpu)
 {
-	struct ptr_pair *pair;
+	struct journal_ptr_pair *pair;
 	size_t size = 0;
 	int i, count;
 	u64 temp;
@@ -376,7 +380,7 @@ u64 nova_create_logentry_transaction(struct super_block *sb,
 u64 nova_create_invalidate_reassign_transaction(struct super_block *sb,
 	void *entry, enum nova_entry_type type, int reassign, int cpu)
 {
-	struct ptr_pair *pair;
+	struct journal_ptr_pair *pair;
 	u64 temp;
 
 	pair = nova_get_journal_pointers(sb, cpu);
@@ -440,7 +444,7 @@ u64 nova_create_invalidate_reassign_transaction(struct super_block *sb,
 
 void nova_commit_lite_transaction(struct super_block *sb, u64 tail, int cpu)
 {
-	struct ptr_pair *pair;
+	struct journal_ptr_pair *pair;
 
 	pair = nova_get_journal_pointers(sb, cpu);
 	if (!pair || pair->journal_tail != tail)
@@ -455,7 +459,7 @@ void nova_commit_lite_transaction(struct super_block *sb, u64 tail, int cpu)
 int nova_lite_journal_soft_init(struct super_block *sb)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
-	struct ptr_pair *pair;
+	struct journal_ptr_pair *pair;
 	int i;
 	int ret = 0;
 
@@ -490,7 +494,7 @@ int nova_lite_journal_hard_init(struct super_block *sb)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_inode_info_header sih;
-	struct ptr_pair *pair;
+	struct journal_ptr_pair *pair;
 	unsigned long blocknr = 0;
 	int allocated;
 	int i;

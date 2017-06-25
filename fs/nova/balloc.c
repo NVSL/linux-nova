@@ -489,7 +489,8 @@ static int not_enough_blocks(struct free_list *free_list,
 	if (free_list->num_free_blocks < num_blocks || !first || !last)
 		return 1;
 
-	if (atype == LOG && last->range_high - first->range_low < DEAD_ZONE_BLOCKS)
+	if (atype == LOG &&
+		last->range_high - first->range_low < DEAD_ZONE_BLOCKS)
 		return 1;
 
 	return 0;
@@ -698,6 +699,7 @@ inline int nova_new_data_blocks(struct super_block *sb,
 {
 	int allocated;
 	timing_t alloc_time;
+
 	NOVA_START_TIMING(new_data_blocks_t, alloc_time);
 	allocated = nova_new_blocks(sb, blocknr, num,
 				sih->i_blk_type, zero, DATA, cpu, from_tail);
@@ -716,6 +718,7 @@ inline int nova_new_log_blocks(struct super_block *sb,
 {
 	int allocated;
 	timing_t alloc_time;
+
 	NOVA_START_TIMING(new_log_blocks_t, alloc_time);
 	allocated = nova_new_blocks(sb, blocknr, num,
 				sih->i_blk_type, zero, LOG, cpu, from_tail);

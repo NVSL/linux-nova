@@ -17,6 +17,7 @@
 
 #include "nova.h"
 
+/* entry given to this function is a copy in dram */
 static void nova_apply_setattr_entry(struct super_block *sb,
 	struct nova_inode_rebuild *reb,	struct nova_inode_info_header *sih,
 	struct nova_setattr_logentry *entry)
@@ -46,10 +47,11 @@ static void nova_apply_setattr_entry(struct super_block *sb,
 			last_blocknr = 0;
 
 		freed = nova_delete_file_tree(sb, sih, first_blocknr,
-					last_blocknr, false, false, false, 0);
+					last_blocknr, false, false, 0);
 	}
 }
 
+/* entry given to this function is a copy in dram */
 static void nova_apply_link_change_entry(struct super_block *sb,
 	struct nova_inode_rebuild *reb,	struct nova_link_change_entry *entry)
 {
@@ -211,60 +213,45 @@ int nova_reset_csum_parity_range(struct super_block *sb,
 
 /* Reset data csum for updating entries */
 static int nova_reset_data_csum_parity(struct super_block *sb,
-	struct nova_inode_info_header *sih,
-	struct nova_file_write_entry *entry)
+	struct nova_inode_info_header *sih, struct nova_file_write_entry *entry,
+	struct nova_file_write_entry *entryc)
 {
-	struct nova_file_write_entry fake_entry;
-	size_t size = sizeof(struct nova_file_write_entry);
 	unsigned long end_pgoff;
-	int ret = 0;
 
 	if (data_csum == 0 && data_parity == 0)
 		goto out;
 
-	ret = memcpy_from_pmem(&fake_entry, entry, size);
-	if (ret < 0)
-		return ret;
-
-	if (fake_entry.invalid_pages == fake_entry.num_pages) {
+	if (entryc->invalid_pages == entryc->num_pages)
 		/* Dead entry */
 		goto out;
-	}
 
-	end_pgoff = fake_entry.pgoff + fake_entry.num_pages;
-	nova_reset_csum_parity_range(sb, sih, entry, fake_entry.pgoff,
+	end_pgoff = entryc->pgoff + entryc->num_pages;
+	nova_reset_csum_parity_range(sb, sih, entry, entryc->pgoff,
 			end_pgoff, 0, 1);
 
 out:
-	if (ret == 0)
-		nova_set_write_entry_updating(sb, entry, 0);
+	nova_set_write_entry_updating(sb, entry, 0);
 
-	return ret;
+	return 0;
 }
 
 /* Reset data csum for mmap entries */
 static int nova_reset_mmap_csum_parity(struct super_block *sb,
-	struct nova_inode_info_header *sih, struct nova_mmap_entry *entry)
+	struct nova_inode_info_header *sih, struct nova_mmap_entry *entry,
+	struct nova_mmap_entry *entryc)
 {
-	struct nova_mmap_entry fake_entry;
-	size_t size = sizeof(struct nova_mmap_entry);
 	unsigned long end_pgoff;
 	int ret = 0;
 
 	if (data_csum == 0 && data_parity == 0)
 		return 0;
 
-	ret = memcpy_from_pmem(&fake_entry, entry, size);
-	if (ret < 0)
-		return ret;
-
-	if (fake_entry.invalid == 1) {
+	if (entryc->invalid == 1)
 		/* Dead entry */
 		return 0;
-	}
 
-	end_pgoff = fake_entry.pgoff + fake_entry.num_pages;
-	nova_reset_csum_parity_range(sb, sih, NULL, fake_entry.pgoff,
+	end_pgoff = entryc->pgoff + entryc->num_pages;
+	nova_reset_csum_parity_range(sb, sih, NULL, entryc->pgoff,
 			end_pgoff, 0, 0);
 
 	ret = nova_invalidate_logentry(sb, entry, MMAP_WRITE, 0);
@@ -367,25 +354,26 @@ int nova_reset_vma_csum_parity(struct super_block *sb,
 
 static void nova_rebuild_handle_write_entry(struct super_block *sb,
 	struct nova_inode_info_header *sih, struct nova_inode_rebuild *reb,
-	struct nova_file_write_entry *entry)
+	struct nova_file_write_entry *entry,
+	struct nova_file_write_entry *entryc)
 {
-	if (entry->num_pages != entry->invalid_pages) {
+	if (entryc->num_pages != entryc->invalid_pages) {
 		/*
 		 * The overlaped blocks are already freed.
 		 * Don't double free them, just re-assign the pointers.
 		 */
-		nova_assign_write_entry(sb, sih, entry, false);
+		nova_assign_write_entry(sb, sih, entry, entryc, false);
 	}
 
-	if (entry->trans_id >= sih->trans_id) {
+	if (entryc->trans_id >= sih->trans_id) {
 		nova_rebuild_file_time_and_size(sb, reb,
-					entry->mtime, entry->mtime,
-					entry->size);
-		reb->trans_id = entry->trans_id;
+					entryc->mtime, entryc->mtime,
+					entryc->size);
+		reb->trans_id = entryc->trans_id;
 	}
 
-	if (entry->updating) {
-		nova_reset_data_csum_parity(sb, sih, entry);
+	if (entryc->updating) {
+		nova_reset_data_csum_parity(sb, sih, entry, entryc);
 	}
 
 	/* Update sih->i_size for setattr apply operations */
@@ -401,11 +389,12 @@ static int nova_rebuild_file_inode_tree(struct super_block *sb,
 	struct nova_setattr_logentry *attr_entry = NULL;
 	struct nova_link_change_entry *link_change_entry = NULL;
 	struct nova_mmap_entry *mmap_entry = NULL;
+	char entry_copy[NOVA_MAX_ENTRY_LEN];
 	struct nova_inode_rebuild rebuild, *reb;
 	unsigned int data_bits = blk_type_to_shift[sih->i_blk_type];
 	u64 ino = pi->nova_ino;
 	timing_t rebuild_time;
-	void *addr;
+	void *addr, *entryc;
 	u64 curr_p;
 	u8 type;
 	int ret;
@@ -422,6 +411,8 @@ static int nova_rebuild_file_inode_tree(struct super_block *sb,
 	if (curr_p == 0 && sih->log_tail == 0)
 		goto out;
 
+	entryc = (metadata_csum == 0) ? NULL : entry_copy;
+
 //	nova_print_nova_log(sb, sih);
 
 	while (curr_p != sih->log_tail) {
@@ -436,14 +427,13 @@ static int nova_rebuild_file_inode_tree(struct super_block *sb,
 		}
 
 		addr = (void *)nova_get_block(sb, curr_p);
-		if (!nova_verify_entry_csum(sb, addr, NULL)) {
-			nova_err(sb, "%s: entry checksum fail "
-					"inode %llu entry addr 0x%llx\n",
-					__func__, ino, (u64)addr);
-			break;
-		}
 
-		type = nova_get_entry_type(addr);
+		if (metadata_csum == 0)
+			entryc = addr;
+		else if (!nova_verify_entry_csum(sb, addr, entryc))
+			return 0;
+
+		type = nova_get_entry_type(entryc);
 
 		if (sbi->mount_snapshot) {
 			if (nova_encounter_mount_snapshot(sb, addr, type))
@@ -451,50 +441,47 @@ static int nova_rebuild_file_inode_tree(struct super_block *sb,
 		}
 
 		switch (type) {
-			case SET_ATTR:
-				attr_entry =
-					(struct nova_setattr_logentry *)addr;
-				nova_apply_setattr_entry(sb, reb, sih,
-								attr_entry);
-				sih->last_setattr = curr_p;
-				if (attr_entry->trans_id >= reb->trans_id) {
-					nova_rebuild_file_time_and_size(sb, reb,
+		case SET_ATTR:
+			attr_entry = (struct nova_setattr_logentry *)entryc;
+			nova_apply_setattr_entry(sb, reb, sih, attr_entry);
+			sih->last_setattr = curr_p;
+			if (attr_entry->trans_id >= reb->trans_id) {
+				nova_rebuild_file_time_and_size(sb, reb,
 							attr_entry->mtime,
 							attr_entry->ctime,
 							attr_entry->size);
-					reb->trans_id = attr_entry->trans_id;
-				}
+				reb->trans_id = attr_entry->trans_id;
+			}
 
-				/* Update sih->i_size for setattr operation */
-				sih->i_size = le64_to_cpu(reb->i_size);
-				curr_p += sizeof(struct nova_setattr_logentry);
-				break;
-			case LINK_CHANGE:
-				link_change_entry =
-					(struct nova_link_change_entry *)addr;
-				nova_apply_link_change_entry(sb, reb,
-							link_change_entry);
-				sih->last_link_change = curr_p;
-				curr_p += sizeof(struct nova_link_change_entry);
-				break;
-			case FILE_WRITE:
-				entry = (struct nova_file_write_entry *)addr;
-				nova_rebuild_handle_write_entry(sb, sih, reb,
-						entry);
-				curr_p += sizeof(struct nova_file_write_entry);
-				break;
-			case MMAP_WRITE:
-				mmap_entry = (struct nova_mmap_entry *)addr;
-				nova_reset_mmap_csum_parity(sb, sih,
-						mmap_entry);
-				curr_p += sizeof(struct nova_mmap_entry);
-				break;
-			default:
-				nova_err(sb, "unknown type %d, 0x%llx\n",
-							type, curr_p);
-				NOVA_ASSERT(0);
-				curr_p += sizeof(struct nova_file_write_entry);
-				break;
+			/* Update sih->i_size for setattr operation */
+			sih->i_size = le64_to_cpu(reb->i_size);
+			curr_p += sizeof(struct nova_setattr_logentry);
+			break;
+		case LINK_CHANGE:
+			link_change_entry =
+				(struct nova_link_change_entry *)entryc;
+			nova_apply_link_change_entry(sb, reb,
+						link_change_entry);
+			sih->last_link_change = curr_p;
+			curr_p += sizeof(struct nova_link_change_entry);
+			break;
+		case FILE_WRITE:
+			entry = (struct nova_file_write_entry *)addr;
+			nova_rebuild_handle_write_entry(sb, sih, reb,
+					entry, WENTRY(entryc));
+			curr_p += sizeof(struct nova_file_write_entry);
+			break;
+		case MMAP_WRITE:
+			mmap_entry = (struct nova_mmap_entry *)addr;
+			nova_reset_mmap_csum_parity(sb, sih,
+					mmap_entry, MMENTRY(entryc));
+			curr_p += sizeof(struct nova_mmap_entry);
+			break;
+		default:
+			nova_err(sb, "unknown type %d, 0x%llx\n", type, curr_p);
+			NOVA_ASSERT(0);
+			curr_p += sizeof(struct nova_file_write_entry);
+			break;
 		}
 
 	}
@@ -511,21 +498,23 @@ out:
 /******************* Directory rebuild *********************/
 
 static inline void nova_rebuild_dir_time_and_size(struct super_block *sb,
-	struct nova_inode_rebuild *reb, struct nova_dentry *entry)
+	struct nova_inode_rebuild *reb, struct nova_dentry *entry,
+	struct nova_dentry *entryc)
 {
 	if (!entry || !reb)
 		return;
 
-	reb->i_ctime = entry->mtime;
-	reb->i_mtime = entry->mtime;
-	reb->i_links_count = entry->links_count;
-	reb->i_size = entry->size;
+	reb->i_ctime = entryc->mtime;
+	reb->i_mtime = entryc->mtime;
+	reb->i_links_count = entryc->links_count;
+	reb->i_size = entryc->size;
 }
 
 static void nova_reassign_last_dentry(struct super_block *sb,
 	struct nova_inode_info_header *sih, u64 curr_p)
 {
 	struct nova_dentry *dentry, *old_dentry;
+
 	if (sih->last_dentry == 0) {
 		sih->last_dentry = curr_p;
 	} else {
@@ -538,19 +527,20 @@ static void nova_reassign_last_dentry(struct super_block *sb,
 }
 
 static inline int nova_replay_add_dentry(struct super_block *sb,
-	struct nova_inode_info_header *sih, struct nova_dentry *entry)
+	struct nova_inode_info_header *sih, struct nova_dentry *entry,
+	struct nova_dentry *entryc)
 {
-	if (!entry->name_len)
+	if (!entryc->name_len)
 		return -EINVAL;
 
 	nova_dbg_verbose("%s: add %s\n", __func__, entry->name);
 	return nova_insert_dir_radix_tree(sb, sih,
-			entry->name, entry->name_len, entry);
+			entryc->name, entryc->name_len, entry);
 }
 
+/* entry given to this function is a copy in dram */
 static inline int nova_replay_remove_dentry(struct super_block *sb,
-	struct nova_inode_info_header *sih,
-	struct nova_dentry *entry)
+	struct nova_inode_info_header *sih, struct nova_dentry *entry)
 {
 	nova_dbg_verbose("%s: remove %s\n", __func__, entry->name);
 	nova_remove_dir_radix_tree(sb, sih, entry->name,
@@ -560,7 +550,7 @@ static inline int nova_replay_remove_dentry(struct super_block *sb,
 
 static int nova_rebuild_handle_dentry(struct super_block *sb,
 	struct nova_inode_info_header *sih, struct nova_inode_rebuild *reb,
-	struct nova_dentry *entry, u64 curr_p)
+	struct nova_dentry *entry, struct nova_dentry *entryc, u64 curr_p)
 {
 	int ret = 0;
 
@@ -572,11 +562,11 @@ static int nova_rebuild_handle_dentry(struct super_block *sb,
 
 	nova_reassign_last_dentry(sb, sih, curr_p);
 
-	if (entry->invalid == 0) {
-		if (entry->ino > 0)
-			ret = nova_replay_add_dentry(sb, sih, entry);
+	if (entryc->invalid == 0) {
+		if (entryc->ino > 0)
+			ret = nova_replay_add_dentry(sb, sih, entry, entryc);
 		else
-			ret = nova_replay_remove_dentry(sb, sih, entry);
+			ret = nova_replay_remove_dentry(sb, sih, entryc);
 	}
 
 	if (ret) {
@@ -584,9 +574,9 @@ static int nova_rebuild_handle_dentry(struct super_block *sb,
 		return ret;
 	}
 
-	if (entry->trans_id >= reb->trans_id) {
-		nova_rebuild_dir_time_and_size(sb, reb, entry);
-		reb->trans_id = entry->trans_id;
+	if (entryc->trans_id >= reb->trans_id) {
+		nova_rebuild_dir_time_and_size(sb, reb, entry, entryc);
+		reb->trans_id = entryc->trans_id;
 	}
 
 	return ret;
@@ -600,11 +590,12 @@ int nova_rebuild_dir_inode_tree(struct super_block *sb,
 	struct nova_dentry *entry = NULL;
 	struct nova_setattr_logentry *attr_entry = NULL;
 	struct nova_link_change_entry *lc_entry = NULL;
+	char entry_copy[NOVA_MAX_ENTRY_LEN];
 	struct nova_inode_rebuild rebuild, *reb;
 	u64 ino = pi->nova_ino;
 	unsigned short de_len;
 	timing_t rebuild_time;
-	void *addr;
+	void *addr, *entryc;
 	u64 curr_p;
 	u8 type;
 	int ret;
@@ -624,6 +615,8 @@ int nova_rebuild_dir_inode_tree(struct super_block *sb,
 		goto out;
 	}
 
+	entryc = (metadata_csum == 0) ? NULL : entry_copy;
+
 	while (curr_p != sih->log_tail) {
 		if (goto_next_page(sb, curr_p)) {
 			sih->log_pages++;
@@ -636,14 +629,13 @@ int nova_rebuild_dir_inode_tree(struct super_block *sb,
 		}
 
 		addr = (void *)nova_get_block(sb, curr_p);
-		if (!nova_verify_entry_csum(sb, addr, NULL)) {
-			nova_err(sb, "%s: entry checksum fail "
-				"inode %llu entry addr 0x%llx\n",
-				__func__, ino, (u64)addr);
-			break;
-		}
 
-		type = nova_get_entry_type(addr);
+		if (metadata_csum == 0)
+			entryc = addr;
+		else if (!nova_verify_entry_csum(sb, addr, entryc))
+			return 0;
+
+		type = nova_get_entry_type(entryc);
 
 		if (sbi->mount_snapshot) {
 			if (nova_encounter_mount_snapshot(sb, addr, type))
@@ -651,39 +643,35 @@ int nova_rebuild_dir_inode_tree(struct super_block *sb,
 		}
 
 		switch (type) {
-			case SET_ATTR:
-				attr_entry =
-					(struct nova_setattr_logentry *)addr;
-				nova_apply_setattr_entry(sb, reb, sih,
-								attr_entry);
-				sih->last_setattr = curr_p;
-				curr_p += sizeof(struct nova_setattr_logentry);
-				break;
-			case LINK_CHANGE:
-				lc_entry =
-					(struct nova_link_change_entry *)addr;
-				if (lc_entry->trans_id >= reb->trans_id) {
-					nova_apply_link_change_entry(sb, reb,
-								lc_entry);
-					reb->trans_id = lc_entry->trans_id;
-				}
-				sih->last_link_change = curr_p;
-				curr_p += sizeof(struct nova_link_change_entry);
-				break;
-			case DIR_LOG:
-				entry = (struct nova_dentry *)addr;
-				ret = nova_rebuild_handle_dentry(sb, sih, reb,
-						entry, curr_p);
-				if (ret)
-					goto out;
-				de_len = le16_to_cpu(entry->de_len);
-				curr_p += de_len;
-				break;
-			default:
-				nova_dbg("%s: unknown type %d, 0x%llx\n",
-							__func__, type, curr_p);
-				NOVA_ASSERT(0);
-				break;
+		case SET_ATTR:
+			attr_entry = (struct nova_setattr_logentry *)entryc;
+			nova_apply_setattr_entry(sb, reb, sih, attr_entry);
+			sih->last_setattr = curr_p;
+			curr_p += sizeof(struct nova_setattr_logentry);
+			break;
+		case LINK_CHANGE:
+			lc_entry = (struct nova_link_change_entry *)entryc;
+			if (lc_entry->trans_id >= reb->trans_id) {
+				nova_apply_link_change_entry(sb, reb, lc_entry);
+				reb->trans_id = lc_entry->trans_id;
+			}
+			sih->last_link_change = curr_p;
+			curr_p += sizeof(struct nova_link_change_entry);
+			break;
+		case DIR_LOG:
+			entry = (struct nova_dentry *)addr;
+			ret = nova_rebuild_handle_dentry(sb, sih, reb,
+					entry, DENTRY(entryc), curr_p);
+			if (ret)
+				goto out;
+			de_len = le16_to_cpu(DENTRY(entryc)->de_len);
+			curr_p += de_len;
+			break;
+		default:
+			nova_dbg("%s: unknown type %d, 0x%llx\n",
+					__func__, type, curr_p);
+			NOVA_ASSERT(0);
+			break;
 		}
 	}
 
@@ -701,6 +689,7 @@ int nova_rebuild_inode(struct super_block *sb, struct nova_inode_info *si,
 {
 	struct nova_inode_info_header *sih = &si->header;
 	struct nova_inode *pi;
+	struct nova_inode inode_copy;
 	u64 alter_pi_addr = 0;
 	int ret;
 
@@ -711,7 +700,8 @@ int nova_rebuild_inode(struct super_block *sb, struct nova_inode_info *si,
 			return ret;
 	}
 
-	ret = nova_check_inode_integrity(sb, ino, pi_addr, alter_pi_addr);
+	ret = nova_check_inode_integrity(sb, ino, pi_addr, alter_pi_addr,
+							&inode_copy, 1);
 	if (ret)
 		return ret;
 
@@ -763,17 +753,20 @@ int nova_restore_snapshot_table(struct super_block *sb, int just_init)
 	struct nova_inode_info_header *sih;
 	struct nova_inode_rebuild rebuild, *reb;
 	unsigned int data_bits;
+	char entry_copy[NOVA_MAX_ENTRY_LEN];
 	size_t size = sizeof(struct nova_snapshot_info_entry);
 	u64 ino = NOVA_SNAPSHOT_INO;
 	timing_t rebuild_time;
 	int count = 0;
-	void *addr;
+	void *addr, *entryc;
 	u64 curr_p;
 	u8 type;
 	int ret;
 
 	NOVA_START_TIMING(rebuild_snapshot_t, rebuild_time);
 	nova_dbg_verbose("Rebuild snapshot table\n");
+
+	entryc = (metadata_csum == 0) ? NULL : entry_copy;
 
 	pi = nova_get_basic_inode(sb, ino);
 	sih = &sbi->snapshot_si->header;
@@ -801,35 +794,33 @@ int nova_restore_snapshot_table(struct super_block *sb, int just_init)
 		}
 
 		addr = (void *)nova_get_block(sb, curr_p);
-		if (!nova_verify_entry_csum(sb, addr, NULL)) {
-			nova_err(sb, "%s: entry checksum fail "
-					"inode %llu entry addr 0x%llx\n",
-					__func__, ino, (u64)addr);
-			break;
-		}
 
-		type = nova_get_entry_type(addr);
+		if (metadata_csum == 0)
+			entryc = addr;
+		else if (!nova_verify_entry_csum(sb, addr, entryc))
+			return 0;
+
+		type = nova_get_entry_type(entryc);
 
 		switch (type) {
-			case SNAPSHOT_INFO:
-				entry = (struct nova_snapshot_info_entry *)addr;
-				ret = nova_restore_snapshot_entry(sb, entry,
-							curr_p, just_init);
-				if (ret) {
-					nova_err(sb, "Restore entry %llu "
-						"failed\n", entry->epoch_id);
-					goto out;
-				}
-				if (entry->deleted == 0)
-					count++;
-				curr_p += size;
-				break;
-			default:
-				nova_err(sb, "unknown type %d, 0x%llx\n",
-							type, curr_p);
-				NOVA_ASSERT(0);
-				curr_p += size;
-				break;
+		case SNAPSHOT_INFO:
+			entry = (struct nova_snapshot_info_entry *)addr;
+			ret = nova_restore_snapshot_entry(sb, entry,
+						curr_p, just_init);
+			if (ret) {
+				nova_err(sb, "Restore entry %llu "
+					"failed\n", entry->epoch_id);
+				goto out;
+			}
+			if (SNENTRY(entryc)->deleted == 0)
+				count++;
+			curr_p += size;
+			break;
+		default:
+			nova_err(sb, "unknown type %d, 0x%llx\n", type, curr_p);
+			NOVA_ASSERT(0);
+			curr_p += size;
+			break;
 		}
 
 	}

@@ -235,74 +235,24 @@ int nova_get_alter_inode_address(struct super_block *sb, u64 ino,
 	return 0;
 }
 
-static int nova_delete_cache_tree(struct super_block *sb,
-	struct nova_inode_info_header *sih, unsigned long start_blocknr,
-	unsigned long last_blocknr)
-{
-	unsigned long addr;
-	unsigned long i;
-	int deleted = 0;
-	void *ret;
-
-	nova_dbgv("%s: inode %lu, mmap pages %lu, start %lu, last %lu\n",
-			__func__, sih->ino, sih->mmap_pages,
-			start_blocknr, last_blocknr);
-
-	for (i = start_blocknr; i <= last_blocknr; i++) {
-		addr = (unsigned long)radix_tree_lookup(&sih->cache_tree, i);
-		if (addr) {
-			ret = radix_tree_delete(&sih->cache_tree, i);
-			nova_free_data_blocks(sb, sih, addr >> PAGE_SHIFT, 1);
-			sih->mmap_pages--;
-			deleted++;
-		}
-	}
-
-	nova_dbgv("%s: inode %lu, deleted mmap pages %d\n",
-			__func__, sih->ino, deleted);
-
-	if (sih->mmap_pages == 0) {
-		sih->low_dirty = ULONG_MAX;
-		sih->high_dirty = 0;
-	}
-
-	return 0;
-}
-
-static int nova_zero_cache_tree(struct super_block *sb,
-	struct nova_inode_info_header *sih, unsigned long start_blocknr)
-{
-	unsigned long block;
-	unsigned long i;
-	void *addr;
-
-	nova_dbgv("%s: inode %lu, mmap pages %lu, start %lu, last %lu, "
-			"size %lu", __func__, sih->ino, sih->mmap_pages,
-			start_blocknr, sih->high_dirty, sih->i_size);
-
-	for (i = start_blocknr; i <= sih->high_dirty; i++) {
-		block = (unsigned long)radix_tree_lookup(&sih->cache_tree, i);
-		if (block) {
-			addr = nova_get_block(sb, block);
-			memset(addr, 0, PAGE_SIZE);
-		}
-	}
-
-	return 0;
-}
-
-static int nova_traverse_delete_file_tree(struct super_block *sb,
+int nova_delete_file_tree(struct super_block *sb,
 	struct nova_inode_info_header *sih, unsigned long start_blocknr,
 	unsigned long last_blocknr, bool delete_nvmm, bool delete_dead,
 	u64 epoch_id)
 {
 	struct nova_file_write_entry *entry;
+	struct nova_file_write_entry *entryc, entry_copy;
 	struct nova_file_write_entry *old_entry = NULL;
 	unsigned long pgoff = start_blocknr;
 	unsigned long old_pgoff = 0;
 	unsigned int num_free = 0;
 	int freed = 0;
 	void *ret;
+	timing_t delete_time;
+
+	NOVA_START_TIMING(delete_file_tree_t, delete_time);
+
+	entryc = (metadata_csum == 0) ? entry : &entry_copy;
 
 	/* Handle EOF blocks */
 	do {
@@ -318,6 +268,7 @@ static int nova_traverse_delete_file_tree(struct super_block *sb,
 							epoch_id);
 					freed += num_free;
 				}
+
 				old_entry = entry;
 				old_pgoff = pgoff;
 				num_free = 1;
@@ -330,8 +281,14 @@ static int nova_traverse_delete_file_tree(struct super_block *sb,
 			entry = nova_find_next_entry(sb, sih, pgoff);
 			if (!entry)
 				break;
+
+			if (metadata_csum == 0)
+				entryc = entry;
+			else if (!nova_verify_entry_csum(sb, entry, entryc))
+				break;
+
 			pgoff++;
-			pgoff = pgoff > entry->pgoff ? pgoff : entry->pgoff;
+			pgoff = pgoff > entryc->pgoff ? pgoff : entryc->pgoff;
 		}
 	} while (1);
 
@@ -344,31 +301,8 @@ static int nova_traverse_delete_file_tree(struct super_block *sb,
 	nova_dbgv("Inode %lu: delete file tree from pgoff %lu to %lu, "
 			"%d blocks freed\n",
 			sih->ino, start_blocknr, last_blocknr, freed);
-	return freed;
-}
-
-int nova_delete_file_tree(struct super_block *sb,
-	struct nova_inode_info_header *sih, unsigned long start_blocknr,
-	unsigned long last_blocknr, bool delete_nvmm, bool delete_mmap,
-	bool delete_dead, u64 epoch_id)
-{
-	int freed = 0;
-	timing_t delete_time;
-
-	NOVA_START_TIMING(delete_file_tree_t, delete_time);
-
-	if (delete_mmap && sih->mmap_pages)
-		nova_delete_cache_tree(sb, sih, start_blocknr,
-						last_blocknr);
-
-	if (sih->mmap_pages && start_blocknr <= sih->high_dirty)
-		nova_zero_cache_tree(sb, sih, start_blocknr);
-
-	freed = nova_traverse_delete_file_tree(sb, sih, start_blocknr,
-			last_blocknr, delete_nvmm, delete_dead, epoch_id);
 
 	NOVA_END_TIMING(delete_file_tree_t, delete_time);
-
 	return freed;
 }
 
@@ -384,7 +318,7 @@ static int nova_free_dram_resource(struct super_block *sb,
 	if (S_ISREG(sih->i_mode)) {
 		last_blocknr = nova_get_last_blocknr(sb, sih);
 		freed = nova_delete_file_tree(sb, sih, 0,
-					last_blocknr, false, true, false, 0);
+					last_blocknr, false, false, 0);
 	} else {
 		nova_delete_dir_tree(sb, sih);
 		freed = 1;
@@ -422,7 +356,7 @@ static void nova_truncate_file_blocks(struct inode *inode, loff_t start,
 		return;
 
 	freed = nova_delete_file_tree(sb, sih, first_blocknr,
-				last_blocknr, true, false, false, epoch_id);
+				last_blocknr, true, false, epoch_id);
 
 	inode->i_blocks -= (freed * (1 << (data_bits -
 				sb->s_blocksize_bits)));
@@ -449,8 +383,11 @@ static int nova_lookup_hole_in_range(struct super_block *sb,
 	int *data_found, int *hole_found, int hole)
 {
 	struct nova_file_write_entry *entry;
+	struct nova_file_write_entry *entryc, entry_copy;
 	unsigned long blocks = 0;
 	unsigned long pgoff, old_pgoff;
+
+	entryc = (metadata_csum == 0) ? entry : &entry_copy;
 
 	pgoff = first_blocknr;
 	while (pgoff <= last_blocknr) {
@@ -466,8 +403,14 @@ static int nova_lookup_hole_in_range(struct super_block *sb,
 			entry = nova_find_next_entry(sb, sih, pgoff);
 			pgoff++;
 			if (entry) {
-				pgoff = pgoff > entry->pgoff ?
-					pgoff : entry->pgoff;
+				if (metadata_csum == 0)
+					entryc = entry;
+				else if (!nova_verify_entry_csum(sb, entry,
+								entryc))
+					goto done;
+
+				pgoff = pgoff > entryc->pgoff ?
+					pgoff : entryc->pgoff;
 				if (pgoff > last_blocknr)
 					pgoff = last_blocknr + 1;
 			}
@@ -861,7 +804,7 @@ static int nova_free_inode_resource(struct super_block *sb,
 		last_blocknr = nova_get_last_blocknr(sb, sih);
 		nova_dbgv("%s: file ino %lu\n", __func__, sih->ino);
 		freed = nova_delete_file_tree(sb, sih, 0,
-					last_blocknr, true, true, true, 0);
+					last_blocknr, true, true, 0);
 		break;
 	case S_IFDIR:
 		nova_dbgv("%s: dir ino %lu\n", __func__, sih->ino);
@@ -872,7 +815,7 @@ static int nova_free_inode_resource(struct super_block *sb,
 		nova_dbgv("%s: symlink ino %lu\n",
 				__func__, sih->ino);
 		freed = nova_delete_file_tree(sb, sih, 0, 0,
-						true, true, true, 0);
+						true, true, 0);
 		break;
 	default:
 		nova_dbgv("%s: special ino %lu\n",
@@ -948,7 +891,8 @@ out:
 		nova_free_dram_resource(sb, sih);
 
 	/* TODO: Since we don't use page-cache, do we really need the following
-	 * call? */
+	 * call?
+	 */
 	truncate_inode_pages(&inode->i_data, 0);
 
 	clear_inode(inode);
@@ -1086,31 +1030,31 @@ struct inode *nova_new_vfs_inode(enum nova_new_inode_type type,
 	inode->i_ino = ino;
 
 	switch (type) {
-		case TYPE_CREATE:
-			inode->i_op = &nova_file_inode_operations;
-			inode->i_mapping->a_ops = &nova_aops_dax;
-			if (inplace_data_updates && wprotect == 0)
-				inode->i_fop = &nova_dax_file_operations;
-			else
-				inode->i_fop = &nova_wrap_file_operations;
-			break;
-		case TYPE_MKNOD:
-			init_special_inode(inode, mode, rdev);
-			inode->i_op = &nova_special_inode_operations;
-			break;
-		case TYPE_SYMLINK:
-			inode->i_op = &nova_symlink_inode_operations;
-			inode->i_mapping->a_ops = &nova_aops_dax;
-			break;
-		case TYPE_MKDIR:
-			inode->i_op = &nova_dir_inode_operations;
-			inode->i_fop = &nova_dir_operations;
-			inode->i_mapping->a_ops = &nova_aops_dax;
-			set_nlink(inode, 2);
-			break;
-		default:
-			nova_dbg("Unknown new inode type %d\n", type);
-			break;
+	case TYPE_CREATE:
+		inode->i_op = &nova_file_inode_operations;
+		inode->i_mapping->a_ops = &nova_aops_dax;
+		if (inplace_data_updates && wprotect == 0)
+			inode->i_fop = &nova_dax_file_operations;
+		else
+			inode->i_fop = &nova_wrap_file_operations;
+		break;
+	case TYPE_MKNOD:
+		init_special_inode(inode, mode, rdev);
+		inode->i_op = &nova_special_inode_operations;
+		break;
+	case TYPE_SYMLINK:
+		inode->i_op = &nova_symlink_inode_operations;
+		inode->i_mapping->a_ops = &nova_aops_dax;
+		break;
+	case TYPE_MKDIR:
+		inode->i_op = &nova_dir_inode_operations;
+		inode->i_fop = &nova_dir_operations;
+		inode->i_mapping->a_ops = &nova_aops_dax;
+		set_nlink(inode, 2);
+		break;
+	default:
+		nova_dbg("Unknown new inode type %d\n", type);
+		break;
 	}
 
 	/*
@@ -1126,7 +1070,8 @@ struct inode *nova_new_vfs_inode(enum nova_new_inode_type type,
 	nova_init_inode(inode, pi);
 
 	if (replica_metadata) {
-		alter_pi = (struct nova_inode *)nova_get_block(sb, alter_pi_addr);
+		alter_pi = (struct nova_inode *)nova_get_block(sb,
+								alter_pi_addr);
 		memcpy_to_pmem_nocache(alter_pi, pi, sizeof(struct nova_inode));
 	}
 
@@ -1162,7 +1107,8 @@ fail2:
 int nova_write_inode(struct inode *inode, struct writeback_control *wbc)
 {
 	/* write_inode should never be called because we always keep our inodes
-	 * clean. So let us know if write_inode ever gets called. */
+	 * clean. So let us know if write_inode ever gets called.
+	 */
 //	BUG();
 	return 0;
 }
@@ -1177,13 +1123,23 @@ void nova_dirty_inode(struct inode *inode, int flags)
 {
 	struct super_block *sb = inode->i_sb;
 	struct nova_sb_info *sbi = NOVA_SB(sb);
-	struct nova_inode *pi = nova_get_inode(sb, inode);
+	struct nova_inode_info *si = NOVA_I(inode);
+	struct nova_inode_info_header *sih = &si->header;
+	struct nova_inode *pi, inode_copy;
 
 	if (sbi->mount_snapshot)
 		return;
 
+	pi = nova_get_block(sb, sih->pi_addr);
+
+	/* check the inode before updating to make sure all fields are good */
+	if (nova_check_inode_integrity(sb, sih->ino, sih->pi_addr,
+					sih->alter_pi_addr, &inode_copy, 0) < 0)
+		return;
+
 	/* only i_atime should have changed if at all.
-	 * we can do in-place atomic update */
+	 * we can do in-place atomic update
+	 */
 	nova_memunlock_inode(sb, pi);
 	pi->i_atime = cpu_to_le32(inode->i_atime.tv_sec);
 	nova_update_inode_checksum(pi);
@@ -1199,12 +1155,15 @@ static void nova_setsize(struct inode *inode, loff_t oldsize, loff_t newsize,
 	struct super_block *sb = inode->i_sb;
 	struct nova_inode_info *si = NOVA_I(inode);
 	struct nova_inode_info_header *sih = &si->header;
+	timing_t setsize_time;
 
 	/* We only support truncate regular file */
 	if (!(S_ISREG(inode->i_mode))) {
 		nova_err(inode->i_sb, "%s:wrong file mode %x\n", inode->i_mode);
 		return;
 	}
+
+	NOVA_START_TIMING(setsize_t, setsize_time);
 
 	inode_dio_wait(inode);
 
@@ -1219,7 +1178,8 @@ static void nova_setsize(struct inode *inode, loff_t oldsize, loff_t newsize,
 
 	/* FIXME: we should make sure that there is nobody reading the inode
 	 * before truncating it. Also we need to munmap the truncated range
-	 * from application address space, if mmapped. */
+	 * from application address space, if mmapped.
+	 */
 	/* synchronize_rcu(); */
 
 	/* FIXME: Do we need to clear truncated DAX pages? */
@@ -1227,10 +1187,11 @@ static void nova_setsize(struct inode *inode, loff_t oldsize, loff_t newsize,
 
 	truncate_pagecache(inode, newsize);
 	nova_truncate_file_blocks(inode, newsize, oldsize, epoch_id);
+	NOVA_END_TIMING(setsize_t, setsize_time);
 }
 
 int nova_getattr(struct vfsmount *mnt, struct dentry *dentry,
-		         struct kstat *stat)
+	struct kstat *stat)
 {
 	struct inode *inode;
 
@@ -1255,12 +1216,14 @@ int nova_notify_change(struct dentry *dentry, struct iattr *attr)
 	timing_t setattr_time;
 
 	NOVA_START_TIMING(setattr_t, setattr_time);
-	if (!pi)
-		return -EACCES;
+	if (!pi) {
+		ret = -EACCES;
+		goto out;
+	}
 
 	ret = setattr_prepare(dentry, attr);
 	if (ret)
-		return ret;
+		goto out;
 
 	/* Update inode with attr except for size */
 	setattr_copy(inode, attr);
@@ -1273,7 +1236,7 @@ int nova_notify_change(struct dentry *dentry, struct iattr *attr)
 	ia_valid = ia_valid & attr_mask;
 
 	if (ia_valid == 0)
-		return ret;
+		goto out;
 
 	ret = nova_handle_setattr_operation(sb, inode, pi, ia_valid,
 					attr, epoch_id);

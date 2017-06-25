@@ -205,13 +205,15 @@ static int nova_dax_cow_mmap_handler(struct super_block *sb,
 	struct vm_area_struct *vma, struct nova_inode_info_header *sih,
 	u64 begin_tail)
 {
-	struct nova_file_write_entry *entry, entry_data;
+	struct nova_file_write_entry *entry;
+	struct nova_file_write_entry *entryc, entry_copy;
 	u64 curr_p = begin_tail;
 	size_t entry_size = sizeof(struct nova_file_write_entry);
 	int ret = 0;
 	timing_t update_time;
 
 	NOVA_START_TIMING(mmap_handler_t, update_time);
+	entryc = (metadata_csum == 0) ? entry : &entry_copy;
 	while (curr_p && curr_p != sih->log_tail) {
 		if (is_last_entry(curr_p, entry_size))
 			curr_p = next_log_page(sb, curr_p);
@@ -225,21 +227,24 @@ static int nova_dax_cow_mmap_handler(struct super_block *sb,
 
 		entry = (struct nova_file_write_entry *)
 					nova_get_block(sb, curr_p);
-		ret = memcpy_from_pmem(&entry_data, entry, entry_size);
-		if (ret) {
-			/* FIXME: try alter entry */
+
+		if (metadata_csum == 0)
+			entryc = entry;
+		else if (!nova_verify_entry_csum(sb, entry, entryc)) {
+			ret = -EIO;
 			curr_p += entry_size;
 			continue;
 		}
 
-		if (nova_get_entry_type(&entry_data) != FILE_WRITE) {
+		if (nova_get_entry_type(entryc) != FILE_WRITE) {
+			/* for debug information, still use nvmm entry */
 			nova_dbg("%s: entry type is not write? %d\n",
-				__func__, nova_get_entry_type(&entry_data));
+				__func__, nova_get_entry_type(entry));
 			curr_p += entry_size;
 			continue;
 		}
 
-		ret = nova_dax_mmap_update_mapping(sb, sih, vma, &entry_data);
+		ret = nova_dax_mmap_update_mapping(sb, sih, vma, entryc);
 		if (ret)
 			break;
 
@@ -285,7 +290,8 @@ int nova_mmap_to_new_blocks(struct vm_area_struct *vma,
 	struct super_block *sb = inode->i_sb;
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_inode *pi;
-	struct nova_file_write_entry *entry, entryd;
+	struct nova_file_write_entry *entry;
+	struct nova_file_write_entry *entryc, entry_copy;
 	struct nova_file_write_entry entry_data;
 	struct nova_inode_update update;
 	unsigned long start_blk, end_blk;
@@ -338,6 +344,9 @@ int nova_mmap_to_new_blocks(struct vm_area_struct *vma,
 	epoch_id = nova_get_epoch_id(sb);
 	update.tail = pi->log_tail;
 	update.alter_tail = pi->alter_log_tail;
+
+	entryc = (metadata_csum == 0) ? entry : &entry_copy;
+
 	while (start_blk < end_blk) {
 		entry = nova_get_write_entry(sb, sih, start_blk);
 		if (!entry) {
@@ -349,31 +358,34 @@ int nova_mmap_to_new_blocks(struct vm_area_struct *vma,
 			if (!entry)
 				break;
 
-			start_blk = entry->pgoff;
+			if (metadata_csum == 0)
+				entryc = entry;
+			else if (!nova_verify_entry_csum(sb, entry, entryc))
+				break;
+
+			start_blk = entryc->pgoff;
 			if (start_blk >= end_blk)
+				break;
+		} else {
+			if (metadata_csum == 0)
+				entryc = entry;
+			else if (!nova_verify_entry_csum(sb, entry, entryc))
 				break;
 		}
 
-		if (!nova_verify_entry_csum(sb, entry, &entryd)) {
-			nova_dbg("%s: nova entry checksum error\n", __func__);
-			ret = -EIO;
-			goto out;
-		}
-		entry = &entryd;
-
-		if (entry->epoch_id == epoch_id) {
+		if (entryc->epoch_id == epoch_id) {
 			/* Someone has done it for us. */
 			break;
 		}
 
-		from_blocknr = get_nvmm(sb, sih, entry, start_blk);
+		from_blocknr = get_nvmm(sb, sih, entryc, start_blk);
 		from_blockoff = nova_get_block_off(sb, from_blocknr,
 						pi->i_blk_type);
 		from_kmem = nova_get_block(sb, from_blockoff);
 
-		if (entry->reassigned == 0)
-			avail_blocks = entry->num_pages -
-					(start_blk - entry->pgoff);
+		if (entryc->reassigned == 0)
+			avail_blocks = entryc->num_pages -
+					(start_blk - entryc->pgoff);
 		else
 			avail_blocks = 1;
 

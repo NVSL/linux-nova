@@ -143,28 +143,25 @@ static int nova_delete_snapshot_list_entries(struct super_block *sb,
 		type = nova_get_entry_type(addr);
 
 		switch (type) {
-			case SS_INODE:
-				i_entry = (struct snapshot_inode_entry *)addr;
-				if (i_entry->deleted == 0)
-					nova_delete_dead_inode(sb,
-							i_entry->nova_ino);
-				curr_p += sizeof(struct snapshot_inode_entry);
-				continue;
-			case SS_FILE_WRITE:
-				w_entry = (struct snapshot_file_write_entry *)addr;
-				if (w_entry->deleted == 0)
-					nova_free_data_blocks(sb, &sih,
-							w_entry->nvmm,
+		case SS_INODE:
+			i_entry = (struct snapshot_inode_entry *)addr;
+			if (i_entry->deleted == 0)
+				nova_delete_dead_inode(sb, i_entry->nova_ino);
+			curr_p += sizeof(struct snapshot_inode_entry);
+			continue;
+		case SS_FILE_WRITE:
+			w_entry = (struct snapshot_file_write_entry *)addr;
+			if (w_entry->deleted == 0)
+				nova_free_data_blocks(sb, &sih, w_entry->nvmm,
 							w_entry->num_pages);
-				curr_p += sizeof(struct snapshot_file_write_entry);
-				continue;
-			default:
-				nova_err(sb, "unknown type %d, 0x%llx, "
-						"tail 0x%llx\n",
-						type, curr_p, list->tail);
-				NOVA_ASSERT(0);
-				curr_p += sizeof(struct snapshot_file_write_entry);
-				continue;
+			curr_p += sizeof(struct snapshot_file_write_entry);
+			continue;
+		default:
+			nova_err(sb, "unknown type %d, 0x%llx, tail 0x%llx\n",
+					type, curr_p, list->tail);
+			NOVA_ASSERT(0);
+			curr_p += sizeof(struct snapshot_file_write_entry);
+			continue;
 		}
 	}
 
@@ -235,23 +232,21 @@ static int nova_background_clean_snapshot_list(struct super_block *sb,
 		type = nova_get_entry_type(addr);
 
 		switch (type) {
-			case SS_INODE:
-				nova_background_clean_inode_entry(sb, addr,
-							epoch_id);
-				curr_p += sizeof(struct snapshot_inode_entry);
-				continue;
-			case SS_FILE_WRITE:
-				nova_background_clean_write_entry(sb, addr,
-							&sih, epoch_id);
-				curr_p += sizeof(struct snapshot_file_write_entry);
-				continue;
-			default:
-				nova_err(sb, "unknown type %d, 0x%llx, "
-						"tail 0x%llx\n",
-						type, curr_p, list->tail);
-				NOVA_ASSERT(0);
-				curr_p += sizeof(struct snapshot_file_write_entry);
-				continue;
+		case SS_INODE:
+			nova_background_clean_inode_entry(sb, addr, epoch_id);
+			curr_p += sizeof(struct snapshot_inode_entry);
+			continue;
+		case SS_FILE_WRITE:
+			nova_background_clean_write_entry(sb, addr, &sih,
+								epoch_id);
+			curr_p += sizeof(struct snapshot_file_write_entry);
+			continue;
+		default:
+			nova_err(sb, "unknown type %d, 0x%llx, tail 0x%llx\n",
+					type, curr_p, list->tail);
+			NOVA_ASSERT(0);
+			curr_p += sizeof(struct snapshot_file_write_entry);
+			continue;
 		}
 	}
 
@@ -526,6 +521,7 @@ static int nova_append_snapshot_file_write_entry(struct super_block *sb,
 	return ret;
 }
 
+/* entry given to this function is a copy in dram */
 int nova_append_data_to_snapshot(struct super_block *sb,
 	struct nova_file_write_entry *entry, u64 nvmm, u64 num_pages,
 	u64 delete_epoch_id)
@@ -598,33 +594,33 @@ int nova_encounter_mount_snapshot(struct super_block *sb, void *addr,
 	int ret = 0;
 
 	switch (type) {
-		case SET_ATTR:
-			attr_entry = (struct nova_setattr_logentry *)addr;
-			if (pass_mount_snapshot(sb, attr_entry->epoch_id))
-				ret = 1;
-			break;
-		case LINK_CHANGE:
-			linkc_entry = (struct nova_link_change_entry *)addr;
-			if (pass_mount_snapshot(sb, linkc_entry->epoch_id))
-				ret = 1;
-			break;
-		case DIR_LOG:
-			dentry = (struct nova_dentry *)addr;
-			if (pass_mount_snapshot(sb, dentry->epoch_id))
-				ret = 1;
-			break;
-		case FILE_WRITE:
-			fw_entry = (struct nova_file_write_entry *)addr;
-			if (pass_mount_snapshot(sb, fw_entry->epoch_id))
-				ret = 1;
-			break;
-		case MMAP_WRITE:
-			mmap_entry = (struct nova_mmap_entry *)addr;
-			if (pass_mount_snapshot(sb, mmap_entry->epoch_id))
-				ret = 1;
-			break;
-		default:
-			break;
+	case SET_ATTR:
+		attr_entry = (struct nova_setattr_logentry *)addr;
+		if (pass_mount_snapshot(sb, attr_entry->epoch_id))
+			ret = 1;
+		break;
+	case LINK_CHANGE:
+		linkc_entry = (struct nova_link_change_entry *)addr;
+		if (pass_mount_snapshot(sb, linkc_entry->epoch_id))
+			ret = 1;
+		break;
+	case DIR_LOG:
+		dentry = (struct nova_dentry *)addr;
+		if (pass_mount_snapshot(sb, dentry->epoch_id))
+			ret = 1;
+		break;
+	case FILE_WRITE:
+		fw_entry = (struct nova_file_write_entry *)addr;
+		if (pass_mount_snapshot(sb, fw_entry->epoch_id))
+			ret = 1;
+		break;
+	case MMAP_WRITE:
+		mmap_entry = (struct nova_mmap_entry *)addr;
+		if (pass_mount_snapshot(sb, mmap_entry->epoch_id))
+			ret = 1;
+		break;
+	default:
+		break;
 	}
 
 	return ret;
@@ -912,7 +908,6 @@ static int nova_append_snapshot_info_log(struct super_block *sb,
 int nova_create_snapshot(struct super_block *sb)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
-	struct nova_super_block *super;
 	struct snapshot_info *info = NULL;
 	u64 timestamp = 0;
 	u64 epoch_id;
@@ -961,12 +956,11 @@ int nova_create_snapshot(struct super_block *sb)
 
 	nova_set_vmas_readonly(sb);
 
-	super = nova_get_super(sb);
+	sbi->nova_sb->s_wtime = cpu_to_le32(get_seconds());
+	sbi->nova_sb->s_epoch_id = cpu_to_le64(epoch_id);
+	nova_update_super_crc(sb);
 
-	nova_memunlock_super(sb);
-	super->s_epoch_id = cpu_to_le64(epoch_id);
-	nova_memlock_super(sb);
-	nova_flush_buffer(super, NOVA_SB_SIZE, 0);
+	nova_sync_super(sb);
 
 out:
 	sbi->snapshot_taking = 0;
@@ -1323,6 +1317,7 @@ int nova_destroy_snapshot_infos(struct super_block *sb)
 static void snapshot_cleaner_try_sleeping(struct nova_sb_info *sbi)
 {
 	DEFINE_WAIT(wait);
+
 	prepare_to_wait(&sbi->snapshot_cleaner_wait, &wait, TASK_INTERRUPTIBLE);
 	schedule();
 	finish_wait(&sbi->snapshot_cleaner_wait, &wait);

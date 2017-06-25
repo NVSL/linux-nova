@@ -45,37 +45,6 @@ static inline int nova_range_check(struct super_block *sb, void *p,
 	return 0;
 }
 
-/* nova_memunlock_super() before calling! */
-static inline void nova_sync_super(struct super_block *sb,
-	struct nova_super_block *ps)
-{
-	struct nova_super_block *super_redund;
-	u16 crc = 0;
-
-	super_redund = nova_get_redund_super(sb);
-	ps->s_wtime = cpu_to_le32(get_seconds());
-	ps->s_sum = 0;
-	crc = crc16(~0, (__u8 *)ps + sizeof(__le16),
-			NOVA_SB_STATIC_SIZE(ps) - sizeof(__le16));
-	ps->s_sum = cpu_to_le16(crc);
-	/* Keep sync redundant super block */
-	memcpy_to_pmem_nocache((void *)super_redund, (void *)ps,
-		sizeof(struct nova_super_block));
-}
-
-#if 0
-/* nova_memunlock_inode() before calling! */
-static inline void nova_sync_inode(struct nova_inode *pi)
-{
-	u16 crc = 0;
-
-	pi->i_sum = 0;
-	crc = crc16(~0, (__u8 *)pi + sizeof(__le16), NOVA_INODE_SIZE -
-		    sizeof(__le16));
-	pi->i_sum = cpu_to_le16(crc);
-}
-#endif
-
 extern int nova_writeable(void *vaddr, unsigned long size, int rw);
 
 static inline int nova_is_protected(struct super_block *sb)
@@ -141,7 +110,6 @@ static inline void nova_memlock_super(struct super_block *sb)
 {
 	struct nova_super_block *ps = nova_get_super(sb);
 
-	nova_sync_super(sb, ps);
 	if (nova_is_protected(sb))
 		__nova_memlock_range(ps, NOVA_SB_SIZE);
 }
@@ -150,6 +118,7 @@ static inline void nova_memunlock_reserved(struct super_block *sb,
 					 struct nova_super_block *ps)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
+
 	if (nova_is_protected(sb))
 		__nova_memunlock_range(ps,
 			sbi->head_reserved_blocks * NOVA_DEF_BLOCK_SIZE_4K);
@@ -159,6 +128,7 @@ static inline void nova_memlock_reserved(struct super_block *sb,
 				       struct nova_super_block *ps)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
+
 	if (nova_is_protected(sb))
 		__nova_memlock_range(ps,
 			sbi->head_reserved_blocks * NOVA_DEF_BLOCK_SIZE_4K);
@@ -178,6 +148,7 @@ static inline void nova_memunlock_journal(struct super_block *sb)
 static inline void nova_memlock_journal(struct super_block *sb)
 {
 	void *addr = nova_get_block(sb, NOVA_DEF_BLOCK_SIZE_4K * JOURNAL_START);
+
 	if (nova_is_protected(sb))
 		__nova_memlock_range(addr, NOVA_DEF_BLOCK_SIZE_4K);
 }
@@ -213,6 +184,63 @@ static inline void nova_memlock_block(struct super_block *sb, void *bp)
 {
 	if (nova_is_protected(sb))
 		__nova_memlock_range(bp, sb->s_blocksize);
+}
+
+static inline int nova_check_super_checksum(struct super_block *sb)
+{
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	u32 crc = 0;
+
+	crc = nova_crc32c(~0, (__u8 *)sbi->nova_sb + sizeof(__le32),
+			sizeof(struct nova_super_block) - sizeof(__le32));
+	if (sbi->nova_sb->s_sum == cpu_to_le32(crc))
+		return 0;
+	else
+		return 1;
+}
+
+/* Update checksum for the DRAM copy */
+static inline void nova_update_super_crc(struct super_block *sb)
+{
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	u32 crc = 0;
+
+	sbi->nova_sb->s_wtime = cpu_to_le32(get_seconds());
+	sbi->nova_sb->s_sum = 0;
+	crc = nova_crc32c(~0, (__u8 *)sbi->nova_sb + sizeof(__le32),
+			sizeof(struct nova_super_block) - sizeof(__le32));
+	sbi->nova_sb->s_sum = cpu_to_le32(crc);
+}
+
+static inline void nova_sync_super(struct super_block *sb)
+{
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	struct nova_super_block *super = nova_get_super(sb);
+	struct nova_super_block *super_redund;
+
+	nova_memunlock_super(sb);
+	super_redund = nova_get_redund_super(sb);
+	memcpy_to_pmem_nocache((void *)super, (void *)sbi->nova_sb,
+		sizeof(struct nova_super_block));
+	PERSISTENT_BARRIER();
+	memcpy_to_pmem_nocache((void *)super_redund, (void *)sbi->nova_sb,
+		sizeof(struct nova_super_block));
+	PERSISTENT_BARRIER();
+	nova_memlock_super(sb);
+}
+
+static inline void nova_update_mount_time(struct super_block *sb)
+{
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	u64 mnt_write_time;
+
+	mnt_write_time = (get_seconds() & 0xFFFFFFFF);
+	mnt_write_time = mnt_write_time | (mnt_write_time << 32);
+
+	sbi->nova_sb->s_mtime = cpu_to_le64(mnt_write_time);
+	nova_update_super_crc(sb);
+
+	nova_sync_super(sb);
 }
 
 #endif

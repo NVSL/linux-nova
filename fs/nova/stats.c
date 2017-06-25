@@ -20,8 +20,7 @@
 
 #include "nova.h"
 
-const char *Timingstring[TIMING_NUM] = 
-{
+const char *Timingstring[TIMING_NUM] = {
 	/* Init */
 	"================ Initialization ================",
 	"init",
@@ -45,6 +44,7 @@ const char *Timingstring[TIMING_NUM] =
 	"add_dentry",
 	"remove_dentry",
 	"setattr",
+	"setsize",
 
 	/* I/O operations */
 	"================ I/O operations ================",
@@ -134,6 +134,8 @@ const char *Timingstring[TIMING_NUM] =
 	/* Mmap */
 	"=============== MMap operations ================",
 	"mmap_page_fault",
+	"mmap_pmd_fault",
+	"mmap_pfn_mkwrite",
 	"insert_vma",
 	"remove_vma",
 	"set_vma_readonly",
@@ -182,9 +184,11 @@ static void nova_print_alloc_stats(struct super_block *sb)
 	printk("Alloc %llu, alloc steps %llu, average %llu\n",
 		Countstats[new_data_blocks_t], IOstats[alloc_steps],
 		Countstats[new_data_blocks_t] ?
-			IOstats[alloc_steps] / Countstats[new_data_blocks_t] : 0);
+			IOstats[alloc_steps] / Countstats[new_data_blocks_t]
+			: 0);
 	printk("Free %llu\n", Countstats[free_data_t]);
-	printk("Fast GC %llu, check pages %llu, free pages %llu, average %llu\n",
+	printk("Fast GC %llu, check pages %llu, free pages %llu, "
+		"average %llu\n",
 		Countstats[fast_gc_t], IOstats[fast_checked_pages],
 		IOstats[fast_gc_pages], Countstats[fast_gc_t] ?
 			IOstats[fast_gc_pages] / Countstats[fast_gc_t] : 0);
@@ -192,7 +196,8 @@ static void nova_print_alloc_stats(struct super_block *sb)
 		"average %llu\n", Countstats[thorough_gc_t],
 		IOstats[thorough_checked_pages], IOstats[thorough_gc_pages],
 		Countstats[thorough_gc_t] ?
-			IOstats[thorough_gc_pages] / Countstats[thorough_gc_t] : 0);
+			IOstats[thorough_gc_pages] / Countstats[thorough_gc_t]
+			: 0);
 
 	for (i = 0; i < sbi->cpus; i++) {
 		free_list = nova_get_free_list(sb, i);
@@ -230,14 +235,17 @@ static void nova_print_IO_stats(struct super_block *sb)
 		Countstats[cow_write_t] ?
 			IOstats[cow_write_bytes] / Countstats[cow_write_t] : 0,
 		IOstats[cow_write_breaks], Countstats[cow_write_t] ?
-			IOstats[cow_write_breaks] / Countstats[cow_write_t] : 0);
+			IOstats[cow_write_breaks] / Countstats[cow_write_t]
+			: 0);
 	printk("Inplace write %llu, bytes %llu, average %llu, "
 		"write breaks %llu, average %llu\n",
 		Countstats[inplace_write_t], IOstats[inplace_write_bytes],
 		Countstats[inplace_write_t] ?
-			IOstats[inplace_write_bytes] / Countstats[inplace_write_t] : 0,
+			IOstats[inplace_write_bytes] /
+			Countstats[inplace_write_t] : 0,
 		IOstats[inplace_write_breaks], Countstats[inplace_write_t] ?
-			IOstats[inplace_write_breaks] / Countstats[inplace_write_t] : 0);
+			IOstats[inplace_write_breaks] /
+			Countstats[inplace_write_t] : 0);
 }
 
 void nova_get_timing_stats(void)
@@ -445,47 +453,45 @@ u64 nova_print_log_entry(struct super_block *sb, u64 curr)
 	addr = (void *)nova_get_block(sb, curr);
 	type = nova_get_entry_type(addr);
 	switch (type) {
-		case SET_ATTR:
-			nova_print_set_attr_entry(sb, curr, addr);
-			curr += sizeof(struct nova_setattr_logentry);
-			break;
-		case LINK_CHANGE:
-			nova_print_link_change_entry(sb, curr, addr);
-			curr += sizeof(struct nova_link_change_entry);
-			break;
-		case MMAP_WRITE:
-			nova_print_mmap_entry(sb, curr, addr);
-			curr += sizeof(struct nova_mmap_entry);
-			break;
-		case SNAPSHOT_INFO:
-			nova_print_snapshot_info_entry(sb, curr, addr);
-			curr += sizeof(struct nova_snapshot_info_entry);
-			break;
-		case FILE_WRITE:
-			nova_print_file_write_entry(sb, curr, addr);
-			curr += sizeof(struct nova_file_write_entry);
-			break;
-		case DIR_LOG:
-			size = nova_print_dentry(sb, curr, addr);
-			curr += size;
-			if (size == 0) {
-				nova_dbg("%s: dentry with size 0 @ 0x%llx\n",
-						__func__, curr);
-				curr += sizeof(struct nova_file_write_entry);
-				NOVA_ASSERT(0);
-			}
-			break;
-		case NEXT_PAGE:
-			nova_dbg("%s: next page sign @ 0x%llx\n",
-						__func__, curr);
-			curr = PAGE_TAIL(curr);
-			break;
-		default:
-			nova_dbg("%s: unknown type %d, 0x%llx\n",
-						__func__, type, curr);
+	case SET_ATTR:
+		nova_print_set_attr_entry(sb, curr, addr);
+		curr += sizeof(struct nova_setattr_logentry);
+		break;
+	case LINK_CHANGE:
+		nova_print_link_change_entry(sb, curr, addr);
+		curr += sizeof(struct nova_link_change_entry);
+		break;
+	case MMAP_WRITE:
+		nova_print_mmap_entry(sb, curr, addr);
+		curr += sizeof(struct nova_mmap_entry);
+		break;
+	case SNAPSHOT_INFO:
+		nova_print_snapshot_info_entry(sb, curr, addr);
+		curr += sizeof(struct nova_snapshot_info_entry);
+		break;
+	case FILE_WRITE:
+		nova_print_file_write_entry(sb, curr, addr);
+		curr += sizeof(struct nova_file_write_entry);
+		break;
+	case DIR_LOG:
+		size = nova_print_dentry(sb, curr, addr);
+		curr += size;
+		if (size == 0) {
+			nova_dbg("%s: dentry with size 0 @ 0x%llx\n",
+					__func__, curr);
 			curr += sizeof(struct nova_file_write_entry);
 			NOVA_ASSERT(0);
-			break;
+		}
+		break;
+	case NEXT_PAGE:
+		nova_dbg("%s: next page sign @ 0x%llx\n", __func__, curr);
+		curr = PAGE_TAIL(curr);
+		break;
+	default:
+		nova_dbg("%s: unknown type %d, 0x%llx\n", __func__, type, curr);
+		curr += sizeof(struct nova_file_write_entry);
+		NOVA_ASSERT(0);
+		break;
 	}
 
 	return curr;
@@ -499,9 +505,8 @@ void nova_print_curr_log_page(struct super_block *sb, u64 curr)
 	start = BLOCK_OFF(curr);
 	end = PAGE_TAIL(curr);
 
-	while (start < end) {
+	while (start < end)
 		start = nova_print_log_entry(sb, start);
-	}
 
 	tail = nova_get_block(sb, end);
 	nova_dbg("Page tail. curr 0x%llx, next page 0x%llx, "

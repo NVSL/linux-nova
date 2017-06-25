@@ -23,14 +23,23 @@ static ino_t nova_inode_by_name(struct inode *dir, struct qstr *entry,
 {
 	struct super_block *sb = dir->i_sb;
 	struct nova_dentry *direntry;
+	struct nova_dentry *direntryc, entry_copy;
 
 	direntry = nova_find_dentry(sb, NULL, dir,
 					entry->name, entry->len);
 	if (direntry == NULL)
 		return 0;
 
+	if (metadata_csum == 0)
+		direntryc = direntry;
+	else {
+		direntryc = &entry_copy;
+		if (!nova_verify_entry_csum(sb, direntry, direntryc))
+			return 0;
+	}
+
 	*res_entry = direntry;
-	return direntry->ino;
+	return direntryc->ino;
 }
 
 static struct dentry *nova_lookup(struct inode *dir, struct dentry *dentry,
@@ -217,9 +226,9 @@ static int nova_symlink(struct inode *dir, struct dentry *dentry,
 {
 	struct super_block *sb = dir->i_sb;
 	int err = -ENAMETOOLONG;
-	unsigned len = strlen(symname);
+	unsigned int len = strlen(symname);
 	struct inode *inode;
-	struct nova_inode_info *si; 
+	struct nova_inode_info *si;
 	struct nova_inode_info_header *sih;
 	u64 pi_addr = 0;
 	struct nova_inode *pidir, *pi;
@@ -425,9 +434,8 @@ static int nova_unlink(struct inode *dir, struct dentry *dentry)
 	if (inode->i_nlink == 1)
 		invalidate = 1;
 
-	if (inode->i_nlink) {
+	if (inode->i_nlink)
 		drop_nlink(inode);
-	}
 
 	update.tail = 0;
 	update.alter_tail = 0;
@@ -531,6 +539,7 @@ static int nova_empty_dir(struct inode *inode)
 	struct nova_inode_info *si = NOVA_I(inode);
 	struct nova_inode_info_header *sih = &si->header;
 	struct nova_dentry *entry;
+	struct nova_dentry *entryc, entry_copy;
 	unsigned long pos = 0;
 	struct nova_dentry *entries[4];
 	int nr_entries;
@@ -542,9 +551,17 @@ static int nova_empty_dir(struct inode *inode)
 	if (nr_entries > 2)
 		return 0;
 
+	entryc = (metadata_csum == 0) ? entry : &entry_copy;
+
 	for (i = 0; i < nr_entries; i++) {
 		entry = entries[i];
-		if (!is_dir_init_entry(sb, entry))
+
+		if (metadata_csum == 0)
+			entryc = entry;
+		else if (!nova_verify_entry_csum(sb, entry, entryc))
+			return 0;
+
+		if (!is_dir_init_entry(sb, entryc))
 			return 0;
 	}
 
@@ -639,6 +656,7 @@ static int nova_rename(struct inode *old_dir,
 	struct nova_inode *old_pi = NULL, *new_pi = NULL;
 	struct nova_inode *new_pidir = NULL, *old_pidir = NULL;
 	struct nova_dentry *father_entry = NULL;
+	struct nova_dentry *father_entryc, entry_copy;
 	char *head_addr = NULL;
 	int invalidate_new_inode = 0;
 	struct nova_inode_update update_dir_new;
@@ -715,7 +733,19 @@ static int nova_rename(struct inode *old_dir,
 		head_addr = (char *)nova_get_block(sb, old_pi->log_head);
 		father_entry = (struct nova_dentry *)(head_addr +
 					NOVA_DIR_LOG_REC_LEN(1));
-		if (le64_to_cpu(father_entry->ino) != old_dir->i_ino)
+
+		if (metadata_csum == 0)
+			father_entryc = father_entry;
+		else {
+			father_entryc = &entry_copy;
+			if (!nova_verify_entry_csum(sb, father_entry,
+							father_entryc)) {
+				err = -EIO;
+				goto out;
+			}
+		}
+
+		if (le64_to_cpu(father_entryc->ino) != old_dir->i_ino)
 			nova_err(sb, "%s: dir %lu parent should be %lu, "
 				"but actually %lu\n", __func__,
 				old_inode->i_ino, old_dir->i_ino,
@@ -791,9 +821,8 @@ static int nova_rename(struct inode *old_dir,
 	nova_update_inode(sb, old_inode, old_pi, &update_old, 0);
 	nova_update_inode(sb, old_dir, old_pidir, &update_dir_old, 0);
 
-	if (old_pidir != new_pidir) {
+	if (old_pidir != new_pidir)
 		nova_update_inode(sb, new_dir, new_pidir, &update_dir_new, 0);
-	}
 
 	if (change_parent && father_entry) {
 		father_entry->ino = cpu_to_le64(new_dir->i_ino);
@@ -848,6 +877,10 @@ struct dentry *nova_get_parent(struct dentry *child)
 	nova_inode_by_name(child->d_inode, &dotdot, &de);
 	if (!de)
 		return ERR_PTR(-ENOENT);
+
+	/* FIXME: can de->ino be avoided by using the return value of
+	 * nova_inode_by_name()?
+	 */
 	ino = le64_to_cpu(de->ino);
 
 	if (ino)

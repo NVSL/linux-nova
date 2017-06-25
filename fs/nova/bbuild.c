@@ -34,15 +34,11 @@ void nova_init_header(struct super_block *sb,
 	struct nova_inode_info_header *sih, u16 i_mode)
 {
 	sih->log_pages = 0;
-	sih->mmap_pages = 0;
-	sih->low_dirty = ULONG_MAX;
-	sih->high_dirty = 0;
 	sih->i_size = 0;
 	sih->i_blocks = 0;
 	sih->pi_addr = 0;
 	sih->alter_pi_addr = 0;
 	INIT_RADIX_TREE(&sih->tree, GFP_ATOMIC);
-	INIT_RADIX_TREE(&sih->cache_tree, GFP_ATOMIC);
 	sih->vma_tree = RB_ROOT;
 	sih->num_vmas = 0;
 	INIT_LIST_HEAD(&sih->list);
@@ -70,21 +66,21 @@ inline void set_bm(unsigned long bit, struct scan_bitmap *bm,
 	enum bm_type type)
 {
 	switch (type) {
-		case BM_4K:
-			set_scan_bm(bit, &bm->scan_bm_4K);
-			break;
-		case BM_2M:
-			set_scan_bm(bit, &bm->scan_bm_2M);
-			break;
-		case BM_1G:
-			set_scan_bm(bit, &bm->scan_bm_1G);
-			break;
-		default:
-			break;
+	case BM_4K:
+		set_scan_bm(bit, &bm->scan_bm_4K);
+		break;
+	case BM_2M:
+		set_scan_bm(bit, &bm->scan_bm_2M);
+		break;
+	case BM_1G:
+		set_scan_bm(bit, &bm->scan_bm_1G);
+		break;
+	default:
+		break;
 	}
 }
 
-inline static int get_cpuid(struct nova_sb_info *sbi, unsigned long blocknr)
+static inline int get_cpuid(struct nova_sb_info *sbi, unsigned long blocknr)
 {
 	return blocknr / sbi->per_list_blocks;
 }
@@ -437,8 +433,8 @@ static u64 nova_save_free_list_blocknodes(struct super_block *sb, int cpu,
 	struct free_list *free_list;
 
 	free_list = nova_get_free_list(sb, cpu);
-	temp_tail = nova_save_range_nodes_to_log(sb, &free_list->block_free_tree,
-								temp_tail, 0);
+	temp_tail = nova_save_range_nodes_to_log(sb,
+				&free_list->block_free_tree, temp_tail, 0);
 	return temp_tail;
 }
 
@@ -497,7 +493,6 @@ void nova_save_blocknode_mappings_to_log(struct super_block *sb)
 	struct nova_inode *pi = nova_get_inode_by_ino(sb, NOVA_BLOCKNODE_INO);
 	struct nova_inode_info_header sih;
 	struct nova_sb_info *sbi = NOVA_SB(sb);
-	struct nova_super_block *super;
 	struct free_list *free_list;
 	unsigned long num_blocknode = 0;
 	unsigned long num_pages;
@@ -527,22 +522,6 @@ void nova_save_blocknode_mappings_to_log(struct super_block *sb)
 		nova_dbg("Error saving blocknode mappings: %d\n", allocated);
 		return;
 	}
-
-	/*
-	 * save the total allocated blocknode mappings
-	 * in super block
-	 * No transaction is needed as we will recover the fields
-	 * via failure recovery
-	 */
-	super = nova_get_super(sb);
-
-	nova_memunlock_super(sb);
-
-	super->s_wtime = cpu_to_le32(get_seconds());
-	super->s_epoch_id = cpu_to_le64(sbi->s_epoch_id);
-
-	nova_memlock_super(sb);
-	nova_flush_buffer(super, NOVA_SB_SIZE, 0);
 
 	temp_tail = new_block;
 	for (i = 0; i < sbi->cpus; i++) {
@@ -630,7 +609,7 @@ static int __nova_build_blocknode_map(struct super_block *sb,
 		low = next;
 		next = find_next_bit(bitmap, end, next);
 		if (nova_insert_blocknode_map(sb, cpuid,
-				low << scale , (next << scale) - 1)) {
+				low << scale, (next << scale) - 1)) {
 			nova_dbg("Error: could not insert %lu - %lu\n",
 				low << scale, ((next << scale) - 1));
 		}
@@ -846,6 +825,7 @@ static unsigned int nova_check_old_entry(struct super_block *sb,
 	struct scan_bitmap *bm)
 {
 	struct nova_file_write_entry *entry;
+	struct nova_file_write_entry *entryc, entry_copy;
 	unsigned long old_nvmm, nvmm;
 	unsigned long index;
 	int i;
@@ -856,9 +836,17 @@ static unsigned int nova_check_old_entry(struct super_block *sb,
 	if (!entry)
 		return 0;
 
-	old_nvmm = get_nvmm(sb, sih, entry, pgoff);
+	if (metadata_csum == 0)
+		entryc = entry;
+	else {
+		entryc = &entry_copy;
+		if (!nova_verify_entry_csum(sb, entry, entryc))
+			return 0;
+	}
 
-	ret = nova_append_data_to_snapshot(sb, entry, old_nvmm,
+	old_nvmm = get_nvmm(sb, sih, entryc, pgoff);
+
+	ret = nova_append_data_to_snapshot(sb, entryc, old_nvmm,
 				num_free, epoch_id);
 
 	if (ret != 0)
@@ -877,20 +865,21 @@ static unsigned int nova_check_old_entry(struct super_block *sb,
 
 static int nova_set_ring_array(struct super_block *sb,
 	struct nova_inode_info_header *sih, struct nova_file_write_entry *entry,
-	struct task_ring *ring, unsigned long base, struct scan_bitmap *bm)
+	struct nova_file_write_entry *entryc, struct task_ring *ring,
+	unsigned long base, struct scan_bitmap *bm)
 {
 	unsigned long start, end;
 	unsigned long pgoff, old_pgoff = 0;
 	unsigned long index;
 	unsigned int num_free = 0;
 	u64 old_entry = 0;
-	u64 epoch_id = entry->epoch_id;
+	u64 epoch_id = entryc->epoch_id;
 
-	start = entry->pgoff;
+	start = entryc->pgoff;
 	if (start < base)
 		start = base;
 
-	end = entry->pgoff + entry->num_pages;
+	end = entryc->pgoff + entryc->num_pages;
 	if (end > base + MAX_PGOFF)
 		end = base + MAX_PGOFF;
 
@@ -920,8 +909,8 @@ static int nova_set_ring_array(struct super_block *sb,
 	for (pgoff = start; pgoff < end; pgoff++) {
 		index = pgoff - base;
 		ring->entry_array[index] = (u64)entry;
-		ring->nvmm_array[index] = (u64)(entry->block >> PAGE_SHIFT)
-						+ pgoff - entry->pgoff;
+		ring->nvmm_array[index] = (u64)(entryc->block >> PAGE_SHIFT)
+						+ pgoff - entryc->pgoff;
 	}
 
 	return 0;
@@ -950,6 +939,7 @@ static int nova_set_file_bm(struct super_block *sb,
 	return 0;
 }
 
+/* entry given to this function is a copy in dram */
 static void nova_ring_setattr_entry(struct super_block *sb,
 	struct nova_inode_info_header *sih,
 	struct nova_setattr_logentry *entry, struct task_ring *ring,
@@ -1019,16 +1009,16 @@ out:
 }
 
 static void nova_traverse_file_write_entry(struct super_block *sb,
-	struct nova_inode_info_header *sih,
-	struct nova_file_write_entry *entry, struct task_ring *ring,
+	struct nova_inode_info_header *sih, struct nova_file_write_entry *entry,
+	struct nova_file_write_entry *entryc, struct task_ring *ring,
 	unsigned long base, struct scan_bitmap *bm)
 {
-	sih->i_size = entry->size;
+	sih->i_size = entryc->size;
 
-	if (entry->num_pages != entry->invalid_pages) {
-		if (entry->pgoff < base + MAX_PGOFF &&
-				entry->pgoff + entry->num_pages > base)
-			nova_set_ring_array(sb, sih, entry,
+	if (entryc->num_pages != entryc->invalid_pages) {
+		if (entryc->pgoff < base + MAX_PGOFF &&
+				entryc->pgoff + entryc->num_pages > base)
+			nova_set_ring_array(sb, sih, entry, entryc,
 						ring, base, bm);
 	}
 }
@@ -1037,12 +1027,11 @@ static int nova_traverse_file_inode_log(struct super_block *sb,
 	struct nova_inode *pi, struct nova_inode_info_header *sih,
 	struct task_ring *ring, struct scan_bitmap *bm)
 {
-	struct nova_file_write_entry *entry = NULL;
-	struct nova_setattr_logentry *attr_entry = NULL;
+	char entry_copy[NOVA_MAX_ENTRY_LEN];
 	unsigned long base = 0;
 	unsigned long last_blocknr;
 	u64 ino = pi->nova_ino;
-	void *addr;
+	void *entry, *entryc;
 	unsigned int btype;
 	unsigned int data_bits;
 	u64 curr_p;
@@ -1054,6 +1043,8 @@ static int nova_traverse_file_inode_log(struct super_block *sb,
 
 	if (replica_metadata)
 		nova_traverse_inode_log(sb, pi, bm, pi->alter_log_head);
+
+	entryc = (metadata_csum == 0) ? NULL : entry_copy;
 
 again:
 	sih->i_size = 0;
@@ -1082,41 +1073,37 @@ again:
 			BUG();
 		}
 
-		addr = (void *)nova_get_block(sb, curr_p);
-		if (!nova_verify_entry_csum(sb, addr, NULL)) {
-			nova_err(sb, "%s: entry checksum fail "
-					"inode %llu entry addr 0x%llx\n",
-					__func__, ino, (u64)addr);
-			break;
-		}
+		entry = (void *)nova_get_block(sb, curr_p);
 
-		type = nova_get_entry_type(addr);
+		if (metadata_csum == 0)
+			entryc = entry;
+		else if (!nova_verify_entry_csum(sb, entry, entryc))
+			return 0;
+
+		type = nova_get_entry_type(entryc);
 		switch (type) {
-			case SET_ATTR:
-				attr_entry =
-					(struct nova_setattr_logentry *)addr;
-				nova_ring_setattr_entry(sb, sih, attr_entry,
-							ring, base, data_bits,
-							bm);
-				curr_p += sizeof(struct nova_setattr_logentry);
-				break;
-			case LINK_CHANGE:
-				curr_p += sizeof(struct nova_link_change_entry);
-				break;
-			case FILE_WRITE:
-				entry = (struct nova_file_write_entry *)addr;
-				nova_traverse_file_write_entry(sb, sih, entry,
-							ring, base, bm);
-				curr_p += sizeof(struct nova_file_write_entry);
-				break;
-			case MMAP_WRITE:
-				curr_p += sizeof(struct nova_mmap_entry);
-				break;
-			default:
-				nova_dbg("%s: unknown type %d, 0x%llx\n",
-							__func__, type, curr_p);
-				NOVA_ASSERT(0);
-				BUG();
+		case SET_ATTR:
+			nova_ring_setattr_entry(sb, sih, SENTRY(entryc),
+						ring, base, data_bits,
+						bm);
+			curr_p += sizeof(struct nova_setattr_logentry);
+			break;
+		case LINK_CHANGE:
+			curr_p += sizeof(struct nova_link_change_entry);
+			break;
+		case FILE_WRITE:
+			nova_traverse_file_write_entry(sb, sih, WENTRY(entry),
+						WENTRY(entryc), ring, base, bm);
+			curr_p += sizeof(struct nova_file_write_entry);
+			break;
+		case MMAP_WRITE:
+			curr_p += sizeof(struct nova_mmap_entry);
+			break;
+		default:
+			nova_dbg("%s: unknown type %d, 0x%llx\n",
+						__func__, type, curr_p);
+			NOVA_ASSERT(0);
+			BUG();
 		}
 
 	}
@@ -1367,7 +1354,7 @@ static int failure_thread_func(void *data)
 	if (max_size) {
 		last_blocknr = (max_size - 1) >> PAGE_SHIFT;
 		nova_delete_file_tree(sb, &sih, 0, last_blocknr,
-						false, false, false, 0);
+						false, false, 0);
 	}
 
 	finished[cpuid] = 1;
@@ -1457,7 +1444,7 @@ int nova_failure_recovery(struct super_block *sb)
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct task_ring *ring;
 	struct nova_inode *pi;
-	struct ptr_pair *pair;
+	struct journal_ptr_pair *pair;
 	int ret;
 	int i;
 
@@ -1556,7 +1543,7 @@ static bool nova_try_normal_recovery(struct super_block *sb)
 int nova_recovery(struct super_block *sb)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
-	struct nova_super_block *super = nova_get_super(sb);
+	struct nova_super_block *super = sbi->nova_sb;
 	unsigned long initsize = le64_to_cpu(super->s_size);
 	bool value = false;
 	int ret = 0;

@@ -134,32 +134,30 @@ struct nova_inode {
  */
 struct nova_super_block {
 	/* static fields. they never change after file system creation.
-	 * checksum only validates up to s_start_dynamic field below */
-	__le16		s_sum;			/* checksum of this sb */
-	__le16		s_padding16;
+	 * checksum only validates up to s_start_dynamic field below
+	 */
+	__le32		s_sum;			/* checksum of this sb */
 	__le32		s_magic;		/* magic signature */
 	__le32		s_padding32;
 	__le32		s_blocksize;		/* blocksize in bytes */
 	__le64		s_size;			/* total size of fs in bytes */
 	char		s_volume_name[16];	/* volume name */
 
-	__le64		s_start_dynamic;
-
 	/* all the dynamic fields should go here */
 	__le64		s_epoch_id;		/* Epoch ID */
 
 	/* s_mtime and s_wtime should be together and their order should not be
-	 * changed. we use an 8 byte write to update both of them atomically */
+	 * changed. we use an 8 byte write to update both of them atomically
+	 */
 	__le32		s_mtime;		/* mount time */
 	__le32		s_wtime;		/* write time */
-	/* fields for fast mount support. Always keep them together */
-	__le64		s_num_free_blocks;
+
+	/* Metadata and data protections */
+	u8		s_replica_metadata;
+	u8		s_metadata_csum;
+	u8		s_data_csum;
+	u8		s_data_parity;
 } __attribute((__packed__));
-
-#define NOVA_SB_STATIC_SIZE(ps) ((u64)&ps->s_start_dynamic - (u64)ps)
-
-/* the above fast mount fields take total 32 bytes in the super block */
-#define NOVA_FAST_MOUNT_FIELD_SIZE  (36)
 
 
 /* ======================= Reserved blocks ========================= */
@@ -178,13 +176,12 @@ struct nova_super_block {
 #define	HEAD_RESERVED_BLOCKS	8
 
 #define	RESERVE_INODE_START	1
-#define	REPLICA_INODE_START	2
 #define	JOURNAL_START		3
 #define	INODE_TABLE0_START	4
 #define	INODE_TABLE1_START	5
 
-/* For redundant super block */
-#define	TAIL_RESERVED_BLOCKS	1
+/* For redundant super block and replica basic inodes */
+#define	TAIL_RESERVED_BLOCKS	2
 
 /* ======================= Reserved inodes ========================= */
 
@@ -240,6 +237,7 @@ static inline void PERSISTENT_BARRIER(void)
 static inline void nova_flush_buffer(void *buf, uint32_t len, bool fence)
 {
 	uint32_t i;
+
 	len = len + ((unsigned long)(buf) & (CACHELINE_SIZE - 1));
 	if (support_clwb) {
 		for (i = 0; i < len; i += CACHELINE_SIZE)
@@ -251,7 +249,8 @@ static inline void nova_flush_buffer(void *buf, uint32_t len, bool fence)
 	/* Do a fence only if asked. We often don't need to do a fence
 	 * immediately after clflush because even if we get context switched
 	 * between clflush and subsequent fence, the context switch operation
-	 * provides implicit fence. */
+	 * provides implicit fence.
+	 */
 	if (fence)
 		PERSISTENT_BARRIER();
 }
@@ -261,7 +260,8 @@ static inline void nova_flush_buffer(void *buf, uint32_t len, bool fence)
 #define	NOVA_DATA_CSUM_LEN	(4)
 
 /* This is to set the initial value of checksum state register.
- * For CRC32C this should not matter and can be set to any value. */
+ * For CRC32C this should not matter and can be set to any value.
+ */
 #define	NOVA_INIT_CSUM		(1)
 
 #define	ADDR_ALIGN(p, bytes)	((void *) (((unsigned long) p) & ~(bytes - 1)))
@@ -271,8 +271,11 @@ static inline void nova_flush_buffer(void *buf, uint32_t len, bool fence)
  * equals to the affordable lost size of data per block (page).
  * Its value should be no less than the blast radius size of media errors.
  *
- * Support NOVA_STRIPE_SHIFT <= PAGE_SHIFT (NOVA file block size shift). */
-#define NOVA_STRIPE_SHIFT	(9)
+ * Support NOVA_STRIPE_SHIFT <= PAGE_SHIFT (NOVA file block size shift).
+ */
+#define POISON_RADIUS		(512)
+#define POISON_MASK		(~(POISON_RADIUS - 1))
+#define NOVA_STRIPE_SHIFT	(9) /* size should be no less than PR_SIZE */
 #define NOVA_STRIPE_SIZE	(1 << NOVA_STRIPE_SHIFT)
 
 #endif /* _LINUX_NOVA_DEF_H */

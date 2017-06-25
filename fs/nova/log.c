@@ -25,45 +25,46 @@ static int nova_execute_invalidate_reassign_logentry(struct super_block *sb,
 	int invalid = 0;
 
 	switch (type) {
-		case FILE_WRITE:
-			fw_entry = (struct nova_file_write_entry *)entry;
-			if (reassign)
-				fw_entry->reassigned = 1;
-			if (num_free)
-				fw_entry->invalid_pages += num_free;
-			if (fw_entry->invalid_pages == fw_entry->num_pages)
-				invalid = 1;
-			break;
-		case DIR_LOG:
-			if (reassign) {
-				((struct nova_dentry *)entry)->reassigned = 1;
-			} else {
-				((struct nova_dentry *)entry)->invalid = 1;
-				invalid = 1;
-			}
-			break;
-		case SET_ATTR:
-			((struct nova_setattr_logentry *)entry)->invalid = 1;
+	case FILE_WRITE:
+		fw_entry = (struct nova_file_write_entry *)entry;
+		if (reassign)
+			fw_entry->reassigned = 1;
+		if (num_free)
+			fw_entry->invalid_pages += num_free;
+		if (fw_entry->invalid_pages == fw_entry->num_pages)
 			invalid = 1;
-			break;
-		case LINK_CHANGE:
-			((struct nova_link_change_entry *)entry)->invalid = 1;
+		break;
+	case DIR_LOG:
+		if (reassign) {
+			((struct nova_dentry *)entry)->reassigned = 1;
+		} else {
+			((struct nova_dentry *)entry)->invalid = 1;
 			invalid = 1;
-			break;
-		case MMAP_WRITE:
-			((struct nova_mmap_entry *)entry)->invalid = 1;
-			invalid = 1;
-			break;
-		case SNAPSHOT_INFO:
-			((struct nova_snapshot_info_entry *)entry)->deleted = 1;
-			invalid = 1;
-			break;
-		default:
-			break;
+		}
+		break;
+	case SET_ATTR:
+		((struct nova_setattr_logentry *)entry)->invalid = 1;
+		invalid = 1;
+		break;
+	case LINK_CHANGE:
+		((struct nova_link_change_entry *)entry)->invalid = 1;
+		invalid = 1;
+		break;
+	case MMAP_WRITE:
+		((struct nova_mmap_entry *)entry)->invalid = 1;
+		invalid = 1;
+		break;
+	case SNAPSHOT_INFO:
+		((struct nova_snapshot_info_entry *)entry)->deleted = 1;
+		invalid = 1;
+		break;
+	default:
+		break;
 	}
 
 	if (invalid) {
 		u64 addr = nova_get_addr_off(NOVA_SB(sb), entry);
+
 		nova_inc_page_invalid_entries(sb, addr);
 	}
 
@@ -101,14 +102,24 @@ static inline int nova_invalidate_write_entry(struct super_block *sb,
 	struct nova_file_write_entry *entry, int reassign,
 	unsigned int num_free)
 {
+	struct nova_file_write_entry *entryc, entry_copy;
+
 	if (!entry)
 		return 0;
 
-	if (num_free == 0 && entry->reassigned == 1)
+	if (metadata_csum == 0)
+		entryc = entry;
+	else {
+		entryc = &entry_copy;
+		if (!nova_verify_entry_csum(sb, entry, entryc))
+			return -EIO;
+	}
+
+	if (num_free == 0 && entryc->reassigned == 1)
 		return 0;
 
 	return nova_invalidate_reassign_logentry(sb, entry, FILE_WRITE,
-						reassign, num_free);
+							reassign, num_free);
 }
 
 unsigned int nova_free_old_entry(struct super_block *sb,
@@ -117,7 +128,7 @@ unsigned int nova_free_old_entry(struct super_block *sb,
 	unsigned long pgoff, unsigned int num_free,
 	bool delete_dead, u64 epoch_id)
 {
-	struct nova_file_write_entry entryd;
+	struct nova_file_write_entry *entryc, entry_copy;
 	unsigned long old_nvmm;
 	int ret;
 	timing_t free_time;
@@ -126,14 +137,19 @@ unsigned int nova_free_old_entry(struct super_block *sb,
 		return 0;
 
 	NOVA_START_TIMING(free_old_t, free_time);
-	if (!nova_verify_entry_csum(sb, entry, &entryd)) {
-		nova_dbg("%s: nova entry checksum error\n", __func__);
-		return -EIO;
+
+	if (metadata_csum == 0)
+		entryc = entry;
+	else {
+		entryc = &entry_copy;
+		if (!nova_verify_entry_csum(sb, entry, entryc))
+			return -EIO;
 	}
-	old_nvmm = get_nvmm(sb, sih, &entryd, pgoff);
+
+	old_nvmm = get_nvmm(sb, sih, entryc, pgoff);
 
 	if (!delete_dead) {
-		ret = nova_append_data_to_snapshot(sb, entry, old_nvmm,
+		ret = nova_append_data_to_snapshot(sb, entryc, old_nvmm,
 				num_free, epoch_id);
 		if (ret == 0) {
 			nova_invalidate_write_entry(sb, entry, 1, 0);
@@ -203,26 +219,6 @@ void nova_clear_last_page_tail(struct super_block *sb,
 		nova_update_truncated_block_csum(sb, inode, newsize);
 	if (data_parity > 0)
 		nova_update_truncated_block_parity(sb, inode, newsize);
-
-	/* Clear mmap page */
-	if (sih->mmap_pages && pgoff <= sih->high_dirty &&
-			pgoff >= sih->low_dirty) {
-		nvmm = (unsigned long)radix_tree_lookup(&sih->cache_tree,
-							pgoff);
-		if (nvmm) {
-			nvmm_addr = nova_get_block(sb, nvmm);
-			nova_memunlock_range(sb, nvmm_addr + offset, length);
-			memset(nvmm_addr + offset, 0, length);
-			nova_memlock_range(sb, nvmm_addr + offset, length);
-
-			if (data_csum > 0)
-				nova_update_truncated_block_csum(sb, inode,
-								newsize);
-			if (data_parity > 0)
-				nova_update_truncated_block_parity(sb, inode,
-								newsize);
-		}
-	}
 }
 
 static void nova_update_setattr_entry(struct inode *inode,
@@ -246,7 +242,7 @@ static void nova_update_setattr_entry(struct inode *inode,
 	entry->mtime	= cpu_to_le32(inode->i_mtime.tv_sec);
 	entry->epoch_id = cpu_to_le64(entry_info->epoch_id);
 	entry->trans_id	= cpu_to_le64(entry_info->trans_id);
-	entry->invalid 	= 0;
+	entry->invalid	= 0;
 
 	if (ia_valid & ATTR_SIZE)
 		entry->size = cpu_to_le64(attr->ia_size);
@@ -357,37 +353,35 @@ static int nova_update_log_entry(struct super_block *sb, struct inode *inode,
 	enum nova_entry_type type = entry_info->type;
 
 	switch (type) {
-		case FILE_WRITE:
-			if (entry_info->inplace)
-				nova_update_write_entry(sb, entry, entry_info);
-			else
-				memcpy_to_pmem_nocache(entry, entry_info->data,
-					sizeof(struct nova_file_write_entry));
-			break;
-		case DIR_LOG:
-			if (entry_info->inplace)
-				nova_update_old_dentry(sb, inode, entry,
-					entry_info);
-			else
-				nova_update_new_dentry(sb, inode, entry,
-					entry_info);
-			break;
-		case SET_ATTR:
-			nova_update_setattr_entry(inode, entry, entry_info);
-			break;
-		case LINK_CHANGE:
-			nova_update_link_change_entry(inode, entry, entry_info);
-			break;
-		case MMAP_WRITE:
+	case FILE_WRITE:
+		if (entry_info->inplace)
+			nova_update_write_entry(sb, entry, entry_info);
+		else
 			memcpy_to_pmem_nocache(entry, entry_info->data,
-					sizeof(struct nova_mmap_entry));
-			break;
-		case SNAPSHOT_INFO:
-			memcpy_to_pmem_nocache(entry, entry_info->data,
-					sizeof(struct nova_snapshot_info_entry));
-			break;
-		default:
-			break;
+				sizeof(struct nova_file_write_entry));
+		break;
+	case DIR_LOG:
+		if (entry_info->inplace)
+			nova_update_old_dentry(sb, inode, entry, entry_info);
+		else
+			nova_update_new_dentry(sb, inode, entry, entry_info);
+		break;
+	case SET_ATTR:
+		nova_update_setattr_entry(inode, entry, entry_info);
+		break;
+	case LINK_CHANGE:
+		nova_update_link_change_entry(inode, entry, entry_info);
+		break;
+	case MMAP_WRITE:
+		memcpy_to_pmem_nocache(entry, entry_info->data,
+				sizeof(struct nova_mmap_entry));
+		break;
+	case SNAPSHOT_INFO:
+		memcpy_to_pmem_nocache(entry, entry_info->data,
+				sizeof(struct nova_snapshot_info_entry));
+		break;
+	default:
+		break;
 	}
 
 	return 0;
@@ -498,6 +492,7 @@ static int nova_append_setattr_entry(struct super_block *sb,
 {
 	struct nova_inode_info *si = NOVA_I(inode);
 	struct nova_inode_info_header *sih = &si->header;
+	struct nova_inode inode_copy;
 	struct nova_log_entry_info entry_info;
 	timing_t append_time;
 	int ret;
@@ -508,6 +503,12 @@ static int nova_append_setattr_entry(struct super_block *sb,
 	entry_info.update = update;
 	entry_info.epoch_id = epoch_id;
 	entry_info.trans_id = sih->trans_id;
+
+	if (nova_check_inode_integrity(sb, sih->ino, sih->pi_addr,
+			sih->alter_pi_addr, &inode_copy, 0) < 0) {
+		ret = -EIO;
+		goto out;
+	}
 
 	ret = nova_append_log_entry(sb, pi, inode, sih, &entry_info);
 	if (ret) {
@@ -527,29 +528,27 @@ out:
 static int nova_invalidate_setattr_entry(struct super_block *sb,
 	u64 last_setattr)
 {
-	struct nova_setattr_logentry *old_entry, old_entryd;
+	struct nova_setattr_logentry *old_entry;
+	struct nova_setattr_logentry *old_entryc, old_entry_copy;
 	void *addr;
 	int ret;
 
 	addr = (void *)nova_get_block(sb, last_setattr);
 	old_entry = (struct nova_setattr_logentry *)addr;
-	if (!nova_verify_entry_csum(sb, old_entry, &old_entryd)) {
-		nova_dbg("%s: nova entry checksum error\n", __func__);
-		return -EIO;
+
+	if (metadata_csum == 0)
+		old_entryc = old_entry;
+	else {
+		old_entryc = &old_entry_copy;
+		if (!nova_verify_entry_csum(sb, old_entry, old_entryc))
+			return -EIO;
 	}
-	old_entry = &old_entryd;
+
 	/* Do not invalidate setsize entries */
-	if (!old_entry_freeable(sb, old_entry->epoch_id) ||
-			(old_entry->attr & ATTR_SIZE))
+	if (!old_entry_freeable(sb, old_entryc->epoch_id) ||
+			(old_entryc->attr & ATTR_SIZE))
 		return 0;
 
-	ret = nova_check_alter_entry(sb, last_setattr);
-	if (ret) {
-		nova_dbg("%s: check_alter_entry returned %d\n", __func__, ret);
-		return ret;
-	}
-
-	old_entry = (struct nova_setattr_logentry *)addr;
 	ret = nova_invalidate_logentry(sb, old_entry, SET_ATTR, 0);
 
 	return ret;
@@ -633,7 +632,7 @@ int nova_handle_setattr_operation(struct super_block *sb, struct inode *inode,
 	 * we can update the inode in place. If a snapshot creation
 	 * is in progress, we will use the create_snapshot_epoch_id
 	 * as the latest snapshot id.
-	*/
+	 */
 	if (!(ia_valid & ATTR_SIZE) &&
 			nova_can_inplace_update_setattr(sb, sih, epoch_id)) {
 		nova_inplace_update_setattr_entry(sb, inode, sih,
@@ -644,9 +643,10 @@ int nova_handle_setattr_operation(struct super_block *sb, struct inode *inode,
 				__func__, inode->i_ino);
 		update.tail = update.alter_tail = 0;
 		ret = nova_append_setattr_entry(sb, pi, inode, attr, &update,
-				                &last_setattr, epoch_id);
+						&last_setattr, epoch_id);
 		if (ret) {
-			nova_dbg("%s: append setattr entry failure\n", __func__);
+			nova_dbg("%s: append setattr entry failure\n",
+								__func__);
 			return ret;
 		}
 
@@ -666,7 +666,8 @@ int nova_handle_setattr_operation(struct super_block *sb, struct inode *inode,
 int nova_invalidate_link_change_entry(struct super_block *sb,
 	u64 old_link_change)
 {
-	struct nova_link_change_entry *old_entry, old_entryd;
+	struct nova_link_change_entry *old_entry;
+	struct nova_link_change_entry *old_entryc, old_entry_copy;
 	void *addr;
 	int ret;
 
@@ -675,21 +676,18 @@ int nova_invalidate_link_change_entry(struct super_block *sb,
 
 	addr = (void *)nova_get_block(sb, old_link_change);
 	old_entry = (struct nova_link_change_entry *)addr;
-	if (!nova_verify_entry_csum(sb, old_entry, &old_entryd)) {
-		nova_dbg("%s: nova entry checksum error\n", __func__);
-		return -EIO;
+
+	if (metadata_csum == 0)
+		old_entryc = old_entry;
+	else {
+		old_entryc = &old_entry_copy;
+		if (!nova_verify_entry_csum(sb, old_entry, old_entryc))
+			return -EIO;
 	}
-	old_entry = &old_entryd;
-	if (!old_entry_freeable(sb, old_entry->epoch_id))
+
+	if (!old_entry_freeable(sb, old_entryc->epoch_id))
 		return 0;
 
-	ret = nova_check_alter_entry(sb, old_link_change);
-	if (ret) {
-		nova_dbg("%s: check_alter_entry returned %d\n", __func__, ret);
-		return ret;
-	}
-
-	old_entry = (struct nova_link_change_entry *)addr;
 	ret = nova_invalidate_logentry(sb, old_entry, LINK_CHANGE, 0);
 
 	return ret;
@@ -739,11 +737,18 @@ int nova_append_link_change_entry(struct super_block *sb,
 {
 	struct nova_inode_info *si = NOVA_I(inode);
 	struct nova_inode_info_header *sih = &si->header;
+	struct nova_inode inode_copy;
 	struct nova_log_entry_info entry_info;
 	int ret = 0;
 	timing_t append_time;
 
 	NOVA_START_TIMING(append_link_change_t, append_time);
+
+	if (nova_check_inode_integrity(sb, sih->ino, sih->pi_addr,
+			sih->alter_pi_addr, &inode_copy, 0) < 0) {
+		ret = -EIO;
+		goto out;
+	}
 
 	if (nova_can_inplace_update_lcentry(sb, sih, epoch_id)) {
 		nova_inplace_update_lcentry(sb, inode, sih, epoch_id);
@@ -777,14 +782,15 @@ out:
 int nova_assign_write_entry(struct super_block *sb,
 	struct nova_inode_info_header *sih,
 	struct nova_file_write_entry *entry,
+	struct nova_file_write_entry *entryc,
 	bool free)
 {
 	struct nova_file_write_entry *old_entry;
 	struct nova_file_write_entry *start_old_entry = NULL;
 	void **pentry;
-	unsigned long start_pgoff = entry->pgoff;
+	unsigned long start_pgoff = entryc->pgoff;
 	unsigned long start_old_pgoff = 0;
-	unsigned int num = entry->num_pages;
+	unsigned int num = entryc->num_pages;
 	unsigned int num_free = 0;
 	unsigned long curr_pgoff;
 	int i;
@@ -798,16 +804,16 @@ int nova_assign_write_entry(struct super_block *sb,
 		pentry = radix_tree_lookup_slot(&sih->tree, curr_pgoff);
 		if (pentry) {
 			old_entry = radix_tree_deref_slot(pentry);
-
 			if (old_entry != start_old_entry) {
 				if (start_old_entry && free)
 					nova_free_old_entry(sb, sih,
 							start_old_entry,
 							start_old_pgoff,
 							num_free, false,
-							entry->epoch_id);
+							entryc->epoch_id);
 				nova_invalidate_write_entry(sb,
 						start_old_entry, 1, 0);
+
 				start_old_entry = old_entry;
 				start_old_pgoff = curr_pgoff;
 				num_free = 1;
@@ -828,7 +834,7 @@ int nova_assign_write_entry(struct super_block *sb,
 	if (start_old_entry && free)
 		nova_free_old_entry(sb, sih, start_old_entry,
 					start_old_pgoff, num_free, false,
-					entry->epoch_id);
+					entryc->epoch_id);
 
 	nova_invalidate_write_entry(sb, start_old_entry, 1, 0);
 
@@ -899,6 +905,7 @@ int nova_append_mmap_entry(struct super_block *sb, struct nova_inode *pi,
 {
 	struct nova_inode_info *si = NOVA_I(inode);
 	struct nova_inode_info_header *sih = &si->header;
+	struct nova_inode inode_copy;
 	struct nova_log_entry_info entry_info;
 	timing_t append_time;
 	int ret;
@@ -912,11 +919,18 @@ int nova_append_mmap_entry(struct super_block *sb, struct nova_inode *pi,
 	entry_info.data = data;
 	entry_info.epoch_id = data->epoch_id;
 
+	if (nova_check_inode_integrity(sb, sih->ino, sih->pi_addr,
+			sih->alter_pi_addr, &inode_copy, 0) < 0) {
+		ret = -EIO;
+		goto out;
+	}
+
 	ret = nova_append_log_entry(sb, pi, inode, sih, &entry_info);
 	if (ret)
 		nova_err(sb, "%s failed\n", __func__);
 
 	item->mmap_entry = entry_info.curr_p;
+out:
 	NOVA_END_TIMING(append_mmap_entry_t, append_time);
 	return ret;
 }
@@ -927,6 +941,7 @@ int nova_append_snapshot_info_entry(struct super_block *sb,
 	struct nova_inode_update *update)
 {
 	struct nova_inode_info_header *sih = &si->header;
+	struct nova_inode inode_copy;
 	struct nova_log_entry_info entry_info;
 	timing_t append_time;
 	int ret;
@@ -941,11 +956,18 @@ int nova_append_snapshot_info_entry(struct super_block *sb,
 	entry_info.epoch_id = data->epoch_id;
 	entry_info.inplace = 0;
 
+	if (nova_check_inode_integrity(sb, sih->ino, sih->pi_addr,
+			sih->alter_pi_addr, &inode_copy, 0) < 0) {
+		ret = -EIO;
+		goto out;
+	}
+
 	ret = nova_append_log_entry(sb, pi, NULL, sih, &entry_info);
 	if (ret)
 		nova_err(sb, "%s failed\n", __func__);
 
 	info->snapshot_entry = entry_info.curr_p;
+out:
 	NOVA_END_TIMING(append_snapshot_info_t, append_time);
 	return ret;
 }
@@ -957,6 +979,7 @@ int nova_append_dentry(struct super_block *sb, struct nova_inode *pi,
 {
 	struct nova_inode_info *si = NOVA_I(dir);
 	struct nova_inode_info_header *sih = &si->header;
+	struct nova_inode inode_copy;
 	struct nova_log_entry_info entry_info;
 	timing_t append_time;
 	int ret;
@@ -973,11 +996,21 @@ int nova_append_dentry(struct super_block *sb, struct nova_inode *pi,
 	entry_info.trans_id = sih->trans_id;
 	entry_info.inplace = 0;
 
+	/* nova_inode tail pointer will be updated and we make sure all other
+	 * inode fields are good before checksumming the whole structure
+	 */
+	if (nova_check_inode_integrity(sb, sih->ino, sih->pi_addr,
+			sih->alter_pi_addr, &inode_copy, 0) < 0) {
+		ret = -EIO;
+		goto out;
+	}
+
 	ret = nova_append_log_entry(sb, pi, dir, sih, &entry_info);
 	if (ret)
 		nova_err(sb, "%s failed\n", __func__);
 
 	dir->i_blocks = sih->i_blocks;
+out:
 	NOVA_END_TIMING(append_dir_entry_t, append_time);
 	return ret;
 }
@@ -1139,6 +1172,7 @@ static int nova_initialize_inode_log(struct super_block *sb,
 		sih->i_blocks++;
 		nova_flush_buffer(&pi->alter_log_head, CACHELINE_SIZE, 1);
 	}
+	nova_update_inode_checksum(pi);
 	nova_memlock_inode(sb, pi);
 
 	return 0;
@@ -1192,7 +1226,7 @@ static u64 nova_extend_inode_log(struct super_block *sb, struct nova_inode *pi,
 
 	if (replica_metadata) {
 		allocated = nova_allocate_inode_log_pages(sb, sih,
-					num_pages, &alter_new_block, ANY_CPU, 1);
+				num_pages, &alter_new_block, ANY_CPU, 1);
 		if (allocated <= 0) {
 			nova_err(sb, "%s ERROR: no inode log page "
 					"available\n", __func__);

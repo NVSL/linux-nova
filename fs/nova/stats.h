@@ -14,7 +14,7 @@
  * more details.
  *
  * You should have received a copy of the GNU General Public License along with
- * this program; if not, write to the Free Software Foundation, Inc., 
+ * this program; if not, write to the Free Software Foundation, Inc.,
  * 51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
@@ -44,6 +44,7 @@ enum timing_category {
 	add_dentry_t,
 	remove_dentry_t,
 	setattr_t,
+	setsize_t,
 
 	/* I/O operations */
 	io_title_t,
@@ -133,6 +134,8 @@ enum timing_category {
 	/* Mmap */
 	mmap_title_t,
 	mmap_fault_t,
+	pmd_fault_t,
+	pfn_mkwrite_t,
 	insert_vma_t,
 	remove_vma_t,
 	set_vma_read_t,
@@ -177,6 +180,9 @@ enum stats_category {
 	dax_cow_during_snapshot,
 	mapping_updated_pages,
 	cow_overlap_mmap,
+	dax_new_blocks,
+	inplace_new_blocks,
+	fdatasync,
 
 	/* Sentinel */
 	STATS_NUM,
@@ -193,7 +199,7 @@ DECLARE_PER_CPU(u64[STATS_NUM], IOstats_percpu);
 typedef struct timespec timing_t;
 
 #define NOVA_START_TIMING(name, start) \
-	{if (measure_timing) getrawmonotonic(&start);}
+	{if (measure_timing) getrawmonotonic(&start); }
 
 #define NOVA_END_TIMING(name, start) \
 	{if (measure_timing) { \
@@ -207,6 +213,6 @@ typedef struct timespec timing_t;
 	}
 
 #define NOVA_STATS_ADD(name, value) \
-	{__this_cpu_add(IOstats_percpu[name], value);}
+	{__this_cpu_add(IOstats_percpu[name], value); }
 
 

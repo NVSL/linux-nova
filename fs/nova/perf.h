@@ -26,8 +26,8 @@
 #define	reset_perf_timer()	__this_cpu_write(Timingstats_percpu[perf_t], 0)
 #define	read_perf_timer()	__this_cpu_read(Timingstats_percpu[perf_t])
 
-#define	mb_per_sec(size, nsec)	( nsec == 0 ? 0 : \
-				( size * (1000000000 / 1024 / 1024) / nsec ) )
+#define	mb_per_sec(size, nsec)	(nsec == 0 ? 0 : \
+				(size * (1000000000 / 1024 / 1024) / nsec))
 
 enum memcpy_call_id {
 	memcpy_read_id = 0,

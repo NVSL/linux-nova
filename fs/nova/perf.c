@@ -42,8 +42,7 @@ static int memcpy_bidir_call(char *dst, char *src, size_t off, size_t size)
 	return 0;
 }
 
-static const memcpy_call_t memcpy_calls[] =
-{
+static const memcpy_call_t memcpy_calls[] = {
 	/* order should match enum memcpy_call_id */
 	{ "memcpy (mostly read)",  memcpy_read_call },
 	{ "memcpy (mostly write)", memcpy_write_call },
@@ -59,8 +58,7 @@ static int from_pmem_call(char *dst, char *src, size_t off, size_t size)
 	return 0;
 }
 
-static const memcpy_call_t from_pmem_calls[] =
-{
+static const memcpy_call_t from_pmem_calls[] = {
 	/* order should match enum from_pmem_call_id */
 	{ "memcpy_from_pmem", from_pmem_call }
 };
@@ -91,8 +89,7 @@ static int to_pmem_flush_call(char *dst, char *src, size_t off, size_t size)
 	return 0;
 }
 
-static const memcpy_call_t to_pmem_calls[] =
-{
+static const memcpy_call_t to_pmem_calls[] = {
 	/* order should match enum to_pmem_call_id */
 	{ "memcpy_to_pmem_nocache", to_pmem_nocache_call },
 	{ "flush buffer",	    to_flush_call },
@@ -103,6 +100,7 @@ static const memcpy_call_t to_pmem_calls[] =
 static u64 zlib_adler32_call(u64 init, char *data, size_t size)
 {
 	u64 csum;
+
 	/* include/linux/zutil.h */
 	csum = zlib_adler32(init, data, size);
 	return csum;
@@ -111,6 +109,7 @@ static u64 zlib_adler32_call(u64 init, char *data, size_t size)
 static u64 nd_fletcher64_call(u64 init, char *data, size_t size)
 {
 	u64 csum;
+
 	/* drivers/nvdimm/core.c */
 	csum = nd_fletcher64(data, size, 1);
 	return csum;
@@ -119,6 +118,7 @@ static u64 nd_fletcher64_call(u64 init, char *data, size_t size)
 static u64 libcrc32c_call(u64 init, char *data, size_t size)
 {
 	u32 crc = (u32) init;
+
 	crc = crc32c(crc, data, size);
 	return (u64) crc;
 }
@@ -126,6 +126,7 @@ static u64 libcrc32c_call(u64 init, char *data, size_t size)
 static u64 nova_crc32c_call(u64 init, char *data, size_t size)
 {
 	u32 crc = (u32) init;
+
 	crc = nova_crc32c(crc, data, size);
 	return (u64) crc;
 }
@@ -146,8 +147,7 @@ static u64 plain_xor64_call(u64 init, char *data, size_t size)
 	return csum;
 }
 
-static const checksum_call_t checksum_calls[] =
-{
+static const checksum_call_t checksum_calls[] = {
 	/* order should match enum checksum_call_id */
 	{ "zlib_adler32",  zlib_adler32_call },
 	{ "nd_fletcher64", nd_fletcher64_call },
@@ -167,7 +167,7 @@ static u64 nova_block_parity_call(char **data, char *parity,
 
 	/* FIXME: using same code as in parity.c; need a way to reuse that */
 
-	if ( static_cpu_has(X86_FEATURE_XMM2) ) { // sse2 128b
+	if (static_cpu_has(X86_FEATURE_XMM2)) { // sse2 128b
 		for (i = 0; i < strp_size; i += 16) {
 			asm volatile("movdqa %0, %%xmm0" : : "m" (block[i]));
 			for (strp = 1; strp < num_strps; strp++) {
@@ -228,22 +228,21 @@ static u64 nova_block_csum_parity_call(char **data, char *parity,
 		// }
 
 		// if (data_parity > 0) {
-			parity[i] =	qwd[0] ^ qwd[1] ^ qwd[2] ^ \
-					qwd[3] ^ qwd[4] ^ qwd[5] ^ \
-					qwd[6] ^ qwd[7];
+			parity[i] = qwd[0] ^ qwd[1] ^ qwd[2] ^ qwd[3] ^
+					qwd[4] ^ qwd[5] ^ qwd[6] ^ qwd[7];
 		// }
 
 		block += 8;
 	}
 	// if (data_csum > 0 && unroll_csum) {
-		crc[0] = cpu_to_le32( (u32) acc[0] );
-		crc[1] = cpu_to_le32( (u32) acc[1] );
-		crc[2] = cpu_to_le32( (u32) acc[2] );
-		crc[3] = cpu_to_le32( (u32) acc[3] );
-		crc[4] = cpu_to_le32( (u32) acc[4] );
-		crc[5] = cpu_to_le32( (u32) acc[5] );
-		crc[6] = cpu_to_le32( (u32) acc[6] );
-		crc[7] = cpu_to_le32( (u32) acc[7] );
+		crc[0] = cpu_to_le32((u32) acc[0]);
+		crc[1] = cpu_to_le32((u32) acc[1]);
+		crc[2] = cpu_to_le32((u32) acc[2]);
+		crc[3] = cpu_to_le32((u32) acc[3]);
+		crc[4] = cpu_to_le32((u32) acc[4]);
+		crc[5] = cpu_to_le32((u32) acc[5]);
+		crc[6] = cpu_to_le32((u32) acc[6]);
+		crc[7] = cpu_to_le32((u32) acc[7]);
 	// }
 
 	return *((u64 *) parity);
@@ -272,8 +271,7 @@ static u64 xor_blocks_call(char **data, char *parity,
 }
 #endif
 
-static const raid5_call_t raid5_calls[] =
-{
+static const raid5_call_t raid5_calls[] = {
 	/* order should match enum raid5_call_id */
 	{ "nova_block_parity", nova_block_parity_call },
 	{ "nova_block_csum_parity", nova_block_csum_parity_call },
@@ -284,16 +282,16 @@ static const raid5_call_t raid5_calls[] =
 static void *nova_alloc_vmem_pool(size_t poolsize)
 {
 	void *pool = vmalloc(poolsize);
-	if (pool == NULL) {
-		nova_dbg("%s: vmalloc error\n", __func__);
+
+	if (pool == NULL)
 		return NULL;
-	}
 
 	/* init pool to verify some checksum results */
 	// memset(pool, 0xAC, poolsize);
 
 	/* to have a clean start, flush the data cache for the given virtual
-	 * address range in the vmap area */
+	 * address range in the vmap area
+	 */
 	flush_kernel_vmap_range(pool, poolsize);
 
 	return pool;
@@ -301,7 +299,8 @@ static void *nova_alloc_vmem_pool(size_t poolsize)
 
 static void nova_free_vmem_pool(void *pool)
 {
-	if (pool != NULL) vfree(pool);
+	if (pool != NULL)
+		vfree(pool);
 }
 
 static void *nova_alloc_pmem_pool(struct super_block *sb,
@@ -315,7 +314,8 @@ static void *nova_alloc_pmem_pool(struct super_block *sb,
 
 	blocksize = blk_type_to_size[blocktype];
 	num = poolsize / blocksize;
-	if (poolsize % blocksize) num++;
+	if (poolsize % blocksize)
+		num++;
 
 	sih->ino = NOVA_TEST_PERF_INO;
 	sih->i_blk_type = blocktype;
@@ -342,7 +342,8 @@ static void nova_free_pmem_pool(struct super_block *sb,
 	struct nova_inode_info_header *sih, char **pmem,
 	unsigned long blocknr, int num)
 {
-	if (num > 0) nova_free_data_blocks(sb, sih, blocknr, num);
+	if (num > 0)
+		nova_free_data_blocks(sb, sih, blocknr, num);
 	*pmem = NULL;
 }
 
@@ -470,39 +471,38 @@ test:
 	NOVA_START_TIMING(perf_t, perf_time);
 
 	switch (call_gid) {
-		case memcpy_gid:
-			for (i = 0; i < reps; i++, off += size)
-				err = fmemcpy->call(dst, src, off, size);
-			break;
-		case from_pmem_gid:
-			for (i = 0; i < reps; i++, off += size)
-				err = fmemcpy->call(dst, pmem, off, size);
-			break;
-		case to_pmem_gid:
-			nova_memunlock_range(sb, pmem, poolsize);
-			for (i = 0; i < reps; i++, off += size)
-				err = fmemcpy->call(pmem, src, off, size);
-			nova_memlock_range(sb, pmem, poolsize);
-			break;
-		case checksum_gid:
-			for (i = 0; i < reps; i++, off += size)
-				/* checksum calls are memory-read intensive */
-				csum = fchecksum->call(csum, src + off, size);
-			result = csum;
-			break;
-		case raid5_gid:
-			for (i = 0; i < reps; i++, off += (disks + 1) * size) {
-				for (j = 0; j < disks; j++)
-					data[j] = &src[off + j * size];
-				parity = src + off + disks * size;
-				xor = fraid5->call(data, parity, size, disks);
-			}
-			result = xor;
-			break;
-		default:
-			nova_dbg("%s: invalid function group %d\n",
-						__func__, call_gid);
-			break;
+	case memcpy_gid:
+		for (i = 0; i < reps; i++, off += size)
+			err = fmemcpy->call(dst, src, off, size);
+		break;
+	case from_pmem_gid:
+		for (i = 0; i < reps; i++, off += size)
+			err = fmemcpy->call(dst, pmem, off, size);
+		break;
+	case to_pmem_gid:
+		nova_memunlock_range(sb, pmem, poolsize);
+		for (i = 0; i < reps; i++, off += size)
+			err = fmemcpy->call(pmem, src, off, size);
+		nova_memlock_range(sb, pmem, poolsize);
+		break;
+	case checksum_gid:
+		for (i = 0; i < reps; i++, off += size)
+			/* checksum calls are memory-read intensive */
+			csum = fchecksum->call(csum, src + off, size);
+		result = csum;
+		break;
+	case raid5_gid:
+		for (i = 0; i < reps; i++, off += (disks + 1) * size) {
+			for (j = 0; j < disks; j++)
+				data[j] = &src[off + j * size];
+			parity = src + off + disks * size;
+			xor = fraid5->call(data, parity, size, disks);
+		}
+		result = xor;
+		break;
+	default:
+		nova_dbg("%s: invalid function group %d\n", __func__, call_gid);
+		break;
 	}
 
 	NOVA_END_TIMING(perf_t, perf_time);
@@ -516,7 +516,7 @@ test:
 	else
 		thru = (err) ? 0 : mb_per_sec(reps * size, nsec);
 
-	if ( cpu != smp_processor_id() ) /* scheduling shouldn't happen */
+	if (cpu != smp_processor_id()) /* scheduling shouldn't happen */
 		nova_dbg("cpu was %d, now %d\n", cpu, smp_processor_id());
 
 	nova_info("%4u %25s %4u %8lu %8lu\n", func_id, fname, cpu, lat, thru);
@@ -526,11 +526,13 @@ out:
 	nova_free_vmem_pool(dst);
 	nova_free_pmem_pool(sb, &perf_sih, &pmem, blocknr, allocated);
 
-	if (data != NULL) kfree(data);
+	if (data != NULL)
+		kfree(data);
 
 	put_cpu(); /* enable preemption */
 
-	if (err) nova_dbg("%s: performance test aborted\n", __func__);
+	if (err)
+		nova_dbg("%s: performance test aborted\n", __func__);
 	return err;
 }
 
@@ -575,8 +577,10 @@ int nova_test_perf(struct super_block *sb, unsigned int func_id,
 	if (func_id == 0) {
 		/* individual function id starting from 1 */
 		for (id = 1; id <= NUM_PERF_CALLS; id++) {
-			ret = nova_test_func_perf(sb, id, poolsize, size, disks);
-			if (ret < 0) goto out;
+			ret = nova_test_func_perf(sb, id, poolsize,
+							size, disks);
+			if (ret < 0)
+				goto out;
 		}
 	} else {
 		ret = nova_test_func_perf(sb, func_id, poolsize, size, disks);

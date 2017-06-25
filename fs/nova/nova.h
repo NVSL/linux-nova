@@ -27,7 +27,6 @@
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <linux/sched.h>
-#include <linux/crc16.h>
 #include <linux/mutex.h>
 #include <linux/pagemap.h>
 #include <linux/backing-dev.h>
@@ -56,11 +55,11 @@
 #define PAGE_SHIFT_2M 21
 #define PAGE_SHIFT_1G 30
 
-#define NOVA_ASSERT(x)                                                 \
-	if (!(x)) {                                                     \
+#define NOVA_ASSERT(x) do {                                             \
+	if (!(x))                                                       \
 		printk(KERN_WARNING "assertion failed %s:%d: %s\n",     \
-	               __FILE__, __LINE__, #x);                         \
-	}
+				__FILE__, __LINE__, #x);                \
+	} while (0)
 
 /*
  * Debug code
@@ -118,8 +117,8 @@ extern unsigned int nova_dbgmask;
 /* Flags that should be inherited by new inodes from their parent. */
 #define NOVA_FL_INHERITED (FS_SECRM_FL | FS_UNRM_FL | FS_COMPR_FL | \
 			    FS_SYNC_FL | FS_NODUMP_FL | FS_NOATIME_FL |	\
-			    FS_COMPRBLK_FL | FS_NOCOMP_FL | FS_JOURNAL_DATA_FL | \
-			    FS_NOTAIL_FL | FS_DIRSYNC_FL)
+			    FS_COMPRBLK_FL | FS_NOCOMP_FL | \
+			    FS_JOURNAL_DATA_FL | FS_NOTAIL_FL | FS_DIRSYNC_FL)
 /* Flags that are appropriate for regular files (all but dir-specific ones). */
 #define NOVA_REG_FLMASK (~(FS_DIRSYNC_FL | FS_TOPDIR_FL))
 /* Flags that are appropriate for non-directories/regular files. */
@@ -245,6 +244,8 @@ struct nova_file_write_entry {
 	__le32	csum;
 } __attribute((__packed__));
 
+#define WENTRY(entry)	((struct nova_file_write_entry *) entry)
+
 /*
  * Structure of a directory log entry in NOVA.
  * Update DIR_LOG_REC_LEN if modify this struct!
@@ -265,12 +266,16 @@ struct nova_dentry {
 	char	name[NOVA_NAME_LEN + 1];	/* File name */
 } __attribute((__packed__));
 
+#define DENTRY(entry)	((struct nova_dentry *) entry)
+
 #define NOVA_DIR_PAD			8	/* Align to 8 bytes boundary */
 #define NOVA_DIR_ROUND			(NOVA_DIR_PAD - 1)
 #define NOVA_DENTRY_HEADER_LEN		48
 #define NOVA_DIR_LOG_REC_LEN(name_len) \
 	(((name_len + 1) + NOVA_DENTRY_HEADER_LEN \
 	 + NOVA_DIR_ROUND) & ~NOVA_DIR_ROUND)
+
+#define NOVA_MAX_ENTRY_LEN		NOVA_DIR_LOG_REC_LEN(NOVA_NAME_LEN)
 
 /* Struct of inode attributes change log (setattr) */
 struct nova_setattr_logentry {
@@ -290,6 +295,8 @@ struct nova_setattr_logentry {
 	__le32	csum;
 } __attribute((__packed__));
 
+#define SENTRY(entry)	((struct nova_setattr_logentry *) entry)
+
 /* Do we need this to be 32 bytes? */
 struct nova_link_change_entry {
 	u8	entry_type;
@@ -304,6 +311,8 @@ struct nova_link_change_entry {
 	__le32	csum;
 } __attribute((__packed__));
 
+#define LCENTRY(entry)	((struct nova_link_change_entry *) entry)
+
 struct nova_mmap_entry {
 	u8	entry_type;
 	u8	invalid;
@@ -314,6 +323,8 @@ struct nova_mmap_entry {
 	__le32	csumpadding;
 	__le32	csum;
 } __attribute((__packed__));
+
+#define MMENTRY(entry)	((struct nova_mmap_entry *) entry)
 
 /* Log appending information */
 struct nova_log_entry_info {
@@ -337,26 +348,26 @@ static inline size_t nova_get_log_entry_size(struct super_block *sb,
 	size_t size = 0;
 
 	switch (type) {
-		case FILE_WRITE:
-			size = sizeof(struct nova_file_write_entry);
-			break;
-		case DIR_LOG:
-			size = NOVA_DENTRY_HEADER_LEN;
-			break;
-		case SET_ATTR:
-			size = sizeof(struct nova_setattr_logentry);
-			break;
-		case LINK_CHANGE:
-			size = sizeof(struct nova_link_change_entry);
-			break;
-		case MMAP_WRITE:
-			size = sizeof(struct nova_mmap_entry);
-			break;
-		case SNAPSHOT_INFO:
-			size = sizeof(struct nova_snapshot_info_entry);
-			break;
-		default:
-			break;
+	case FILE_WRITE:
+		size = sizeof(struct nova_file_write_entry);
+		break;
+	case DIR_LOG:
+		size = NOVA_DENTRY_HEADER_LEN;
+		break;
+	case SET_ATTR:
+		size = sizeof(struct nova_setattr_logentry);
+		break;
+	case LINK_CHANGE:
+		size = sizeof(struct nova_link_change_entry);
+		break;
+	case MMAP_WRITE:
+		size = sizeof(struct nova_mmap_entry);
+		break;
+	case SNAPSHOT_INFO:
+		size = sizeof(struct nova_snapshot_info_entry);
+		break;
+	default:
+		break;
 	}
 
 	return size;
@@ -426,24 +437,26 @@ static inline __le32 nova_mask_flags(umode_t mode, __le32 flags)
 }
 
 /* Update the crc32c value by appending a 64b data word. */
-#define nova_crc32c_qword(qword, crc) \
+#define nova_crc32c_qword(qword, crc) do { \
 	asm volatile ("crc32q %1, %0" \
 		: "=r" (crc) \
-		: "r" (qword), "0" (crc))
+		: "r" (qword), "0" (crc)); \
+	} while (0)
 
 static inline u32 nova_crc32c(u32 crc, const u8 *data, size_t len)
 {
 	u8 *ptr = (u8 *) data;
-	u64 acc = crc; // accumulator, crc32c value in lower 32b
+	u64 acc = crc; /* accumulator, crc32c value in lower 32b */
 	u32 csum;
 
 	/* x86 instruction crc32 is part of SSE-4.2 */
-	if ( static_cpu_has(X86_FEATURE_XMM4_2) ) {
+	if (static_cpu_has(X86_FEATURE_XMM4_2)) {
 		/* This inline assembly implementation should be equivalent
 		 * to the kernel's crc32c_intel_le_hw() function used by
-		 * crc32c(), but this performs better on test machines. */
+		 * crc32c(), but this performs better on test machines.
+		 */
 		while (len > 8) {
-			asm volatile( // 64b quad words
+			asm volatile(/* 64b quad words */
 				"crc32q (%1), %0"
 				: "=r" (acc)
 				: "r"  (ptr), "0" (acc)
@@ -453,7 +466,7 @@ static inline u32 nova_crc32c(u32 crc, const u8 *data, size_t len)
 		}
 
 		while (len > 0) {
-			asm volatile( // trailing bytes
+			asm volatile(/* trailing bytes */
 				"crc32b (%1), %0"
 				: "=r" (acc)
 				: "r"  (ptr), "0" (acc)
@@ -467,22 +480,12 @@ static inline u32 nova_crc32c(u32 crc, const u8 *data, size_t len)
 		/* The kernel's crc32c() function should also detect and use the
 		 * crc32 instruction of SSE-4.2. But calling in to this function
 		 * is about 3x to 5x slower than the inline assembly version on
-		 * some test machines. */
+		 * some test machines.
+		 */
 		csum = crc32c(crc, data, len);
 	}
 
 	return csum;
-}
-
-static inline int nova_calc_sb_checksum(u8 *data, int n)
-{
-	u16 crc = 0;
-
-	crc = crc16(~0, (__u8 *)data + sizeof(__le16), n - sizeof(__le16));
-	if (*((__le16 *)data) == cpu_to_le16(crc))
-		return 0;
-	else
-		return 1;
 }
 
 static inline int nova_update_inode_checksum(struct nova_inode *pi)
@@ -572,7 +575,7 @@ static inline bool nova_range_node_checksum_ok(struct nova_range_node *node)
 	if (!ret) {
 		nova_dbg("%s: checksum failure, "
 				"vma %p, range low %lu, range high %lu, "
-				"csum 0x%d\n", __func__,
+				"csum 0x%x\n", __func__,
 				node->vma, node->range_low, node->range_high,
 				node->csum);
 	}
@@ -582,7 +585,6 @@ static inline bool nova_range_node_checksum_ok(struct nova_range_node *node)
 
 struct nova_inode_info_header {
 	struct radix_tree_root tree;	/* Dir name entry tree root */
-	struct radix_tree_root cache_tree;	/* Mmap cache tree root */
 	struct rb_root vma_tree;	/* Write vmas */
 	struct list_head list;		/* SB list of mmap sih */
 	int num_vmas;
@@ -593,9 +595,6 @@ struct nova_inode_info_header {
 	unsigned long ino;
 	unsigned long pi_addr;
 	unsigned long alter_pi_addr;
-	unsigned long mmap_pages;	/* Num of mmap pages */
-	unsigned long low_dirty;	/* Mmap dirty low range */
-	unsigned long high_dirty;	/* Mmap dirty high range */
 	unsigned long valid_entries;	/* For thorough GC */
 	unsigned long num_entries;	/* For thorough GC */
 	u64 last_setattr;		/* Last setattr entry */
@@ -621,7 +620,7 @@ struct nova_inode_rebuild {
 	u32	i_generation;	/* File version (for NFS) */
 	u16	i_links_count;	/* Links count */
 	u16	i_mode;		/* File mode */
-	u64 	trans_id;
+	u64	trans_id;
 };
 
 struct nova_inode_info {
@@ -651,7 +650,7 @@ struct free_list {
 	struct rb_root	block_free_tree;
 	struct nova_range_node *first_node;
 	struct nova_range_node *last_node;
-	int 		index;
+	int		index;
 	unsigned long	csum_start;
 	unsigned long	replica_csum_start;
 	unsigned long	parity_start;
@@ -690,7 +689,8 @@ struct inode_map {
  * NOVA super-block data in memory
  */
 struct nova_sb_info {
-	struct super_block *sb;
+	struct super_block *sb;			/* VFS super block */
+	struct nova_super_block *nova_sb;	/* DRAM copy of SB */
 	struct block_device *s_bdev;
 
 	/*
@@ -699,7 +699,8 @@ struct nova_sb_info {
 	 */
 	phys_addr_t	phys_addr;
 	void		*virt_addr;
-	void		*tail_addr;
+	void		*replica_basic_inodes_addr;
+	void		*replica_sb_addr;
 
 	unsigned long	num_blocks;
 
@@ -725,7 +726,7 @@ struct nova_sb_info {
 	unsigned long	head_reserved_blocks;
 	unsigned long	tail_reserved_blocks;
 
-	struct mutex 	s_lock;	/* protects the SB's buffer-head */
+	struct mutex	s_lock;	/* protects the SB's buffer-head */
 
 	int cpus;
 	struct proc_dir_entry *s_proc;
@@ -782,7 +783,8 @@ static inline struct nova_inode_info *NOVA_I(struct inode *inode)
 }
 
 /* If this is part of a read-modify-write of the super block,
- * nova_memunlock_super() before calling! */
+ * nova_memunlock_super() before calling!
+ */
 static inline struct nova_super_block *nova_get_super(struct super_block *sb)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
@@ -790,15 +792,17 @@ static inline struct nova_super_block *nova_get_super(struct super_block *sb)
 	return (struct nova_super_block *)sbi->virt_addr;
 }
 
-static inline struct nova_super_block *nova_get_redund_super(struct super_block *sb)
+static inline struct nova_super_block
+*nova_get_redund_super(struct super_block *sb)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 
-	return (struct nova_super_block *)(sbi->tail_addr);
+	return (struct nova_super_block *)(sbi->replica_sb_addr);
 }
 
 /* If this is part of a read-modify-write of the block,
- * nova_memunlock_block() before calling! */
+ * nova_memunlock_block() before calling!
+ */
 static inline void *nova_get_block(struct super_block *sb, u64 block)
 {
 	struct nova_super_block *ps = nova_get_super(sb);
@@ -872,24 +876,23 @@ static inline void nova_print_curr_epoch_id(struct super_block *sb)
 
 	ret = sbi->s_epoch_id;
 	nova_dbg("Current epoch id: %llu\n", ret);
-
-	return;
 }
 
-struct ptr_pair {
+struct journal_ptr_pair {
 	__le64 journal_head;
 	__le64 journal_tail;
 };
 
 static inline
-struct ptr_pair *nova_get_journal_pointers(struct super_block *sb, int cpu)
+struct journal_ptr_pair *nova_get_journal_pointers(struct super_block *sb,
+	int cpu)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 
 	if (cpu >= sbi->cpus)
 		return NULL;
 
-	return (struct ptr_pair *)((char *)nova_get_block(sb,
+	return (struct journal_ptr_pair *)((char *)nova_get_block(sb,
 		NOVA_DEF_BLOCK_SIZE_4K * JOURNAL_START) + cpu * CACHELINE_SIZE);
 }
 
@@ -946,45 +949,43 @@ static inline unsigned long BKDRHash(const char *str, int length)
 	unsigned long hash = 0;
 	int i;
 
-	for (i = 0; i < length; i++) {
+	for (i = 0; i < length; i++)
 		hash = hash * seed + (*str++);
-	}
 
 	return hash;
 }
 
 /* uses CPU instructions to atomically write up to 8 bytes */
-static inline void nova_memcpy_atomic (void *dst, const void *src, u8 size)
+static inline void nova_memcpy_atomic(void *dst, const void *src, u8 size)
 {
 	switch (size) {
-		case 1: {
-			volatile u8 *daddr = dst;
-			const u8 *saddr = src;
-			*daddr = *saddr;
-			break;
-		}
-		case 2: {
-			volatile __le16 *daddr = dst;
-			const u16 *saddr = src;
-			*daddr = cpu_to_le16(*saddr);
-			break;
-		}
-		case 4: {
-			volatile __le32 *daddr = dst;
-			const u32 *saddr = src;
-			*daddr = cpu_to_le32(*saddr);
-			break;
-		}
-		case 8: {
-			volatile __le64 *daddr = dst;
-			const u64 *saddr = src;
-			*daddr = cpu_to_le64(*saddr);
-			break;
-		}
-		default:
-			nova_dbg("error: memcpy_atomic called with %d bytes\n",
-					size);
-			//BUG();
+	case 1: {
+		volatile u8 *daddr = dst;
+		const u8 *saddr = src;
+		*daddr = *saddr;
+		break;
+	}
+	case 2: {
+		volatile __le16 *daddr = dst;
+		const u16 *saddr = src;
+		*daddr = cpu_to_le16(*saddr);
+		break;
+	}
+	case 4: {
+		volatile __le32 *daddr = dst;
+		const u32 *saddr = src;
+		*daddr = cpu_to_le32(*saddr);
+		break;
+	}
+	case 8: {
+		volatile __le64 *daddr = dst;
+		const u64 *saddr = src;
+		*daddr = cpu_to_le64(*saddr);
+		break;
+	}
+	default:
+		nova_dbg("error: memcpy_atomic called with %d bytes\n", size);
+		//BUG();
 	}
 }
 
@@ -1034,7 +1035,9 @@ static inline void memset_nt(void *dest, uint32_t dword, size_t length)
 		"jz 12f\n"
 		"movnti %%eax,(%%rdi)\n"
 		"12:\n"
-		: "=D"(dummy1), "=d" (dummy2) : "D" (dest), "a" (qword), "d" (length) : "memory", "rcx");
+		: "=D"(dummy1), "=d" (dummy2)
+		: "D" (dest), "a" (qword), "d" (length)
+		: "memory", "rcx");
 }
 
 static inline struct nova_file_write_entry *
@@ -1062,45 +1065,34 @@ static inline unsigned long get_nvmm(struct super_block *sb,
 {
 	/* entry is already verified before this call and resides in dram
 	 * or we can do memcpy_from_pmem here but have to avoid double copy and
-	 * verification of the entry.*/
-	struct nova_file_write_entry *data = entry;
-
-	/*
-	struct nova_file_write_entry datat, *data;
-	int rc;
-
-	rc = memcpy_from_pmem(&datat, pmem_data,
-				sizeof(struct nova_file_write_entry));
-	if (rc) {
-		NOVA_ASSERT(0);
-		return 0;
-	}
-	data = &datat;
-	*/
-
-	if (data->pgoff > pgoff || (unsigned long)data->pgoff +
-			(unsigned long)data->num_pages <= pgoff) {
+	 * verification of the entry.
+	 */
+	if (entry->pgoff > pgoff || (unsigned long) entry->pgoff +
+			(unsigned long) entry->num_pages <= pgoff) {
 		struct nova_sb_info *sbi = NOVA_SB(sb);
 		u64 curr;
 
-		curr = nova_get_addr_off(sbi, data);
+		curr = nova_get_addr_off(sbi, entry);
 		nova_dbg("Entry ERROR: inode %lu, curr 0x%llx, pgoff %lu, "
 			"entry pgoff %llu, num %u\n", sih->ino,
-			curr, pgoff, data->pgoff, data->num_pages);
+			curr, pgoff, entry->pgoff, entry->num_pages);
 		nova_print_nova_log_pages(sb, sih);
 		nova_print_nova_log(sb, sih);
 		NOVA_ASSERT(0);
 	}
 
-	return (unsigned long)(data->block >> PAGE_SHIFT) + pgoff
-		- data->pgoff;
+	return (unsigned long) (entry->block >> PAGE_SHIFT) + pgoff
+		- entry->pgoff;
 }
+
+bool nova_verify_entry_csum(struct super_block *sb, void *entry, void *entryc);
 
 static inline u64 nova_find_nvmm_block(struct super_block *sb,
 	struct nova_inode_info_header *sih, struct nova_file_write_entry *entry,
 	unsigned long blocknr)
 {
 	unsigned long nvmm;
+	struct nova_file_write_entry *entryc, entry_copy;
 
 	if (!entry) {
 		entry = nova_get_write_entry(sb, sih, blocknr);
@@ -1108,20 +1100,24 @@ static inline u64 nova_find_nvmm_block(struct super_block *sb,
 			return 0;
 	}
 
-	nvmm = get_nvmm(sb, sih, entry, blocknr);
+	/*
+	if (metadata_csum == 0)
+		entryc = entry;
+	else {
+		entryc = &entry_copy;
+		if (!nova_verify_entry_csum(sb, entry, entryc))
+			return 0;
+	}
+	*/
+	/* don't check entry here as someone else may be modifying it
+	 * when called from reset_vma_csum_parity */
+	entryc = &entry_copy;
+	if (memcpy_from_pmem(entryc, entry,
+			sizeof(struct nova_file_write_entry)) < 0)
+		return 0;
+
+	nvmm = get_nvmm(sb, sih, entryc, blocknr);
 	return nvmm << PAGE_SHIFT;
-}
-
-static inline unsigned long nova_get_cache_addr(struct super_block *sb,
-	struct nova_inode_info *si, unsigned long blocknr)
-{
-	struct nova_inode_info_header *sih = &si->header;
-	unsigned long addr;
-
-	addr = (unsigned long)radix_tree_lookup(&sih->cache_tree, blocknr);
-	nova_dbgv("%s: inode %lu, blocknr %lu, addr 0x%lx\n",
-		__func__, sih->ino, blocknr, addr);
-	return addr;
 }
 
 static inline unsigned int
@@ -1138,14 +1134,16 @@ static inline uint32_t nova_inode_blk_size(struct nova_inode_info_header *sih)
 static inline u64 nova_get_basic_inode_addr(struct super_block *sb,
 	u64 inode_number)
 {
-	return 	(NOVA_DEF_BLOCK_SIZE_4K * RESERVE_INODE_START) +
+	return (NOVA_DEF_BLOCK_SIZE_4K * RESERVE_INODE_START) +
 			inode_number * NOVA_INODE_SIZE;
 }
 
 static inline u64 nova_get_alter_basic_inode_addr(struct super_block *sb,
 	u64 inode_number)
 {
-	return 	(NOVA_DEF_BLOCK_SIZE_4K * REPLICA_INODE_START) +
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+
+	return nova_get_addr_off(sbi, sbi->replica_basic_inodes_addr) +
 			inode_number * NOVA_INODE_SIZE;
 }
 
@@ -1173,7 +1171,8 @@ nova_get_alter_basic_inode(struct super_block *sb,
 }
 
 /* If this is part of a read-modify-write of the inode metadata,
- * nova_memunlock_inode() before calling! */
+ * nova_memunlock_inode() before calling!
+ */
 static inline struct nova_inode *nova_get_inode_by_ino(struct super_block *sb,
 						  u64 ino)
 {
@@ -1285,6 +1284,7 @@ static inline unsigned long nova_get_pfn(struct super_block *sb, u64 block)
 static inline int nova_is_mounting(struct super_block *sb)
 {
 	struct nova_sb_info *sbi = (struct nova_sb_info *)sb->s_fs_info;
+
 	return sbi->s_mount_opt & NOVA_MOUNT_MOUNTING;
 }
 
@@ -1602,7 +1602,8 @@ static inline void *nova_get_parity_addr(struct super_block *sb,
 	}
 
 	data_csum_addr = (u8 *) nova_get_block(sb, blockoff) +
-				((blocknr - free_list->block_start) << NOVA_STRIPE_SHIFT);
+				((blocknr - free_list->block_start)
+				 << NOVA_STRIPE_SHIFT);
 
 	return data_csum_addr;
 }
@@ -1660,14 +1661,12 @@ int nova_recovery(struct super_block *sb);
 
 /* checksum.c */
 void nova_update_entry_csum(void *entry);
-bool nova_verify_entry_csum(struct super_block *sb, void *entry, void *entryd);
 int nova_update_block_csum(struct super_block *sb,
 	struct nova_inode_info_header *sih, u8 *block, unsigned long blocknr,
 	size_t offset, size_t bytes, int zero);
 int nova_update_alter_entry(struct super_block *sb, void *entry);
-int nova_check_alter_entry(struct super_block *sb, u64 curr);
-int nova_check_inode_integrity(struct super_block *sb, u64 ino,
-	u64 pi_addr, u64 alter_pi_addr);
+int nova_check_inode_integrity(struct super_block *sb, u64 ino, u64 pi_addr,
+	u64 alter_pi_addr, struct nova_inode *pic, int check_replica);
 int nova_update_pgoff_csum(struct super_block *sb,
 	struct nova_inode_info_header *sih, struct nova_file_write_entry *entry,
 	unsigned long pgoff, int zero);
@@ -1689,12 +1688,14 @@ int nova_cleanup_incomplete_write(struct super_block *sb,
 	int allocated, u64 begin_tail, u64 end_tail);
 void nova_init_file_write_entry(struct super_block *sb,
 	struct nova_inode_info_header *sih, struct nova_file_write_entry *entry,
-	u64 epoch_id, u64 pgoff, int num_pages, u64 blocknr, u32 time, u64 size);
+	u64 epoch_id, u64 pgoff, int num_pages, u64 blocknr, u32 time,
+	u64 size);
 int nova_reassign_file_tree(struct super_block *sb,
 	struct nova_inode_info_header *sih, u64 begin_tail);
 unsigned long nova_check_existing_entry(struct super_block *sb,
 	struct inode *inode, unsigned long num_blocks, unsigned long start_blk,
-	struct nova_file_write_entry **ret_entry, int check_next, u64 epoch_id,
+	struct nova_file_write_entry **ret_entry,
+	struct nova_file_write_entry *ret_entryc, int check_next, u64 epoch_id,
 	int *inplace, int locked);
 ssize_t nova_dax_file_read(struct file *filp, char __user *buf, size_t len,
 			    loff_t *ppos);
@@ -1704,9 +1705,9 @@ int nova_dax_get_blocks(struct inode *inode, sector_t iblock,
 	unsigned long max_blocks, u32 *bno, bool *new, bool *boundary,
 	int create, bool taking_lock);
 int nova_iomap_begin(struct inode *inode, loff_t offset, loff_t length,
-	unsigned flags, struct iomap *iomap, bool taking_lock);
+	unsigned int flags, struct iomap *iomap, bool taking_lock);
 int nova_iomap_end(struct inode *inode, loff_t offset, loff_t length,
-	ssize_t written, unsigned flags, struct iomap *iomap);
+	ssize_t written, unsigned int flags, struct iomap *iomap);
 int nova_dax_file_mmap(struct file *file, struct vm_area_struct *vma);
 
 /* dir.c */
@@ -1773,7 +1774,7 @@ extern unsigned long nova_find_region(struct inode *inode, loff_t *offset,
 		int hole);
 int nova_delete_file_tree(struct super_block *sb,
 	struct nova_inode_info_header *sih, unsigned long start_blocknr,
-	unsigned long last_blocknr, bool delete_nvmm, bool delete_mmap,
+	unsigned long last_blocknr, bool delete_nvmm,
 	bool delete_dead, u64 trasn_id);
 u64 nova_new_nova_inode(struct super_block *sb, u64 *pi_addr);
 extern struct inode *nova_new_vfs_inode(enum nova_new_inode_type,
@@ -1856,7 +1857,7 @@ int nova_append_snapshot_info_entry(struct super_block *sb,
 int nova_assign_write_entry(struct super_block *sb,
 	struct nova_inode_info_header *sih,
 	struct nova_file_write_entry *entry,
-	bool free);
+	struct nova_file_write_entry *entryc, bool free);
 
 /* mprotect.c */
 extern int nova_dax_mem_protect(struct super_block *sb,
@@ -1883,8 +1884,8 @@ int nova_update_block_csum_parity(struct super_block *sb,
 	struct nova_inode_info_header *sih, u8 *block, unsigned long blocknr,
 	size_t offset, size_t bytes);
 int nova_restore_data(struct super_block *sb, unsigned long blocknr,
-        unsigned int badstrip_id, void *badstrip, int nvmmerr, u32 csum0,
-        u32 csum1, u32 *csum_good);
+	unsigned int badstrip_id, void *badstrip, int nvmmerr, u32 csum0,
+	u32 csum1, u32 *csum_good);
 int nova_update_truncated_block_parity(struct super_block *sb,
 	struct inode *inode, loff_t newsize);
 int nova_data_parity_init_free_list(struct super_block *sb,
@@ -1932,8 +1933,6 @@ extern struct super_block *nova_read_super(struct super_block *sb, void *data,
 	int silent);
 extern int nova_statfs(struct dentry *d, struct kstatfs *buf);
 extern int nova_remount(struct super_block *sb, int *flags, char *data);
-int nova_check_integrity(struct super_block *sb,
-	struct nova_super_block *super);
 void *nova_ioremap(struct super_block *sb, phys_addr_t phys_addr,
 	ssize_t size);
 

@@ -26,7 +26,7 @@ static int nova_calculate_block_parity(struct super_block *sb, u8 *parity,
 	u64 xor;
 
 	num_strps = sb->s_blocksize >> strp_shift;
-	if ( static_cpu_has(X86_FEATURE_XMM2) ) { // sse2 128b
+	if (static_cpu_has(X86_FEATURE_XMM2)) { // sse2 128b
 		for (i = 0; i < strp_size; i += 16) {
 			asm volatile("movdqa %0, %%xmm0" : : "m" (block[i]));
 			for (strp = 1; strp < num_strps; strp++) {
@@ -84,7 +84,6 @@ static int nova_update_block_parity(struct super_block *sb, u8 *block,
 
 	parity = kmalloc(strp_size, GFP_KERNEL);
 	if (parity == NULL) {
-		nova_err(sb, "%s: parity buffer allocation error\n", __func__);
 		ret = -ENOMEM;
 		goto out;
 	}
@@ -108,7 +107,8 @@ static int nova_update_block_parity(struct super_block *sb, u8 *block,
 
 	// TODO: The parity stripe is better checksummed for higher reliability.
 out:
-	if (parity != NULL) kfree(parity);
+	if (parity != NULL)
+		kfree(parity);
 
 	NOVA_END_TIMING(block_parity_t, block_parity_time);
 
@@ -175,7 +175,7 @@ int nova_update_block_csum_parity(struct super_block *sb,
 	if (unroll_csum || unroll_parity) {
 		NOVA_START_TIMING(block_csum_parity_t, block_csum_parity_time);
 		if (data_parity > 0) {
-			parity = (u64 *) kmalloc(strp_size, GFP_KERNEL);
+			parity = kmalloc(strp_size, GFP_KERNEL);
 			if (parity == NULL) {
 				nova_err(sb, "%s: buffer allocation error\n",
 								__func__);
@@ -207,22 +207,21 @@ int nova_update_block_csum_parity(struct super_block *sb,
 			}
 
 			if (data_parity > 0) {
-				parity[i] =	qwd[0] ^ qwd[1] ^ qwd[2] ^ \
-						qwd[3] ^ qwd[4] ^ qwd[5] ^ \
-						qwd[6] ^ qwd[7];
+				parity[i] = qwd[0] ^ qwd[1] ^ qwd[2] ^ qwd[3] ^
+					    qwd[4] ^ qwd[5] ^ qwd[6] ^ qwd[7];
 			}
 
 			block += 8;
 		}
 		if (data_csum > 0 && unroll_csum) {
-			crc[0] = cpu_to_le32( (u32) acc[0] );
-			crc[1] = cpu_to_le32( (u32) acc[1] );
-			crc[2] = cpu_to_le32( (u32) acc[2] );
-			crc[3] = cpu_to_le32( (u32) acc[3] );
-			crc[4] = cpu_to_le32( (u32) acc[4] );
-			crc[5] = cpu_to_le32( (u32) acc[5] );
-			crc[6] = cpu_to_le32( (u32) acc[6] );
-			crc[7] = cpu_to_le32( (u32) acc[7] );
+			crc[0] = cpu_to_le32((u32) acc[0]);
+			crc[1] = cpu_to_le32((u32) acc[1]);
+			crc[2] = cpu_to_le32((u32) acc[2]);
+			crc[3] = cpu_to_le32((u32) acc[3]);
+			crc[4] = cpu_to_le32((u32) acc[4]);
+			crc[5] = cpu_to_le32((u32) acc[5]);
+			crc[6] = cpu_to_le32((u32) acc[6]);
+			crc[7] = cpu_to_le32((u32) acc[7]);
 
 			nvmmptr = nova_get_data_csum_addr(sb, strp_nr, 0);
 			nvmmptr1 = nova_get_data_csum_addr(sb, strp_nr, 1);
@@ -239,12 +238,14 @@ int nova_update_block_csum_parity(struct super_block *sb,
 			nova_memlock_range(sb, nvmmptr, strp_size);
 		}
 
-		if (parity) kfree(parity);
+		if (parity != NULL)
+			kfree(parity);
 		NOVA_END_TIMING(block_csum_parity_t, block_csum_parity_time);
 	}
 
 	if (data_csum > 0 && !unroll_csum)
-		nova_update_block_csum(sb, sih, block, blocknr, offset, bytes, 0);
+		nova_update_block_csum(sb, sih, block, blocknr,
+					offset, bytes, 0);
 	if (data_parity > 0 && !unroll_parity)
 		nova_update_block_parity(sb, block, blocknr, 0);
 
@@ -263,8 +264,8 @@ out:
  * the caller will also check if any checksum restoration is necessary.
  */
 int nova_restore_data(struct super_block *sb, unsigned long blocknr,
-        unsigned int badstrip_id, void *badstrip, int nvmmerr, u32 csum0,
-        u32 csum1, u32 *csum_good)
+	unsigned int badstrip_id, void *badstrip, int nvmmerr, u32 csum0,
+	u32 csum1, u32 *csum_good)
 {
 	unsigned int i, num_strps;
 	size_t strp_size = NOVA_STRIPE_SIZE;
@@ -322,7 +323,8 @@ int nova_restore_data(struct super_block *sb, unsigned long blocknr,
 		 * can restore the strip; otherwise we need to test every i to
 		 * check if there is a unaligned but recoverable corruption,
 		 * i.e. a scribble corrupting two adjacent strips but the
-		 * scribble size is no larger than the strip size. */
+		 * scribble size is no larger than the strip size.
+		 */
 		memcpy(strip, badstrip, i);
 
 		csum_calc = nova_crc32c(NOVA_INIT_CSUM, strip, strp_size);
@@ -332,18 +334,21 @@ int nova_restore_data(struct super_block *sb, unsigned long blocknr,
 		}
 
 		/* media error, no good bytes in badstrip */
-		if (nvmmerr) break;
+		if (nvmmerr)
+			break;
 
 		/* corruption happens to the last strip must be contained within
 		 * the strip; if the corruption goes beyond the block boundary,
-		 * that's not the concern of this recovery call. */
-		if (badstrip_id == num_strps - 1) break;
+		 * that's not the concern of this recovery call.
+		 */
+		if (badstrip_id == num_strps - 1)
+			break;
 	}
 
 	if (success) {
 		/* recovery success, repair the bad nvmm data */
 		nova_memunlock_range(sb, stripptr, strp_size);
-	        memcpy_to_pmem_nocache(stripptr, strip, strp_size);
+		memcpy_to_pmem_nocache(stripptr, strip, strp_size);
 		nova_memlock_range(sb, stripptr, strp_size);
 
 		/* return the good checksum */
@@ -354,8 +359,10 @@ int nova_restore_data(struct super_block *sb, unsigned long blocknr,
 	}
 
 out:
-	if (block != NULL) kfree(block);
-	if (strip != NULL) kfree(strip);
+	if (block != NULL)
+		kfree(block);
+	if (strip != NULL)
+		kfree(strip);
 
 	NOVA_END_TIMING(restore_data_t, restore_time);
 	return ret;
@@ -367,9 +374,11 @@ int nova_update_truncated_block_parity(struct super_block *sb,
 	struct nova_inode_info *si = NOVA_I(inode);
 	struct nova_inode_info_header *sih = &si->header;
 	unsigned long pgoff, blocknr;
+	unsigned long blocksize = sb->s_blocksize;
 	u64 nvmm;
 	char *nvmm_addr, *block;
 	u8 btype = sih->i_blk_type;
+	int ret = 0;
 
 	pgoff = newsize >> sb->s_blocksize_bits;
 
@@ -381,22 +390,23 @@ int nova_update_truncated_block_parity(struct super_block *sb,
 
 	blocknr = nova_get_blocknr(sb, nvmm, btype);
 
-	/* Copy to DRAM to catch MCE.
+	/* Copy to DRAM to catch MCE. */
 	block = kmalloc(blocksize, GFP_KERNEL);
 	if (block == NULL) {
-		nova_err(sb, "%s: buffer allocation error\n", __func__);
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto out;
 	}
-	*/
 
-//	memcpy_from_pmem(block, nvmm_addr, blocksize);
-	block = nvmm_addr;
+	if (memcpy_from_pmem(block, nvmm_addr, blocksize) < 0) {
+		ret = -EIO;
+		goto out;
+	}
 
 	nova_update_block_parity(sb, block, blocknr, 0);
-
-//	kfree(blkbuf);
-
-	return 0;
+out:
+	if (block != NULL)
+		kfree(block);
+	return ret;
 }
 
 int nova_data_parity_init_free_list(struct super_block *sb,
@@ -408,7 +418,8 @@ int nova_data_parity_init_free_list(struct super_block *sb,
 
 	/* Allocate blocks to store data block checksums.
 	 * Always reserve in case user turns it off at init mount but later
-	 * turns it on. */
+	 * turns it on.
+	 */
 	blocksize = sb->s_blocksize;
 	total_blocks = sbi->initsize / blocksize;
 	parity_blocks = total_blocks / (blocksize / strp_size + 1);

@@ -24,10 +24,12 @@ struct nova_snapshot_info_entry {
 	u8	paddings[6];
 	__le64	epoch_id;
 	__le64	timestamp;
-	__le64 	nvmm_page_addr;
+	__le64	nvmm_page_addr;
 	__le32	csumpadding;
 	__le32	csum;
 } __attribute((__packed__));
+
+#define SNENTRY(entry)	((struct nova_snapshot_info_entry *) entry)
 
 struct snapshot_list {
 	struct mutex list_mutex;

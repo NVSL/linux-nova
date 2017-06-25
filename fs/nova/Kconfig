@@ -1,13 +1,13 @@
 config NOVA_FS
 	tristate "NOVA: log-structured file system for non-volatile memories"
 	depends on FS_DAX
-	select CRC16
+	select CRC32
 	help
 	  If your system has a block of fast (comparable in access speed to
 	  system memory) and non-volatile byte-addressable memory and you wish
 	  to mount a light-weight filesystem with strong consistency support
 	  over it, say Y here.
-							  
+
 	  To compile this as a module, choose M here: the module will be
 	  called nova.
 

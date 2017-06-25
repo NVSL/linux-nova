@@ -29,7 +29,8 @@ static inline int nova_can_set_blocksize_hint(struct inode *inode,
 	struct nova_inode_info_header *sih = &si->header;
 
 	/* Currently, we don't deallocate data blocks till the file is deleted.
-	 * So no changing blocksize hints once allocation is done. */
+	 * So no changing blocksize hints once allocation is done.
+	 */
 	if (sih->i_size > 0)
 		return 0;
 	return 1;
@@ -108,172 +109,11 @@ static loff_t nova_llseek(struct file *file, loff_t offset, int origin)
 	return offset;
 }
 
-#if 0
-static inline int nova_check_page_dirty(struct super_block *sb,
-	unsigned long addr)
-{
-	return IS_MAP_WRITE(addr);
-}
-
-static unsigned long nova_get_dirty_range(struct super_block *sb,
-	struct nova_inode *pi, struct nova_inode_info *si, loff_t *start,
-	loff_t end)
-{
-	unsigned long flush_bytes = 0;
-	unsigned long bytes;
-	unsigned long cache_addr = 0;
-	pgoff_t pgoff;
-	loff_t offset;
-	loff_t dirty_start;
-	loff_t temp = *start;
-
-	nova_dbgv("%s: inode %llu, start %llu, end %llu\n",
-			__func__, pi->nova_ino, *start, end);
-
-	dirty_start = temp;
-	while (temp < end) {
-		pgoff = temp >> PAGE_SHIFT;
-		offset = temp & ~PAGE_MASK;
-		bytes = sb->s_blocksize - offset;
-		if (bytes > (end - temp))
-			bytes = end - temp;
-
-		cache_addr = nova_get_cache_addr(sb, si, pgoff);
-		if (cache_addr && nova_check_page_dirty(sb, cache_addr)) {
-			if (flush_bytes == 0)
-				dirty_start = temp;
-			flush_bytes += bytes;
-		} else {
-			if (flush_bytes)
-				break;
-		}
-		temp += bytes;
-	}
-
-	if (flush_bytes == 0)
-		*start = end;
-	else
-		*start = dirty_start;
-
-	return flush_bytes;
-}
-
-static void nova_get_sync_range(struct nova_inode_info_header *sih,
-	loff_t *start, loff_t *end)
-{
-	unsigned long start_blk, end_blk;
-	unsigned long low_blk, high_blk;
-
-	start_blk = *start >> PAGE_SHIFT;
-	end_blk = *end >> PAGE_SHIFT;
-
-	low_blk = sih->low_dirty;
-	high_blk = sih->high_dirty;
-
-	if (start_blk < low_blk)
-		*start = low_blk << PAGE_SHIFT;
-	if (end_blk > high_blk)
-		*end = (high_blk + 1) << PAGE_SHIFT;
-}
-
 /* This function is called by both msync() and fsync().
  * TODO: Check if we can avoid calling nova_flush_buffer() for fsync. We use
  * movnti to write data to files, so we may want to avoid doing unnecessary
- * nova_flush_buffer() on fsync() */
-int nova_fsync(struct file *file, loff_t start, loff_t end, int datasync)
-{
-	/* Sync from start to end[inclusive] */
-	struct address_space *mapping = file->f_mapping;
-	struct inode *inode = mapping->host;
-	struct nova_inode_info *si = NOVA_I(inode);
-	struct nova_inode_info_header *sih = &si->header;
-	struct super_block *sb = inode->i_sb;
-	struct nova_inode *pi;
-	unsigned long start_blk, end_blk;
-	u64 end_tail = 0, begin_tail = 0;
-	u64 begin_temp = 0, end_temp = 0;
-	int ret = 0;
-	loff_t sync_start, sync_end;
-	loff_t isize;
-	timing_t fsync_time;
-
-	NOVA_START_TIMING(fsync_t, fsync_time);
-	if (!mapping_mapped(mapping))
-		goto out;
-
-	inode_lock(inode);
-
-	/* Check the dirty range */
-	pi = nova_get_inode(sb, inode);
-
-	end += 1; /* end is inclusive. We like our indices normal please! */
-
-	isize = i_size_read(inode);
-
-	if ((unsigned long)end > (unsigned long)isize)
-		end = isize;
-	if (!isize || (start >= end))
-	{
-		nova_dbg_verbose("[%s:%d] : (ERR) isize(%llx), start(%llx),"
-			" end(%llx)\n", __func__, __LINE__, isize, start, end);
-		NOVA_END_TIMING(fsync_t, fsync_time);
-		inode_unlock(inode);
-		return 0;
-	}
-
-	nova_get_sync_range(sih, &start, &end);
-	start_blk = start >> PAGE_SHIFT;
-	end_blk = end >> PAGE_SHIFT;
-
-	nova_dbgv("%s: start %llu, end %llu, size %llu, "
-			" start_blk %lu, end_blk %lu\n",
-			__func__, start, end, isize, start_blk,
-			end_blk);
-
-	sync_start = start;
-	sync_end = end;
-	end_temp = sih->log_tail;
-
-	do {
-		unsigned long nr_flush_bytes = 0;
-
-		nr_flush_bytes = nova_get_dirty_range(sb, pi, si, &start, end);
-
-		nova_dbgv("start %llu, flush bytes %lu\n",
-				start, nr_flush_bytes);
-		if (nr_flush_bytes) {
-			nova_copy_to_nvmm(sb, inode, pi, start,
-				nr_flush_bytes, &begin_temp, &end_temp);
-			if (begin_tail == 0)
-				begin_tail = begin_temp;
-		}
-
-		start += nr_flush_bytes;
-	} while (start < end);
-
-	end_tail = end_temp;
-	if (begin_tail && end_tail && end_tail != sih->log_tail) {
-		nova_update_tail(pi, end_tail);
-
-		/* Free the overlap blocks after the write is committed */
-		ret = nova_reassign_file_tree(sb, sih, begin_tail);
-
-		inode->i_blocks = sih->i_blocks;
-	}
-
-	inode_unlock(inode);
-
-out:
-	NOVA_END_TIMING(fsync_t, fsync_time);
-
-	return ret;
-}
-#endif
-
-/* This function is called by both msync() and fsync().
- * TODO: Check if we can avoid calling nova_flush_buffer() for fsync. We use
- * movnti to write data to files, so we may want to avoid doing unnecessary
- * nova_flush_buffer() on fsync() */
+ * nova_flush_buffer() on fsync()
+ */
 int nova_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 {
 	struct address_space *mapping = file->f_mapping;
@@ -284,6 +124,9 @@ int nova_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 	timing_t fsync_time;
 
 	NOVA_START_TIMING(fsync_t, fsync_time);
+
+	if (datasync)
+		NOVA_STATS_ADD(fdatasync, 1);
 
 	/* No need to flush if the file is not mmaped */
 	if (!mapping_mapped(mapping))
@@ -324,7 +167,7 @@ static int nova_open(struct inode *inode, struct file *filp)
 }
 
 static long nova_fallocate(struct file *file, int mode, loff_t offset,
-			    loff_t len)
+	loff_t len)
 {
 	struct inode *inode = file->f_path.dentry->d_inode;
 	struct super_block *sb = inode->i_sb;
@@ -332,6 +175,7 @@ static long nova_fallocate(struct file *file, int mode, loff_t offset,
 	struct nova_inode_info_header *sih = &si->header;
 	struct nova_inode *pi;
 	struct nova_file_write_entry *entry;
+	struct nova_file_write_entry *entryc, entry_copy;
 	struct nova_file_write_entry entry_data;
 	struct nova_inode_update update;
 	unsigned long start_blk, num_blocks, ent_blks = 0;
@@ -350,9 +194,10 @@ static long nova_fallocate(struct file *file, int mode, loff_t offset,
 	u64 epoch_id;
 	u32 time;
 
-	/* No fallocate for CoW */
-	if (inplace_data_updates == 0)
-		return -EOPNOTSUPP;
+	/*
+	 * Fallocate does not make much sence for CoW,
+	 * but we still support it for DAX-mmap purpose.
+	 */
 
 	/* We only support the FALLOC_FL_KEEP_SIZE mode */
 	if (mode & ~FALLOC_FL_KEEP_SIZE)
@@ -395,11 +240,13 @@ static long nova_fallocate(struct file *file, int mode, loff_t offset,
 	update.alter_tail = sih->alter_log_tail;
 	while (num_blocks > 0) {
 		ent_blks = nova_check_existing_entry(sb, inode, num_blocks,
-						start_blk, &entry, 1, epoch_id,
-						&inplace, 1);
+						start_blk, &entry, &entry_copy,
+						1, epoch_id, &inplace, 1);
+
+		entryc = (metadata_csum == 0) ? entry : &entry_copy;
 
 		if (entry && inplace) {
-			if (entry->size < new_size) {
+			if (entryc->size < new_size) {
 				/* Update existing entry */
 				nova_memunlock_range(sb, entry, CACHELINE_SIZE);
 				entry->size = new_size;
@@ -468,9 +315,9 @@ next:
 
 		/* Update file tree */
 		ret = nova_reassign_file_tree(sb, sih, begin_tail);
-		if (ret) {
+		if (ret)
 			goto out;
-		}
+
 	}
 
 	nova_dbgv("blocks: %lu, %lu\n", inode->i_blocks, sih->i_blocks);
@@ -503,7 +350,7 @@ out:
 }
 
 static int nova_iomap_begin_nolock(struct inode *inode, loff_t offset,
-	loff_t length, unsigned flags, struct iomap *iomap)
+	loff_t length, unsigned int flags, struct iomap *iomap)
 {
 	return nova_iomap_begin(inode, offset, length, flags, iomap, false);
 }
