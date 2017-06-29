@@ -1,15 +1,16 @@
 # NOVA: NOn-Volatile memory Accelerated log-structured file system
 
-NOVA is a log-structured file system designed for byte-addressable non-volatile
-memories (e.g., NVDIMMs and Intel's soon-to-be-released 3DXpoint DIMMs),
-developed by the [Non-Volatile Systems Laboratory][NVSL], University of
-California, San Diego.
 
 NOVA's goal is to provide a high-performance, full-featured, production-ready
-file system tailored for NVDIMMs.  It combines design elements from many other
-file systems to provide a combination of high-performance, strong consistency
-guarantees, and comprehensive data protection.  NOVA support DAX-style mmap and
-making DAX performs well is a first-order priority in NOVA's design.
+file system tailored for byte-addressable non-volatile memories (e.g., NVDIMMs
+and Intel's soon-to-be-released 3DXpoint DIMMs).  It combines design elements
+from many other file systems to provide a combination of high-performance,
+strong consistency guarantees, and comprehensive data protection.  NOVA support
+DAX-style mmap and making DAX performs well is a first-order priority in NOVA's
+design.  NOVA was developed by the [Non-Volatile Systems Laboratory][NVSL] in
+the [Computer Science and Engineering Department][CSE] at the [University of
+California, San Diego][UCSD].
+
 
 NOVA is primarily a log-structured file system, but rather than maintain a
 single global log for the entire file system, it maintains separate logs for
@@ -34,8 +35,8 @@ A more thorough discussion of NOVA's design is avaialable in these two papers:
 
 **NOVA: A Log-structured File system for Hybrid Volatile/Non-volatile Main Memories** 
 [PDF](http://cseweb.ucsd.edu/~swanson/papers/FAST2016NOVA.pdf)<br>
-*Jian Xu and Steven Swanson, University of California, San Diego*<br>
-Published in FAST 2016
+*Jian Xu and Steven Swanson*<br>
+Published in [FAST 2016][FAST2016]
 
 **Hardening the NOVA File System**
 [PDF](http://cseweb.ucsd.edu/~swanson/papers/TechReport2017HardenedNOVA.pdf) <br>
@@ -197,3 +198,6 @@ Users should not write to the file system after mounting a snapshot.
 
 [NVSL]: http://nvsl.ucsd.edu/ "http://nvsl.ucsd.edu"
 [POSIXtest]: http://www.tuxera.com/community/posix-test-suite/ 
+[FAST2016]: https://www.usenix.org/conference/fast16/technical-sessions
+[CSE]: http://cs.ucsd.edu
+[UCSD]: http://www.ucsd.edu
