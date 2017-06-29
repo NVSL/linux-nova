@@ -11,7 +11,7 @@ NOVA's goal is to provide a high-performance, full-featured, production-ready
 file system tailored for NVDIMMs.  It combines design elements from many other
 file systems to provide a combination of high-performance, strong consistency
 guarantees, and comprehensive data protection.  NOVA support DAX-style mmap and
-ensuring that DAX performs well is 1st order priority in NOVA's design.
+making DAX performs well is a first-order priority in NOVA's design.
 
 NOVA is primarily a log-structured file system, but rather than maintain a
 single global log for the entire file system, it maintains separate logs for
@@ -32,19 +32,19 @@ threads can scan logs in parallel.
 NOVA replicates and checksums all metadata structures and protects file data
 with RAID-5-style parity.  It supports checkpoints to facilitate backups.
 
-Further details about NOVA's overall design and its current status is discussed below.
-
 A more thorough discussion of NOVA's design is avaialable in these two papers:
 
-**NOVA: A Log-structured File system for Hybrid Volatile/Non-volatile Main Memories**<br>
+**NOVA: A Log-structured File system for Hybrid Volatile/Non-volatile Main Memories** 
 [PDF](http://cseweb.ucsd.edu/~swanson/papers/FAST2016NOVA.pdf)<br>
 *Jian Xu and Steven Swanson, University of California, San Diego*<br>
 Published in FAST 2016
 
 **Hardening the NOVA File System**<br>
-[PDF](http://cseweb.ucsd.edu/~swanson/papers/TechReport2017HardenedNOVA.pdf)<br>
+[PDF](http://cseweb.ucsd.edu/~swanson/papers/TechReport2017HardenedNOVA.pdf) 
 UCSD-CSE Techreport CS2017-1018
 *Jian Xu, Lu Zhang, Amirsaman Memaripour, Akshatha Gangadharaiah, Amit Borase, Tamires Brito Da Silva, Andy Rudoff, Steven Swanson*<br>
+
+Read on for further details about NOVA's overall design and its current status 
 
 ### Compatibilty with Other File Systems
 
@@ -54,20 +54,20 @@ NOVA aims to be compatible with other Linux file systems.  To help verify that i
 * The linux testing project file system tests.
 * The fstest POSIX conformance test suite.
 
-Currently, nearly all of these tests pass, and the handful of failures are not critical and are on our list of TODOs.
+Currently, nearly all of these tests pass for the `master` branch, and the
+handful of failures are not critical and are on our list of TODOs.
 
 NOVA uses the standard PMEM kernel interfaces for accessing and managing persistent memory.
 
 ### Atomicity
 
-By default, NOVA makes all metadata and file data operations atomic.  This is
-similar to Ext4's datajournaling mode.
+By default, NOVA makes all metadata and file data operations atomic.
 
 Strong atomicity guarantees make it easier to build reliable applications on
 NOVA, and NOVA can provide these guarantees with sacrificing much performance
 because NVDIMMs support very fast random access.
 
-NOVA also support support "unsafe data" and "unsafe metadata" modes that
+NOVA also supports "unsafe data" and "unsafe metadata" modes that
 improve performance in some cases and allows for non-atomic updates of file
 data and metadata, respectively.
 
@@ -80,10 +80,10 @@ NOVA protects all of its metadata data structures with a combination of
 replication and checksums.  It protects file data using RAID-5 style parity.
 
 NOVA can detects data corruption by verifying checksums on each access and by
-catching and handly machine check exceptions (MCEs) that arise when the
+catching and handling machine check exceptions (MCEs) that arise when the
 system's memory controller detects at uncorrectable media error.
 
-We have developed a fault injection tool that allows testing of these recovery mechanisms.
+We use a fault injection tool that allows testing of these recovery mechanisms.
 
 To facilitate backups, NOVA can take snapshots of the current filesystem state
 that can be mounted read-only while the current file system is mounted
@@ -103,11 +103,11 @@ to modify a file, the program must take full responsibility for that data and
 NOVA must ensure that the memory will behave as expected.  At other times, the
 file system provides protection.  This approach has several implications:
 
-1. NOVA expects that that msync() may be implemented in userspace.
+1. Implementing `msync()` in user space works fine.
 
 2. While a file is mmap'd, it is not protected by NOVA's RAID-style parity
-mechanism.  When the file is unmapped and/or during file system recovery,
-protection is restored.
+mechanism, because protecting it would be too expensive.  When the file is
+unmapped and/or during file system recovery, protection is restored.
 
 3. The snapshot mechanism must be careful about the order in which in adds
 pages to the file's snapshot image.
@@ -122,18 +122,20 @@ COW overheads for the entire page.
 The technical report also illustrates the trade-offs between our protection
 mechanisms and performance.
 
-
 ## Gaps and Missing Features
 
 Although NOVA is a fully-functional file system, there is still much work left
-to be done.  In particular, the following items are currently missing:
+to be done.  In particular, (at least) the following items are currently missing:
 
 1.  There is no mkfs or fsk utility (`mount` takes an option to create a NOVA file system)
 2.  NOVA doesn't scrub data to prevent corruption from accumulating in infrequently accessed data.
 3.  NOVA doesn't read bad block information on mount and attempt recovery of the effected data.
 4.  NOVA only works on x86-64 kernels.
 5.  NOVA does not currently support extended attributes or ACL.
-6.  ...
+6.  NOVA does not currently prevent writes to mounted snapshots.
+7.  Using `write()` to modify pages that are mmap'd is not supported.
+8.  ...
+
 
 ## Building and Using NOVA
 
