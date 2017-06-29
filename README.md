@@ -196,6 +196,20 @@ To mount a snapshot, mount NOVA and specifying the snapshot index, for example:
 
 Users should not write to the file system after mounting a snapshot.
 
+## Hacking and Contributing
+
+The NOVA source code is almost completely contains in the `fs/nova` directory.
+The execptions are some small changes in the kernel's memory management system
+to support checkpointing.
+
+`Documentation/filesystems/nova` contains a brief description of the role of
+each file does in `fs/nova`.
+
+If you find bugs, please [report them](https://github.com/NVSL/linux-nova/issues).
+
+If you have other questions or suggestions you can contact the NOVA developers at [cse-nova-hackers@eng.ucsd.edu](mailto:cse-nova-hackers@eng.ucsd.edu).
+
+
 [NVSL]: http://nvsl.ucsd.edu/ "http://nvsl.ucsd.edu"
 [POSIXtest]: http://www.tuxera.com/community/posix-test-suite/ 
 [FAST2016]: https://www.usenix.org/conference/fast16/technical-sessions
