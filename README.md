@@ -133,8 +133,11 @@ to be done.  In particular, (at least) the following items are currently missing
 5.  NOVA does not currently support extended attributes or ACL.
 6.  NOVA does not currently prevent writes to mounted snapshots.
 7.  Using `write()` to modify pages that are mmap'd is not supported.
-8.  ...
+8.  NOVA doesn't provide quota support.
+9.  atime and mmaptime are not always updated properly.
+10.  Moving NOVA file systems between machines with different numbers of CPUs does not work.
 
+None of these are fundamental limitations of NOVA's design.
 
 ## Building and Using NOVA
 
@@ -202,7 +205,7 @@ The NOVA source code is almost completely contains in the `fs/nova` directory.
 The execptions are some small changes in the kernel's memory management system
 to support checkpointing.
 
-`Documentation/filesystems/nova` contains a brief description of the role of
+`Documentation/filesystems/nova.txt` contains a brief description of the role of
 each file does in `fs/nova`.
 
 If you find bugs, please [report them](https://github.com/NVSL/linux-nova/issues).
