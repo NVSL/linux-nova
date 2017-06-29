@@ -1,7 +1,5 @@
 # NOVA: NOn-Volatile memory Accelerated log-structured file system
 
-## Overiew
-
 NOVA is a log-structured file system designed for byte-addressable non-volatile
 memories (e.g., NVDIMMs and Intel's soon-to-be-released 3DXpoint DIMMs),
 developed by the [Non-Volatile Systems Laboratory][NVSL], University of
@@ -39,8 +37,8 @@ A more thorough discussion of NOVA's design is avaialable in these two papers:
 *Jian Xu and Steven Swanson, University of California, San Diego*<br>
 Published in FAST 2016
 
-**Hardening the NOVA File System**<br>
-[PDF](http://cseweb.ucsd.edu/~swanson/papers/TechReport2017HardenedNOVA.pdf) 
+**Hardening the NOVA File System**
+[PDF](http://cseweb.ucsd.edu/~swanson/papers/TechReport2017HardenedNOVA.pdf) <br>
 UCSD-CSE Techreport CS2017-1018
 *Jian Xu, Lu Zhang, Amirsaman Memaripour, Akshatha Gangadharaiah, Amit Borase, Tamires Brito Da Silva, Andy Rudoff, Steven Swanson*<br>
 
