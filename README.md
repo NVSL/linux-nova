@@ -1,6 +1,5 @@
 # NOVA: NOn-Volatile memory Accelerated log-structured file system
 
-
 NOVA's goal is to provide a high-performance, full-featured, production-ready
 file system tailored for byte-addressable non-volatile memories (e.g., NVDIMMs
 and Intel's soon-to-be-released 3DXpoint DIMMs).  It combines design elements
@@ -49,12 +48,11 @@ Read on for further details about NOVA's overall design and its current status
 
 NOVA aims to be compatible with other Linux file systems.  To help verify that it achieves this we run several test suites against NOVA each night.
 
-* The latest version of XFSTests.
+* The latest version of XFSTests. ([Current failures](https://github.com/NVSL/linux-nova/issues?q=is%3Aopen+is%3Aissue+label%3AXFSTests))
 * The linux testing project file system tests.
 * The fstest POSIX conformance test suite.
 
-Currently, nearly all of these tests pass for the `master` branch, and the
-handful of failures are not critical and are on our list of TODOs.
+Currently, nearly all of these tests pass for the `master` branch.
 
 NOVA uses the standard PMEM kernel interfaces for accessing and managing persistent memory.
 
@@ -135,9 +133,10 @@ to be done.  In particular, (at least) the following items are currently missing
 7.  Using `write()` to modify pages that are mmap'd is not supported.
 8.  NOVA doesn't provide quota support.
 9.  atime and mmaptime are not always updated properly.
-10.  Moving NOVA file systems between machines with different numbers of CPUs does not work.
+10. Moving NOVA file systems between machines with different numbers of CPUs does not work.
+11. Remounting a NOVA file system with different mount options may fail. 
 
-None of these are fundamental limitations of NOVA's design.
+None of these are fundamental limitations of NOVA's design.  Additional bugs and issues are here [here][https://github.com/NVSL/linux-nova/issues]
 
 ## Building and Using NOVA
 
