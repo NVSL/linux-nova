@@ -2,6 +2,7 @@ config NOVA_FS
 	tristate "NOVA: log-structured file system for non-volatile memories"
 	depends on FS_DAX
 	select CRC32
+	select LIBCRC32C
 	help
 	  If your system has a block of fast (comparable in access speed to
 	  system memory) and non-volatile byte-addressable memory and you wish
