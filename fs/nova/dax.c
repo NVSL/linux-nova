@@ -221,7 +221,7 @@ static inline int nova_handle_partial_block(struct super_block *sb,
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_file_write_entry *entryc, entry_copy;
-
+	int copied_blocks = 0;
 	nova_memunlock_block(sb, kmem);
 	if (entry == NULL) {
 		/* Fill zero */
@@ -242,12 +242,13 @@ static inline int nova_handle_partial_block(struct super_block *sb,
 
 		nova_copy_partial_block(sb, sih, entryc, index,
 					offset, length, kmem);
+		copied_blocks = 1;
 	}
 	nova_memlock_block(sb, kmem);
 	if (support_clwb)
 		nova_flush_buffer(kmem + offset, length, 0);
 
-	return 0;
+	return copied_blocks;
 }
 
 /*
@@ -255,7 +256,7 @@ static inline int nova_handle_partial_block(struct super_block *sb,
  * Do nothing if fully covered; copy if original blocks present;
  * Fill zero otherwise.
  */
-static void nova_handle_head_tail_blocks(struct super_block *sb,
+static int nova_handle_head_tail_blocks(struct super_block *sb,
 	struct inode *inode, loff_t pos, size_t count, void *kmem)
 {
 	struct nova_inode_info *si = NOVA_I(inode);
@@ -264,7 +265,9 @@ static void nova_handle_head_tail_blocks(struct super_block *sb,
 	unsigned long start_blk, end_blk, num_blocks;
 	struct nova_file_write_entry *entry;
 	timing_t partial_time;
-
+	int copied_end = 0;
+	int copied_start = 0;
+	     
 	NOVA_START_TIMING(partial_block_t, partial_time);
 	offset = pos & (sb->s_blocksize - 1);
 	num_blocks = ((count + offset - 1) >> sb->s_blocksize_bits) + 1;
@@ -281,8 +284,14 @@ static void nova_handle_head_tail_blocks(struct super_block *sb,
 				offset, start_blk, kmem);
 	if (offset != 0) {
 		entry = nova_get_write_entry(sb, sih, start_blk);
-		nova_handle_partial_block(sb, sih, entry, start_blk,
-					0, offset, kmem);
+		copied_start = nova_handle_partial_block(sb, sih, entry, start_blk,
+							 0, offset, kmem);
+		if (copied_start == 0)
+		     nova_dbgv("%s: COW start page\n",__func__);
+		if (copied_start < 0) 
+		     return copied_start;
+		
+		
 	}
 
 	kmem = (void *)((char *)kmem +
@@ -292,13 +301,22 @@ static void nova_handle_head_tail_blocks(struct super_block *sb,
 				eblk_offset, end_blk, kmem);
 	if (eblk_offset != 0) {
 		entry = nova_get_write_entry(sb, sih, end_blk);
-		nova_handle_partial_block(sb, sih, entry, end_blk,
+		copied_end = nova_handle_partial_block(sb, sih, entry, end_blk,
 					eblk_offset,
 					sb->s_blocksize - eblk_offset,
 					kmem);
-
+		if (copied_end == 0)
+		     nova_dbgv("%s: COW end page\n",__func__);
+		if (copied_end < 0) 
+		     return copied_end;
+		
 	}
 	NOVA_END_TIMING(partial_block_t, partial_time);
+	
+	if (start_blk == end_blk) 
+	     return copied_start;
+	else
+	     return copied_start + copied_end;
 }
 
 int nova_reassign_file_tree(struct super_block *sb,
@@ -742,7 +760,8 @@ static ssize_t nova_inplace_file_write(struct file *filp,
 	u64 file_size;
 	u32 time;
 	ssize_t ret;
-
+	int cow_blocks = 0;
+	
 	if (len == 0)
 		return 0;
 
@@ -837,10 +856,16 @@ static ssize_t nova_inplace_file_write(struct file *filp,
 		kmem = nova_get_block(inode->i_sb, blk_off);
 
 		if (hole_fill &&
-			(offset || ((offset + bytes) & (PAGE_SIZE - 1)) != 0))
-			nova_handle_head_tail_blocks(sb, inode, pos,
+		    (offset || ((offset + bytes) & (PAGE_SIZE - 1)) != 0)) {
+		     // TODO: What to do with cow_blocks?  why are we COWing during an in-place update?
+		     ret = nova_handle_head_tail_blocks(sb, inode, pos,
 							bytes, kmem);
+		     if (ret < 0) 
+			  goto out;
+		     cow_blocks += ret;
 
+		}
+		
 		/* Now copy from user buf */
 //		nova_dbg("Write: %p\n", kmem);
 		NOVA_START_TIMING(memcpy_w_nvmm_t, memcpy_time);
@@ -917,7 +942,7 @@ static ssize_t nova_inplace_file_write(struct file *filp,
 	}
 
 	data_bits = blk_type_to_shift[sih->i_blk_type];
-	sih->i_blocks += (total_blocks << (data_bits - sb->s_blocksize_bits));
+	sih->i_blocks += (total_blocks << (data_bits - sb->s_blocksize_bits)) - cow_blocks;
 
 	inode->i_blocks = sih->i_blocks;
 
@@ -1019,6 +1044,8 @@ static ssize_t nova_cow_file_write(struct file *filp,
 	int try_inplace = 0;
 	u64 epoch_id;
 	u32 time;
+	int cow_blocks = 0;
+
 
 	if (len == 0)
 		return 0;
@@ -1105,9 +1132,14 @@ static ssize_t nova_cow_file_write(struct file *filp,
 		kmem = nova_get_block(inode->i_sb,
 			nova_get_block_off(sb, blocknr,	sih->i_blk_type));
 
-		if (offset || ((offset + bytes) & (PAGE_SIZE - 1)) != 0)
-			nova_handle_head_tail_blocks(sb, inode, pos,
-							bytes, kmem);
+		if (offset || ((offset + bytes) & (PAGE_SIZE - 1)) != 0) {
+			ret = nova_handle_head_tail_blocks(sb, inode, pos,
+								  bytes, kmem);
+		     if (ret < 0) 
+			  goto out;
+		     cow_blocks += ret;
+		     nova_dbgv("%s: COWd %d pages; %d total\n", __func__, ret, cow_blocks);
+		}
 
 		/* Now copy from user buf */
 //		nova_dbg("Write: %p\n", kmem);
@@ -1165,8 +1197,8 @@ static ssize_t nova_cow_file_write(struct file *filp,
 	}
 
 	data_bits = blk_type_to_shift[sih->i_blk_type];
-	sih->i_blocks += (total_blocks << (data_bits - sb->s_blocksize_bits));
-
+	sih->i_blocks += (total_blocks << (data_bits - sb->s_blocksize_bits)) - cow_blocks;
+	
 	nova_memunlock_inode(sb, pi);
 	nova_update_inode(sb, inode, pi, &update, 1);
 	nova_memlock_inode(sb, pi);
