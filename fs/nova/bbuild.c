@@ -453,7 +453,8 @@ void nova_save_inode_list_to_log(struct super_block *sb)
 
 	sih.ino = NOVA_INODELIST1_INO;
 	sih.i_blk_type = NOVA_DEFAULT_BLOCK_TYPE;
-
+	sih.i_blocks = 0;
+	
 	for (i = 0; i < sbi->cpus; i++) {
 		inode_map = &sbi->inode_maps[i];
 		num_nodes += inode_map->num_range_node_inode;
