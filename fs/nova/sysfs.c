@@ -476,9 +476,18 @@ ssize_t nova_seq_gc(struct file *filp, const char __user *buf,
      nova_info("%s: got inode %d @ 0x%p; pi=0x%p\n", __func__,
 	       target_inode_number, target_inode, target_pi);
 
-     nova_inode_log_fast_gc(sb, target_pi, &target_sih->header, 0, 0, 0, 0);
+     nova_inode_log_fast_gc(sb, target_pi, &target_sih->header, 0, 0, 0, 0, 1);
      
-out:
+     /* struct address_space *mapping = filp->f_mapping; */
+     /* 	struct inode *inode = mapping->host; */
+     /* 	struct super_block *sb = PDE_DATA(inode); */
+     /* 	size_t size; */
+     /* 	unsigned int func_id, poolmb, disks; */
+
+     /* 	sscanf(buf, "%u:%u:%zu:%u", &func_id, &poolmb, &size, &disks); */
+     /* 	nova_test_perf(sb, func_id, poolmb, size, disks); */
+
+ out:
      return retval;
 }
 
