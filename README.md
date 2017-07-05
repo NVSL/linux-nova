@@ -52,9 +52,11 @@ NOVA aims to be compatible with other Linux file systems.  To help verify that i
 * The linux testing project file system tests.
 * The fstest POSIX conformance test suite.
 
-Currently, nearly all of these tests pass for the `master` branch.
+Currently, nearly all of these tests pass for the `master` branch, and we have
+run complex programs on NOVA.  There are, of course, many bugs left to fix.
 
-NOVA uses the standard PMEM kernel interfaces for accessing and managing persistent memory.
+NOVA uses the standard PMEM kernel interfaces for accessing and managing
+persistent memory.
 
 ### Atomicity
 
@@ -119,12 +121,12 @@ COW overheads for the entire page.
 The technical report also illustrates the trade-offs between our protection
 mechanisms and performance.
 
-## Gaps and Missing Features
+## Gaps, Missing Features, and Development Status
 
 Although NOVA is a fully-functional file system, there is still much work left
 to be done.  In particular, (at least) the following items are currently missing:
 
-1.  There is no mkfs or fsk utility (`mount` takes an option to create a NOVA file system)
+1.  There is no mkfs or fsk utility (`mount` takes `-o init` to create a NOVA file system)
 2.  NOVA doesn't scrub data to prevent corruption from accumulating in infrequently accessed data.
 3.  NOVA doesn't read bad block information on mount and attempt recovery of the effected data.
 4.  NOVA only works on x86-64 kernels.
@@ -132,11 +134,15 @@ to be done.  In particular, (at least) the following items are currently missing
 6.  NOVA does not currently prevent writes to mounted snapshots.
 7.  Using `write()` to modify pages that are mmap'd is not supported.
 8.  NOVA doesn't provide quota support.
-9.  atime and mmaptime are not always updated properly.
-10. Moving NOVA file systems between machines with different numbers of CPUs does not work.
-11. Remounting a NOVA file system with different mount options may fail. 
+9.  Moving NOVA file systems between machines with different numbers of CPUs does not work.
+10. Remounting a NOVA file system with different mount options may fail. 
 
-None of these are fundamental limitations of NOVA's design.  Additional bugs and issues are here [here][https://github.com/NVSL/linux-nova/issues]
+None of these are fundamental limitations of NOVA's design.  Additional bugs
+and issues are here [here][https://github.com/NVSL/linux-nova/issues].
+
+NOVA is complete and robust enough to run a range of complex applications, but
+it is not yet ready for production use.  Our current focus is on adding a few
+missing features list above and finding/fixing bugs.
 
 ## Building and Using NOVA
 
@@ -158,16 +164,34 @@ from address 8GB, and the kernel will create a `pmem0` block device under the
 After the OS has booted, you can initialize a NOVA instance with the following commands:
 
 ~~~
-#modprobe nova
-#mount -t NOVA -o init /dev/pmem0 /mnt/ramdisk
+# modprobe nova
+# mount -t NOVA -o init /dev/pmem0 /mnt/ramdisk
 ~~~
 
 The above commands create a NOVA instance on pmem0 device, and mount on `/mnt/ramdisk`.
 
+To enable NOVA's data protection features, load the module like so:
+
+~~~
+# modprobe nova measure_timing=0\
+    inplace_data_updates=0\
+    wprotect=0\
+    mmap_cow=1\
+    unsafe_metadata=0\
+    replica_metadata=1\
+    metadata_csum=1\
+    dram_struct_csum=1\
+    data_csum=1\
+    data_parity=1
+~~~
+
+Currently, not all combinations of options work properly, and remount file
+systems with different combinations of options may not work.
+
 To recover an existing NOVA instance, mount NOVA without the init option, for example:
 
 ~~~
-#mount -t NOVA /dev/pmem0 /mnt/ramdisk
+# mount -t NOVA /dev/pmem0 /mnt/ramdisk
 ~~~
 
 ### Taking Snapshots
@@ -175,25 +199,25 @@ To recover an existing NOVA instance, mount NOVA without the init option, for ex
 To create a snapshot:
 
 ~~~
-#echo 1 > /proc/fs/NOVA/<device>/create_snapshot
+# echo 1 > /proc/fs/NOVA/<device>/create_snapshot
 ~~~
 
 To list the current snapshots:
 
 ~~~
-#cat /proc/fs/NOVA/<device>/snapshots
+# cat /proc/fs/NOVA/<device>/snapshots
 ~~~
 
 To delete a snapshot, specify the snapshot index which is given by the previous command:
 
 ~~~
-#echo <index> > /proc/fs/NOVA/<device>/delete_snapshot
+# echo <index> > /proc/fs/NOVA/<device>/delete_snapshot
 ~~~
 
 To mount a snapshot, mount NOVA and specifying the snapshot index, for example:
 
 ~~~
-#mount -t NOVA -o snapshot=<index> /dev/pmem0 /mnt/ramdisk
+# mount -t NOVA -o snapshot=<index> /dev/pmem0 /mnt/ramdisk
 ~~~
 
 Users should not write to the file system after mounting a snapshot.
