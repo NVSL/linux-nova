@@ -648,26 +648,28 @@ int nova_inode_log_fast_gc(struct super_block *sb,
 	nova_dbgv("checked pages %lu, freed %d\n", checked_pages, freed_pages);
 	checked_pages -= freed_pages;
 
-	curr = BLOCK_OFF(curr_tail);
-	curr_page = (struct nova_inode_log_page *)nova_get_block(sb, curr);
+	if (num_pages > 0) {
+	     curr = BLOCK_OFF(curr_tail);
+	     curr_page = (struct nova_inode_log_page *)nova_get_block(sb, curr);
 
-	nova_memunlock_block(sb, curr_page);
-	nova_set_next_page_address(sb, curr_page, new_block, 1);
-	nova_memlock_block(sb, curr_page);
+	     nova_memunlock_block(sb, curr_page);
+	     nova_set_next_page_address(sb, curr_page, new_block, 1);
+	     nova_memlock_block(sb, curr_page);
 
-	if (replica_metadata) {
-		alter_curr = BLOCK_OFF(sih->alter_log_tail);
-		while (next_log_page(sb, alter_curr) > 0)
-			alter_curr = next_log_page(sb, alter_curr);
+	     if (replica_metadata) {
+		  alter_curr = BLOCK_OFF(sih->alter_log_tail);
+		  while (next_log_page(sb, alter_curr) > 0)
+		       alter_curr = next_log_page(sb, alter_curr);
 
-		alter_curr_page = (struct nova_inode_log_page *)
-						nova_get_block(sb, alter_curr);
-		nova_memunlock_block(sb, curr_page);
-		nova_set_next_page_address(sb, alter_curr_page,
-						alter_new_block, 1);
-		nova_memlock_block(sb, curr_page);
+		  alter_curr_page = (struct nova_inode_log_page *)
+		       nova_get_block(sb, alter_curr);
+		  nova_memunlock_block(sb, curr_page);
+		  nova_set_next_page_address(sb, alter_curr_page,
+					     alter_new_block, 1);
+		  nova_memlock_block(sb, curr_page);
+	     }
 	}
-
+	
 	curr = sih->log_head;
 	alter_curr = sih->alter_log_head;
 
