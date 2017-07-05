@@ -1138,7 +1138,8 @@ static ssize_t nova_cow_file_write(struct file *filp,
 		     if (ret < 0) 
 			  goto out;
 		     cow_blocks += ret;
-		     nova_dbgv("%s: COWd %d pages; %d total\n", __func__, ret, cow_blocks);
+		     nova_dbgv("%s: COWd %zu pages; %d total\n", __func__, ret,
+								cow_blocks);
 		}
 
 		/* Now copy from user buf */
