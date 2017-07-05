@@ -1164,7 +1164,6 @@ static int nova_initialize_inode_log(struct super_block *sb,
 		pi->log_head = new_block;
 		sih->log_head = sih->log_tail = new_block;
 		sih->log_pages = 1;
-		sih->i_blocks++;
 		nova_flush_buffer(&pi->log_head, CACHELINE_SIZE, 1);
 	} else {
 		pi->alter_log_tail = new_block;
@@ -1172,7 +1171,6 @@ static int nova_initialize_inode_log(struct super_block *sb,
 		pi->alter_log_head = new_block;
 		sih->alter_log_head = sih->alter_log_tail = new_block;
 		sih->log_pages++;
-		sih->i_blocks++;
 		nova_flush_buffer(&pi->alter_log_head, CACHELINE_SIZE, 1);
 	}
 	nova_update_inode_checksum(pi);
@@ -1245,7 +1243,7 @@ static u64 nova_extend_inode_log(struct super_block *sb, struct nova_inode *pi,
 
 
 	nova_inode_log_fast_gc(sb, pi, sih, curr_p,
-					new_block, alter_new_block, allocated);
+					new_block, alter_new_block, allocated, 0);
 
 //	nova_dbg("After append log pages:\n");
 //	nova_print_inode_log_page(sb, inode);

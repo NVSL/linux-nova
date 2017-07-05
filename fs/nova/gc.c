@@ -410,7 +410,6 @@ static unsigned long nova_inode_log_thorough_gc(struct super_block *sb,
 	nova_free_contiguous_log_blocks(sb, sih, old_head);
 
 	sih->log_pages = sih->log_pages + blocks - checked_pages;
-	sih->i_blocks = sih->i_blocks + blocks - checked_pages;
 	NOVA_STATS_ADD(thorough_gc_pages, checked_pages - blocks);
 	NOVA_STATS_ADD(thorough_checked_pages, checked_pages);
 out:
@@ -535,7 +534,6 @@ static unsigned long nova_inode_alter_log_thorough_gc(struct super_block *sb,
 	nova_free_contiguous_log_blocks(sb, sih, alter_old_head);
 
 	sih->log_pages = sih->log_pages + blocks - checked_pages;
-	sih->i_blocks = sih->i_blocks + blocks - checked_pages;
 	NOVA_STATS_ADD(thorough_gc_pages, checked_pages - blocks);
 	NOVA_STATS_ADD(thorough_checked_pages, checked_pages);
 out:
@@ -555,7 +553,7 @@ static int need_thorough_gc(struct super_block *sb,
 
 int nova_inode_log_fast_gc(struct super_block *sb,
 	struct nova_inode *pi, struct nova_inode_info_header *sih,
-	u64 curr_tail, u64 new_block, u64 alter_new_block, int num_pages)
+	u64 curr_tail, u64 new_block, u64 alter_new_block, int num_pages, int force_thorough)
 {
 	struct nova_inode *alter_pi;
 	u64 curr, next, possible_head = 0;
@@ -688,7 +686,6 @@ int nova_inode_log_fast_gc(struct super_block *sb,
 	nova_dbgv("%s: %d new head 0x%llx\n", __func__,
 					found_head, possible_head);
 	sih->log_pages += (num_pages - freed_pages) * num_logs;
-	sih->i_blocks += (num_pages - freed_pages) * num_logs;
 	/* Don't update log tail pointer here */
 	nova_flush_buffer(&pi->log_head, CACHELINE_SIZE, 1);
 
@@ -712,7 +709,8 @@ int nova_inode_log_fast_gc(struct super_block *sb,
 	if ((sih->valid_entries * checked_pages) % sih->num_entries)
 		blocks++;
 
-	if (need_thorough_gc(sb, sih, blocks, checked_pages)) {
+	if (force_thorough ||
+	    need_thorough_gc(sb, sih, blocks, checked_pages) ) {
 		nova_dbgv("Thorough GC for inode %lu: checked pages %lu, "
 				"valid pages %lu\n", sih->ino,
 				checked_pages, blocks);
