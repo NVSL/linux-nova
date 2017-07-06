@@ -487,9 +487,9 @@ static int nova_read_inode(struct super_block *sb, struct inode *inode,
 
 	/* Update size and time after rebuild the tree */
 	inode->i_size = le64_to_cpu(sih->i_size);
-	inode->i_atime.tv_sec = le32_to_cpu(pi->i_atime);
-	inode->i_ctime.tv_sec = le32_to_cpu(pi->i_ctime);
-	inode->i_mtime.tv_sec = le32_to_cpu(pi->i_mtime);
+	inode->i_atime.tv_sec = (__s32)le32_to_cpu(pi->i_atime);
+	inode->i_ctime.tv_sec = (__s32)le32_to_cpu(pi->i_ctime);
+	inode->i_mtime.tv_sec = (__s32)le32_to_cpu(pi->i_mtime);
 	inode->i_atime.tv_nsec = inode->i_mtime.tv_nsec =
 					 inode->i_ctime.tv_nsec = 0;
 	set_nlink(inode, le16_to_cpu(pi->i_links_count));
