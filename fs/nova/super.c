@@ -662,7 +662,7 @@ setup_sb:
 	sb->s_magic = le32_to_cpu(sbi->nova_sb->s_magic);
 	sb->s_op = &nova_sops;
 	sb->s_maxbytes = nova_max_size(sb->s_blocksize_bits);
-	sb->s_time_gran = 1;
+	sb->s_time_gran = 1000000000; // 1 second.
 	sb->s_export_op = &nova_export_ops;
 	sb->s_xattr = NULL;
 	sb->s_flags |= MS_NOSEC;

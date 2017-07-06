@@ -1004,7 +1004,7 @@ struct inode *nova_new_vfs_inode(enum nova_new_inode_type type,
 
 	inode_init_owner(inode, dir, mode);
 	inode->i_blocks = inode->i_size = 0;
-	inode->i_mtime = inode->i_atime = inode->i_ctime = CURRENT_TIME;
+	inode->i_mtime = inode->i_atime = inode->i_ctime = current_time(inode);
 
 	inode->i_generation = atomic_add_return(1, &sbi->next_generation);
 	inode->i_size = size;
