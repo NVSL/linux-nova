@@ -956,13 +956,10 @@ int nova_append_snapshot_info_entry(struct super_block *sb,
 	entry_info.epoch_id = data->epoch_id;
 	entry_info.inplace = 0;
 
-	if (sih->log_head != 0) {
-		/* sih->log_head == 0 indicates this inode is not initialized */
-		if (nova_check_inode_integrity(sb, sih->ino, sih->pi_addr,
-				sih->alter_pi_addr, &inode_copy, 0) < 0) {
-			ret = -EIO;
-			goto out;
-		}
+	if (nova_check_inode_integrity(sb, sih->ino, sih->pi_addr,
+			sih->alter_pi_addr, &inode_copy, 0) < 0) {
+		ret = -EIO;
+		goto out;
 	}
 
 	ret = nova_append_log_entry(sb, pi, NULL, sih, &entry_info);
