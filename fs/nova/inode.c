@@ -155,6 +155,11 @@ int nova_get_inode_address(struct super_block *sb, u64 ino, int version,
 	unsigned long curr_addr;
 	int allocated;
 
+	if (ino < NOVA_NORMAL_INODE_START) {
+	     *pi_addr = nova_get_basic_inode_addr(sb, ino);
+	     return 0;
+	}
+	
 	sih.ino = NOVA_INODETABLE_INO;
 	sih.i_blk_type = NOVA_BLOCK_TYPE_2M;
 	data_bits = blk_type_to_shift[sih.i_blk_type];

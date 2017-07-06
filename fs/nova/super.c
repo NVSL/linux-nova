@@ -385,8 +385,8 @@ static struct nova_inode *nova_init(struct super_block *sb,
 
 	nova_sync_super(sb);
 
-	nova_dbgv("Allocate root inode\n");
 	root_i = nova_get_inode_by_ino(sb, NOVA_ROOT_INO);
+	nova_dbgv("%s: Allocate root inode @ 0x%p\n", __func__, root_i);
 
 	nova_memunlock_inode(sb, root_i);
 	root_i->i_mode = cpu_to_le16(sbi->mode | S_IFDIR);
