@@ -724,15 +724,11 @@ struct inode *nova_iget(struct super_block *sb, unsigned long ino)
 
 	nova_dbgv("%s: inode %lu\n", __func__, ino);
 
-	if (ino < NOVA_NORMAL_INODE_START) {
-		pi_addr = nova_get_basic_inode_addr(sb, ino);
-	} else {
-		err = nova_get_inode_address(sb, ino, 0, &pi_addr, 0, 0);
-		if (err) {
-			nova_dbg("%s: get inode %lu address failed %d\n",
-					__func__, ino, err);
-			goto fail;
-		}
+	err = nova_get_inode_address(sb, ino, 0, &pi_addr, 0, 0);
+	if (err) {
+	     nova_dbg("%s: get inode %lu address failed %d\n",
+		      __func__, ino, err);
+	     goto fail;
 	}
 
 	if (pi_addr == 0) {
