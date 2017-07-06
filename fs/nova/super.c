@@ -185,7 +185,8 @@ static int nova_parse_options(char *options, struct nova_sb_info *sbi,
 	char *p;
 	substring_t args[MAX_OPT_ARGS];
 	int option;
-
+	kuid_t uid;
+	
 	if (!options)
 		return 0;
 
@@ -198,18 +199,19 @@ static int nova_parse_options(char *options, struct nova_sb_info *sbi,
 		token = match_token(p, tokens, args);
 		switch (token) {
 		case Opt_bpi:
-			if (remount)
-				goto bad_opt;
 			if (match_int(&args[0], &option))
 				goto bad_val;
+			if (remount && sbi->bpi )
+				goto bad_opt;
 			sbi->bpi = option;
 			break;
 		case Opt_uid:
-			if (remount)
-				goto bad_opt;
 			if (match_int(&args[0], &option))
 				goto bad_val;
-			sbi->uid = make_kuid(current_user_ns(), option);
+			uid = make_kuid(current_user_ns(), option);
+			if (remount && !uid_eq(sbi->uid, uid))
+			        goto bad_opt;
+			sbi->uid = uid;
 			break;
 		case Opt_gid:
 			if (match_int(&args[0], &option))
@@ -751,15 +753,15 @@ static int nova_show_options(struct seq_file *seq, struct dentry *root)
 {
 	struct nova_sb_info *sbi = NOVA_SB(root->d_sb);
 
-	seq_printf(seq, ",physaddr=0x%016llx", (u64)sbi->phys_addr);
-	if (sbi->initsize)
-		seq_printf(seq, ",init=%luk", sbi->initsize >> 10);
-	if (sbi->blocksize)
-		seq_printf(seq, ",bs=%lu", sbi->blocksize);
-	if (sbi->bpi)
-		seq_printf(seq, ",bpi=%lu", sbi->bpi);
-	if (sbi->num_inodes)
-		seq_printf(seq, ",N=%lu", sbi->num_inodes);
+	//seq_printf(seq, ",physaddr=0x%016llx", (u64)sbi->phys_addr);
+	//if (sbi->initsize)
+	//     seq_printf(seq, ",init=%luk", sbi->initsize >> 10);
+	//if (sbi->blocksize)
+	//       seq_printf(seq, ",bs=%lu", sbi->blocksize);
+	//if (sbi->bpi)
+	//	seq_printf(seq, ",bpi=%lu", sbi->bpi);
+	//if (sbi->num_inodes)
+	//	seq_printf(seq, ",N=%lu", sbi->num_inodes);
 	if (sbi->mode != (S_IRWXUGO | S_ISVTX))
 		seq_printf(seq, ",mode=%03o", sbi->mode);
 	if (uid_valid(sbi->uid))
@@ -773,8 +775,8 @@ static int nova_show_options(struct seq_file *seq, struct dentry *root)
 	/* memory protection disabled by default */
 	if (test_opt(root->d_sb, PROTECT))
 		seq_puts(seq, ",wprotect");
-	if (test_opt(root->d_sb, DAX))
-		seq_puts(seq, ",dax");
+	//if (test_opt(root->d_sb, DAX))
+	//	seq_puts(seq, ",dax");
 
 	return 0;
 }
