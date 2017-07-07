@@ -710,6 +710,8 @@ int nova_rebuild_inode(struct super_block *sb, struct nova_inode_info *si,
 		return ret;
 
 	pi = (struct nova_inode *)nova_get_block(sb, pi_addr);
+	// We need this te valid in case we need to evect the inode.
+	sih->pi_addr = pi_addr;
 
 	if (pi->deleted == 1) {
 		nova_dbg("%s: inode %llu has been deleted.\n", __func__, ino);
@@ -724,7 +726,7 @@ int nova_rebuild_inode(struct super_block *sb, struct nova_inode_info *si,
 	nova_init_header(sb, sih, __le16_to_cpu(pi->i_mode));
 	sih->ino = ino;
 	sih->alter_pi_addr = alter_pi_addr;
-
+	
 	switch (__le16_to_cpu(pi->i_mode) & S_IFMT) {
 	case S_IFLNK:
 		/* Treat symlink files as normal files */
