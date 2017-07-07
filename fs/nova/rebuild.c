@@ -684,6 +684,7 @@ out:
 	return ret;
 }
 
+/* initialize nova inode header and other DRAM data structures */
 int nova_rebuild_inode(struct super_block *sb, struct nova_inode_info *si,
 	u64 ino, u64 pi_addr, int rebuild_dir)
 {
@@ -696,8 +697,10 @@ int nova_rebuild_inode(struct super_block *sb, struct nova_inode_info *si,
 	if (replica_metadata) {
 		/* Get alternate inode address */
 		ret = nova_get_alter_inode_address(sb, ino, &alter_pi_addr);
-		if (ret)
+		if (ret)  {
+		        nova_dbg("%s: failed to get alt inode addr for inode %llu\n", __func__, ino);
 			return ret;
+		}
 	}
 
 	ret = nova_check_inode_integrity(sb, ino, pi_addr, alter_pi_addr,
@@ -707,8 +710,10 @@ int nova_rebuild_inode(struct super_block *sb, struct nova_inode_info *si,
 
 	pi = (struct nova_inode *)nova_get_block(sb, pi_addr);
 
-	if (pi->deleted == 1)
+       if (pi->deleted == 1) {
+	        nova_dbg("%s: inode %lu has been deleted.\n", __func__, ino);
 		return -EINVAL;
+	}
 
 	nova_dbgv("%s: inode %llu, addr 0x%llx, valid %d, "
 			"head 0x%llx, tail 0x%llx\n",

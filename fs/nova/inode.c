@@ -428,6 +428,7 @@ done:
 	return blocks;
 }
 
+/* copy persistent state to struct inode */
 static int nova_read_inode(struct super_block *sb, struct inode *inode,
 	u64 pi_addr)
 {
@@ -732,17 +733,24 @@ struct inode *nova_iget(struct super_block *sb, unsigned long ino)
 	}
 
 	if (pi_addr == 0) {
+	        nova_dbg("%s: failed to get pi_addr for inode %llu\n", __func__, ino);
 		err = -EACCES;
 		goto fail;
 	}
 
 	err = nova_rebuild_inode(sb, si, ino, pi_addr, 1);
-	if (err)
+	if (err) {
+	        nova_dbg("%s: failed to rebuild inode %llu\n", __func__, ino);
 		goto fail;
+	}
 
 	err = nova_read_inode(sb, inode, pi_addr);
-	if (unlikely(err))
+	if (unlikely(err)) {
+	        nova_dbg("%s: failed to read inode %llu\n", __func__, ino);
 		goto fail;
+		
+	}
+
 	inode->i_ino = ino;
 
 	unlock_new_inode(inode);
@@ -892,9 +900,10 @@ void nova_evict_inode(struct inode *inode)
 		inode->i_size = 0;
 	}
 out:
-	if (destroy == 0)
+	if (destroy == 0) {
+	        nova_dbg("%s: destroying  %lu\n", __func__,  inode->i_ino);
 		nova_free_dram_resource(sb, sih);
-
+	}
 	/* TODO: Since we don't use page-cache, do we really need the following
 	 * call?
 	 */
