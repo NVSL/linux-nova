@@ -852,7 +852,9 @@ void nova_evict_inode(struct inode *inode)
 		goto out;
 	}
 
-	if (pi->nova_ino != inode->i_ino) {
+	// pi can be NULL if the file has already been deleted, but a handle
+	// remains.
+	if (pi && pi->nova_ino != inode->i_ino) {
 		nova_err(sb, "%s: inode %lu ino does not match: %llu\n",
 				__func__, inode->i_ino, pi->nova_ino);
 		nova_dbg("inode size %llu, pi addr 0x%lx, pi head 0x%llx, "
@@ -866,7 +868,7 @@ void nova_evict_inode(struct inode *inode)
 	}
 
 	/* Check if this inode exists in at least one snapshot. */
-	if (pi->valid == 0) {
+	if (pi && pi->valid == 0) {
 		ret = nova_append_inode_to_snapshot(sb, pi);
 		if (ret == 0)
 			goto out;
@@ -877,9 +879,11 @@ void nova_evict_inode(struct inode *inode)
 		if (IS_APPEND(inode) || IS_IMMUTABLE(inode))
 			goto out;
 
-		ret = nova_free_inode_resource(sb, pi, sih);
-		if (ret)
-			goto out;
+		if (pi) {
+		     ret = nova_free_inode_resource(sb, pi, sih);
+		     if (ret)
+			  goto out;
+		}
 
 		destroy = 1;
 		pi = NULL; /* we no longer own the nova_inode */
