@@ -463,7 +463,7 @@ const struct file_operations nova_dax_file_operations = {
 #endif
 };
 
-/*
+
 static ssize_t nova_wrap_rw_iter(struct kiocb *iocb, struct iov_iter *iter)
 {
 	struct file *filp = iocb->ki_filp;
@@ -501,15 +501,15 @@ static ssize_t nova_wrap_rw_iter(struct kiocb *iocb, struct iov_iter *iter)
 err:
 	return ret;
 }
-*/
+
 
 /* Wrap read/write_iter for DP, CoW and WP */
 const struct file_operations nova_wrap_file_operations = {
 	.llseek			= nova_llseek,
 	.read			= nova_dax_file_read,
 	.write			= nova_dax_file_write,
-	//.read_iter		= nova_wrap_rw_iter,
-	//.write_iter		= nova_wrap_rw_iter,
+	.read_iter		= nova_wrap_rw_iter,
+	.write_iter		= nova_wrap_rw_iter,
 	.mmap			= nova_dax_file_mmap,
 	.open			= nova_open,
 	.fsync			= nova_fsync,
