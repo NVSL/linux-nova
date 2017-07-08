@@ -186,7 +186,7 @@ static int nova_parse_options(char *options, struct nova_sb_info *sbi,
 	substring_t args[MAX_OPT_ARGS];
 	int option;
 	kuid_t uid;
-	
+
 	if (!options)
 		return 0;
 
@@ -371,7 +371,6 @@ static struct nova_inode *nova_init(struct super_block *sb,
 
 	if (nova_init_inode_table(sb) < 0)
 		return ERR_PTR(-EINVAL);
-
 
 	epoch_id = nova_get_epoch_id(sb);
 
