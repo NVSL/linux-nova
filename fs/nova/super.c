@@ -558,6 +558,13 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 	if (nova_get_nvmm_info(sb, sbi))
 		goto out;
 
+	if (metadata_csum != replica_metadata) {
+		nova_warn("metadata_csum should not be used without "
+			"replica_metadata, setting both to 0\n");
+		metadata_csum = 0;
+		replica_metadata = 0;
+	}
+
 	nova_dbg("measure timing %d, replica metadata %d, "
 		"metadata checksum %d, inplace metadata update %d, "
 		"inplace update %d, wprotect %d, mmap Cow %d, "
