@@ -77,6 +77,7 @@
  * as inode table tail pointer.
  */
 struct nova_inode {
+
 	/* first 40 bytes */
 	u8	i_rsvd;		/* reserved. used to be checksum */
 	u8	valid;		/* Is this inode valid? */
@@ -102,7 +103,7 @@ struct nova_inode {
 	__le64	log_head;	/* Log head pointer */
 	__le64	log_tail;	/* Log tail pointer */
 
-        /* last 40 bytes */
+	/* last 40 bytes */
 	__le64	alter_log_head;	/* Alternate log head pointer */
 	__le64	alter_log_tail;	/* Alternate log tail pointer */
 

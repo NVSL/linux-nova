@@ -1240,7 +1240,7 @@ static u64 nova_extend_inode_log(struct super_block *sb, struct nova_inode *pi,
 
 
 	nova_inode_log_fast_gc(sb, pi, sih, curr_p,
-					new_block, alter_new_block, allocated, 0);
+			       new_block, alter_new_block, allocated, 0);
 
 //	nova_dbg("After append log pages:\n");
 //	nova_print_inode_log_page(sb, inode);

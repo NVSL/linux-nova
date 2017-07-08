@@ -135,7 +135,7 @@ to be done.  In particular, (at least) the following items are currently missing
 7.  Using `write()` to modify pages that are mmap'd is not supported.
 8.  NOVA doesn't provide quota support.
 9.  Moving NOVA file systems between machines with different numbers of CPUs does not work.
-10. Remounting a NOVA file system with different mount options may fail. 
+10. Remounting a NOVA file system with different mount options may fail.
 
 None of these are fundamental limitations of NOVA's design.  Additional bugs
 and issues are here [here][https://github.com/NVSL/linux-nova/issues].

@@ -418,7 +418,7 @@ static const struct file_operations nova_seq_test_perf_fops = {
 static int nova_seq_gc_show(struct seq_file *seq, void *v)
 {
 	seq_printf(seq, "Echo inode number to trigger garbage collection\n"
-   		        "    example: echo 34 > /proc/fs/NOVA/pmem0/gc\n");
+		   "    example: echo 34 > /proc/fs/NOVA/pmem0/gc\n");
 	return 0;
 }
 
@@ -430,65 +430,64 @@ static int nova_seq_gc_open(struct inode *inode, struct file *file)
 ssize_t nova_seq_gc(struct file *filp, const char __user *buf,
 	size_t len, loff_t *ppos)
 {
-     int target_inode_number;
-     struct address_space *mapping = filp->f_mapping;
-     struct inode *inode = mapping->host;
-     struct super_block *sb = PDE_DATA(inode);
-     struct inode *target_inode;
-     struct nova_inode *target_pi;
-     struct nova_inode_info *target_sih;
+	u64 target_inode_number;
+	struct address_space *mapping = filp->f_mapping;
+	struct inode *inode = mapping->host;
+	struct super_block *sb = PDE_DATA(inode);
+	struct inode *target_inode;
+	struct nova_inode *target_pi;
+	struct nova_inode_info *target_sih;
 
-     char *_buf;
-     int retval = len;
-     
-     if ((_buf = (char*) kmalloc(len, GFP_KERNEL)) == NULL) {
-	  nova_info("%s: kmalloc failed\n", __func__);
-	  retval = -ENOMEM;
-	  goto out;
-     }    
+	int ret;
+	char *_buf;
+	int retval = len;
 
-     if(copy_from_user(_buf, buf, len)){
-	  retval = -EFAULT;
-	  goto out;
-     }
-     sscanf(_buf, "%d", & target_inode_number);
-     kfree(_buf);
+	_buf = (char *)kmalloc(len, GFP_KERNEL);
+	if (_buf == NULL)  {
+		nova_info("%s: kmalloc failed\n", __func__);
+		retval = -ENOMEM;
+		goto out;
+	}
 
-     nova_info("%s: target_inode_number=%d.", __func__, target_inode_number);
-     
-     
-     if ((target_inode = nova_iget(sb, target_inode_number)) == NULL) {
-	  nova_info("%s: inode %d does not exist.", __func__,
-		    target_inode_number);
-	  retval = -ENOENT;
-	  goto out;
-     }
+	if (copy_from_user(_buf, buf, len)) {
+		retval = -EFAULT;
+		goto out;
+	}
 
-     if ((target_pi = nova_get_inode(sb, target_inode)) == NULL) {
-	  nova_info("%s: couldn't get nova inode %d.", __func__,
-		    target_inode_number);
-	  retval = -ENOENT;
-	  goto out;
-     }
+	ret = kstrtoul(_buf, 0, &target_inode_number);
+	if (ret) {
+		nova_info("%s: Could not parse ino '%s'\n", __func__, _buf);
+		return err;
+	}
+	nova_info("%s: target_inode_number=%d.", __func__, target_inode_number);
 
-     target_sih = NOVA_I(target_inode);
-     
-     nova_info("%s: got inode %d @ 0x%p; pi=0x%p\n", __func__,
-	       target_inode_number, target_inode, target_pi);
+	target_inode = nova_iget(sb, target_inode_number);
+	if (target_inode == NULL) {
+		nova_info("%s: inode %d does not exist.", __func__,
+			  target_inode_number);
+		retval = -ENOENT;
+		goto out;
+	}
 
-     nova_inode_log_fast_gc(sb, target_pi, &target_sih->header, 0, 0, 0, 0, 1);
-     
-     /* struct address_space *mapping = filp->f_mapping; */
-     /* 	struct inode *inode = mapping->host; */
-     /* 	struct super_block *sb = PDE_DATA(inode); */
-     /* 	size_t size; */
-     /* 	unsigned int func_id, poolmb, disks; */
+	target_pi = nova_get_inode(sb, target_inode);
+	if (target_pi == NULL) {
+		nova_info("%s: couldn't get nova inode %d.", __func__,
+			  target_inode_number);
+		retval = -ENOENT;
+		goto out;
+	}
 
-     /* 	sscanf(buf, "%u:%u:%zu:%u", &func_id, &poolmb, &size, &disks); */
-     /* 	nova_test_perf(sb, func_id, poolmb, size, disks); */
+	target_sih = NOVA_I(target_inode);
 
- out:
-     return retval;
+	nova_info("%s: got inode %d @ 0x%p; pi=0x%p\n", __func__,
+		  target_inode_number, target_inode, target_pi);
+
+	nova_inode_log_fast_gc(sb, target_pi, &target_sih->header,
+			       0, 0, 0, 0, 1);
+
+out:
+	kfree(_buf);
+	return retval;
 }
 
 static const struct file_operations nova_seq_gc_fops = {
@@ -524,7 +523,7 @@ void nova_sysfs_init(struct super_block *sb)
 				 &nova_seq_show_snapshots_fops, sb);
 		proc_create_data("test_perf", S_IRUGO, sbi->s_proc,
 				 &nova_seq_test_perf_fops, sb);
-		proc_create_data("gc", S_IRUGO, sbi->s_proc,
+		proc_create_data("gc", 0444, sbi->s_proc,
 				 &nova_seq_gc_fops, sb);
 	}
 }
@@ -546,4 +545,3 @@ void nova_sysfs_exit(struct super_block *sb)
 					nova_proc_root);
 	}
 }
- 
