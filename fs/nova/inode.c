@@ -156,8 +156,8 @@ int nova_get_inode_address(struct super_block *sb, u64 ino, int version,
 	int allocated;
 
 	if (ino < NOVA_NORMAL_INODE_START) {
-	     *pi_addr = nova_get_basic_inode_addr(sb, ino);
-	     return 0;
+		*pi_addr = nova_get_basic_inode_addr(sb, ino);
+		return 0;
 	}
 
 	sih.ino = NOVA_INODETABLE_INO;
@@ -727,28 +727,29 @@ struct inode *nova_iget(struct super_block *sb, unsigned long ino)
 
 	err = nova_get_inode_address(sb, ino, 0, &pi_addr, 0, 0);
 	if (err) {
-	     nova_dbg("%s: get inode %lu address failed %d\n",
-		      __func__, ino, err);
-	     goto fail;
+		nova_dbg("%s: get inode %lu address failed %d\n",
+			 __func__, ino, err);
+		goto fail;
 	}
 
 	if (pi_addr == 0) {
-	        nova_dbg("%s: failed to get pi_addr for inode %llu\n", __func__, ino);
+		nova_dbg("%s: failed to get pi_addr for inode %llu\n",
+			 __func__, ino);
 		err = -EACCES;
 		goto fail;
 	}
 
 	err = nova_rebuild_inode(sb, si, ino, pi_addr, 1);
 	if (err) {
-	        nova_dbg("%s: failed to rebuild inode %llu\n", __func__, ino);
+		nova_dbg("%s: failed to rebuild inode %llu\n", __func__, ino);
 		goto fail;
 	}
 
 	err = nova_read_inode(sb, inode, pi_addr);
 	if (unlikely(err)) {
-	        nova_dbg("%s: failed to read inode %llu\n", __func__, ino);
+		nova_dbg("%s: failed to read inode %llu\n", __func__, ino);
 		goto fail;
-		
+
 	}
 
 	inode->i_ino = ino;
@@ -888,9 +889,9 @@ void nova_evict_inode(struct inode *inode)
 			goto out;
 
 		if (pi) {
-		     ret = nova_free_inode_resource(sb, pi, sih);
-		     if (ret)
-			  goto out;
+			ret = nova_free_inode_resource(sb, pi, sih);
+			if (ret)
+				goto out;
 		}
 
 		destroy = 1;
@@ -901,7 +902,7 @@ void nova_evict_inode(struct inode *inode)
 	}
 out:
 	if (destroy == 0) {
-	        nova_dbg("%s: destroying  %lu\n", __func__,  inode->i_ino);
+		nova_dbg("%s: destroying  %lu\n", __func__,  inode->i_ino);
 		nova_free_dram_resource(sb, sih);
 	}
 	/* TODO: Since we don't use page-cache, do we really need the following

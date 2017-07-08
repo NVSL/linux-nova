@@ -281,10 +281,10 @@ static int nova_handle_head_tail_blocks(struct super_block *sb,
 				offset, start_blk, kmem);
 	if (offset != 0) {
 		entry = nova_get_write_entry(sb, sih, start_blk);
-		if ((ret = nova_handle_partial_block(sb, sih, entry,
-			     start_blk, 0,offset, kmem)) < 0)
-		     return ret;
-
+		ret = nova_handle_partial_block(sb, sih, entry,
+						start_blk, 0, offset, kmem);
+		if (ret < 0)
+			return ret;
 	}
 
 	kmem = (void *)((char *)kmem +
@@ -294,10 +294,13 @@ static int nova_handle_head_tail_blocks(struct super_block *sb,
 				eblk_offset, end_blk, kmem);
 	if (eblk_offset != 0) {
 		entry = nova_get_write_entry(sb, sih, end_blk);
-		if ((ret = nova_handle_partial_block(sb, sih, entry, end_blk,
-				  eblk_offset, sb->s_blocksize - eblk_offset,
-				  kmem)) < 0)
-		     return ret;
+
+		ret = nova_handle_partial_block(sb, sih, entry, end_blk,
+						eblk_offset,
+						sb->s_blocksize - eblk_offset,
+						kmem);
+		if (ret < 0)
+			return ret;
 	}
 	NOVA_END_TIMING(partial_block_t, partial_time);
 
@@ -714,7 +717,7 @@ static ssize_t nova_inplace_file_write(struct file *filp,
 	const char __user *buf,	size_t len, loff_t *ppos)
 {
 	struct address_space *mapping = filp->f_mapping;
-	struct inode    *inode = mapping->host;
+	struct inode	*inode = mapping->host;
 	struct nova_inode_info *si = NOVA_I(inode);
 	struct nova_inode_info_header *sih = &si->header;
 	struct super_block *sb = inode->i_sb;
@@ -723,7 +726,7 @@ static ssize_t nova_inplace_file_write(struct file *filp,
 	struct nova_file_write_entry *entryc, entry_copy;
 	struct nova_file_write_entry entry_data;
 	struct nova_inode_update update;
-	ssize_t     written = 0;
+	ssize_t	    written = 0;
 	loff_t pos;
 	size_t count, offset, copied;
 	unsigned long start_blk, num_blocks, ent_blks = 0;
@@ -750,7 +753,7 @@ static ssize_t nova_inplace_file_write(struct file *filp,
 	if (len == 0)
 		return 0;
 
-	nova_dbgmask |=  NOVA_DBGMASK_VERBOSE;
+	nova_dbgmask |=	 NOVA_DBGMASK_VERBOSE;
 
 	NOVA_START_TIMING(inplace_write_t, inplace_write_time);
 
@@ -844,10 +847,10 @@ static ssize_t nova_inplace_file_write(struct file *filp,
 
 		if (hole_fill &&
 		    (offset || ((offset + bytes) & (PAGE_SIZE - 1)) != 0)) {
-		     ret =  nova_handle_head_tail_blocks(sb, inode,
-							 pos, bytes, kmem);
-		     if (ret)
-			  goto out;
+			ret =  nova_handle_head_tail_blocks(sb, inode,
+							    pos, bytes, kmem);
+			if (ret)
+				goto out;
 
 		}
 
@@ -1003,14 +1006,14 @@ static ssize_t nova_cow_file_write(struct file *filp,
 	const char __user *buf,	size_t len, loff_t *ppos)
 {
 	struct address_space *mapping = filp->f_mapping;
-	struct inode    *inode = mapping->host;
+	struct inode	*inode = mapping->host;
 	struct nova_inode_info *si = NOVA_I(inode);
 	struct nova_inode_info_header *sih = &si->header;
 	struct super_block *sb = inode->i_sb;
 	struct nova_inode *pi, inode_copy;
 	struct nova_file_write_entry entry_data;
 	struct nova_inode_update update;
-	ssize_t     written = 0;
+	ssize_t	    written = 0;
 	loff_t pos;
 	size_t count, offset, copied;
 	unsigned long start_blk, num_blocks;
@@ -1114,7 +1117,7 @@ static ssize_t nova_cow_file_write(struct file *filp,
 			bytes = count;
 
 		kmem = nova_get_block(inode->i_sb,
-			nova_get_block_off(sb, blocknr,	sih->i_blk_type));
+			     nova_get_block_off(sb, blocknr, sih->i_blk_type));
 
 		if (offset || ((offset + bytes) & (PAGE_SIZE - 1)) != 0)  {
 		     ret = nova_handle_head_tail_blocks(sb, inode, pos,
@@ -1772,4 +1775,3 @@ int nova_dax_file_mmap(struct file *file, struct vm_area_struct *vma)
 
 	return 0;
 }
-

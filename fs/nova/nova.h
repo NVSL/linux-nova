@@ -1748,7 +1748,8 @@ int nova_fsync(struct file *file, loff_t start, loff_t end, int datasync);
 /* gc.c */
 int nova_inode_log_fast_gc(struct super_block *sb,
 	struct nova_inode *pi, struct nova_inode_info_header *sih,
-			   u64 curr_tail, u64 new_block, u64 alter_new_block, int num_pages, int force_thorough);
+	u64 curr_tail, u64 new_block, u64 alter_new_block, int num_pages,
+	int force_thorough);
 
 /* inode.c */
 extern const struct address_space_operations nova_aops_dax;

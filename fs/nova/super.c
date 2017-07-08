@@ -201,7 +201,7 @@ static int nova_parse_options(char *options, struct nova_sb_info *sbi,
 		case Opt_bpi:
 			if (match_int(&args[0], &option))
 				goto bad_val;
-			if (remount && sbi->bpi )
+			if (remount && sbi->bpi)
 				goto bad_opt;
 			sbi->bpi = option;
 			break;
@@ -210,7 +210,7 @@ static int nova_parse_options(char *options, struct nova_sb_info *sbi,
 				goto bad_val;
 			uid = make_kuid(current_user_ns(), option);
 			if (remount && !uid_eq(sbi->uid, uid))
-			        goto bad_opt;
+				goto bad_opt;
 			sbi->uid = uid;
 			break;
 		case Opt_gid:
@@ -772,7 +772,7 @@ static int nova_show_options(struct seq_file *seq, struct dentry *root)
 	//if (sbi->initsize)
 	//     seq_printf(seq, ",init=%luk", sbi->initsize >> 10);
 	//if (sbi->blocksize)
-	//       seq_printf(seq, ",bs=%lu", sbi->blocksize);
+	//	 seq_printf(seq, ",bs=%lu", sbi->blocksize);
 	//if (sbi->bpi)
 	//	seq_printf(seq, ",bpi=%lu", sbi->bpi);
 	//if (sbi->num_inodes)

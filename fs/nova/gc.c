@@ -553,7 +553,8 @@ static int need_thorough_gc(struct super_block *sb,
 
 int nova_inode_log_fast_gc(struct super_block *sb,
 	struct nova_inode *pi, struct nova_inode_info_header *sih,
-	u64 curr_tail, u64 new_block, u64 alter_new_block, int num_pages, int force_thorough)
+	u64 curr_tail, u64 new_block, u64 alter_new_block,
+	int num_pages, int force_thorough)
 {
 	struct nova_inode *alter_pi;
 	u64 curr, next, possible_head = 0;
@@ -647,27 +648,29 @@ int nova_inode_log_fast_gc(struct super_block *sb,
 	checked_pages -= freed_pages;
 
 	if (num_pages > 0) {
-	     curr = BLOCK_OFF(curr_tail);
-	     curr_page = (struct nova_inode_log_page *)nova_get_block(sb, curr);
+		curr = BLOCK_OFF(curr_tail);
+		curr_page = (struct nova_inode_log_page *)
+						  nova_get_block(sb, curr);
 
-	     nova_memunlock_block(sb, curr_page);
-	     nova_set_next_page_address(sb, curr_page, new_block, 1);
-	     nova_memlock_block(sb, curr_page);
+		nova_memunlock_block(sb, curr_page);
+		nova_set_next_page_address(sb, curr_page, new_block, 1);
+		nova_memlock_block(sb, curr_page);
 
-	     if (replica_metadata) {
-		  alter_curr = BLOCK_OFF(sih->alter_log_tail);
-		  while (next_log_page(sb, alter_curr) > 0)
-		       alter_curr = next_log_page(sb, alter_curr);
+		if (replica_metadata) {
+			alter_curr = BLOCK_OFF(sih->alter_log_tail);
 
-		  alter_curr_page = (struct nova_inode_log_page *)
-		       nova_get_block(sb, alter_curr);
-		  nova_memunlock_block(sb, curr_page);
-		  nova_set_next_page_address(sb, alter_curr_page,
-					     alter_new_block, 1);
-		  nova_memlock_block(sb, curr_page);
-	     }
+			while (next_log_page(sb, alter_curr) > 0)
+				alter_curr = next_log_page(sb, alter_curr);
+
+			alter_curr_page = (struct nova_inode_log_page *)
+				nova_get_block(sb, alter_curr);
+			nova_memunlock_block(sb, curr_page);
+			nova_set_next_page_address(sb, alter_curr_page,
+						   alter_new_block, 1);
+			nova_memlock_block(sb, curr_page);
+		}
 	}
-	
+
 	curr = sih->log_head;
 	alter_curr = sih->alter_log_head;
 
@@ -710,7 +713,7 @@ int nova_inode_log_fast_gc(struct super_block *sb,
 		blocks++;
 
 	if (force_thorough ||
-	    need_thorough_gc(sb, sih, blocks, checked_pages) ) {
+	    need_thorough_gc(sb, sih, blocks, checked_pages)) {
 		nova_dbgv("Thorough GC for inode %lu: checked pages %lu, "
 				"valid pages %lu\n", sih->ino,
 				checked_pages, blocks);
