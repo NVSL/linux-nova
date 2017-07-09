@@ -712,7 +712,7 @@ int nova_rebuild_inode(struct super_block *sb, struct nova_inode_info *si,
 	pi = (struct nova_inode *)nova_get_block(sb, pi_addr);
 
 	if (pi->deleted == 1) {
-		nova_dbg("%s: inode %lu has been deleted.\n", __func__, ino);
+		nova_dbg("%s: inode %llu has been deleted.\n", __func__, ino);
 		return -EINVAL;
 	}
 
