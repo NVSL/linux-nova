@@ -454,16 +454,18 @@ ssize_t nova_seq_gc(struct file *filp, const char __user *buf,
 		goto out;
 	}
 
-	ret = kstrtoul(_buf, 0, &target_inode_number);
+	_buf[len] = 0;
+	ret = kstrtoull(_buf, 0, &target_inode_number);
 	if (ret) {
 		nova_info("%s: Could not parse ino '%s'\n", __func__, _buf);
-		return err;
+		return ret;
 	}
-	nova_info("%s: target_inode_number=%d.", __func__, target_inode_number);
+	nova_info("%s: target_inode_number=%llu.", __func__,
+		  target_inode_number);
 
 	target_inode = nova_iget(sb, target_inode_number);
 	if (target_inode == NULL) {
-		nova_info("%s: inode %d does not exist.", __func__,
+		nova_info("%s: inode %llu does not exist.", __func__,
 			  target_inode_number);
 		retval = -ENOENT;
 		goto out;
@@ -471,7 +473,7 @@ ssize_t nova_seq_gc(struct file *filp, const char __user *buf,
 
 	target_pi = nova_get_inode(sb, target_inode);
 	if (target_pi == NULL) {
-		nova_info("%s: couldn't get nova inode %d.", __func__,
+		nova_info("%s: couldn't get nova inode %llu.", __func__,
 			  target_inode_number);
 		retval = -ENOENT;
 		goto out;
@@ -479,7 +481,7 @@ ssize_t nova_seq_gc(struct file *filp, const char __user *buf,
 
 	target_sih = NOVA_I(target_inode);
 
-	nova_info("%s: got inode %d @ 0x%p; pi=0x%p\n", __func__,
+	nova_info("%s: got inode %llu @ 0x%p; pi=0x%p\n", __func__,
 		  target_inode_number, target_inode, target_pi);
 
 	nova_inode_log_fast_gc(sb, target_pi, &target_sih->header,

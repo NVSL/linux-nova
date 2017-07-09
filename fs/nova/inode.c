@@ -733,7 +733,7 @@ struct inode *nova_iget(struct super_block *sb, unsigned long ino)
 	}
 
 	if (pi_addr == 0) {
-		nova_dbg("%s: failed to get pi_addr for inode %llu\n",
+		nova_dbg("%s: failed to get pi_addr for inode %lu\n",
 			 __func__, ino);
 		err = -EACCES;
 		goto fail;
@@ -741,13 +741,13 @@ struct inode *nova_iget(struct super_block *sb, unsigned long ino)
 
 	err = nova_rebuild_inode(sb, si, ino, pi_addr, 1);
 	if (err) {
-		nova_dbg("%s: failed to rebuild inode %llu\n", __func__, ino);
+		nova_dbg("%s: failed to rebuild inode %lu\n", __func__, ino);
 		goto fail;
 	}
 
 	err = nova_read_inode(sb, inode, pi_addr);
 	if (unlikely(err)) {
-		nova_dbg("%s: failed to read inode %llu\n", __func__, ino);
+		nova_dbg("%s: failed to read inode %lu\n", __func__, ino);
 		goto fail;
 
 	}
