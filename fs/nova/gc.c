@@ -300,6 +300,7 @@ static unsigned long nova_inode_log_thorough_gc(struct super_block *sb,
 {
 	struct nova_inode_log_page *curr_page = NULL;
 	size_t length;
+	struct nova_inode *alter_pi;
 	u64 ino = pi->nova_ino;
 	u64 curr_p, new_curr;
 	u64 old_curr_p;
@@ -386,8 +387,13 @@ static unsigned long nova_inode_log_thorough_gc(struct super_block *sb,
 
 	/* Step 2: Atomically switch to the new log */
 	nova_memunlock_inode(sb, pi);
-	/* FIXME */
 	pi->log_head = new_head;
+	nova_update_inode_checksum(pi);
+	if (replica_metadata && sih->alter_pi_addr) {
+		alter_pi = (struct nova_inode *)nova_get_block(sb,
+						sih->alter_pi_addr);
+		memcpy_to_pmem_nocache(alter_pi, pi, sizeof(struct nova_inode));
+	}
 	nova_memlock_inode(sb, pi);
 	nova_flush_buffer(pi, sizeof(struct nova_inode), 1);
 	sih->log_head = new_head;
@@ -423,6 +429,7 @@ static unsigned long nova_inode_alter_log_thorough_gc(struct super_block *sb,
 	unsigned long blocks, unsigned long checked_pages)
 {
 	struct nova_inode_log_page *alter_curr_page = NULL;
+	struct nova_inode *alter_pi;
 	u64 ino = pi->nova_ino;
 	u64 curr_p, new_curr;
 	u64 alter_curr_p;
@@ -510,8 +517,13 @@ static unsigned long nova_inode_alter_log_thorough_gc(struct super_block *sb,
 
 	/* Step 3: Atomically switch to the new log */
 	nova_memunlock_inode(sb, pi);
-	/* FIXME */
 	pi->alter_log_head = new_head;
+	nova_update_inode_checksum(pi);
+	if (replica_metadata && sih->alter_pi_addr) {
+		alter_pi = (struct nova_inode *)nova_get_block(sb,
+						sih->alter_pi_addr);
+		memcpy_to_pmem_nocache(alter_pi, pi, sizeof(struct nova_inode));
+	}
 	nova_memlock_inode(sb, pi);
 	nova_flush_buffer(pi, sizeof(struct nova_inode), 1);
 	sih->alter_log_head = new_head;

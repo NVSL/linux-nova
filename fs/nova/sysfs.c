@@ -486,6 +486,7 @@ ssize_t nova_seq_gc(struct file *filp, const char __user *buf,
 
 	nova_inode_log_fast_gc(sb, target_pi, &target_sih->header,
 			       0, 0, 0, 0, 1);
+	iput(target_inode);
 
 out:
 	kfree(_buf);
