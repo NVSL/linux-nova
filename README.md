@@ -49,8 +49,8 @@ Read on for further details about NOVA's overall design and its current status
 NOVA aims to be compatible with other Linux file systems.  To help verify that it achieves this we run several test suites against NOVA each night.
 
 * The latest version of XFSTests. ([Current failures](https://github.com/NVSL/linux-nova/issues?q=is%3Aopen+is%3Aissue+label%3AXFSTests))
-* The linux testing project file system tests.
-* The fstest POSIX conformance test suite.
+* The (Linux testing project)(https://linux-test-project.github.io/) file system tests.
+* The (fstest POSIX test suite)[POSIXtest].
 
 Currently, nearly all of these tests pass for the `master` branch, and we have
 run complex programs on NOVA.  There are, of course, many bugs left to fix.
@@ -133,7 +133,7 @@ to be done.  In particular, (at least) the following items are currently missing
 5.  NOVA does not currently support extended attributes or ACL.
 6.  NOVA does not currently prevent writes to mounted snapshots.
 7.  Using `write()` to modify pages that are mmap'd is not supported.
-8.  NOVA doesn't provide quota support.
+8.  NOVA deoesn't provide quota support.
 9.  Moving NOVA file systems between machines with different numbers of CPUs does not work.
 10. Remounting a NOVA file system with different mount options may fail.
 
@@ -168,24 +168,19 @@ After the OS has booted, you can initialize a NOVA instance with the following c
 # mount -t NOVA -o init /dev/pmem0 /mnt/ramdisk
 ~~~
 
-The above commands create a NOVA instance on pmem0 device, and mount on `/mnt/ramdisk`.
+The above commands create a NOVA instance on `/dev/pmem0` and mounts it on `/mnt/ramdisk`.
 
-To enable NOVA's data protection features, load the module like so:
+NOVA's data protection features are not yet as stable as NOVA's core functionality, but you can enable them by loading the module like so:
 
 ~~~
-# modprobe nova measure_timing=0\
-    inplace_data_updates=0\
-    wprotect=0\
-    mmap_cow=1\
-    unsafe_metadata=0\
-    replica_metadata=1\
+# modprobe nova replica_metadata=1\
     metadata_csum=1\
     dram_struct_csum=1\
     data_csum=1\
     data_parity=1
 ~~~
 
-Currently, not all combinations of options work properly, and remount file
+Currently, not all combinations of options work properly, and remounting file
 systems with different combinations of options may not work.
 
 To recover an existing NOVA instance, mount NOVA without the init option, for example:
@@ -206,12 +201,6 @@ To list the current snapshots:
 
 ~~~
 # cat /proc/fs/NOVA/<device>/snapshots
-~~~
-
-To delete a snapshot, specify the snapshot index which is given by the previous command:
-
-~~~
-# echo <index> > /proc/fs/NOVA/<device>/delete_snapshot
 ~~~
 
 To mount a snapshot, mount NOVA and specifying the snapshot index, for example:
