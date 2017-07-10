@@ -902,7 +902,7 @@ void nova_evict_inode(struct inode *inode)
 	}
 out:
 	if (destroy == 0) {
-		nova_dbg("%s: destroying  %lu\n", __func__,  inode->i_ino);
+		nova_dbgv("%s: destroying %lu\n", __func__, inode->i_ino);
 		nova_free_dram_resource(sb, sih);
 	}
 	/* TODO: Since we don't use page-cache, do we really need the following
