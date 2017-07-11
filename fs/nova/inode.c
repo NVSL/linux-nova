@@ -796,15 +796,21 @@ static int nova_free_inode_resource(struct super_block *sb,
 	unsigned long last_blocknr;
 	int ret = 0;
 	int freed = 0;
+	struct nova_inode *alter_pi;
 
 	nova_memunlock_inode(sb, pi);
-	/* FIXME: Update checksum */
 	pi->deleted = 1;
 
 	if (pi->valid) {
 		nova_dbg("%s: inode %lu still valid\n",
 				__func__, sih->ino);
 		pi->valid = 0;
+	}
+	nova_update_inode_checksum(pi);
+	if (metadata_csum && sih->alter_pi_addr) {
+		alter_pi = (struct nova_inode *)nova_get_block(sb,
+						sih->alter_pi_addr);
+		memcpy_to_pmem_nocache(alter_pi, pi, sizeof(struct nova_inode));
 	}
 	nova_memlock_inode(sb, pi);
 
