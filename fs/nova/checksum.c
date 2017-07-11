@@ -311,7 +311,7 @@ bool nova_verify_entry_csum(struct super_block *sb, void *entry, void *entryc)
 	NOVA_START_TIMING(verify_entry_csum_t, verify_time);
 
 	ret = nova_get_entry_copy(sb, entry, &entry_csum, &entry_size,
-					entry_copy);
+				  entry_copy);
 	if (ret < 0) { /* media error */
 		ret = nova_repair_entry_pr(sb, entry);
 		if (ret < 0)
@@ -502,22 +502,22 @@ int nova_check_inode_integrity(struct super_block *sb, u64 ino, u64 pi_addr,
 			"verification\n", __func__);
 		goto fail;
 	} else if (inode_bad) {
-		nova_dbg("%s: inode %llu checksum error, trying to "
-			"repair using the replica\n", __func__, ino);
+		nova_dbg("%s: inode %llu checksum error, trying to repair using the replica\n",
+			 __func__, ino);
 		ret = nova_repair_inode(sb, pi, alter_pic);
 		if (ret != 0)
 			goto fail;
 
 		memcpy(pic, alter_pic, sizeof(struct nova_inode));
 	} else if (alter_bad) {
-		nova_dbg("%s: inode replica %llu checksum error, trying to "
-			"repair using the primary\n", __func__, ino);
+		nova_dbg("%s: inode replica %llu checksum error, trying to repair using the primary\n",
+			 __func__, ino);
 		ret = nova_repair_inode(sb, alter_pi, pic);
 		if (ret != 0)
 			goto fail;
 	} else if (memcmp(pic, alter_pic, sizeof(struct nova_inode))) {
-		nova_dbg("%s: inode replica %llu is stale, trying to "
-			"repair using the primary\n", __func__, ino);
+		nova_dbg("%s: inode replica %llu is stale, trying to repair using the primary\n",
+			 __func__, ino);
 		ret = nova_repair_inode(sb, alter_pi, pic);
 		if (ret != 0)
 			goto fail;

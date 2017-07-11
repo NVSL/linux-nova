@@ -705,7 +705,8 @@ int nova_rebuild_inode(struct super_block *sb, struct nova_inode_info *si,
 	}
 
 	ret = nova_check_inode_integrity(sb, ino, pi_addr, alter_pi_addr,
-							&inode_copy, 1);
+					 &inode_copy, 1);
+
 	if (ret)
 		return ret;
 
