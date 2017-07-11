@@ -243,7 +243,7 @@ int nova_append_dir_init_entries(struct super_block *sb,
 
 	nova_memlock_inode(sb, pi);
 
-	if (replica_metadata == 0)
+	if (metadata_csum == 0)
 		return 0;
 
 	allocated = nova_allocate_inode_log_pages(sb, &sih, 1, &new_block,

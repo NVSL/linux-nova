@@ -426,7 +426,7 @@ static int nova_append_log_entry(struct super_block *sb,
 	update->curr_entry = curr_p;
 	update->tail = curr_p + size;
 
-	if (replica_metadata) {
+	if (metadata_csum) {
 		alter_curr_p = nova_get_append_head(sb, pi, sih, alter_tail,
 						size, ALTER_LOG, 0, &extended);
 		if (alter_curr_p == 0)
@@ -460,7 +460,7 @@ int nova_inplace_update_log_entry(struct super_block *sb,
 	NOVA_START_TIMING(update_entry_t, update_time);
 	size = nova_get_log_entry_size(sb, type);
 
-	if (replica_metadata || unsafe_metadata) {
+	if (metadata_csum || unsafe_metadata) {
 		nova_memunlock_range(sb, entry, size);
 		nova_update_log_entry(sb, inode, entry, entry_info);
 		// Also update the alter inode log entry.
@@ -1018,7 +1018,7 @@ out:
 int nova_update_alter_pages(struct super_block *sb, struct nova_inode *pi,
 	u64 curr, u64 alter_curr)
 {
-	if (curr == 0 || alter_curr == 0 || replica_metadata == 0)
+	if (curr == 0 || alter_curr == 0 || metadata_csum == 0)
 		return 0;
 
 	while (curr && alter_curr) {
@@ -1191,7 +1191,7 @@ static u64 nova_extend_inode_log(struct super_block *sb, struct nova_inode *pi,
 		if (ret)
 			return 0;
 
-		if (replica_metadata) {
+		if (metadata_csum) {
 			ret = nova_initialize_inode_log(sb, pi, sih, ALTER_LOG);
 			if (ret)
 				return 0;
@@ -1222,7 +1222,7 @@ static u64 nova_extend_inode_log(struct super_block *sb, struct nova_inode *pi,
 		return 0;
 	}
 
-	if (replica_metadata) {
+	if (metadata_csum) {
 		allocated = nova_allocate_inode_log_pages(sb, sih,
 				num_pages, &alter_new_block, ANY_CPU, 1);
 		if (allocated <= 0) {
@@ -1395,7 +1395,7 @@ int nova_free_inode_log(struct super_block *sb, struct nova_inode *pi,
 	}
 
 	freed = nova_free_contiguous_log_blocks(sb, sih, sih->log_head);
-	if (replica_metadata)
+	if (metadata_csum)
 		freed += nova_free_contiguous_log_blocks(sb, sih,
 					sih->alter_log_head);
 

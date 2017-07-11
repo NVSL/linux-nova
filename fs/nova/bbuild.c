@@ -815,7 +815,7 @@ static void nova_traverse_dir_inode_log(struct super_block *sb,
 	struct nova_inode *pi, struct scan_bitmap *bm)
 {
 	nova_traverse_inode_log(sb, pi, bm, pi->log_head);
-	if (replica_metadata)
+	if (metadata_csum)
 		nova_traverse_inode_log(sb, pi, bm, pi->alter_log_head);
 }
 
@@ -1042,7 +1042,7 @@ static int nova_traverse_file_inode_log(struct super_block *sb,
 	btype = pi->i_blk_type;
 	data_bits = blk_type_to_shift[btype];
 
-	if (replica_metadata)
+	if (metadata_csum)
 		nova_traverse_inode_log(sb, pi, bm, pi->alter_log_head);
 
 	entryc = (metadata_csum == 0) ? NULL : entry_copy;
@@ -1310,7 +1310,7 @@ static int failure_thread_func(void *data)
 			set_bm((curr >> PAGE_SHIFT) + i,
 					global_bm[cpuid], BM_4K);
 
-		if (replica_metadata) {
+		if (metadata_csum) {
 			for (i = 0; i < 512; i++)
 				set_bm((curr1 >> PAGE_SHIFT) + i,
 					global_bm[cpuid], BM_4K);
@@ -1383,7 +1383,7 @@ static int nova_failure_recovery_crawl(struct super_block *sb)
 	root_addr = nova_get_basic_inode_addr(sb, NOVA_ROOT_INO);
 
 	num_tables = 1;
-	if (replica_metadata)
+	if (metadata_csum)
 		num_tables = 2;
 
 	for (cpuid = 0; cpuid < sbi->cpus; cpuid++) {

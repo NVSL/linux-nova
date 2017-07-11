@@ -389,7 +389,7 @@ static unsigned long nova_inode_log_thorough_gc(struct super_block *sb,
 	nova_memunlock_inode(sb, pi);
 	pi->log_head = new_head;
 	nova_update_inode_checksum(pi);
-	if (replica_metadata && sih->alter_pi_addr) {
+	if (metadata_csum && sih->alter_pi_addr) {
 		alter_pi = (struct nova_inode *)nova_get_block(sb,
 						sih->alter_pi_addr);
 		memcpy_to_pmem_nocache(alter_pi, pi, sizeof(struct nova_inode));
@@ -519,7 +519,7 @@ static unsigned long nova_inode_alter_log_thorough_gc(struct super_block *sb,
 	nova_memunlock_inode(sb, pi);
 	pi->alter_log_head = new_head;
 	nova_update_inode_checksum(pi);
-	if (replica_metadata && sih->alter_pi_addr) {
+	if (metadata_csum && sih->alter_pi_addr) {
 		alter_pi = (struct nova_inode *)nova_get_block(sb,
 						sih->alter_pi_addr);
 		memcpy_to_pmem_nocache(alter_pi, pi, sizeof(struct nova_inode));
@@ -591,7 +591,7 @@ int nova_inode_log_fast_gc(struct super_block *sb,
 	sih->num_entries = 0;
 
 	num_logs = 1;
-	if (replica_metadata)
+	if (metadata_csum)
 		num_logs = 2;
 
 	nova_dbgv("%s: log head 0x%llx, tail 0x%llx\n",
@@ -612,7 +612,7 @@ int nova_inode_log_fast_gc(struct super_block *sb,
 		if (next < 0)
 			break;
 
-		if (replica_metadata) {
+		if (metadata_csum) {
 			alter_curr_page = (struct nova_inode_log_page *)
 						nova_get_block(sb, alter_curr);
 			alter_next = next_log_page(sb, alter_curr);
@@ -632,7 +632,7 @@ int nova_inode_log_fast_gc(struct super_block *sb,
 						curr >> PAGE_SHIFT);
 				free_curr_page(sb, sih, curr_page, last_page,
 						curr);
-				if (replica_metadata)
+				if (metadata_csum)
 					free_curr_page(sb, sih, alter_curr_page,
 						alter_last_page, alter_curr);
 			}
@@ -651,7 +651,7 @@ int nova_inode_log_fast_gc(struct super_block *sb,
 		curr = next;
 		alter_curr = alter_next;
 		checked_pages++;
-		if (curr == 0 || (replica_metadata && alter_curr == 0))
+		if (curr == 0 || (metadata_csum && alter_curr == 0))
 			break;
 	}
 
@@ -668,7 +668,7 @@ int nova_inode_log_fast_gc(struct super_block *sb,
 		nova_set_next_page_address(sb, curr_page, new_block, 1);
 		nova_memlock_block(sb, curr_page);
 
-		if (replica_metadata) {
+		if (metadata_csum) {
 			alter_curr = BLOCK_OFF(sih->alter_log_tail);
 
 			while (next_log_page(sb, alter_curr) > 0)
@@ -690,7 +690,7 @@ int nova_inode_log_fast_gc(struct super_block *sb,
 	pi->log_head = possible_head;
 	pi->alter_log_head = alter_possible_head;
 	nova_update_inode_checksum(pi);
-	if (replica_metadata && sih->alter_pi_addr) {
+	if (metadata_csum && sih->alter_pi_addr) {
 		alter_pi = (struct nova_inode *)nova_get_block(sb,
 						sih->alter_pi_addr);
 		memcpy_to_pmem_nocache(alter_pi, pi, sizeof(struct nova_inode));
@@ -709,7 +709,7 @@ int nova_inode_log_fast_gc(struct super_block *sb,
 					curr >> PAGE_SHIFT);
 		nova_free_log_blocks(sb, sih,
 				nova_get_blocknr(sb, curr, btype), 1);
-		if (replica_metadata)
+		if (metadata_csum)
 			nova_free_log_blocks(sb, sih,
 				nova_get_blocknr(sb, alter_curr, btype), 1);
 	}
@@ -731,7 +731,7 @@ int nova_inode_log_fast_gc(struct super_block *sb,
 				checked_pages, blocks);
 		blocks = nova_inode_log_thorough_gc(sb, pi, sih,
 							blocks, checked_pages);
-		if (replica_metadata)
+		if (metadata_csum)
 			nova_inode_alter_log_thorough_gc(sb, pi, sih,
 							blocks, checked_pages);
 	}

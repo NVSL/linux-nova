@@ -39,7 +39,6 @@
 #include "nova.h"
 
 int measure_timing = 0;
-int replica_metadata = 0;
 int metadata_csum = 0;
 int unsafe_metadata = 0;
 int wprotect = 0;
@@ -51,10 +50,8 @@ int support_clwb = 0;
 
 module_param(measure_timing, int, S_IRUGO);
 MODULE_PARM_DESC(measure_timing, "Timing measurement");
-module_param(replica_metadata, int, S_IRUGO);
-MODULE_PARM_DESC(replica_metadata, "Metadata replication");
 module_param(metadata_csum, int, S_IRUGO);
-MODULE_PARM_DESC(metadata_csum, "Metadata checksum");
+MODULE_PARM_DESC(metadata_csum, "Metadata checksum and replication");
 module_param(unsafe_metadata, int, S_IRUGO);
 MODULE_PARM_DESC(unsafe_metadata, "Inplace metadata update");
 module_param(wprotect, int, S_IRUGO);
@@ -378,7 +375,6 @@ static struct nova_inode *nova_init(struct super_block *sb,
 	sbi->nova_sb->s_blocksize = cpu_to_le32(blocksize);
 	sbi->nova_sb->s_magic = cpu_to_le32(NOVA_SUPER_MAGIC);
 	sbi->nova_sb->s_epoch_id = 0;
-	sbi->nova_sb->s_replica_metadata = replica_metadata;
 	sbi->nova_sb->s_metadata_csum = metadata_csum;
 	sbi->nova_sb->s_data_csum = data_csum;
 	sbi->nova_sb->s_data_parity = data_parity;
@@ -458,13 +454,6 @@ static int nova_check_super(struct super_block *sb,
 static int nova_check_module_params(struct super_block *sb)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
-
-	if (sbi->nova_sb->s_replica_metadata != replica_metadata) {
-		nova_dbg("%s replica metadata\n",
-			sbi->nova_sb->s_replica_metadata ?
-			"Enable" : "Disable");
-		replica_metadata = sbi->nova_sb->s_replica_metadata;
-	}
 
 	if (sbi->nova_sb->s_metadata_csum != metadata_csum) {
 		nova_dbg("%s metadata checksum\n",
@@ -557,20 +546,13 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 	if (nova_get_nvmm_info(sb, sbi))
 		goto out;
 
-	if (metadata_csum != replica_metadata) {
-		nova_warn("metadata_csum should not be used without "
-			"replica_metadata, setting both to 0\n");
-		metadata_csum = 0;
-		replica_metadata = 0;
-	}
-
-	nova_dbg("measure timing %d, replica metadata %d, "
-		"metadata checksum %d, inplace metadata update %d, "
-		"inplace update %d, wprotect %d, mmap Cow %d, "
-		"data checksum %d, data parity %d, DRAM checksum %d\n",
-		measure_timing, replica_metadata, metadata_csum,
-		unsafe_metadata, inplace_data_updates, wprotect, mmap_cow,
-		data_csum, data_parity, dram_struct_csum);
+	nova_dbg("measure timing %d, metadata checksum %d, "
+		"inplace metadata update %d, inplace update %d, wprotect %d, "
+		"mmap Cow %d, data checksum %d, data parity %d, "
+		"DRAM checksum %d\n",
+		measure_timing, metadata_csum, unsafe_metadata,
+		inplace_data_updates, wprotect, mmap_cow, data_csum,
+		data_parity, dram_struct_csum);
 
 	get_random_bytes(&random, sizeof(u32));
 	atomic_set(&sbi->next_generation, random);

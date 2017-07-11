@@ -155,7 +155,7 @@ struct nova_super_block {
 	__le32		s_wtime;		/* write time */
 
 	/* Metadata and data protections */
-	u8		s_replica_metadata;
+	u8		s_padding8;
 	u8		s_metadata_csum;
 	u8		s_data_csum;
 	u8		s_data_parity;

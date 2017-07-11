@@ -114,7 +114,7 @@ static void nova_recover_journal_inode(struct super_block *sb,
 	struct nova_inode *pi, *alter_pi;
 	u64 pi_addr, alter_pi_addr;
 
-	if (replica_metadata == 0)
+	if (metadata_csum == 0)
 		return;
 
 	pi_addr = le64_to_cpu(entry->data1);
@@ -228,7 +228,7 @@ static u64 nova_journal_inode_tail(struct super_block *sb,
 	u64 curr_p, struct nova_inode *pi)
 {
 	curr_p = nova_append_entry_journal(sb, curr_p, &pi->log_tail);
-	if (replica_metadata)
+	if (metadata_csum)
 		curr_p = nova_append_entry_journal(sb, curr_p,
 						&pi->alter_log_tail);
 	return curr_p;
@@ -240,7 +240,7 @@ static u64 nova_append_inode_journal(struct super_block *sb,
 {
 	struct nova_inode *pi = nova_get_inode(sb, inode);
 
-	if (replica_metadata)
+	if (metadata_csum)
 		return nova_append_replica_inode_journal(sb, curr_p, inode);
 
 	if (!pi) {

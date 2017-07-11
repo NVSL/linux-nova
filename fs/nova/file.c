@@ -309,7 +309,7 @@ next:
 
 		nova_memunlock_inode(sb, pi);
 		nova_update_tail(pi, update.tail);
-		if (replica_metadata)
+		if (metadata_csum)
 			nova_update_alter_tail(pi, update.alter_tail);
 		nova_memlock_inode(sb, pi);
 

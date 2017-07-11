@@ -165,8 +165,7 @@ void nova_update_entry_csum(void *entry)
 	u32 csum;
 	size_t entry_len = CACHELINE_SIZE;
 
-	/* No point to update csum if replica log is disabled */
-	if (replica_metadata == 0 || metadata_csum == 0)
+	if (metadata_csum == 0)
 		goto flush;
 
 	type = nova_get_entry_type(entry);
@@ -220,7 +219,7 @@ int nova_update_alter_entry(struct super_block *sb, void *entry)
 	char entry_copy[NOVA_MAX_ENTRY_LEN];
 	int ret;
 
-	if (replica_metadata == 0)
+	if (metadata_csum == 0)
 		return 0;
 
 	curr = nova_get_addr_off(sbi, entry);
@@ -306,7 +305,7 @@ bool nova_verify_entry_csum(struct super_block *sb, void *entry, void *entryc)
 	char alter_copy[NOVA_MAX_ENTRY_LEN];
 	timing_t verify_time;
 
-	if (metadata_csum == 0 || replica_metadata == 0)
+	if (metadata_csum == 0)
 		return true;
 
 	NOVA_START_TIMING(verify_entry_csum_t, verify_time);
@@ -461,7 +460,7 @@ int nova_check_inode_integrity(struct super_block *sb, u64 ino, u64 pi_addr,
 
 	ret = memcpy_from_pmem(pic, pi, sizeof(struct nova_inode));
 
-	if (metadata_csum == 0 || replica_metadata == 0)
+	if (metadata_csum == 0)
 		return ret;
 
 	alter_pi = (struct nova_inode *)nova_get_block(sb, alter_pi_addr);

@@ -101,7 +101,7 @@ static void nova_lite_transaction_for_new_inode(struct super_block *sb,
 	nova_memlock_journal(sb);
 	spin_unlock(&sbi->journal_locks[cpu]);
 
-	if (replica_metadata) {
+	if (metadata_csum) {
 		nova_memunlock_inode(sb, pi);
 		nova_update_alter_inode(sb, inode, pi);
 		nova_update_alter_inode(sb, dir, pidir);
@@ -323,7 +323,7 @@ static void nova_lite_transaction_for_time_and_link(struct super_block *sb,
 	nova_memlock_journal(sb);
 	spin_unlock(&sbi->journal_locks[cpu]);
 
-	if (replica_metadata) {
+	if (metadata_csum) {
 		nova_memunlock_inode(sb, pi);
 		nova_update_alter_inode(sb, inode, pi);
 		nova_update_alter_inode(sb, dir, pidir);

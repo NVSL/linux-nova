@@ -122,7 +122,7 @@ int nova_init_inode_table(struct super_block *sb)
 	sih.i_blk_type = NOVA_BLOCK_TYPE_2M;
 
 	num_tables = 1;
-	if (replica_metadata)
+	if (metadata_csum)
 		num_tables = 2;
 
 	for (i = 0; i < num_tables; i++) {
@@ -210,7 +210,7 @@ int nova_get_inode_address(struct super_block *sb, u64 ino, int version,
 	}
 
 	/* Extend alternate inode table */
-	if (extended && extend_alternate && replica_metadata)
+	if (extended && extend_alternate && metadata_csum)
 		nova_get_inode_address(sb, ino, version + 1,
 					&alternate_pi_addr, extendable, 0);
 
@@ -224,7 +224,7 @@ int nova_get_alter_inode_address(struct super_block *sb, u64 ino,
 {
 	int ret;
 
-	if (replica_metadata == 0) {
+	if (metadata_csum == 0) {
 		nova_err(sb, "Access alter inode when replica inode disabled\n");
 		return 0;
 	}
@@ -1030,7 +1030,7 @@ struct inode *nova_new_vfs_inode(enum nova_new_inode_type type,
 		goto fail1;
 	}
 
-	if (replica_metadata) {
+	if (metadata_csum) {
 		/* Get alternate inode address */
 		errval = nova_get_alter_inode_address(sb, ino, &alter_pi_addr);
 		if (errval)
@@ -1084,7 +1084,7 @@ struct inode *nova_new_vfs_inode(enum nova_new_inode_type type,
 	pi->create_epoch_id = epoch_id;
 	nova_init_inode(inode, pi);
 
-	if (replica_metadata) {
+	if (metadata_csum) {
 		alter_pi = (struct nova_inode *)nova_get_block(sb,
 								alter_pi_addr);
 		memcpy_to_pmem_nocache(alter_pi, pi, sizeof(struct nova_inode));
