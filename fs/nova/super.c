@@ -580,8 +580,6 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 		goto out;
 	}
 
-	nova_sysfs_init(sb);
-
 	for (i = 0; i < sbi->cpus; i++) {
 		inode_map = &sbi->inode_maps[i];
 		mutex_init(&inode_map->inode_table_mutex);
@@ -618,6 +616,8 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 		retval = -ENOMEM;
 		goto out;
 	}
+
+	nova_sysfs_init(sb);
 
 	/* Init a new nova instance */
 	if (sbi->s_mount_opt & NOVA_MOUNT_FORMAT) {
