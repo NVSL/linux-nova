@@ -543,9 +543,9 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 	set_default_opts(sbi);
 
 	/* Currently the log page supports 64 journal pointer pairs */
-	if (sbi->cpus > 64) {
+	if (sbi->cpus > MAX_CPUS) {
 		nova_err(sb, "NOVA needs more log pointer pages "
-				"to support more than 64 cpus.\n");
+				"to support more than " #MAX_CPUS " cpus.\n");
 		goto out;
 	}
 
