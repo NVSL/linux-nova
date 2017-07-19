@@ -133,6 +133,12 @@ static int nova_get_nvmm_info(struct super_block *sb,
 	}
 
 	sbi->virt_addr = virt_addr;
+	
+	if (!sbi->virt_addr) {
+		printk(KERN_ERR "ioremap of the nova image failed(1)\n");
+		return ERR_PTR(-EINVAL);
+	}
+
 	sbi->phys_addr = pfn_t_to_pfn(__pfn_t) << PAGE_SHIFT;
 	sbi->initsize = size;
 	sbi->replica_basic_inodes_addr = virt_addr + size -
@@ -317,11 +323,6 @@ static struct nova_inode *nova_init(struct super_block *sb,
 	NOVA_START_TIMING(new_init_t, init_time);
 	nova_info("creating an empty nova of size %lu\n", size);
 	sbi->num_blocks = ((unsigned long)(size) >> PAGE_SHIFT);
-
-	if (!sbi->virt_addr) {
-		printk(KERN_ERR "ioremap of the nova image failed(1)\n");
-		return ERR_PTR(-EINVAL);
-	}
 
 	nova_dbgv("nova: Default block size set to 4K\n");
 	blocksize = sbi->blocksize = NOVA_DEF_BLOCK_SIZE_4K;
