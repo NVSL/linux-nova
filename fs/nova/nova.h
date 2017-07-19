@@ -700,6 +700,7 @@ struct nova_sb_info {
 
 	unsigned long	num_blocks;
 
+	/* TODO: Remove this, since it's unused */
 	/*
 	 * Backing store option:
 	 * 1 = no load, 2 = no store,

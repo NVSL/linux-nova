@@ -136,7 +136,7 @@ static int nova_get_nvmm_info(struct super_block *sb,
 	
 	if (!sbi->virt_addr) {
 		printk(KERN_ERR "ioremap of the nova image failed(1)\n");
-		return ERR_PTR(-EINVAL);
+		return -EINVAL;
 	}
 
 	sbi->phys_addr = pfn_t_to_pfn(__pfn_t) << PAGE_SHIFT;
@@ -545,7 +545,7 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 	/* Currently the log page supports 64 journal pointer pairs */
 	if (sbi->cpus > MAX_CPUS) {
 		nova_err(sb, "NOVA needs more log pointer pages "
-				"to support more than " #MAX_CPUS " cpus.\n");
+			 "to support more than " __stringify(MAX_CPUS) " cpus.\n");
 		goto out;
 	}
 
