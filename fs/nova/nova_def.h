@@ -32,17 +32,17 @@
 /*
  * Mount flags
  */
-#define NOVA_MOUNT_PROTECT 0x000001            /* wprotect CR0.WP */
-#define NOVA_MOUNT_XATTR_USER 0x000002         /* Extended user attributes */
-#define NOVA_MOUNT_POSIX_ACL 0x000004          /* POSIX Access Control Lists */
-#define NOVA_MOUNT_DAX 0x000008                /* Direct Access */
-#define NOVA_MOUNT_ERRORS_CONT 0x000010        /* Continue on errors */
-#define NOVA_MOUNT_ERRORS_RO 0x000020          /* Remount fs ro on errors */
-#define NOVA_MOUNT_ERRORS_PANIC 0x000040       /* Panic on errors */
-#define NOVA_MOUNT_HUGEMMAP 0x000080           /* Huge mappings with mmap */
-#define NOVA_MOUNT_HUGEIOREMAP 0x000100        /* Huge mappings with ioremap */
-#define NOVA_MOUNT_FORMAT      0x000200        /* was FS formatted on mount? */
-#define NOVA_MOUNT_MOUNTING    0x000400        /* FS currently being mounted */
+#define NOVA_MOUNT_PROTECT      0x000001    /* wprotect CR0.WP */
+#define NOVA_MOUNT_XATTR_USER   0x000002    /* Extended user attributes */
+#define NOVA_MOUNT_POSIX_ACL    0x000004    /* POSIX Access Control Lists */
+#define NOVA_MOUNT_DAX          0x000008    /* Direct Access */
+#define NOVA_MOUNT_ERRORS_CONT  0x000010    /* Continue on errors */
+#define NOVA_MOUNT_ERRORS_RO    0x000020    /* Remount fs ro on errors */
+#define NOVA_MOUNT_ERRORS_PANIC 0x000040    /* Panic on errors */
+#define NOVA_MOUNT_HUGEMMAP     0x000080    /* Huge mappings with mmap */
+#define NOVA_MOUNT_HUGEIOREMAP  0x000100    /* Huge mappings with ioremap */
+#define NOVA_MOUNT_FORMAT       0x000200    /* was FS formatted on mount? */
+#define NOVA_MOUNT_MOUNTING     0x000400    /* FS currently being mounted */
 
 /*
  * Maximal count of links to a file
@@ -51,8 +51,8 @@
 
 #define NOVA_DEF_BLOCK_SIZE_4K 4096
 
-#define NOVA_INODE_SIZE 128    /* must be power of two */
 #define NOVA_INODE_BITS   7
+#define NOVA_INODE_SIZE   128    /* must be power of two */
 
 #define NOVA_NAME_LEN 255
 
@@ -79,42 +79,42 @@
 struct nova_inode {
 
 	/* first 40 bytes */
-	u8	i_rsvd;		/* reserved. used to be checksum */
-	u8	valid;		/* Is this inode valid? */
-	u8	deleted;	/* Is this inode deleted? */
-	u8	i_blk_type;	/* data block size this inode uses */
-	__le32	i_flags;	/* Inode flags */
-	__le64	i_size;		/* Size of data in bytes */
-	__le32	i_ctime;	/* Inode modification time */
-	__le32	i_mtime;	/* Inode b-tree Modification time */
-	__le32	i_atime;	/* Access time */
-	__le16	i_mode;		/* File mode */
-	__le16	i_links_count;	/* Links count */
+	u8	i_rsvd;		 /* reserved. used to be checksum */
+	u8	valid;		 /* Is this inode valid? */
+	u8	deleted;	 /* Is this inode deleted? */
+	u8	i_blk_type;	 /* data block size this inode uses */
+	__le32	i_flags;	 /* Inode flags */
+	__le64	i_size;		 /* Size of data in bytes */
+	__le32	i_ctime;	 /* Inode modification time */
+	__le32	i_mtime;	 /* Inode b-tree Modification time */
+	__le32	i_atime;	 /* Access time */
+	__le16	i_mode;		 /* File mode */
+	__le16	i_links_count;	 /* Links count */
 
-	__le64	i_xattr;	/* Extended attribute block */
+	__le64	i_xattr;	 /* Extended attribute block */
 
 	/* second 40 bytes */
-	__le32	i_uid;		/* Owner Uid */
-	__le32	i_gid;		/* Group Id */
-	__le32	i_generation;	/* File version (for NFS) */
-	__le32	i_create_time;	/* Create time */
-	__le64	nova_ino;	/* nova inode number */
+	__le32	i_uid;		 /* Owner Uid */
+	__le32	i_gid;		 /* Group Id */
+	__le32	i_generation;	 /* File version (for NFS) */
+	__le32	i_create_time;	 /* Create time */
+	__le64	nova_ino;	 /* nova inode number */
 
-	__le64	log_head;	/* Log head pointer */
-	__le64	log_tail;	/* Log tail pointer */
+	__le64	log_head;	 /* Log head pointer */
+	__le64	log_tail;	 /* Log tail pointer */
 
 	/* last 40 bytes */
-	__le64	alter_log_head;	/* Alternate log head pointer */
-	__le64	alter_log_tail;	/* Alternate log tail pointer */
+	__le64	alter_log_head;	 /* Alternate log head pointer */
+	__le64	alter_log_tail;	 /* Alternate log tail pointer */
 
-	__le64	create_epoch_id;	/* Transaction ID when create */
-	__le64	delete_epoch_id;	/* Transaction ID when create */
+	__le64	create_epoch_id; /* Transaction ID when create */
+	__le64	delete_epoch_id; /* Transaction ID when deleted */
 
 	struct {
-		__le32 rdev;	/* major/minor # */
-	} dev;			/* device inode */
+		__le32 rdev;	 /* major/minor # */
+	} dev;			 /* device inode */
 
-	__le32	csum;
+	__le32	csum;            /* CRC32 checksum */
 
 	/* Leave 8 bytes for inode table tail pointer */
 } __attribute((__packed__));

@@ -600,12 +600,11 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 		sbi->zero_csum[i] = nova_crc32c(NOVA_INIT_CSUM,
 				sbi->zeroed_page, strp_size);
 	sbi->zero_parity = kzalloc(strp_size, GFP_KERNEL);
+
 	if (!sbi->zero_parity) {
 		retval = -ENOMEM;
 		goto out;
 	}
-	/* For XOR parity the content is all zero */
-	// nova_calculate_block_parity(sb, sbi->zero_parity, sbi->zeroed_page);
 
 	sbi->snapshot_si = kmem_cache_alloc(nova_inode_cachep, GFP_NOFS);
 	nova_snapshot_init(sb);
