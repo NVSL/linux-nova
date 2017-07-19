@@ -20,10 +20,6 @@
 #include <linux/version.h>
 #include "nova.h"
 
-int inplace_data_updates = 0;
-
-module_param(inplace_data_updates, int, S_IRUGO);
-MODULE_PARM_DESC(inplace_data_updates, "In-place Write Data Updates");
 
 static ssize_t
 do_dax_mapping_read(struct file *filp, char __user *buf,

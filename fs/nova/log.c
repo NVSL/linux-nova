@@ -460,7 +460,7 @@ int nova_inplace_update_log_entry(struct super_block *sb,
 	NOVA_START_TIMING(update_entry_t, update_time);
 	size = nova_get_log_entry_size(sb, type);
 
-	if (metadata_csum || unsafe_metadata) {
+	if (metadata_csum) {
 		nova_memunlock_range(sb, entry, size);
 		nova_update_log_entry(sb, inode, entry, entry_info);
 		// Also update the alter inode log entry.

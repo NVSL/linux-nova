@@ -40,30 +40,35 @@
 
 int measure_timing = 0;
 int metadata_csum = 0;
-int unsafe_metadata = 0;
 int wprotect = 0;
 int mmap_cow = 1;
 int data_csum = 0;
 int data_parity = 0;
 int dram_struct_csum = 0;
 int support_clwb = 0;
+int inplace_data_updates = 0;
 
 module_param(measure_timing, int, S_IRUGO);
 MODULE_PARM_DESC(measure_timing, "Timing measurement");
+
 module_param(metadata_csum, int, S_IRUGO);
-MODULE_PARM_DESC(metadata_csum, "Metadata checksum and replication");
-module_param(unsafe_metadata, int, S_IRUGO);
-MODULE_PARM_DESC(unsafe_metadata, "Inplace metadata update");
+MODULE_PARM_DESC(metadata_csum, "Protect metadata structures with replication and checksums");
+
 module_param(wprotect, int, S_IRUGO);
-MODULE_PARM_DESC(wprotect, "Wprotect (CR0.WP)");
-module_param(mmap_cow, int, S_IRUGO);
-MODULE_PARM_DESC(mmap_cow, "Mmap CoW on snapshot");
+MODULE_PARM_DESC(wprotect, "Write-protect pmem region and use CR0.WP to allow updates");
+
+
 module_param(data_csum, int, S_IRUGO);
-MODULE_PARM_DESC(data_csum, "Data checksum");
+MODULE_PARM_DESC(data_csum, "Detect corruption of data pages using checksum");
+
 module_param(data_parity, int, S_IRUGO);
-MODULE_PARM_DESC(data_parity, "Data parity");
+MODULE_PARM_DESC(data_parity, "Protect file data using RAID-5 style parity.");
+
+module_param(inplace_data_updates, int, S_IRUGO);
+MODULE_PARM_DESC(inplace_data_updates, "Perform data updates in-place (i.e., not atomically)");
+
 module_param(dram_struct_csum, int, S_IRUGO);
-MODULE_PARM_DESC(data_parity, "DRAM structure checksum");
+MODULE_PARM_DESC(dram_struct_csum, "Protect key DRAM data structures with checksums");
 
 static struct super_operations nova_sops;
 static const struct export_operations nova_export_ops;
@@ -547,10 +552,10 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 		goto out;
 
 	nova_dbg("measure timing %d, metadata checksum %d, "
-		"inplace metadata update %d, inplace update %d, wprotect %d, "
+		"inplace update %d, wprotect %d, "
 		"mmap Cow %d, data checksum %d, data parity %d, "
 		"DRAM checksum %d\n",
-		measure_timing, metadata_csum, unsafe_metadata,
+		measure_timing, metadata_csum,
 		inplace_data_updates, wprotect, mmap_cow, data_csum,
 		data_parity, dram_struct_csum);
 
