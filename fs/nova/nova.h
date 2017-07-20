@@ -797,7 +797,9 @@ static inline struct nova_super_block
 	return (struct nova_super_block *)(sbi->replica_sb_addr);
 }
 
-/* If this is part of a read-modify-write of the block,
+/* Translate NOVA block number to PMEM address.
+ *
+ * If this is part of a read-modify-write of the block,
  * nova_memunlock_block() before calling!
  */
 static inline void *nova_get_block(struct super_block *sb, u64 block)

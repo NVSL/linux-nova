@@ -56,7 +56,7 @@
 
 #define NOVA_NAME_LEN 255
 
-#define MAX_CPUS 64 
+#define MAX_CPUS 64
 
 /* NOVA supported data blocks */
 #define NOVA_BLOCK_TYPE_4K     0

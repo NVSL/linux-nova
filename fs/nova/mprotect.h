@@ -191,8 +191,10 @@ static inline int nova_check_super_checksum(struct super_block *sb)
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	u32 crc = 0;
 
+	// Check CRC but skip c_sum, which is the 4 bytes at the beginning
 	crc = nova_crc32c(~0, (__u8 *)sbi->nova_sb + sizeof(__le32),
 			sizeof(struct nova_super_block) - sizeof(__le32));
+	
 	if (sbi->nova_sb->s_sum == cpu_to_le32(crc))
 		return 0;
 	else
@@ -219,13 +221,17 @@ static inline void nova_sync_super(struct super_block *sb)
 	struct nova_super_block *super_redund;
 
 	nova_memunlock_super(sb);
+
 	super_redund = nova_get_redund_super(sb);
+
 	memcpy_to_pmem_nocache((void *)super, (void *)sbi->nova_sb,
 		sizeof(struct nova_super_block));
 	PERSISTENT_BARRIER();
+	
 	memcpy_to_pmem_nocache((void *)super_redund, (void *)sbi->nova_sb,
 		sizeof(struct nova_super_block));
 	PERSISTENT_BARRIER();
+
 	nova_memlock_super(sb);
 }
 
