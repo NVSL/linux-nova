@@ -78,6 +78,18 @@ static void nova_init_free_list(struct super_block *sb,
 	nova_data_parity_init_free_list(sb, free_list);
 }
 
+inline struct nova_range_node *nova_alloc_blocknode(struct super_block *sb)
+{
+	return nova_alloc_range_node(sb);
+}
+
+inline void nova_free_blocknode(struct super_block *sb,
+	struct nova_range_node *node)
+{
+	nova_free_range_node(node);
+}
+
+
 void nova_init_blockmap(struct super_block *sb, int recovery)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
