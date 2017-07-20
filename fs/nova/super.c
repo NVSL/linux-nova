@@ -37,6 +37,7 @@
 #include <linux/cred.h>
 #include <linux/list.h>
 #include "nova.h"
+#include "journal.h"
 
 int measure_timing = 0;
 int metadata_csum = 0;
@@ -527,7 +528,13 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 	BUILD_BUG_ON(sizeof(struct nova_super_block) > NOVA_SB_SIZE);
 	BUILD_BUG_ON(sizeof(struct nova_inode) > NOVA_INODE_SIZE);
 	BUILD_BUG_ON(sizeof(struct nova_inode_log_page) != PAGE_SIZE);
+	
+	BUILD_BUG_ON(sizeof(struct journal_ptr_pair) > CACHELINE_SIZE);
+	BUILD_BUG_ON(PAGE_SIZE/sizeof(struct journal_ptr_pair) < MAX_CPUS);
+	BUILD_BUG_ON(PAGE_SIZE/sizeof(struct nova_lite_journal_entry) <
+		     NOVA_MAX_JOURNAL_LENGTH);
 
+	
 	sbi = kzalloc(sizeof(struct nova_sb_info), GFP_KERNEL);
 	if (!sbi)
 		return -ENOMEM;

@@ -153,20 +153,6 @@ extern int dram_struct_csum;
 extern unsigned int blk_type_to_shift[NOVA_BLOCK_TYPE_MAX];
 extern unsigned int blk_type_to_size[NOVA_BLOCK_TYPE_MAX];
 
-/* ======================= Lite journal ========================= */
-
-#define	JOURNAL_INODE	1
-#define	JOURNAL_ENTRY	2
-
-/* Lite journal */
-struct nova_lite_journal_entry {
-	__le64 type;
-	__le64 data1;
-	__le64 data2;
-	__le32 padding;
-	__le32 csum;
-} __attribute((__packed__));
-
 
 /* ======================= Log entry ========================= */
 /* Inode entry in the log */
@@ -797,7 +783,7 @@ static inline struct nova_super_block
 	return (struct nova_super_block *)(sbi->replica_sb_addr);
 }
 
-/* Translate NOVA block number to PMEM address.
+/* Translate an offset the beginning of the Nova instance to a PMEM address.
  *
  * If this is part of a read-modify-write of the block,
  * nova_memunlock_block() before calling!
@@ -877,23 +863,6 @@ static inline void nova_print_curr_epoch_id(struct super_block *sb)
 	nova_dbg("Current epoch id: %llu\n", ret);
 }
 
-struct journal_ptr_pair {
-	__le64 journal_head;
-	__le64 journal_tail;
-};
-
-static inline
-struct journal_ptr_pair *nova_get_journal_pointers(struct super_block *sb,
-	int cpu)
-{
-	struct nova_sb_info *sbi = NOVA_SB(sb);
-
-	if (cpu >= sbi->cpus)
-		BUG();
-
-	return (struct journal_ptr_pair *)((char *)nova_get_block(sb,
-		NOVA_DEF_BLOCK_SIZE_4K * JOURNAL_START) + cpu * CACHELINE_SIZE);
-}
 
 struct inode_table {
 	__le64 log_head;
@@ -1788,19 +1757,6 @@ extern long nova_compat_ioctl(struct file *file, unsigned int cmd,
 	unsigned long arg);
 #endif
 
-/* journal.c */
-u64 nova_create_inode_transaction(struct super_block *sb,
-	struct inode *inode, struct inode *dir, int cpu,
-	int new_inode, int invalidate);
-u64 nova_create_rename_transaction(struct super_block *sb,
-	struct inode *old_inode, struct inode *old_dir, struct inode *new_inode,
-	struct inode *new_dir, struct nova_dentry *father_entry,
-	int invalidate_new_inode, int cpu);
-u64 nova_create_logentry_transaction(struct super_block *sb,
-	void *entry, enum nova_entry_type type, int cpu);
-void nova_commit_lite_transaction(struct super_block *sb, u64 tail, int cpu);
-int nova_lite_journal_soft_init(struct super_block *sb);
-int nova_lite_journal_hard_init(struct super_block *sb);
 
 /* log.c */
 int nova_invalidate_logentry(struct super_block *sb, void *entry,

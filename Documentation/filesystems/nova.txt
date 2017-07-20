@@ -176,11 +176,22 @@ FS Layout
 ======================
 
 +----------------------------------------------+
-| primary super block (struct nova_super_block)|
+| 0   |  primary super block (struct nova_super_block)|
 +----------------------------------------------+
-
-
-
+|  1  | Reserved inodes
+|
++-
+|  2  | Replicate reserved inodes
++
+|  3  | Journal pointers
++
+| 4-5 | Inode pointer tables
++
+|  6  | reserved
++
+|  7  | reserved
++
+| ... 
 
 
 
@@ -199,8 +210,29 @@ struct nova_super_block
 | s_sum:
 
 
-
-Mounting
+Journals
 ========
+
+Nova uses a lightweight journaling mechanisms to provide atomicity for
+operations that modify more than one on inode.  The journals providing logging
+for two operations:
+
+1.  Single word updates (JOURNAL_ENTRY)
+2.  Copying inodes (JOURNAL_INODE)
+
+The journals are undo logs: Nova creates the journal entries for an operation,
+and if the operation does not complete due to a system failure, the recovery
+process rolls back the changes using the journal entries.
+
+To commit, Nova drops the log.
+
+Nova maintains one journal per CPU.  The head and tail pointers for each
+journal live in a reserved page near the beginning of the file system.  
+
+During recovery, Nova scans the journals and undoes the operations described by
+each entry.
+
+
+Mounting ========
 
 nova_mount->
