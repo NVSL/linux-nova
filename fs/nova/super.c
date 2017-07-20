@@ -289,11 +289,9 @@ bad_opt:
 }
 
 
-/* Make sure we have enough space 
-*/
+/* Make sure we have enough space */
 static bool nova_check_size(struct super_block *sb, unsigned long size)
 {
-	struct nova_sb_info *sbi = NOVA_SB(sb);
 	unsigned long minimum_size;
 
 	/* space required for super block and root directory.*/
@@ -390,7 +388,7 @@ static struct nova_inode *nova_init(struct super_block *sb,
 	nova_set_blocksize(sb, sbi->blocksize);
 
 	if (!nova_check_size(sb, size)) {
-		nova_dbg("Specified NOVA size too small 0x%lx.\n", size);
+		nova_warn("Specified NOVA size too small 0x%lx.\n", size);
 		return ERR_PTR(-EINVAL);
 	}
 
@@ -413,6 +411,7 @@ static struct nova_inode *nova_init(struct super_block *sb,
 	pi = nova_get_inode_by_ino(sb, NOVA_SNAPSHOT_INO);
 	pi->nova_ino = NOVA_SNAPSHOT_INO;
 	nova_flush_buffer(pi, CACHELINE_SIZE, 1);
+	
 	memset(&update, 0, sizeof(struct nova_inode_update));
 	nova_update_inode(sb, &sbi->snapshot_si->vfs_inode, pi, &update, 1);
 
@@ -431,7 +430,6 @@ static struct nova_inode *nova_init(struct super_block *sb,
 	if (nova_init_inode_table(sb) < 0)
 		return ERR_PTR(-EINVAL);
 
-	epoch_id = nova_get_epoch_id(sb);
 
 	sbi->nova_sb->s_size = cpu_to_le64(size);
 	sbi->nova_sb->s_blocksize = cpu_to_le32(blocksize);
@@ -440,7 +438,7 @@ static struct nova_inode *nova_init(struct super_block *sb,
 	sbi->nova_sb->s_metadata_csum = metadata_csum;
 	sbi->nova_sb->s_data_csum = data_csum;
 	sbi->nova_sb->s_data_parity = data_parity;
-	nova_update_super_crc(sb);
+ 	nova_update_super_crc(sb);
 
 	nova_sync_super(sb);
 
@@ -457,12 +455,13 @@ static struct nova_inode *nova_init(struct super_block *sb,
 	root_i->i_size = cpu_to_le64(sb->s_blocksize);
 	root_i->i_atime = root_i->i_mtime = root_i->i_ctime =
 		cpu_to_le32(get_seconds());
-	root_i->nova_ino = NOVA_ROOT_INO;
+	root_i->nova_ino = cpu_to_le64(NOVA_ROOT_INO);
 	root_i->valid = 1;
 	/* nova_sync_inode(root_i); */
 	nova_flush_buffer(root_i, sizeof(*root_i), false);
 	nova_memlock_inode(sb, root_i);
 
+	epoch_id = nova_get_epoch_id(sb);
 	nova_append_dir_init_entries(sb, root_i, NOVA_ROOT_INO,
 					NOVA_ROOT_INO, epoch_id);
 
