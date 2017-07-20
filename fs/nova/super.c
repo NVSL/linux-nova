@@ -326,13 +326,8 @@ static struct nova_inode *nova_init(struct super_block *sb,
 	sbi->num_blocks = ((unsigned long)(size) >> PAGE_SHIFT);
 
 	nova_dbgv("nova: Default block size set to 4K\n");
-	sbi->blocksize = NOVA_DEF_BLOCK_SIZE_4K;
-
+	sbi->blocksize = blocksize = NOVA_DEF_BLOCK_SIZE_4K;
 	nova_set_blocksize(sb, sbi->blocksize);
-	blocksize = sb->s_blocksize;
-
-	if (sbi->blocksize != blocksize)
-		sbi->blocksize = blocksize;
 
 	if (!nova_check_size(sb, size)) {
 		nova_dbg("Specified NOVA size too small 0x%lx.\n", size);
