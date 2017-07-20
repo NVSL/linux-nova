@@ -4,6 +4,8 @@
 #include <linux/types.h>
 #include <linux/fs.h>
 #include "nova.h"
+#include "super.h"
+
 
 /* ======================= Lite journal ========================= */
 

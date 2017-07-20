@@ -764,15 +764,6 @@ static inline struct nova_inode_info *NOVA_I(struct inode *inode)
 	return container_of(inode, struct nova_inode_info, vfs_inode);
 }
 
-/* If this is part of a read-modify-write of the super block,
- * nova_memunlock_super() before calling!
- */
-static inline struct nova_super_block *nova_get_super(struct super_block *sb)
-{
-	struct nova_sb_info *sbi = NOVA_SB(sb);
-
-	return (struct nova_super_block *)sbi->virt_addr;
-}
 
 static inline struct nova_super_block
 *nova_get_redund_super(struct super_block *sb)
@@ -781,6 +772,8 @@ static inline struct nova_super_block
 
 	return (struct nova_super_block *)(sbi->replica_sb_addr);
 }
+
+#include "super.h" // Remove when we factor out these and other functions.
 
 /* Translate an offset the beginning of the Nova instance to a PMEM address.
  *
@@ -1876,13 +1869,6 @@ int nova_create_snapshot(struct super_block *sb);
 int nova_delete_snapshot(struct super_block *sb, u64 epoch_id);
 int nova_snapshot_init(struct super_block *sb);
 
-/* super.c */
-extern struct super_block *nova_read_super(struct super_block *sb, void *data,
-	int silent);
-extern int nova_statfs(struct dentry *d, struct kstatfs *buf);
-extern int nova_remount(struct super_block *sb, int *flags, char *data);
-void *nova_ioremap(struct super_block *sb, phys_addr_t phys_addr,
-	ssize_t size);
 
 /* symlink.c */
 int nova_block_symlink(struct super_block *sb, struct nova_inode *pi,
