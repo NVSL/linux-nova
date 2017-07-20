@@ -696,7 +696,6 @@ struct nova_sb_info {
 
 	/* Mount options */
 	unsigned long	bpi;
-	unsigned long	num_inodes;
 	unsigned long	blocksize;
 	unsigned long	initsize;
 	unsigned long	s_mount_opt;

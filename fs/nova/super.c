@@ -287,21 +287,17 @@ bad_opt:
 	return -EINVAL;
 }
 
+
+/* Make sure we have enough space 
+*/
 static bool nova_check_size(struct super_block *sb, unsigned long size)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
-	unsigned long minimum_size, num_blocks;
+	unsigned long minimum_size;
 
-	/* space required for super block and root directory */
-	minimum_size = 2 << sb->s_blocksize_bits;
-
-	/* space required for inode table */
-	if (sbi->num_inodes > 0)
-		num_blocks = (sbi->num_inodes >>
-			(sb->s_blocksize_bits - NOVA_INODE_BITS)) + 1;
-	else
-		num_blocks = 1;
-	minimum_size += (num_blocks << sb->s_blocksize_bits);
+	/* space required for super block and root directory.*/
+	minimum_size = (HEAD_RESERVED_BLOCKS + TAIL_RESERVED_BLOCKS + 1)
+		          << sb->s_blocksize_bits;
 
 	if (size < minimum_size)
 		return false;
@@ -764,8 +760,6 @@ static int nova_show_options(struct seq_file *seq, struct dentry *root)
 	//	 seq_printf(seq, ",bs=%lu", sbi->blocksize);
 	//if (sbi->bpi)
 	//	seq_printf(seq, ",bpi=%lu", sbi->bpi);
-	//if (sbi->num_inodes)
-	//	seq_printf(seq, ",N=%lu", sbi->num_inodes);
 	if (sbi->mode != (S_IRWXUGO | S_ISVTX))
 		seq_printf(seq, ",mode=%03o", sbi->mode);
 	if (uid_valid(sbi->uid))
