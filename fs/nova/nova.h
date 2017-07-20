@@ -889,7 +889,7 @@ struct journal_ptr_pair *nova_get_journal_pointers(struct super_block *sb,
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 
 	if (cpu >= sbi->cpus)
-		return NULL;
+		BUG();
 
 	return (struct journal_ptr_pair *)((char *)nova_get_block(sb,
 		NOVA_DEF_BLOCK_SIZE_4K * JOURNAL_START) + cpu * CACHELINE_SIZE);

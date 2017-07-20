@@ -1462,8 +1462,6 @@ int nova_failure_recovery(struct super_block *sb)
 
 	for (i = 0; i < sbi->cpus; i++) {
 		pair = nova_get_journal_pointers(sb, i);
-		if (!pair)
-			return -EINVAL;
 
 		set_bm(pair->journal_head >> PAGE_SHIFT, global_bm[i], BM_4K);
 	}

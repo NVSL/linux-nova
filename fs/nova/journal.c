@@ -283,7 +283,7 @@ u64 nova_create_inode_transaction(struct super_block *sb,
 	u64 temp;
 
 	pair = nova_get_journal_pointers(sb, cpu);
-	if (!pair || pair->journal_head == 0 ||
+	if (pair->journal_head == 0 ||
 			pair->journal_head != pair->journal_tail)
 		BUG();
 
@@ -312,7 +312,7 @@ u64 nova_create_rename_transaction(struct super_block *sb,
 	u64 temp;
 
 	pair = nova_get_journal_pointers(sb, cpu);
-	if (!pair || pair->journal_head == 0 ||
+	if (pair->journal_head == 0 ||
 			pair->journal_head != pair->journal_tail)
 		BUG();
 
@@ -354,7 +354,7 @@ u64 nova_create_logentry_transaction(struct super_block *sb,
 	u64 temp;
 
 	pair = nova_get_journal_pointers(sb, cpu);
-	if (!pair || pair->journal_head == 0 ||
+	if (pair->journal_head == 0 ||
 			pair->journal_head != pair->journal_tail)
 		BUG();
 
@@ -384,8 +384,8 @@ u64 nova_create_invalidate_reassign_transaction(struct super_block *sb,
 	u64 temp;
 
 	pair = nova_get_journal_pointers(sb, cpu);
-	if (!pair || pair->journal_head == 0 ||
-			pair->journal_head != pair->journal_tail)
+	if (pair->journal_head == 0 ||
+	    pair->journal_head != pair->journal_tail)
 		BUG();
 
 	temp = pair->journal_head;
@@ -447,7 +447,7 @@ void nova_commit_lite_transaction(struct super_block *sb, u64 tail, int cpu)
 	struct journal_ptr_pair *pair;
 
 	pair = nova_get_journal_pointers(sb, cpu);
-	if (!pair || pair->journal_tail != tail)
+	if (pair->journal_tail != tail)
 		BUG();
 
 	pair->journal_head = tail;
@@ -505,8 +505,6 @@ int nova_lite_journal_hard_init(struct super_block *sb)
 
 	for (i = 0; i < sbi->cpus; i++) {
 		pair = nova_get_journal_pointers(sb, i);
-		if (!pair)
-			return -EINVAL;
 
 		allocated = nova_new_log_blocks(sb, &sih, &blocknr, 1, 1,
 							ANY_CPU, 0);
