@@ -175,9 +175,9 @@ Source File Structure
 FS Layout
 ======================
 
-+----------------------------------------------+
++-----------------------------------------------------+
 | 0   |  primary super block (struct nova_super_block)|
-+----------------------------------------------+
++-----------------------------------------------------+
 |  1  | Reserved inodes
 |
 +-
@@ -202,13 +202,36 @@ FS Layout
 +----------------------------------------------+
 
 
-Data Structures
-===============
+Superblock and Associated Structures
+====================================
 
-struct nova_super_block
-+----------------------+
-| s_sum:
+The beginning of the PMEM device hold the super block and its associated
+tables.  These include reserved inodes, 
 
+The Nova superblock resides at the beginning of the PMEM device.  Nova
+maintains a replica at end of the PMEM area.
+
+
+Block Allocator/Free Lists
+==========================
+
+Recovery
+========
+
+Inodes
+======
+
+inuse_list
+----------
+
+inode table
+-----------
+
+Checkpoints
+===========
+
+Recovery
+========
 
 Journals
 ========
