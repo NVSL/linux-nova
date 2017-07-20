@@ -608,7 +608,6 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 	if (nova_parse_options(data, sbi, 0))
 		goto out;
 
-	set_opt(sbi->s_mount_opt, MOUNTING);
 
 	if (nova_alloc_block_free_lists(sb)) {
 		retval = -ENOMEM;
@@ -690,8 +689,6 @@ setup_sb:
 
 	if (!(sb->s_flags & MS_RDONLY))
 		nova_update_mount_time(sb);
-
-	clear_opt(sbi->s_mount_opt, MOUNTING);
 
 	nova_print_curr_epoch_id(sb);
 

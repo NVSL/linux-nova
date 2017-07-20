@@ -1248,13 +1248,6 @@ static inline unsigned long nova_get_pfn(struct super_block *sb, u64 block)
 	return (NOVA_SB(sb)->phys_addr + block) >> PAGE_SHIFT;
 }
 
-static inline int nova_is_mounting(struct super_block *sb)
-{
-	struct nova_sb_info *sbi = (struct nova_sb_info *)sb->s_fs_info;
-
-	return sbi->s_mount_opt & NOVA_MOUNT_MOUNTING;
-}
-
 static inline void check_eof_blocks(struct super_block *sb,
 	struct nova_inode *pi, struct inode *inode,
 	struct nova_inode_info_header *sih)

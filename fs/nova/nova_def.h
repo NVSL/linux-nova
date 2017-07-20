@@ -42,7 +42,6 @@
 #define NOVA_MOUNT_HUGEMMAP     0x000080    /* Huge mappings with mmap */
 #define NOVA_MOUNT_HUGEIOREMAP  0x000100    /* Huge mappings with ioremap */
 #define NOVA_MOUNT_FORMAT       0x000200    /* was FS formatted on mount? */
-#define NOVA_MOUNT_MOUNTING     0x000400    /* FS currently being mounted */
 
 /*
  * Maximal count of links to a file
