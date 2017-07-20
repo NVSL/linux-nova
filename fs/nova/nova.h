@@ -99,7 +99,7 @@ extern unsigned int nova_dbgmask;
 
 #define nova_set_bit                   __test_and_set_bit_le
 #define nova_clear_bit                 __test_and_clear_bit_le
-#define nova_find_next_zero_bit                find_next_zero_bit_le
+#define nova_find_next_zero_bit        find_next_zero_bit_le
 
 #define clear_opt(o, opt)       (o &= ~NOVA_MOUNT_ ## opt)
 #define set_opt(o, opt)         (o |= NOVA_MOUNT_ ## opt)
@@ -659,16 +659,16 @@ struct free_list {
 
 
 struct inode_map {
-	struct mutex inode_table_mutex;
-	struct rb_root	inode_inuse_tree;
-	unsigned long	num_range_node_inode;
-	struct nova_range_node *first_inode_range;
-	int allocated;
-	int freed;
+	struct mutex            inode_table_mutex;
+	struct rb_root	        inode_inuse_tree;
+	unsigned long	        num_range_node_inode;
+	struct nova_range_node* first_inode_range;
+	int                     allocated;
+	int                     freed;
 };
 
 /*
- * NOVA super-block data in memory
+ * NOVA super-block data in DRAM
  */
 struct nova_sb_info {
 	struct super_block *sb;			/* VFS super block */

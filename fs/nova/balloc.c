@@ -113,7 +113,7 @@ void nova_init_blockmap(struct super_block *sb, int recovery)
 
 			blknode = nova_alloc_blocknode(sb);
 			if (blknode == NULL)
-				NOVA_ASSERT(0);
+				BUG();
 			blknode->range_low = free_list->block_start;
 			blknode->range_high = free_list->block_end;
 			nova_update_range_node_checksum(blknode);

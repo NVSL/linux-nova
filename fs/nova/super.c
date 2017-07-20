@@ -938,8 +938,7 @@ inline void nova_free_snapshot_info(struct snapshot_info *info)
 	kmem_cache_free(nova_snapshot_info_cachep, info);
 }
 
-static inline
-struct nova_range_node *nova_alloc_range_node(struct super_block *sb)
+inline struct nova_range_node *nova_alloc_range_node(struct super_block *sb)
 {
 	struct nova_range_node *p;
 

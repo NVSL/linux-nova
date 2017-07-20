@@ -208,7 +208,9 @@ static unsigned int nova_init_dentry(struct super_block *sb,
 	return length;
 }
 
-/* Append . and .. entries */
+/* Append . and .. entries 
+ *
+ * TODO: why is epoch_id a parameter when we pass in the sb? */
 int nova_append_dir_init_entries(struct super_block *sb,
 	struct nova_inode *pi, u64 self_ino, u64 parent_ino, u64 epoch_id)
 {
