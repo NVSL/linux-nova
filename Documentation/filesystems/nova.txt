@@ -170,3 +170,37 @@ Source File Structure
   * sysfs.c
     Implements sysfs entries to take user inputs for taking snapshots, printing
     NOVA statistics, and measuring function's performance.
+
+
+FS Layout
+======================
+
++----------------------------------------------+
+| primary super block (struct nova_super_block)|
++----------------------------------------------+
+
+
+
+
+
+
++----------------------------------------------+
+| replica reserved Inodes                      |
++----------------------------------------------+
+| replica super block (struct nova_super_block)|                         |
++----------------------------------------------+
+
+
+Data Structures
+===============
+
+struct nova_super_block
++----------------------+
+| s_sum:
+
+
+
+Mounting
+========
+
+nova_mount->
