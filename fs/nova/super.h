@@ -39,6 +39,7 @@ struct nova_super_block {
 	u8		s_data_parity;
 } __attribute((__packed__));
 
+#define NOVA_SB_SIZE 512       /* must be power of two */
 
 /* ======================= Reserved blocks ========================= */
 
