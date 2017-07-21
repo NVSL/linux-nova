@@ -610,9 +610,14 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 		goto out;
 	}
 
-	if (nova_get_nvmm_info(sb, sbi))
+	retval = nova_get_nvmm_info(sb, sbi);
+	if (retval) {
+		nova_err(sb, "%s: Failed to get nvmm info.",
+			 __func__);
 		goto out;
+	}
 
+	
 	nova_dbg("measure timing %d, metadata checksum %d, "
 		"inplace update %d, wprotect %d, "
 		"mmap Cow %d, data checksum %d, data parity %d, "
@@ -668,9 +673,12 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 	sbi->snapshot_si = kmem_cache_alloc(nova_inode_cachep, GFP_NOFS);
 	nova_snapshot_init(sb);
 
-	if (nova_parse_options(data, sbi, 0))
+	retval = nova_parse_options(data, sbi, 0);
+	if (retval) {
+		nova_err(sb, "%s: Failed to parse nova command line options.",
+			 __func__);
 		goto out;
-
+	}
 
 	if (nova_alloc_block_free_lists(sb)) {
 		retval = -ENOMEM;
