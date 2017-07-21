@@ -45,7 +45,7 @@ struct nova_super_block {
 /*
  * The first block contains super blocks;
  * The second block contains reserved inodes;
- * The third block contains replica reserved inodes;
+ * The third block is reserved.
  * The fourth block contains pointers to journal pages.
  * The fifth/sixth block contains pointers to inode tables.
  * The seventh/eighth blocks are void by now.
@@ -60,7 +60,7 @@ struct nova_super_block {
 #define	INODE_TABLE0_START	4
 #define	INODE_TABLE1_START	5
 
-/* For redundant super block and replica basic inodes */
+/* For replica super block and replica reserved inodes */
 #define	TAIL_RESERVED_BLOCKS	2
 
 /* ======================= Reserved inodes ========================= */
