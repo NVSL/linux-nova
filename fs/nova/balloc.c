@@ -58,6 +58,67 @@ void nova_delete_free_lists(struct super_block *sb)
 	sbi->free_lists = NULL;
 }
 
+static int nova_data_csum_init_free_list(struct super_block *sb,
+	struct free_list *free_list)
+{
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	unsigned long data_csum_blocks;
+
+	/* Allocate pages to hold data checksums.  We store one checksum for
+	   each stripe for each page.  We replicate the checksums at the
+	   beginning and end of per-cpu region that holds the data they cover.
+	 */
+	data_csum_blocks = ((sbi->initsize >> NOVA_STRIPE_SHIFT)
+				* NOVA_DATA_CSUM_LEN) >> PAGE_SHIFT;
+	free_list->csum_start = free_list->block_start;
+	free_list->block_start += data_csum_blocks / sbi->cpus;
+	if (data_csum_blocks % sbi->cpus)
+		free_list->block_start++;
+
+	free_list->num_csum_blocks =
+		free_list->block_start - free_list->csum_start;
+
+	free_list->replica_csum_start = free_list->block_end + 1 -
+						free_list->num_csum_blocks;
+	free_list->block_end -= free_list->num_csum_blocks;
+
+	return 0;
+}
+
+
+static int nova_data_parity_init_free_list(struct super_block *sb,
+	struct free_list *free_list)
+{
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	unsigned long blocksize, total_blocks, parity_blocks;
+
+	/* Allocate blocks to store data block parity stripes. 
+	 * Always reserve in case user turns it off at init mount but later
+	 * turns it on.
+	 */
+	blocksize = sb->s_blocksize;
+	total_blocks = sbi->initsize / blocksize;
+	parity_blocks = total_blocks / (blocksize / NOVA_STRIPE_SIZE + 1);
+	if (total_blocks % (blocksize / NOVA_STRIPE_SIZE + 1))
+		parity_blocks++;
+
+	free_list->parity_start = free_list->block_start;
+	free_list->block_start += parity_blocks / sbi->cpus;
+	if (parity_blocks % sbi->cpus)
+		free_list->block_start++;
+
+	free_list->num_parity_blocks =
+		free_list->block_start - free_list->parity_start;
+
+	free_list->replica_parity_start = free_list->block_end + 1 -
+		free_list->num_parity_blocks;
+
+	return 0;
+}
+
+
+// Initialize a free list.  Each CPU gets an equal share of the block space to
+// manage.
 static void nova_init_free_list(struct super_block *sb,
 	struct free_list *free_list, int index)
 {

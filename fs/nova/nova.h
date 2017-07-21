@@ -511,6 +511,7 @@ struct nova_range_node_lowhigh {
 
 #define	RANGENODE_PER_PAGE	254
 
+/* A node in the RB tree representing a range of pages */
 struct nova_range_node {
 	struct rb_node node;
 	struct vm_area_struct *vma;
@@ -627,35 +628,6 @@ struct scan_bitmap {
 	struct single_scan_bm scan_bm_1G;
 };
 
-struct free_list {
-	spinlock_t s_lock;
-	struct rb_root	block_free_tree;
-	struct nova_range_node *first_node;
-	struct nova_range_node *last_node;
-	int		index;
-	unsigned long	csum_start;
-	unsigned long	replica_csum_start;
-	unsigned long	parity_start;
-	unsigned long	block_start;
-	unsigned long	block_end;
-	unsigned long	num_free_blocks;
-	unsigned long	num_blocknode;
-	unsigned long	num_csum_blocks;
-	unsigned long	num_parity_blocks;
-	u32		csum;		/* Protect integrity */
-
-	/* Statistics */
-	unsigned long	alloc_log_count;
-	unsigned long	alloc_data_count;
-	unsigned long	free_log_count;
-	unsigned long	free_data_count;
-	unsigned long	alloc_log_pages;
-	unsigned long	alloc_data_pages;
-	unsigned long	freed_log_pages;
-	unsigned long	freed_data_pages;
-
-	u64		padding[8];	/* Cache line break */
-};
 
 
 struct inode_map {
@@ -726,13 +698,6 @@ nova_get_block_off(struct super_block *sb, unsigned long blocknr,
 	return (u64)blocknr << PAGE_SHIFT;
 }
 
-static inline
-struct free_list *nova_get_free_list(struct super_block *sb, int cpu)
-{
-	struct nova_sb_info *sbi = NOVA_SB(sb);
-
-	return &sbi->free_lists[cpu];
-}
 
 static inline u64 nova_get_epoch_id(struct super_block *sb)
 {
@@ -1370,6 +1335,8 @@ static inline int is_dir_init_entry(struct super_block *sb,
 	return 0;
 }
 
+#include "balloc.h" // remove once we move the following functions away
+
 /* Checksum methods */
 static inline void *nova_get_data_csum_addr(struct super_block *sb, u64 strp_nr,
 	int replica)
@@ -1458,45 +1425,7 @@ static inline void *nova_get_parity_addr(struct super_block *sb,
 
 /* Function Prototypes */
 
-/* balloc.c */
-int nova_alloc_block_free_lists(struct super_block *sb);
-void nova_delete_free_lists(struct super_block *sb);
-inline struct nova_range_node *nova_alloc_blocknode(struct super_block *sb);
-inline struct nova_range_node *nova_alloc_inode_node(struct super_block *sb);
-inline struct vma_item *nova_alloc_vma_item(struct super_block *sb);
-inline struct snapshot_info *nova_alloc_snapshot_info(struct super_block *sb);
-inline void nova_free_range_node(struct nova_range_node *node);
-inline void nova_free_snapshot_info(struct snapshot_info *info);
-inline void nova_free_blocknode(struct super_block *sb,
-	struct nova_range_node *bnode);
-inline void nova_free_inode_node(struct super_block *sb,
-	struct nova_range_node *bnode);
-inline void nova_free_vma_item(struct super_block *sb,
-	struct vma_item *item);
-extern void nova_init_blockmap(struct super_block *sb, int recovery);
-extern int nova_free_data_blocks(struct super_block *sb,
-	struct nova_inode_info_header *sih, unsigned long blocknr, int num);
-extern int nova_free_log_blocks(struct super_block *sb,
-	struct nova_inode_info_header *sih, unsigned long blocknr, int num);
-extern inline int nova_new_data_blocks(struct super_block *sb,
-	struct nova_inode_info_header *sih, unsigned long *blocknr,
-	unsigned long start_blk, unsigned int num,
-	int zero, int cpu, int from_tail);
-extern int nova_new_log_blocks(struct super_block *sb,
-	struct nova_inode_info_header *sih,
-	unsigned long *blocknr, unsigned int num,
-	int zero, int cpu, int from_tail);
-extern unsigned long nova_count_free_blocks(struct super_block *sb);
-inline int nova_search_inodetree(struct nova_sb_info *sbi,
-	unsigned long ino, struct nova_range_node **ret_node);
-inline int nova_insert_blocktree(struct nova_sb_info *sbi,
-	struct rb_root *tree, struct nova_range_node *new_node);
-inline int nova_insert_inodetree(struct nova_sb_info *sbi,
-	struct nova_range_node *new_node, int cpu);
-int nova_find_free_slot(struct nova_sb_info *sbi,
-	struct rb_root *tree, unsigned long range_low,
-	unsigned long range_high, struct nova_range_node **prev,
-	struct nova_range_node **next);
+
 
 /* bbuild.c */
 inline void set_bm(unsigned long bit, struct scan_bitmap *bm,
@@ -1523,8 +1452,6 @@ bool nova_verify_data_csum(struct super_block *sb,
 	size_t offset, size_t bytes);
 int nova_update_truncated_block_csum(struct super_block *sb,
 	struct inode *inode, loff_t newsize);
-int nova_data_csum_init_free_list(struct super_block *sb,
-	struct free_list *free_list);
 
 /*
  * Inodes and files operations
@@ -1724,8 +1651,6 @@ int nova_restore_data(struct super_block *sb, unsigned long blocknr,
 	u32 csum1, u32 *csum_good);
 int nova_update_truncated_block_parity(struct super_block *sb,
 	struct inode *inode, loff_t newsize);
-int nova_data_parity_init_free_list(struct super_block *sb,
-	struct free_list *free_list);
 
 /* rebuild.c */
 int nova_reset_csum_parity_range(struct super_block *sb,
