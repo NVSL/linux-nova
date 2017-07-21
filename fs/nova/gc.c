@@ -16,6 +16,7 @@
  */
 
 #include "nova.h"
+#include "inode.h"
 
 static bool curr_log_entry_invalid(struct super_block *sb,
 	struct nova_inode *pi, struct nova_inode_info_header *sih,

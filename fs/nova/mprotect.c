@@ -23,6 +23,7 @@
 #include <linux/mm.h>
 #include <linux/io.h>
 #include "nova.h"
+#include "inode.h"
 
 static inline void wprotect_disable(void)
 {

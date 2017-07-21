@@ -19,6 +19,7 @@
  */
 
 #include "nova.h"
+#include "inode.h"
 
 static inline u64 next_list_page(u64 curr_p)
 {
@@ -879,7 +880,7 @@ static int nova_append_snapshot_info_log(struct super_block *sb,
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_inode_info *si = sbi->snapshot_si;
-	struct nova_inode *pi = nova_get_basic_inode(sb, NOVA_SNAPSHOT_INO);
+	struct nova_inode *pi = nova_get_reserved_inode(sb, NOVA_SNAPSHOT_INO);
 	struct nova_inode_update update;
 	struct nova_snapshot_info_entry entry_info;
 	int ret;
@@ -1393,8 +1394,8 @@ int nova_snapshot_init(struct super_block *sb)
 
 	sih = &sbi->snapshot_si->header;
 	nova_init_header(sb, sih, 0);
-	sih->pi_addr = nova_get_basic_inode_addr(sb, ino);
-	sih->alter_pi_addr = nova_get_alter_basic_inode_addr(sb, ino);
+	sih->pi_addr = nova_get_reserved_inode_addr(sb, ino);
+	sih->alter_pi_addr = nova_get_alter_reserved_inode_addr(sb, ino);
 	sih->ino = ino;
 	sih->i_blk_type = NOVA_DEFAULT_BLOCK_TYPE;
 

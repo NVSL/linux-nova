@@ -17,6 +17,7 @@
 
 #include "nova.h"
 #include "journal.h"
+#include "inode.h"
 
 static int nova_execute_invalidate_reassign_logentry(struct super_block *sb,
 	void *entry, enum nova_entry_type type, int reassign,

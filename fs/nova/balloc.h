@@ -93,4 +93,11 @@ int nova_find_free_slot(struct nova_sb_info *sbi,
 	unsigned long range_high, struct nova_range_node **prev,
 	struct nova_range_node **next);
 
+extern int nova_insert_range_node(struct rb_root *tree,
+				  struct nova_range_node *new_node);
+extern int nova_find_range_node(struct nova_sb_info *sbi,
+				struct rb_root *tree, unsigned long range_low,
+				struct nova_range_node **ret_node);
+
+
 #endif

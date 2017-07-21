@@ -26,6 +26,7 @@
 #include <linux/fs.h>
 #include <linux/bitops.h>
 #include "nova.h"
+#include "inode.h"
 
 int nova_alloc_block_free_lists(struct super_block *sb)
 {
@@ -208,7 +209,7 @@ static inline int nova_rbtree_compare_rangenode(struct nova_range_node *curr,
 	return 0;
 }
 
-static int nova_find_range_node(struct nova_sb_info *sbi,
+int nova_find_range_node(struct nova_sb_info *sbi,
 	struct rb_root *tree, unsigned long range_low,
 	struct nova_range_node **ret_node)
 {
@@ -237,25 +238,13 @@ static int nova_find_range_node(struct nova_sb_info *sbi,
 		nova_dbg("%s: curr failed\n", __func__);
 		return 0;
 	}
-
+	
 	*ret_node = curr;
 	return ret;
 }
 
-inline int nova_search_inodetree(struct nova_sb_info *sbi,
-	unsigned long ino, struct nova_range_node **ret_node)
-{
-	struct rb_root *tree;
-	unsigned long internal_ino;
-	int cpu;
 
-	cpu = ino % sbi->cpus;
-	tree = &sbi->inode_maps[cpu].inode_inuse_tree;
-	internal_ino = ino / sbi->cpus;
-	return nova_find_range_node(sbi, tree, internal_ino, ret_node);
-}
-
-static int nova_insert_range_node(struct rb_root *tree,
+int nova_insert_range_node(struct rb_root *tree,
 	struct nova_range_node *new_node)
 {
 	struct nova_range_node *curr;
@@ -304,19 +293,6 @@ inline int nova_insert_blocktree(struct nova_sb_info *sbi,
 	return ret;
 }
 
-inline int nova_insert_inodetree(struct nova_sb_info *sbi,
-	struct nova_range_node *new_node, int cpu)
-{
-	struct rb_root *tree;
-	int ret;
-
-	tree = &sbi->inode_maps[cpu].inode_inuse_tree;
-	ret = nova_insert_range_node(tree, new_node);
-	if (ret)
-		nova_dbg("ERROR: %s failed %d\n", __func__, ret);
-
-	return ret;
-}
 
 /* Used for both block free tree and inode inuse tree */
 int nova_find_free_slot(struct nova_sb_info *sbi,

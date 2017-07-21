@@ -18,6 +18,7 @@
 #include <linux/pagemap.h>
 #include "nova.h"
 #include "journal.h"
+#include "inode.h"
 
 static ino_t nova_inode_by_name(struct inode *dir, struct qstr *entry,
 				 struct nova_dentry **res_entry)

@@ -22,6 +22,7 @@
 #include <linux/namei.h>
 #include <linux/version.h>
 #include "nova.h"
+#include "inode.h"
 
 int nova_block_symlink(struct super_block *sb, struct nova_inode *pi,
 	struct inode *inode, const char *symname, int len, u64 epoch_id)

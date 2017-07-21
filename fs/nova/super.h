@@ -94,7 +94,7 @@ struct nova_sb_info {
 	 */
 	phys_addr_t	phys_addr;
 	void		*virt_addr;
-	void		*replica_basic_inodes_addr;
+	void		*replica_reserved_inodes_addr;
 	void		*replica_sb_addr;
 
 	unsigned long	num_blocks;
@@ -172,10 +172,6 @@ static inline struct nova_sb_info *NOVA_SB(struct super_block *sb)
 	return sb->s_fs_info;
 }
 
-static inline struct nova_inode_info *NOVA_I(struct inode *inode)
-{
-	return container_of(inode, struct nova_inode_info, vfs_inode);
-}
 
 
 static inline struct nova_super_block

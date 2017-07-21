@@ -24,6 +24,8 @@
 #include <linux/types.h>
 #include <linux/ratelimit.h>
 #include "nova.h"
+#include "inode.h"
+
 
 unsigned int blk_type_to_shift[NOVA_BLOCK_TYPE_MAX] = {12, 21, 30};
 uint32_t blk_type_to_size[NOVA_BLOCK_TYPE_MAX] = {0x1000, 0x200000, 0x40000000};
@@ -135,6 +137,33 @@ int nova_init_inode_table(struct super_block *sb)
 	return ret;
 }
 
+inline int nova_insert_inodetree(struct nova_sb_info *sbi,
+	struct nova_range_node *new_node, int cpu)
+{
+	struct rb_root *tree;
+	int ret;
+
+	tree = &sbi->inode_maps[cpu].inode_inuse_tree;
+	ret = nova_insert_range_node(tree, new_node);
+	if (ret)
+		nova_dbg("ERROR: %s failed %d\n", __func__, ret);
+
+	return ret;
+}
+
+inline int nova_search_inodetree(struct nova_sb_info *sbi,
+	unsigned long ino, struct nova_range_node **ret_node)
+{
+	struct rb_root *tree;
+	unsigned long internal_ino;
+	int cpu;
+
+	cpu = ino % sbi->cpus;
+	tree = &sbi->inode_maps[cpu].inode_inuse_tree;
+	internal_ino = ino / sbi->cpus;
+	return nova_find_range_node(sbi, tree, internal_ino, ret_node);
+}
+
 int nova_get_inode_address(struct super_block *sb, u64 ino, int version,
 	u64 *pi_addr, int extendable, int extend_alternate)
 {
@@ -156,7 +185,7 @@ int nova_get_inode_address(struct super_block *sb, u64 ino, int version,
 	int allocated;
 
 	if (ino < NOVA_NORMAL_INODE_START) {
-		*pi_addr = nova_get_basic_inode_addr(sb, ino);
+		*pi_addr = nova_get_reserved_inode_addr(sb, ino);
 		return 0;
 	}
 
@@ -230,7 +259,7 @@ int nova_get_alter_inode_address(struct super_block *sb, u64 ino,
 	}
 
 	if (ino < NOVA_NORMAL_INODE_START) {
-		*alter_pi_addr = nova_get_alter_basic_inode_addr(sb, ino);
+		*alter_pi_addr = nova_get_alter_reserved_inode_addr(sb, ino);
 	} else {
 		ret = nova_get_inode_address(sb, ino, 1, alter_pi_addr, 0, 0);
 		if (ret)
@@ -330,6 +359,21 @@ static int nova_free_dram_resource(struct super_block *sb,
 	}
 
 	return freed;
+}
+
+static inline void check_eof_blocks(struct super_block *sb,
+	struct nova_inode *pi, struct inode *inode,
+	struct nova_inode_info_header *sih)
+{
+	if ((pi->i_flags & cpu_to_le32(NOVA_EOFBLOCKS_FL)) &&
+		(inode->i_size + sb->s_blocksize) > (sih->i_blocks
+			<< sb->s_blocksize_bits)) {
+		nova_memunlock_inode(sb, pi);
+		pi->i_flags &= cpu_to_le32(~NOVA_EOFBLOCKS_FL);
+		nova_update_inode_checksum(pi);
+		nova_update_alter_inode(sb, inode, pi);
+		nova_memlock_inode(sb, pi);
+	}
 }
 
 /*

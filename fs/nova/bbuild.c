@@ -31,6 +31,7 @@
 #include "nova.h"
 #include "journal.h"
 #include "super.h"
+#include "inode.h"
 
 void nova_init_header(struct super_block *sb,
 	struct nova_inode_info_header *sih, u16 i_mode)
@@ -1382,7 +1383,7 @@ static int nova_failure_recovery_crawl(struct super_block *sb)
 	int count;
 	int cpuid;
 
-	root_addr = nova_get_basic_inode_addr(sb, NOVA_ROOT_INO);
+	root_addr = nova_get_reserved_inode_addr(sb, NOVA_ROOT_INO);
 
 	num_tables = 1;
 	if (metadata_csum)

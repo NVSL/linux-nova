@@ -19,6 +19,7 @@
 #include <asm/pgtable.h>
 #include <linux/version.h>
 #include "nova.h"
+#include "inode.h"
 
 
 static ssize_t

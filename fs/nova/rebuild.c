@@ -16,6 +16,7 @@
  */
 
 #include "nova.h"
+#include "inode.h"
 
 /* entry given to this function is a copy in dram */
 static void nova_apply_setattr_entry(struct super_block *sb,
@@ -777,7 +778,7 @@ int nova_restore_snapshot_table(struct super_block *sb, int just_init)
 
 	entryc = (metadata_csum == 0) ? NULL : entry_copy;
 
-	pi = nova_get_basic_inode(sb, ino);
+	pi = nova_get_reserved_inode(sb, ino);
 	sih = &sbi->snapshot_si->header;
 	data_bits = blk_type_to_shift[sih->i_blk_type];
 	reb = &rebuild;
