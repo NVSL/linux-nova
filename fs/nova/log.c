@@ -1087,7 +1087,7 @@ static int nova_coalesce_log_pages(struct super_block *sb,
 /* Log block resides in NVMM */
 int nova_allocate_inode_log_pages(struct super_block *sb,
 	struct nova_inode_info_header *sih, unsigned long num_pages,
-	u64 *new_block, int cpuid, int from_tail)
+	u64 *new_block, int cpuid, enum nova_alloc_direction from_tail)
 {
 	unsigned long new_inode_blocknr;
 	unsigned long first_blocknr;
@@ -1096,7 +1096,7 @@ int nova_allocate_inode_log_pages(struct super_block *sb,
 	int ret_pages = 0;
 
 	allocated = nova_new_log_blocks(sb, sih, &new_inode_blocknr,
-					num_pages, 0, cpuid, from_tail);
+		        num_pages, ALLOC_NO_INIT, cpuid, from_tail);
 
 	if (allocated <= 0) {
 		nova_err(sb, "ERROR: no inode log page available: %d %d\n",
@@ -1117,7 +1117,7 @@ int nova_allocate_inode_log_pages(struct super_block *sb,
 	while (num_pages) {
 		allocated = nova_new_log_blocks(sb, sih,
 					&new_inode_blocknr, num_pages,
-					0, cpuid, from_tail);
+					ALLOC_NO_INIT, cpuid, from_tail);
 
 		nova_dbg_verbose("Alloc %d log blocks @ 0x%lx\n",
 					allocated, new_inode_blocknr);

@@ -549,7 +549,7 @@ static int not_enough_blocks(struct free_list *free_list,
 static long nova_alloc_blocks_in_free_list(struct super_block *sb,
 	struct free_list *free_list, unsigned short btype,
 	enum alloc_type atype, unsigned long num_blocks,
-	unsigned long *new_blocknr, int from_tail)
+	unsigned long *new_blocknr, enum nova_alloc_direction from_tail)
 {
 	struct rb_root *tree;
 	struct nova_range_node *curr, *next = NULL, *prev = NULL;
@@ -565,7 +565,7 @@ static long nova_alloc_blocks_in_free_list(struct super_block *sb,
 		return -ENOSPC;
 
 	tree = &(free_list->block_free_tree);
-	if (from_tail == 0)
+	if (from_tail == ALLOC_FROM_HEAD)
 		temp = &(free_list->first_node->node);
 	else
 		temp = &(free_list->last_node->node);
@@ -613,7 +613,7 @@ static long nova_alloc_blocks_in_free_list(struct super_block *sb,
 		}
 
 		/* Allocate partial blocknode */
-		if (from_tail == 0) {
+		if (from_tail == ALLOC_FROM_HEAD) {
 			*new_blocknr = curr->range_low;
 			curr->range_low += num_blocks;
 		} else {
@@ -625,7 +625,7 @@ static long nova_alloc_blocks_in_free_list(struct super_block *sb,
 		found = 1;
 		break;
 next:
-		if (from_tail == 0)
+		if (from_tail == ALLOC_FROM_HEAD)
 			temp = rb_next(temp);
 		else
 			temp = rb_prev(temp);
@@ -671,7 +671,7 @@ static int nova_get_candidate_free_list(struct super_block *sb)
 
 static int nova_new_blocks(struct super_block *sb, unsigned long *blocknr,
 	unsigned int num, unsigned short btype, int zero,
-	enum alloc_type atype, int cpuid, int from_tail)
+	enum alloc_type atype, int cpuid, enum nova_alloc_direction from_tail)
 {
 	struct free_list *free_list;
 	void *bp;
@@ -744,7 +744,8 @@ alloc:
 inline int nova_new_data_blocks(struct super_block *sb,
 	struct nova_inode_info_header *sih, unsigned long *blocknr,
 	unsigned long start_blk, unsigned int num,
-	int zero, int cpu, int from_tail)
+	enum nova_alloc_init zero, int cpu,
+        enum nova_alloc_direction from_tail)
 {
 	int allocated;
 	timing_t alloc_time;
@@ -760,10 +761,12 @@ inline int nova_new_data_blocks(struct super_block *sb,
 	return allocated;
 }
 
+
 inline int nova_new_log_blocks(struct super_block *sb,
 	struct nova_inode_info_header *sih,
 	unsigned long *blocknr, unsigned int num,
-	int zero, int cpu, int from_tail)
+	enum nova_alloc_init zero, int cpu,
+        enum nova_alloc_direction from_tail)
 {
 	int allocated;
 	timing_t alloc_time;

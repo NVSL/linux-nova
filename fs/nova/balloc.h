@@ -53,7 +53,11 @@ struct free_list *nova_get_free_list(struct super_block *sb, int cpu)
 	return &sbi->free_lists[cpu];
 }
 
-
+enum nova_alloc_direction {ALLOC_FROM_HEAD=0,
+			   ALLOC_FROM_TAIL=1};
+enum nova_alloc_init {ALLOC_NO_INIT=0,
+		      ALLOC_INIT_ZERO=1};
+		      
 int nova_alloc_block_free_lists(struct super_block *sb);
 void nova_delete_free_lists(struct super_block *sb);
 inline struct nova_range_node *nova_alloc_blocknode(struct super_block *sb);
@@ -76,11 +80,13 @@ extern int nova_free_log_blocks(struct super_block *sb,
 extern inline int nova_new_data_blocks(struct super_block *sb,
 	struct nova_inode_info_header *sih, unsigned long *blocknr,
 	unsigned long start_blk, unsigned int num,
-	int zero, int cpu, int from_tail);
+	enum nova_alloc_init zero, int cpu,
+	enum nova_alloc_direction from_tail);
 extern int nova_new_log_blocks(struct super_block *sb,
 	struct nova_inode_info_header *sih,
 	unsigned long *blocknr, unsigned int num,
-	int zero, int cpu, int from_tail);
+	enum nova_alloc_init zero, int cpu,
+        enum nova_alloc_direction from_tail);
 extern unsigned long nova_count_free_blocks(struct super_block *sb);
 inline int nova_search_inodetree(struct nova_sb_info *sbi,
 	unsigned long ino, struct nova_range_node **ret_node);

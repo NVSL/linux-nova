@@ -818,7 +818,9 @@ static ssize_t nova_inplace_file_write(struct file *filp,
 		} else {
 			/* Allocate blocks to fill hole */
 			allocated = nova_new_data_blocks(sb, sih, &blocknr,
-					start_blk, ent_blks, 0, ANY_CPU, 0);
+					 start_blk, ent_blks, ALLOC_NO_INIT,
+					 ANY_CPU, ALLOC_FROM_HEAD);
+			
 			nova_dbg_verbose("%s: alloc %d blocks @ %lu\n",
 						__func__, allocated, blocknr);
 
@@ -1096,7 +1098,9 @@ static ssize_t nova_cow_file_write(struct file *filp,
 
 		/* don't zero-out the allocated blocks */
 		allocated = nova_new_data_blocks(sb, sih, &blocknr, start_blk,
-						num_blocks, 0, ANY_CPU, 0);
+				 num_blocks, ALLOC_NO_INIT, ANY_CPU,
+				 ALLOC_FROM_HEAD);
+		
 		nova_dbg_verbose("%s: alloc %d blocks @ %lu\n", __func__,
 						allocated, blocknr);
 
@@ -1307,7 +1311,8 @@ again:
 
 	/* Return initialized blocks to the user */
 	allocated = nova_new_data_blocks(sb, sih, &blocknr, iblock,
-						num_blocks, 1, ANY_CPU, 0);
+				 num_blocks, ALLOC_INIT_ZERO, ANY_CPU,
+				 ALLOC_FROM_HEAD);
 	if (allocated <= 0) {
 		nova_dbgv("%s alloc blocks failed %d\n", __func__,
 							allocated);

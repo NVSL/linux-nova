@@ -394,7 +394,9 @@ int nova_mmap_to_new_blocks(struct vm_area_struct *vma,
 			avail_blocks = end_blk - start_blk;
 
 		allocated = nova_new_data_blocks(sb, sih, &blocknr, start_blk,
-						avail_blocks, 0, ANY_CPU, 0);
+					 avail_blocks, ALLOC_NO_INIT, ANY_CPU,
+					 ALLOC_FROM_HEAD);
+		
 		nova_dbgv("%s: alloc %d blocks @ %lu\n", __func__,
 						allocated, blocknr);
 

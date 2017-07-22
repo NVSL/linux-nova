@@ -84,8 +84,10 @@ static int nova_alloc_inode_table(struct super_block *sb,
 			return -EINVAL;
 
 		/* Allocate replicate inodes from tail */
-		allocated = nova_new_log_blocks(sb, sih, &blocknr, 1, 1,
-							i, version);
+		allocated = nova_new_log_blocks(sb, sih, &blocknr, 1,
+				ALLOC_INIT_ZERO, i,
+			        version ? ALLOC_FROM_TAIL : ALLOC_FROM_HEAD);
+
 		nova_dbgv("%s: allocate log @ 0x%lx\n", __func__,
 							blocknr);
 		if (allocated != 1 || blocknr == 0)
@@ -221,7 +223,8 @@ int nova_get_inode_address(struct super_block *sb, u64 ino, int version,
 			extended = 1;
 
 			allocated = nova_new_log_blocks(sb, &sih, &blocknr,
-							1, 1, cpuid, version);
+				1, ALLOC_INIT_ZERO, cpuid,
+			        version ? ALLOC_FROM_TAIL : ALLOC_FROM_HEAD);
 
 			if (allocated != 1)
 				return allocated;
