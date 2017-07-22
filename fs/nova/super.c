@@ -589,6 +589,8 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 	BUILD_BUG_ON(PAGE_SIZE/sizeof(struct nova_lite_journal_entry) <
 		     NOVA_MAX_JOURNAL_LENGTH);
 
+	BUILD_BUG_ON(sizeof(struct nova_inode_page_tail) +
+		     LOG_BLOCK_TAIL != PAGE_SIZE);
 	
 	sbi = kzalloc(sizeof(struct nova_sb_info), GFP_KERNEL);
 	if (!sbi)

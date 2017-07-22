@@ -82,6 +82,7 @@ struct nova_super_block {
 #define NOVA_NORMAL_INODE_START      (32)
 
 
+
 /*
  * NOVA super-block data in DRAM
  */

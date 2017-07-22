@@ -24,8 +24,8 @@
 static inline u64 next_list_page(u64 curr_p)
 {
 	void *curr_addr = (void *)curr_p;
-	unsigned long page_tail = ((unsigned long)curr_addr & ~INVALID_MASK)
-					+ LAST_ENTRY;
+	unsigned long page_tail = ((unsigned long)curr_addr & ~PAGE_OFFSET_MASK)
+					+ LOG_BLOCK_TAIL;
 	return ((struct nova_inode_page_tail *)page_tail)->next_page;
 }
 
@@ -35,7 +35,7 @@ static inline bool goto_next_list_page(struct super_block *sb, u64 curr_p)
 	u8 type;
 
 	/* Each kind of entry takes at least 32 bytes */
-	if (ENTRY_LOC(curr_p) + 32 > LAST_ENTRY)
+	if (ENTRY_LOC(curr_p) + 32 > LOG_BLOCK_TAIL)
 		return true;
 
 	addr = (void *)curr_p;
@@ -646,7 +646,7 @@ static int nova_copy_snapshot_list_to_dram(struct super_block *sb,
 	for (i = 0; i < nvmm_list->num_pages; i++) {
 		/* Leave next_page field alone */
 		ret = memcpy_mcsafe((void *)curr_dram_addr, curr_nvmm_addr,
-						LAST_ENTRY);
+						LOG_BLOCK_TAIL);
 
 		if (ret < 0) {
 			nova_dbg("%s: Copy nvmm page %lu failed\n",
@@ -1105,7 +1105,7 @@ static int nova_copy_snapshot_list_to_nvmm(struct super_block *sb,
 		/* Leave next_page field alone */
 		nova_memunlock_block(sb, curr_nvmm_addr);
 		memcpy_to_pmem_nocache(curr_nvmm_addr, (void *)curr_dram_addr,
-						LAST_ENTRY);
+						LOG_BLOCK_TAIL);
 		nova_memlock_block(sb, curr_nvmm_addr);
 
 		dram_page = (struct nova_inode_log_page *)curr_dram_addr;

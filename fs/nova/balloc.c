@@ -741,6 +741,8 @@ alloc:
 	return ret_blocks / nova_get_numblocks(btype);
 }
 
+// Allocate data blocks.  The offset for the allocated block comes back in
+// blocknr.  Return the number of blocks allocated.
 inline int nova_new_data_blocks(struct super_block *sb,
 	struct nova_inode_info_header *sih, unsigned long *blocknr,
 	unsigned long start_blk, unsigned int num,
@@ -762,6 +764,8 @@ inline int nova_new_data_blocks(struct super_block *sb,
 }
 
 
+// Allocate log blocks.  The offset for the allocated block comes back in
+// blocknr.  Return the number of blocks allocated.
 inline int nova_new_log_blocks(struct super_block *sb,
 	struct nova_inode_info_header *sih,
 	unsigned long *blocknr, unsigned int num,

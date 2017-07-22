@@ -469,7 +469,7 @@ static unsigned long nova_inode_alter_log_thorough_gc(struct super_block *sb,
 	while (1) {
 		nova_memunlock_block(sb, nova_get_block(sb, new_curr));
 		memcpy_to_pmem_nocache(nova_get_block(sb, new_curr),
-				nova_get_block(sb, curr_p), LAST_ENTRY);
+				nova_get_block(sb, curr_p), LOG_BLOCK_TAIL);
 
 		nova_set_alter_page_address(sb, curr_p, new_curr);
 		nova_memlock_block(sb, nova_get_block(sb, new_curr));

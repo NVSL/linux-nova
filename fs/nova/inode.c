@@ -166,6 +166,8 @@ inline int nova_search_inodetree(struct nova_sb_info *sbi,
 	return nova_find_range_node(sbi, tree, internal_ino, ret_node);
 }
 
+/* Get the address in PMEM of an inode by inode number.  Allocate additional
+ * block to store additional inodes if necessary. */
 int nova_get_inode_address(struct super_block *sb, u64 ino, int version,
 	u64 *pi_addr, int extendable, int extend_alternate)
 {

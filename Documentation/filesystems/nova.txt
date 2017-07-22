@@ -239,7 +239,26 @@ tables, etc. and their replicas, respectively.
 Each allocator maintains a red-black tree of unallocated ranges (struct
 nova_range_node).
 
+Allocation Functions
+--------------------
 
+Nova allocate PMEM blocks using two mechanisms:
+
+1.  Static allocation as defined in super.h
+
+2.  Allocation for log and data pages via nova_new_log_blocks() and
+nova_new_data_blocks().
+
+Both of these functions allow the caller to control whether the allocator
+preferes higher addresses for allocation or lower addresses.  We use this to
+encourage meta data structures and their replicas to be far from one another.
+
+PMEM Address Translation
+------------------------
+
+In Nova's persistent data structures, memory locations are given as offsets
+from the beginning of the PMEM region.  nova_get_block() translates offsets to
+PMEM addresses.  nova_get_addr_off() performs the reverse translation.
 
 Recovery
 ========
@@ -247,11 +266,30 @@ Recovery
 Inodes
 ======
 
-inuse_list
-----------
+Nova maintains per-CPU inode tables, and inode numbers are striped across the
+tables (i.e., inos 0, n, 2n,... on cpu 0; inos 1, n + 1, 2n + 1, ... on cpu 1).
 
-inode table
------------
+The inodes tables each a linked list of 2MB blocks.  The last 8 bytes of each
+block points to the next block.
+
+To allocate inodes, Nova maintains a per-cpu "inuse_list" in DRAM holds a RB
+tree that holds ranges of unallocated inode numbers.
+
+Logs
+====
+
+Nova maintains a log for each inode that records updates to the inode's
+metadata and holds pointers to the file data.  Nova makes updates to file data
+and metadataa atomic by atomically appending log entries to the log.
+
+Each inode contains pointers to head and tail of the inode's log.
+
+The logs comprise a linked list of PMEM blocks.  The tail of each block
+contains some metadata about the block and pointers to the next block and
+block's replica (struct nova_inode_page_tail).
+
+There are seven kinds of log entry, documented in log.h.
+
 
 Checkpoints
 ===========

@@ -59,6 +59,16 @@ struct nova_inode {
 	/* Leave 8 bytes for inode table tail pointer */
 } __attribute((__packed__));
 
+/* 
+ * Inode table.  It's a linked list of pages.
+ */
+struct inode_table {
+	__le64 log_head;
+};
+
+/* 
+ * NOVA-specific inode state kept in DRAM 
+ */
 struct nova_inode_info_header {
 	struct radix_tree_root tree;	/* Dir name entry tree root */
 	struct rb_root vma_tree;	/* Write vmas */
@@ -99,11 +109,14 @@ struct nova_inode_rebuild {
 	u64	trans_id;
 };
 
-/* DRAM version of a nova inode */
+/* 
+ * DRAM state for inodes
+ */
 struct nova_inode_info {
 	struct nova_inode_info_header header;
 	struct inode vfs_inode;
 };
+
 
 static inline struct nova_inode_info *NOVA_I(struct inode *inode)
 {
