@@ -995,10 +995,6 @@ unsigned long nova_check_existing_entry(struct super_block *sb,
 	struct nova_file_write_entry **ret_entry,
 	struct nova_file_write_entry *ret_entryc, int check_next, u64 epoch_id,
 	int *inplace, int locked);
-ssize_t nova_dax_file_read(struct file *filp, char __user *buf, size_t len,
-			    loff_t *ppos);
-ssize_t nova_dax_file_write(struct file *filp, const char __user *buf,
-		size_t len, loff_t *ppos);
 int nova_dax_get_blocks(struct inode *inode, sector_t iblock,
 	unsigned long max_blocks, u32 *bno, bool *new, bool *boundary,
 	int create, bool taking_lock);
@@ -1006,7 +1002,6 @@ int nova_iomap_begin(struct inode *inode, loff_t offset, loff_t length,
 	unsigned int flags, struct iomap *iomap, bool taking_lock);
 int nova_iomap_end(struct inode *inode, loff_t offset, loff_t length,
 	ssize_t written, unsigned int flags, struct iomap *iomap);
-int nova_dax_file_mmap(struct file *file, struct vm_area_struct *vma);
 
 /* dir.c */
 extern const struct file_operations nova_dir_operations;
@@ -1040,7 +1035,7 @@ struct nova_dentry *nova_find_dentry(struct super_block *sb,
 extern const struct inode_operations nova_file_inode_operations;
 extern const struct file_operations nova_dax_file_operations;
 extern const struct file_operations nova_wrap_file_operations;
-int nova_fsync(struct file *file, loff_t start, loff_t end, int datasync);
+
 
 /* gc.c */
 int nova_inode_log_fast_gc(struct super_block *sb,

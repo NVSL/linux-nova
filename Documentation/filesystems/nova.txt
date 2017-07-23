@@ -307,6 +307,7 @@ Log structure
 -------------
 
 The logs comprise a linked list of PMEM blocks.  The tail of each block
+
 contains some metadata about the block and pointers to the next block and
 block's replica (struct nova_inode_page_tail).
 
@@ -348,6 +349,10 @@ each entry.
 
 File Access
 ===========
+
+To access file data via read(), Nova maintains a radix tree in DRAM for each
+inode (nova_inode_info_header.tree) that maps file offsets to write log
+entries.
 
 MMap
 ====
