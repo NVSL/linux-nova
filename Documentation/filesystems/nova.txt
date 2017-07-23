@@ -347,12 +347,16 @@ During recovery, Nova scans the journals and undoes the operations described by
 each entry.
 
 
-File Access
-===========
+File and Directory Access
+=========================
 
 To access file data via read(), Nova maintains a radix tree in DRAM for each
 inode (nova_inode_info_header.tree) that maps file offsets to write log
-entries.
+entries.  For directories, the same tree maps a hash of filenames to their
+corresponding dentry.
+
+In both cases, the nova populates the tree when the file or directory is opened
+by scanning its log.
 
 MMap
 ====
