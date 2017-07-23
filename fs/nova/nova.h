@@ -552,6 +552,10 @@ nova_get_write_entry(struct super_block *sb,
 }
 
 
+/* 
+ * Find data at a file offset (pgoff) in the data pointed to by a write log
+ * entry.
+ */
 static inline unsigned long get_nvmm(struct super_block *sb,
 	struct nova_inode_info_header *sih,
 	struct nova_file_write_entry *entry, unsigned long pgoff)

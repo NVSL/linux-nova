@@ -260,9 +260,6 @@ In Nova's persistent data structures, memory locations are given as offsets
 from the beginning of the PMEM region.  nova_get_block() translates offsets to
 PMEM addresses.  nova_get_addr_off() performs the reverse translation.
 
-Recovery
-========
-
 Inodes
 ======
 
@@ -280,22 +277,51 @@ Logs
 
 Nova maintains a log for each inode that records updates to the inode's
 metadata and holds pointers to the file data.  Nova makes updates to file data
-and metadataa atomic by atomically appending log entries to the log.
+and metadata atomic by atomically appending log entries to the log.
 
-Each inode contains pointers to head and tail of the inode's log.
+Each inode contains pointers to head and tail of the inode's log.  When the log
+grows past the end of the last page, nova allocates additional space.  For
+short logs (less than 1MB) , it doubles the length.  For longer logs, it adds a
+fixed amount of additional space (1MB).
+
+Log space is reclaimed during garbage collection.
+
+Log Entries
+-----------
+
+There are seven kinds of log entry, documented in log.h.  The log entries have
+several entries in common:
+
+   1.  'epoch_id' gives the epoch during which the log entry was created.
+   Creating a snapshot and creating a file system starts a new epoch.
+
+   2.  'trans_id' is filesystem-wide, monotone increasing, number assigned each
+   log entry.  It provides an ordering over all FS operations.
+
+   3.  'invalid' is true if the effects of this entry are dead and the log
+   entry can be garbage collected.
+
+   4.  'csum' is a CRC32 checksum for the entry.
+
+Log structure
+-------------
 
 The logs comprise a linked list of PMEM blocks.  The tail of each block
 contains some metadata about the block and pointers to the next block and
 block's replica (struct nova_inode_page_tail).
 
-There are seven kinds of log entry, documented in log.h.
++----------------+
+| log entry
++----------------+
+| log entry
++----------------+
+| ...
++----------------+
+| tail           |
+|  metadata      |
+|  -> next block |
++----------------+
 
-
-Checkpoints
-===========
-
-Recovery
-========
 
 Journals
 ========
@@ -320,6 +346,24 @@ During recovery, Nova scans the journals and undoes the operations described by
 each entry.
 
 
-Mounting ========
+File Access
+===========
 
-nova_mount->
+MMap
+====
+
+
+Garbage Collection
+==================
+
+Unsafe mode
+===========
+
+Replication and Checksums
+=========================
+
+Snapshots
+=========
+
+Recovery
+========

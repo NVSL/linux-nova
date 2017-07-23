@@ -64,20 +64,22 @@ static inline void nova_set_entry_type(void *p, enum nova_entry_type type)
 }
 
 /*
- * Write log entry. 
+ * Write log entry.  Records a write to a contiguous range of PMEM pages.
+ *
+ * Documentation/filesystems/nova.txt contains descriptions of some fields.
  */
 struct nova_file_write_entry {
 	u8	entry_type;
 	u8	reassigned;	/* Data is not latest */
-	u8	updating;	/* Date being written */
+	u8	updating;	/* Data is being written */
 	u8	padding;
-	__le32	num_pages;
-	__le64	block;
-	__le64	pgoff;
+	__le32	num_pages;      
+	__le64	block;          /* offset of first block in this write */
+	__le64	pgoff;          /* file offset at the beginning of this write */
 	__le32	invalid_pages;	/* For GC */
 	/* For both ctime and mtime */
 	__le32	mtime;
-	__le64	size;
+	__le64	size;           /* Write size for non-aligned writes */
 	__le64	epoch_id;
 	__le64	trans_id;
 	__le32	csumpadding;
@@ -87,7 +89,8 @@ struct nova_file_write_entry {
 #define WENTRY(entry)	((struct nova_file_write_entry *) entry)
 
 /*
- * Structure of a directory log entry in NOVA.
+ * Log entry for adding a file/directory to a directory.
+ *
  * Update DIR_LOG_REC_LEN if modify this struct!
  */
 struct nova_dentry {
@@ -100,7 +103,7 @@ struct nova_dentry {
 	__le32	mtime;			/* For both mtime and ctime */
 	__le32	csum;			/* entry checksum */
 	__le64	ino;			/* inode no pointed to by this entry */
-	__le64	size;
+	__le64	padding;
 	__le64	epoch_id;
 	__le64	trans_id;
 	char	name[NOVA_NAME_LEN + 1];	/* File name */
@@ -117,17 +120,19 @@ struct nova_dentry {
 
 #define NOVA_MAX_ENTRY_LEN		NOVA_DIR_LOG_REC_LEN(NOVA_NAME_LEN)
 
-/* Struct of inode attributes change log (setattr) */
+/* 
+ * Log entry for updating file attributes.
+ */
 struct nova_setattr_logentry {
 	u8	entry_type;
-	u8	attr;
+	u8	attr;       /* bitmap of which attributes to update */
 	__le16	mode;
 	__le32	uid;
 	__le32	gid;
 	__le32	atime;
 	__le32	mtime;
 	__le32	ctime;
-	__le64	size;
+	__le64	size;        /* File size after truncation */
 	__le64	epoch_id;
 	__le64	trans_id;
 	u8	invalid;
@@ -147,7 +152,7 @@ struct nova_link_change_entry {
 	__le16	links;
 	__le32	ctime;
 	__le32	flags;
-	__le32	generation;
+	__le32	generation;    /* for NFS handles */
 	__le64	epoch_id;
 	__le64	trans_id;
 	__le32	csumpadding;
@@ -173,7 +178,9 @@ struct nova_mmap_entry {
 
 #define MMENTRY(entry)	((struct nova_mmap_entry *) entry)
 
-/* Log appending information */
+/* 
+ * Transient DRAM structure to parameterize the creation of a log entry.
+ */
 struct nova_log_entry_info {
 	enum nova_entry_type type;
 	struct iattr *attr;
@@ -220,7 +227,7 @@ static inline size_t nova_get_log_entry_size(struct super_block *sb,
 	return size;
 }
 
-/* log.c */
+
 int nova_invalidate_logentry(struct super_block *sb, void *entry,
 	enum nova_entry_type type, unsigned int num_free);
 int nova_reassign_logentry(struct super_block *sb, void *entry,
