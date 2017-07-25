@@ -145,7 +145,6 @@ extern int metadata_csum;
 extern int unsafe_metadata;
 extern int inplace_data_updates;
 extern int wprotect;
-extern int mmap_cow;
 extern int data_csum;
 extern int data_parity;
 extern int dram_struct_csum;

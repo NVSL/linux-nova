@@ -853,9 +853,7 @@ static int nova_dax_file_mmap(struct file *file, struct vm_area_struct *vma)
 
 	vma->vm_ops = &nova_dax_vm_ops;
 
-	/* Check SHARED WRITE vma */
-	if (mmap_cow || data_csum || data_parity)
-		nova_insert_write_vma(vma);
+	nova_insert_write_vma(vma);
 
 	nova_dbg_mmap4k("[%s:%d] inode %lu, MMAP 4KPAGE vm_start(0x%lx),"
 			" vm_end(0x%lx), vm pgoff %lu, %lu blocks, "

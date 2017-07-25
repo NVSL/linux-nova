@@ -1160,8 +1160,6 @@ static int nova_insert_write_vma(struct vm_area_struct *vma)
 	int ret;
 	timing_t insert_vma_time;
 
-	if (mmap_cow == 0 && data_csum == 0 && data_parity == 0)
-		return 0;
 
 	if ((vma->vm_flags & flags) != flags)
 		return 0;
@@ -1244,8 +1242,6 @@ static int nova_remove_write_vma(struct vm_area_struct *vma)
 	int remove = 0;
 	timing_t remove_vma_time;
 
-	if (mmap_cow == 0 && data_csum == 0 && data_parity == 0)
-		return 0;
 
 	NOVA_START_TIMING(remove_vma_t, remove_vma_time);
 	inode_lock(inode);
@@ -1298,8 +1294,6 @@ static int nova_restore_page_write(struct vm_area_struct *vma,
 {
 	struct mm_struct *mm = vma->vm_mm;
 
-	if (mmap_cow == 0)
-		return 0;
 
 	down_write(&mm->mmap_sem);
 
@@ -1330,8 +1324,7 @@ static void nova_vma_open(struct vm_area_struct *vma)
 			vma->vm_flags,
 			pgprot_val(vma->vm_page_prot));
 
-	if (mmap_cow || data_csum || data_parity)
-		nova_insert_write_vma(vma);
+	nova_insert_write_vma(vma);
 }
 
 static void nova_vma_close(struct vm_area_struct *vma)
@@ -1343,8 +1336,7 @@ static void nova_vma_close(struct vm_area_struct *vma)
 			vma->vm_flags, pgprot_val(vma->vm_page_prot));
 
 	vma->original_write = 0;
-	if (mmap_cow || data_csum || data_parity)
-		nova_remove_write_vma(vma);
+	nova_remove_write_vma(vma);
 }
 
 static const struct vm_operations_struct nova_dax_vm_ops = {

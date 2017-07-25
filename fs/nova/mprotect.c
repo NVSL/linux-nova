@@ -573,9 +573,6 @@ int nova_set_vmas_readonly(struct super_block *sb)
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_inode_info_header *sih;
 
-	if (mmap_cow == 0)
-		return 0;
-
 	nova_dbgv("%s\n", __func__);
 	mutex_lock(&sbi->vma_mutex);
 	list_for_each_entry(sih, &sbi->mmap_sih_list, list)
@@ -591,9 +588,6 @@ int nova_destroy_vma_tree(struct super_block *sb)
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct vma_item *item;
 	struct rb_node *temp;
-
-	if (mmap_cow == 0)
-		return 0;
 
 	nova_dbgv("%s\n", __func__);
 	mutex_lock(&sbi->vma_mutex);

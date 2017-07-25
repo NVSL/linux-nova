@@ -44,7 +44,6 @@
 int measure_timing = 0;
 int metadata_csum = 0;
 int wprotect = 0;
-int mmap_cow = 1;
 int data_csum = 0;
 int data_parity = 0;
 int dram_struct_csum = 0;
@@ -623,10 +622,10 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 	
 	nova_dbg("measure timing %d, metadata checksum %d, "
 		"inplace update %d, wprotect %d, "
-		"mmap Cow %d, data checksum %d, data parity %d, "
+		"data checksum %d, data parity %d, "
 		"DRAM checksum %d\n",
 		measure_timing, metadata_csum,
-		inplace_data_updates, wprotect, mmap_cow, data_csum,
+		inplace_data_updates, wprotect,  data_csum,
 		data_parity, dram_struct_csum);
 
 	get_random_bytes(&random, sizeof(u32));
