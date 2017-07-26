@@ -69,13 +69,12 @@ struct nova_super_block {
 
 /* We have space for 31 reserved inodes */
 #define NOVA_ROOT_INO		(1)
-#define NOVA_INODETABLE_INO	(2)	/* Temporaty inode table */
-#define NOVA_BLOCKNODE_INO	(3)
-#define NOVA_INODELIST_INO	(4)
-#define NOVA_LITEJOURNAL_INO	(5)
-#define NOVA_INODELIST1_INO	(6)
-#define NOVA_SNAPSHOT_INO	(7)	/* Fake snapshot inode */
-#define NOVA_TEST_PERF_INO	(8)
+#define NOVA_INODETABLE_INO	(2)	/* Inode for storing inode tables */
+#define NOVA_BLOCKNODE_INO	(3)     /* Storage for allocator state */
+#define NOVA_LITEJOURNAL_INO	(4)     /* Storage for lightweight journals */
+#define NOVA_INODELIST1_INO	(5)     /* Storage for Inode free list */
+#define NOVA_SNAPSHOT_INO	(6)	/* Storage for snapshot state */
+#define NOVA_TEST_PERF_INO	(7)
 
 
 /* Normal inode starts at 32 */

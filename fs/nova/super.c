@@ -403,10 +403,6 @@ static struct nova_inode *nova_init(struct super_block *sb,
 	pi->nova_ino = NOVA_BLOCKNODE_INO;
 	nova_flush_buffer(pi, CACHELINE_SIZE, 1);
 
-	pi = nova_get_inode_by_ino(sb, NOVA_INODELIST_INO);
-	pi->nova_ino = NOVA_INODELIST_INO;
-	nova_flush_buffer(pi, CACHELINE_SIZE, 1);
-
 	pi = nova_get_inode_by_ino(sb, NOVA_SNAPSHOT_INO);
 	pi->nova_ino = NOVA_SNAPSHOT_INO;
 	nova_flush_buffer(pi, CACHELINE_SIZE, 1);
