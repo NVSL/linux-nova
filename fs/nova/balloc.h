@@ -57,8 +57,14 @@ struct free_list *nova_get_free_list(struct super_block *sb, int cpu)
 
 enum nova_alloc_direction {ALLOC_FROM_HEAD=0,
 			   ALLOC_FROM_TAIL=1};
+
 enum nova_alloc_init {ALLOC_NO_INIT=0,
 		      ALLOC_INIT_ZERO=1};
+
+enum alloc_type {
+	LOG = 1,
+	DATA,
+};
 
 
 

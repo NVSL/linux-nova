@@ -153,19 +153,11 @@ extern unsigned int blk_type_to_shift[NOVA_BLOCK_TYPE_MAX];
 extern unsigned int blk_type_to_size[NOVA_BLOCK_TYPE_MAX];
 
 
-enum alloc_type {
-	LOG = 1,
-	DATA,
-};
-
 
 #define	MMAP_WRITE_BIT	0x20UL	// mmaped for write
 #define	IS_MAP_WRITE(p)	((p) & (MMAP_WRITE_BIT))
 #define	MMAP_ADDR(p)	((p) & (PAGE_MASK))
 
-
-
-/* Inline functions start here */
 
 /* Mask out flags that are inappropriate for the given type of inode. */
 static inline __le32 nova_mask_flags(umode_t mode, __le32 flags)
