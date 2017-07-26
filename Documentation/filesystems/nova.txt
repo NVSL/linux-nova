@@ -52,21 +52,77 @@ After a system crash, NOVA must scan all the logs to rebuild the memory
 allocator state. Since, there are many logs, NOVA aggressively parallelizes the
 scan.
 
+Using NOVA
+==========
+
+NOVA runs on a pmem non-volatile memory region.  You can create one of these
+regions with the `memmap` kernel command line option.  For instance, adding
+`memmap=16G!8G` to the kernel boot parameters will reserve 16GB memory starting
+from address 8GB, and the kernel will create a `pmem0` block device under the
+`/dev` directory.
+
+After the OS has booted, you can initialize a NOVA instance with the following commands:
+
+
+# modprobe nova
+# mount -t NOVA -o init /dev/pmem0 /mnt/ramdisk
+
+
+The above commands create a NOVA instance on `/dev/pmem0` and mounts it on
+`/mnt/ramdisk`.
+
+Nova support several module command line options:
+
+ * metadata_csum: Enable metadata replication and checksums (default 0)
+
+ * data_csum: Compute checksums on file data. (default: 0)
+
+ * data_parity: Compute parity for file data. (default: 0)
+
+ * inplace_data_updates:  Update data in place rather than with COW (default: 0)
+
+ * wprotect: Make PMEM unwritable and then use CR0.WP to enable writes as
+   needed (default: 0).
+
+For instance to enable all Nova's data protection features:
+
+# modprobe nova metadata_csum=1\
+  	       data_csum=1\
+	       data_parity=1\
+	       wprotect=1
+
+Currently, remounting file systems with different combinations of options may
+not work.
+
+To recover an existing NOVA instance, mount NOVA without the init option, for example:
+
+# mount -t NOVA /dev/pmem0 /mnt/ramdisk
+
+### Taking Snapshots
+
+To create a snapshot:
+
+# echo 1 > /proc/fs/NOVA/<device>/create_snapshot
+
+To list the current snapshots:
+
+# cat /proc/fs/NOVA/<device>/snapshots
+
+To mount a snapshot, mount NOVA and specifying the snapshot index, for example:
+
+# mount -t NOVA -o snapshot=<index> /dev/pmem0 /mnt/ramdisk
+
+Users should not write to the file system after mounting a snapshot.
+
 Source File Structure
 =====================
-  * nova_def.h
-    Defines NOVA inode, super block structures and constant macros.
 
-  * nova.h
-    Defines NOVA entry structures, DRAM data structures, macro functions,
-    function prototypes, and commonly used inline functions.
-
-  * balloc.c
-    NOVA's block allocator implementation. NOVA divides NVMM into pools, one per
-    CPU, and keeps lists of free NVMM pages in DRAM. NOVA uses a red-black tree
-    to keep the free list sorted by address, allowing for efficient merging and
-    providing O(logn) deallocation.
-
+  * nova_def.h/nova.h
+        Defines NOVA macros and key inline functions.
+    
+  * balloc.{h,c}
+    NOVA's block allocator implementation.
+    
   * bbuild.c
     Implements recovery routines to restore the in-use inode list, the NVMM
     allocator information, and the snapshot table.
@@ -90,38 +146,27 @@ Source File Structure
     and flush.
 
   * gc.c
-    NOVA's garbage collection functions. NOVA collects stale data pages
-    immediately during write operations, and NOVA uses two different garbage
-    collection (GC) techniques to reclaim dead entries: Fast GC emphasizes speed
-    over thoroughness and it does not require any copying. If the live entries
-    account for less than 50% of the log space, NOVA applies thorough GC after
-    fast GC finishes, by moving live entries to new log pages.
+    NOVA's garbage collection functions. 
 
-  * inode.c
+  * inode.{h,c}
     Creates, reads, and frees NOVA inode tables and inodes.
 
   * ioctl.c
     Implements some ioctl commands to call NOVA's internal functions.
 
-  * journal.c
+  * journal.{h,c}
     For operations that affect multiple inodes NOVA uses lightweight,
     fixed-length journals – one per core. This file contains functions to
     create and manage the lite journals.
 
-  * log.c
+  * log.{h,c}
     Functions to manipulate NOVA inode logs, including log page allocation, log
     entry creation, commit, modification, and deletion.
 
-  * mprotect.h
+  * mprotect.{h,c}
     Implements inline functions to enable/disable writing to different NOVA
     data structures.
-
-  * mprotect.c
-    When write protection is enabled, NVMM is mapped read-only into the kernel's
-    address space. This file implements functions to enable/disable writes to
-    NVMM via the WriteProtect Enable (WP) bit in the per-core CR0 control
-    register.
-
+    
   * namei.c
     Functions to create/remove files, directories, and links. It also looks for
     the NOVA inode number for a given path name.
@@ -132,26 +177,20 @@ Source File Structure
     RAID-5 method. A function to restore a broken data strip is also implemented
     in this file.
 
-  * perf.h
-    Header file for function performance measurements. It defines function IDs
-    and call prototypes.
-
-  * perf.c
-    Measures primitive functions' performance, including memory copy functions
-    for DRAM and NVMM, checksum functions, and XOR parity functions.
+  * perf.{h,c}
+    Function performance measurements. It defines
+    function IDs and call prototypes.  Measures primitive functions'
+    performance, including memory copy functions for DRAM and NVMM, checksum
+    functions, and XOR parity functions.
 
   * rebuild.c
     When mounting NOVA after a crash, rebuilds NOVA inodes from its logs. There
     are also functions to re-calculate checksums and parity bits for file pages
     that were mmapped during the crash.
 
-  * snapshot.h
-    Defines NOVA snapshot entry in NVMM and DRAM data structures that are
-    relevant to managing snapshots.
-
-  * snapshot.c
-    Implements functions to create, delete and manage NOVA snapshots.
-
+  * snapshot.{h,c}
+    Code and data structures for taking snapshots.
+    
   * stats.h
     Defines data structures and macros that are relevant to gather NOVA usage
     statistics.
@@ -159,10 +198,10 @@ Source File Structure
   * stats.c
     Implements routines to gather and print NOVA usage statistics.
 
-  * super.c
-    This file implements entry points for NOVA mounting and unmounting,
-    initializing or recovering the NOVA super block and other global file system
-    information.
+  * super.{h,c}
+    Super block structures and Nova FS layout and entry points for NOVA
+    mounting and unmounting, initializing or recovering the NOVA super block
+    and other global file system information.
 
   * symlink.c
     Implements functions to create and read symbolic links in the filesystem.
@@ -176,7 +215,7 @@ FS Layout
 ======================
  block
 +-----------------------------------------------------+
-|  0  |  primary super block (struct nova_super_block)|
+|  0  | primary super block (struct nova_super_block) |
 +-----------------------------------------------------+
 |  1  | Reserved inodes                               |
 +-----------------------------------------------------+
@@ -260,14 +299,18 @@ In Nova's persistent data structures, memory locations are given as offsets
 from the beginning of the PMEM region.  nova_get_block() translates offsets to
 PMEM addresses.  nova_get_addr_off() performs the reverse translation.
 
+
 Inodes
 ======
 
 Nova maintains per-CPU inode tables, and inode numbers are striped across the
 tables (i.e., inos 0, n, 2n,... on cpu 0; inos 1, n + 1, 2n + 1, ... on cpu 1).
 
-The inodes tables each a linked list of 2MB blocks.  The last 8 bytes of each
-block points to the next block.
+The inodes themselves live in a set of linked lists (one per CPU) of 2MB
+blocks.  The last 8 bytes of each block points to the next block.  Pointers to
+heads of these list live in PMEM block INODE_TABLE0_START and are replicated in
+PMEM block INODE_TABLE1_START.  Additional space for inodes is allocated on
+demand.
 
 To allocate inodes, Nova maintains a per-cpu "inuse_list" in DRAM holds a RB
 tree that holds ranges of unallocated inode numbers.
@@ -416,11 +459,22 @@ Replication and Checksums
 Nova protects data and metadat from corruption due to media errors and
 "scribbles" -- software errors in the kernels that may overwrite Nova data.
 
+Replication
+-----------
+
+Nova replicates all PMEM metadata structures (there are a few exceptions.  They
+are WIP).  For structure, there is a primary and an "alternate" (denoted as
+"alter" in the code).  To ensure that Nova can recover a consistent copy of the
+data in case of a failure, Nova first updates the primary, and issues a persist
+barrier to ensure that data is written to NVMM.  Then it does the same for the
+alternate.
+
 Detection
 ---------
 
 Nova uses two techniques to detect data corruption.  For media errors, Nova
-should alway uses memcpy_from_pmem() to read data from PMEM.
+should always uses memcpy_from_pmem() to read data from PMEM, usually by
+copying the PMEM data structure into DRAM.
 
 To detect software-caused corruption, Nova uses CRC32 checksums.  All the PMEM
 data structures in Nova include csum field for this purpose.  Nova also
@@ -521,6 +575,40 @@ contents after the snapshot.
 Tracking Live Data
 ------------------
 
+Supporting snapshots requires Nova to preserve file contents from previous
+snapshots while also being able to recover the space a snapshot occupied after
+its deletion.
+
+Preserving file contents requires a small change to how Nova implements write
+operations.  To perform a write, Nova appends a write log entry to the file's
+log.  The log entry includes pointers to newly-allocated and populated NVMM
+pages that hold the written data.  If the write overwrites existing data, Nova
+locates the previous write log entry for that portion of the file, and performs
+an "epoch check" that compares the old log entry's epoch_id to the file
+system's current epoch_id.  If the comparison matches, the old write log entry
+and the file data blocks it points to no longer belong to any snapshot, and
+Nova reclaims the data blocks.
+
+If the epoch_id's do not match, then the data in the old log entry belongs to
+an earlier snapshot and Nova leaves the log entry in place.
+
+Determining when to reclaim data belonging to deleted snapshots requires
+additional bookkeeping.  For each snapshot, Nova maintains a "snapshot log"
+that records the inodes and blocks that belong to that snapshot, but are not
+part of the current file system image.
+
+Nova populates the snapshot log during the epoch check: If the epoch_ids for
+the new and old log entries do not match, it appends a log entry (either struct
+snapshot_inode_entry or struct snapshot_file_write_entry) to the snapshot log
+that the old log entry belongs to.  The log entry contains a pointer to the old
+log entry, and the filesystem's current epoch_id as the delete_epoch_id.
+
+To delete a snapshot, Nova removes the snapshot from the list of live snapshots
+and appends its log to the following snapshot's log.  Then, a background thread
+traverses the combined log and reclaims dead inode/data based on the delete
+epoch_id: If the delete epoch_id for an entry in the log is less than or equal
+to the snapshot's epoch_id, it means the log entry and/or the associated data
+blocks are now dead.
 
 
 Saving Snapshot State
@@ -537,7 +625,6 @@ Each of these lists (one per CPU) contains head and tail pointers to a linked
 list of blocks (just like an inode log).  The lists contain a struct
 snapshot_file_write_entry or struct snapshot_inode_entry for each operation
 that modified file data or an inode.
-
 
 Superblock
 +--------------------+
@@ -581,14 +668,53 @@ Superblock
 +----------+
 
 
-Recovery
-========
+Umount and Recovery
+===================
 
+Clean umount/mount
+------------------
 
+On a clean unmount, Nova saves the contents of many of its DRAM data structures
+to PMEM to accelerate the next mount:
 
-Allocator state
----------------
+1. Nova stores the allocator state for each of the per-cpu allocators to the
+   log of a reserved inode (NOVA_BLOCK_NODE_INO).
+    
+2. Nova stores the per-CPU lists of available inodes (the inuse_list) to the
+   NOVA_BLOCK_INODELIST1_INO reserved inode.
 
+3. Nova stores the snapshot state to PMEM as described above.
 
-Snapshots
----------
+After a clean unmount, the following mount restores these data and then
+invalidates them.
+
+Recovery after failures
+------------------------
+
+In case of a unclean dismount (e.g., system crash), Nova must rebuild these
+DRAM structures by scanning the inode logs.  Nova log scanning is fast because
+per-CPU inode tables and per-inode logs allow for parallel recovery.
+
+The number of live log entries in an inode log is roughly the number of extents
+in the file.  As a result, Nova only needs to scan a small fraction of the NVMM
+during recovery.
+
+The Nova failure recovery consists of two steps:
+
+First, Nova checks its lite weight journals and rolls back any uncommitted
+transactions to restore the file system to a consistent state.
+
+Second, Nova starts a recovery thread on each CPU and scans the inode tables in
+parallel, performing log scanning for every valid inode in the inode table.
+Nova use different recovery mechanisms for directory inodes and file inodes:
+For a directory inode, Nova scans the log's linked list to enumerate the pages
+it occupies, but it does not inspect the log's contents.  For a file inode,
+Nova reads the write entries in the log to enumerate the data pages.
+
+During the recovery scan Nova builds a bitmap of occupied pages, and rebuilds
+the allocator based on the result. After this process completes, the file
+system is ready to accept new requests.
+
+During the same scan, it rebuilds the snapshot information and the list
+available inodes.
+

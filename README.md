@@ -28,7 +28,7 @@ enables enormous parallelism during recovery from an unclean unmount, since
 threads can scan logs in parallel.
 
 NOVA replicates and checksums all metadata structures and protects file data
-with RAID-5-style parity.  It supports checkpoints to facilitate backups.
+with RAID-4-style parity.  It supports checkpoints to facilitate backups.
 
 A more thorough discussion of NOVA's design is avaialable in these two papers:
 
@@ -153,72 +153,13 @@ able to build and install it just as you would the mainline Linux source.
 
 To build NOVA, build the kernel with PMEM (`CONFIG_BLK_DEV_PMEM`), DAX (`CONFIG_FS_DAX`) and NOVA (`CONFIG_NOVA_FS`) support.  Install as usual.
 
-### Running NOVA
-
-NOVA runs on a pmem non-volatile memory region.  You can create one of these
-regions with the `memmap` kernel command line option.  For instance, adding
-`memmap=16G!8G` to the kernel boot parameters will reserve 16GB memory starting
-from address 8GB, and the kernel will create a `pmem0` block device under the
-`/dev` directory.
-
-After the OS has booted, you can initialize a NOVA instance with the following commands:
-
-~~~
-# modprobe nova
-# mount -t NOVA -o init /dev/pmem0 /mnt/ramdisk
-~~~
-
-The above commands create a NOVA instance on `/dev/pmem0` and mounts it on `/mnt/ramdisk`.
-
-NOVA's data protection features are not yet as stable as NOVA's core functionality, but you can enable them by loading the module like so:
-
-~~~
-# modprobe nova replica_metadata=1\
-    metadata_csum=1\
-    dram_struct_csum=1\
-    data_csum=1\
-    data_parity=1
-~~~
-
-Currently, not all combinations of options work properly, and remounting file
-systems with different combinations of options may not work.
-
-To recover an existing NOVA instance, mount NOVA without the init option, for example:
-
-~~~
-# mount -t NOVA /dev/pmem0 /mnt/ramdisk
-~~~
-
-### Taking Snapshots
-
-To create a snapshot:
-
-~~~
-# echo 1 > /proc/fs/NOVA/<device>/create_snapshot
-~~~
-
-To list the current snapshots:
-
-~~~
-# cat /proc/fs/NOVA/<device>/snapshots
-~~~
-
-To mount a snapshot, mount NOVA and specifying the snapshot index, for example:
-
-~~~
-# mount -t NOVA -o snapshot=<index> /dev/pmem0 /mnt/ramdisk
-~~~
-
-Users should not write to the file system after mounting a snapshot.
-
 ## Hacking and Contributing
 
 The NOVA source code is almost completely contains in the `fs/nova` directory.
 The execptions are some small changes in the kernel's memory management system
 to support checkpointing.
 
-`Documentation/filesystems/nova.txt` contains a brief description of the role of
-each file does in `fs/nova`.
+`Documentation/filesystems/nova.txt` describes the internals of Nova in more detail.
 
 If you find bugs, please [report them](https://github.com/NVSL/linux-nova/issues).
 
