@@ -409,6 +409,9 @@ static void __packet_set_status(struct packet_sock *po, void *frame, int status)
 		flush_dcache_page(pgv_to_page(&h.h2->tp_status));
 		break;
 	case TPACKET_V3:
+		h.h3->tp_status = status;
+		flush_dcache_page(pgv_to_page(&h.h3->tp_status));
+		break;
 	default:
 		WARN(1, "TPACKET version not supported.\n");
 		BUG();
@@ -432,6 +435,8 @@ static int __packet_get_status(struct packet_sock *po, void *frame)
 		flush_dcache_page(pgv_to_page(&h.h2->tp_status));
 		return h.h2->tp_status;
 	case TPACKET_V3:
+		flush_dcache_page(pgv_to_page(&h.h3->tp_status));
+		return h.h3->tp_status;
 	default:
 		WARN(1, "TPACKET version not supported.\n");
 		BUG();
@@ -476,6 +481,9 @@ static __u32 __packet_set_timestamp(struct packet_sock *po, void *frame,
 		h.h2->tp_nsec = ts.tv_nsec;
 		break;
 	case TPACKET_V3:
+		h.h3->tp_sec = ts.tv_sec;
+		h.h3->tp_nsec = ts.tv_nsec;
+		break;
 	default:
 		WARN(1, "TPACKET version not supported.\n");
 		BUG();
@@ -1497,6 +1505,8 @@ static void __fanout_link(struct sock *sk, struct packet_sock *po)
 	f->arr[f->num_members] = sk;
 	smp_wmb();
 	f->num_members++;
+	if (f->num_members == 1)
+		dev_add_pack(&f->prot_hook);
 	spin_unlock(&f->lock);
 }
 
@@ -1513,6 +1523,8 @@ static void __fanout_unlink(struct sock *sk, struct packet_sock *po)
 	BUG_ON(i >= f->num_members);
 	f->arr[i] = f->arr[f->num_members - 1];
 	f->num_members--;
+	if (f->num_members == 0)
+		__dev_remove_pack(&f->prot_hook);
 	spin_unlock(&f->lock);
 }
 
@@ -1693,7 +1705,6 @@ static int fanout_add(struct sock *sk, u16 id, u16 type_flags)
 		match->prot_hook.func = packet_rcv_fanout;
 		match->prot_hook.af_packet_priv = match;
 		match->prot_hook.id_match = match_fanout_group;
-		dev_add_pack(&match->prot_hook);
 		list_add(&match->list, &fanout_list);
 	}
 	err = -EINVAL;
@@ -1718,7 +1729,12 @@ out:
 	return err;
 }
 
-static void fanout_release(struct sock *sk)
+/* If pkt_sk(sk)->fanout->sk_ref is zero, this function removes
+ * pkt_sk(sk)->fanout from fanout_list and returns pkt_sk(sk)->fanout.
+ * It is the responsibility of the caller to call fanout_release_data() and
+ * free the returned packet_fanout (after synchronize_net())
+ */
+static struct packet_fanout *fanout_release(struct sock *sk)
 {
 	struct packet_sock *po = pkt_sk(sk);
 	struct packet_fanout *f;
@@ -1728,17 +1744,17 @@ static void fanout_release(struct sock *sk)
 	if (f) {
 		po->fanout = NULL;
 
-		if (atomic_dec_and_test(&f->sk_ref)) {
+		if (atomic_dec_and_test(&f->sk_ref))
 			list_del(&f->list);
-			dev_remove_pack(&f->prot_hook);
-			fanout_release_data(f);
-			kfree(f);
-		}
+		else
+			f = NULL;
 
 		if (po->rollover)
 			kfree_rcu(po->rollover, rcu);
 	}
 	mutex_unlock(&fanout_mutex);
+
+	return f;
 }
 
 static bool packet_extra_vlan_len_allowed(const struct net_device *dev,
@@ -2502,6 +2518,13 @@ static int tpacket_parse_header(struct packet_sock *po, void *frame,
 	ph.raw = frame;
 
 	switch (po->tp_version) {
+	case TPACKET_V3:
+		if (ph.h3->tp_next_offset != 0) {
+			pr_warn_once("variable sized slot not supported");
+			return -EINVAL;
+		}
+		tp_len = ph.h3->tp_len;
+		break;
 	case TPACKET_V2:
 		tp_len = ph.h2->tp_len;
 		break;
@@ -2521,6 +2544,9 @@ static int tpacket_parse_header(struct packet_sock *po, void *frame,
 		off_max = po->tx_ring.frame_size - tp_len;
 		if (po->sk.sk_type == SOCK_DGRAM) {
 			switch (po->tp_version) {
+			case TPACKET_V3:
+				off = ph.h3->tp_net;
+				break;
 			case TPACKET_V2:
 				off = ph.h2->tp_net;
 				break;
@@ -2530,6 +2556,9 @@ static int tpacket_parse_header(struct packet_sock *po, void *frame,
 			}
 		} else {
 			switch (po->tp_version) {
+			case TPACKET_V3:
+				off = ph.h3->tp_mac;
+				break;
 			case TPACKET_V2:
 				off = ph.h2->tp_mac;
 				break;
@@ -2912,6 +2941,7 @@ static int packet_release(struct socket *sock)
 {
 	struct sock *sk = sock->sk;
 	struct packet_sock *po;
+	struct packet_fanout *f;
 	struct net *net;
 	union tpacket_req_u req_u;
 
@@ -2951,9 +2981,14 @@ static int packet_release(struct socket *sock)
 		packet_set_ring(sk, &req_u, 1, 1);
 	}
 
-	fanout_release(sk);
+	f = fanout_release(sk);
 
 	synchronize_net();
+
+	if (f) {
+		fanout_release_data(f);
+		kfree(f);
+	}
 	/*
 	 *	Now the socket is dead. No more input will appear.
 	 */
@@ -3068,7 +3103,7 @@ static int packet_bind_spkt(struct socket *sock, struct sockaddr *uaddr,
 			    int addr_len)
 {
 	struct sock *sk = sock->sk;
-	char name[15];
+	char name[sizeof(uaddr->sa_data) + 1];
 
 	/*
 	 *	Check legality
@@ -3076,7 +3111,11 @@ static int packet_bind_spkt(struct socket *sock, struct sockaddr *uaddr,
 
 	if (addr_len != sizeof(struct sockaddr))
 		return -EINVAL;
-	strlcpy(name, uaddr->sa_data, sizeof(name));
+	/* uaddr->sa_data comes from the userspace, it's not guaranteed to be
+	 * zero-terminated.
+	 */
+	memcpy(name, uaddr->sa_data, sizeof(uaddr->sa_data));
+	name[sizeof(uaddr->sa_data)] = 0;
 
 	return packet_do_bind(sk, name, 0, pkt_sk(sk)->num);
 }
@@ -3626,6 +3665,8 @@ packet_setsockopt(struct socket *sock, int level, int optname, char __user *optv
 			return -EBUSY;
 		if (copy_from_user(&val, optval, sizeof(val)))
 			return -EFAULT;
+		if (val > INT_MAX)
+			return -EINVAL;
 		po->tp_reserve = val;
 		return 0;
 	}
@@ -3795,6 +3836,8 @@ static int packet_getsockopt(struct socket *sock, int level, int optname,
 	case PACKET_HDRLEN:
 		if (len > sizeof(int))
 			len = sizeof(int);
+		if (len < sizeof(int))
+			return -EINVAL;
 		if (copy_from_user(&val, optval, len))
 			return -EFAULT;
 		switch (val) {
@@ -3905,7 +3948,6 @@ static int packet_notifier(struct notifier_block *this,
 				}
 				if (msg == NETDEV_UNREGISTER) {
 					packet_cached_dev_reset(po);
-					fanout_release(sk);
 					po->ifindex = -1;
 					if (po->prot_hook.dev)
 						dev_put(po->prot_hook.dev);
@@ -4119,11 +4161,6 @@ static int packet_set_ring(struct sock *sk, union tpacket_req_u *req_u,
 	struct tpacket_req *req = &req_u->req;
 
 	lock_sock(sk);
-	/* Opening a Tx-ring is NOT supported in TPACKET_V3 */
-	if (!closing && tx_ring && (po->tp_version > TPACKET_V2)) {
-		net_warn_ratelimited("Tx-ring is not supported.\n");
-		goto out;
-	}
 
 	rb = tx_ring ? &po->tx_ring : &po->rx_ring;
 	rb_queue = tx_ring ? &sk->sk_write_queue : &sk->sk_receive_queue;
@@ -4160,8 +4197,8 @@ static int packet_set_ring(struct sock *sk, union tpacket_req_u *req_u,
 		if (unlikely(!PAGE_ALIGNED(req->tp_block_size)))
 			goto out;
 		if (po->tp_version >= TPACKET_V3 &&
-		    (int)(req->tp_block_size -
-			  BLK_PLUS_PRIV(req_u->req3.tp_sizeof_priv)) <= 0)
+		    req->tp_block_size <=
+			  BLK_PLUS_PRIV((u64)req_u->req3.tp_sizeof_priv))
 			goto out;
 		if (unlikely(req->tp_frame_size < po->tp_hdrlen +
 					po->tp_reserve))
@@ -4171,6 +4208,8 @@ static int packet_set_ring(struct sock *sk, union tpacket_req_u *req_u,
 
 		rb->frames_per_block = req->tp_block_size / req->tp_frame_size;
 		if (unlikely(rb->frames_per_block == 0))
+			goto out;
+		if (unlikely(req->tp_block_size > UINT_MAX / req->tp_block_nr))
 			goto out;
 		if (unlikely((rb->frames_per_block * req->tp_block_nr) !=
 					req->tp_frame_nr))
@@ -4183,11 +4222,19 @@ static int packet_set_ring(struct sock *sk, union tpacket_req_u *req_u,
 			goto out;
 		switch (po->tp_version) {
 		case TPACKET_V3:
-		/* Transmit path is not supported. We checked
-		 * it above but just being paranoid
-		 */
-			if (!tx_ring)
+			/* Block transmit is not supported yet */
+			if (!tx_ring) {
 				init_prb_bdqc(po, rb, pg_vec, req_u);
+			} else {
+				struct tpacket_req3 *req3 = &req_u->req3;
+
+				if (req3->tp_retire_blk_tov ||
+				    req3->tp_sizeof_priv ||
+				    req3->tp_feature_req_word) {
+					err = -EINVAL;
+					goto out;
+				}
+			}
 			break;
 		default:
 			break;
