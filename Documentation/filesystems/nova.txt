@@ -178,25 +178,25 @@ FS Layout
 +-----------------------------------------------------+
 |  0  |  primary super block (struct nova_super_block)|
 +-----------------------------------------------------+
-|  1  | Reserved inodes
-|
-+-
-|  2  | reserved
-+
-|  3  | Journal pointers
-+
-| 4-5 | Inode pointer tables
-+
-|  6  | reserved
-+
-|  7  | reserved
-+
-| ... | data pages 
-+----------------------------------------------+
-| n-2 | replica reserved Inodes                |
-+----------------------------------------------+
-| n-1 | replica super block                    |
-+----------------------------------------------+
+|  1  | Reserved inodes                               |
++-----------------------------------------------------+
+|  2  | reserved                                      |
++-----------------------------------------------------+
+|  3  | Journal pointers                              |
++-----------------------------------------------------+
+| 4-5 | Inode pointer tables                          |
++-----------------------------------------------------+
+|  6  | reserved                                      |
++-----------------------------------------------------+
+|  7  | reserved                                      |
++-----------------------------------------------------+
+| ... | data pages                                    |
++-----------------------------------------------------+
+| n-2 | replica reserved Inodes                       |
++-----------------------------------------------------+
+| n-1 | replica super block                           |
++-----------------------------------------------------+
+
 
 
 Superblock and Associated Structures
@@ -289,11 +289,11 @@ Log space is reclaimed during garbage collection.
 Log Entries
 -----------
 
-There are seven kinds of log entry, documented in log.h.  The log entries have
+There are eight kinds of log entry, documented in log.h.  The log entries have
 several entries in common:
 
    1.  'epoch_id' gives the epoch during which the log entry was created.
-   Creating a snapshot and creating a file system starts a new epoch.
+   Creating a snapshot increiments the epoch_id for the file systems.
 
    2.  'trans_id' is filesystem-wide, monotone increasing, number assigned each
    log entry.  It provides an ordering over all FS operations.
@@ -312,11 +312,11 @@ contains some metadata about the block and pointers to the next block and
 block's replica (struct nova_inode_page_tail).
 
 +----------------+
-| log entry
+| log entry      |
 +----------------+
-| log entry
+| log entry      |
 +----------------+
-| ...
+| ...            |
 +----------------+
 | tail           |
 |  metadata      |
@@ -333,7 +333,7 @@ for two operations:
 
 1.  Single word updates (JOURNAL_ENTRY)
 2.  Copying inodes (JOURNAL_INODE)
-
+                                                  
 The journals are undo logs: Nova creates the journal entries for an operation,
 and if the operation does not complete due to a system failure, the recovery
 process rolls back the changes using the journal entries.
@@ -358,21 +358,237 @@ corresponding dentry.
 In both cases, the nova populates the tree when the file or directory is opened
 by scanning its log.
 
-MMap
-====
+MMap and DAX
+============
 
+NOVA leverages the kernel's DAX mechanisms for mmap and file data access.  Nova
+maintains a red-black tree in DRAM (nova_inode_info_header.vma_tree) to track
+which portions of a file have been mapped.
 
 Garbage Collection
 ==================
 
-Unsafe mode
-===========
+Nova recovers log space with a two-phase garbage collection system.  When a log
+reaches the end of its allocated pages, Nova allocates more space.  Then, the
+fast GC algorithm scans the log to remove pages that have no valid entries.
+Then, it estimates how many pages the logs valid entries would fill.  If this
+is less than half the number of pages in the log, the second GC phase copies
+the valid entries to new pages.
+
+For example:
+
++---+          +---+	        +---+
+| I |	       | I |  	      	| V |
++---+	       +---+  Thorough	+---+
+| V |	       | V |  	 GC   	| V |
++---+	       +---+   =====> 	+---+
+| I |	       | I |  	      	| V |
++---+	       +---+	        +---+
+| V |	       | V |  	        | V |
++---+	       +---+            +---+	
+  |	         |	       
+  V	         V             
++---+	       +---+ 	       
+| I |	       | V | 	       
++---+	       +---+ 	       
+| I | fast GC  | I | 	       
++---+  ====>   +---+ 	       
+| I |	       | I | 	       
++---+	       +---+ 	       
+| I |	       | V | 	       
++---+	       +---+ 	       
+  |	       	
+  V	       	
++---+	       	
+| V |	       	
++---+	       	
+| I |	       	
++---+	       	
+| I |	       	
++---+	       	
+| V |	       	
++---+            
+
 
 Replication and Checksums
 =========================
 
+Nova protects data and metadat from corruption due to media errors and
+"scribbles" -- software errors in the kernels that may overwrite Nova data.
+
+Detection
+---------
+
+Nova uses two techniques to detect data corruption.  For media errors, Nova
+should alway uses memcpy_from_pmem() to read data from PMEM.
+
+To detect software-caused corruption, Nova uses CRC32 checksums.  All the PMEM
+data structures in Nova include csum field for this purpose.  Nova also
+computes CRC32 checksums each 512-byte slice of each data page.
+
+The checksums are stored in dedicated pages in each CPU's allocation region.
+
+                                                          replica
+                                                 parity   parity 	
+					         page	  page	  
+            +---+---+---+---+---+---+---+---+    +---+    +---+       
+data page 0 | 0 | 1 | 0 | 0 | 1 | 1 | 1 | 0 |    | 0 |    | 0 |  	
+            +---+---+---+---+---+---+---+---+    +---+    +---+  	
+data page 1 | 0 | 1 | 0 | 0 | 1 | 1 | 1 | 1 |    | 1 |    | 1 |  	
+            +---+---+---+---+---+---+---+---+    +---+    +---+  	
+data page 2 | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 0 |    | 0 |    | 0 |  	
+            +---+---+---+---+---+---+---+---+    +---+    +---+  	
+data page 3 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 1 |    | 0 |    | 0 |  	
+            +---+---+---+---+---+---+---+---+    +---+    +---+  	
+    ...                    ...                    ...      ...   
+
+Recovery
+--------
+
+Nova uses replication to support recovery of metadata structures and
+RAID4-style parity to recover corrupted data.
+
+If Nova detects corruption of a metadata structure, it restores the structure
+using the replica.
+
+If it detects a corrupt slice of data page, it uses RAID4-style recovery to
+restore it.  The CRC32 checksums for the page slices are replicated.
+
+Cautious allocation
+-------------------
+
+To maximize its resilience to software scribbles, Nova allocate metadata
+structures and their replicas far from one another.  It tries to allocate the
+primary copy at a low address and the replica at a high address within the PMEM
+region.
+
+Write Protection
+----------------
+
+Finally, Nova supports can prevent unintended writes PMEM by mapping the entire
+PMEM device as read-only and then disabling _all_ write protection by clearing
+the WP bit the CR0 control register when Nova needs to perform a write.  The
+wprotect mount-time option controls this behavior.
+
+
+Unsafe modes
+============
+
+Nova support modes that disable some of the protections it provides to improve
+perforamnce.
+
+File data
+---------
+
+Nova can disable parity and/or checksums on file data (options 'data_parity=0'
+and 'data_checksum=0').  Without parity, Nova can detect but not recover from
+data corruption.  Without checksums, Nova will still detect and recover from
+media errors, but not scribbles.
+
+Nova also supports in-place file updates (option: inplace_data_updates=1).
+This breaks atomicity for writes, but improve performance, especially for
+sub-page writes, since these require a full page COW in the default mode.
+
+Metadata
+--------
+
+Nova can disable metadata checksums and replication (option 'metadata_csum=0').
+
+
 Snapshots
 =========
 
+Nova supports snapshots to facilitate backups.
+
+Taking a snapshot
+-----------------
+
+Each Nova file systems has a current epoch_id in the super block and each log
+entry has the epoch_id attached to it at creation.  When the user creates a
+snaphot, Nova increments the epoch_id for the file system and the old epoch_id
+identifies the moment the snapshot was taken.
+
+Nova records the epoch_id and a timestamp in a new log entry (struct
+snapshot_info_log_entry) and appends it to the log of the reserved snapshot
+inode (NOVA_SNAPSHOT_INODE) in the superblock.
+
+Nova also maintains a radix tree (nova_sb_info.snapshot_info_tree) of struct
+snapshot_info in DRAM indexed by epoch_id.
+
+Nova also marks all mmap'd pages as read-only and uses COW to preserve file
+contents after the snapshot.
+
+Tracking Live Data
+------------------
+
+
+
+Saving Snapshot State
+---------------------
+
+During a clean shutdown, Nova stores the snapshot information to PMEM.
+
+Nova reserves an inode for storing snapshot information.  The log for the inode
+contains an entry for each snapshot (struct snapshot_info_log_entry).  On
+shutdown, Nova allocates one page (struct snapshot_nvmm_page) to store an array
+of struct snapshot_nvmm_list.
+
+Each of these lists (one per CPU) contains head and tail pointers to a linked
+list of blocks (just like an inode log).  The lists contain a struct
+snapshot_file_write_entry or struct snapshot_inode_entry for each operation
+that modified file data or an inode.
+
+
+Superblock
++--------------------+
+|   ...              |
++--------------------+
+| Reserved Inodes    |
++---+----------------+
+|   |     ..         |
++---+----------------+
+| 7 | Snapshot Inode |
+|   | head           |
++---+----------------+
+        /
+       /
+      / 
++---------+---------+---------+
+|  Snap   |  Snap   |  Snap   |
+| epoch=1 | epoch=4 | epoch=11|
+|         |         |         |
+|nvmm_page|nvmm_page|nvmm_page|
++---------+---------+---------+
+     |
+     |
++----------+   +--------+--------+
+|  cpu 0   |   | snap 	| snap   |	
+|   head   |-->| inode	| write	 |
+|          |   | entry  | entry  |      
+|          |   +--------+--------+
++----------+   +--------+--------+
+|  cpu 1   |   | snap 	| snap   |
+|   head   |-->| write	| write	 |
+|          |   | entry  | entry  |
+|          |   +--------+--------+
++----------+ 
+|    ...   | 
++----------+   +--------+
+|  cpu 128 |   | snap 	|
+|   head   |-->| inode	|
+|          |   | entry  |
+|          |   +--------+
++----------+
+
+
 Recovery
 ========
+
+
+
+Allocator state
+---------------
+
+
+Snapshots
+---------
