@@ -18,19 +18,10 @@
  * warranty of any kind, whether express or implied.
  */
 
-struct nova_snapshot_info_entry {
-	u8	type;
-	u8	deleted;
-	u8	paddings[6];
-	__le64	epoch_id;
-	__le64	timestamp;
-	__le64	nvmm_page_addr;
-	__le32	csumpadding;
-	__le32	csum;
-} __attribute((__packed__));
 
-#define SNENTRY(entry)	((struct nova_snapshot_info_entry *) entry)
-
+/*
+ * DRAM log of updates to a snapshot.  
+ */
 struct snapshot_list {
 	struct mutex list_mutex;
 	unsigned long num_pages;
@@ -38,38 +29,61 @@ struct snapshot_list {
 	unsigned long tail;
 };
 
+
+/*
+ * DRAM info about a snapshop.
+ */
 struct snapshot_info {
 	u64	epoch_id;
 	u64	timestamp;
-	unsigned long snapshot_entry;
+	unsigned long snapshot_entry; /* PMEM pointer to the struct
+				       * snapshot_info_entry for this 
+				       * snapshot 
+				       */
 
-	/* Per-CPU snapshot list */
-	struct snapshot_list *lists;
+	struct snapshot_list *lists; 	/* Per-CPU snapshot list */
 };
+
 
 enum nova_snapshot_entry_type {
 	SS_INODE = 1,
 	SS_FILE_WRITE,
 };
 
+/*
+ * Snapshot log entry for recording an inode operation in a snapshot log.
+ *
+ * Todo: add checksum
+ */
 struct snapshot_inode_entry {
 	u8	type;
 	u8	deleted;
 	u8	padding[6];
 	u64	padding64;
-	u64	nova_ino;
-	u64	delete_epoch_id;
+	u64	nova_ino;          // inode number that was deleted.
+	u64	delete_epoch_id;   // Deleted when?
 } __attribute((__packed__));
 
+/*
+ * Snapshot log entry for recording a write operation in a snapshot log
+ *
+ * Todo: add checksum.
+ */
 struct snapshot_file_write_entry {
 	u8	type;
 	u8	deleted;
 	u8	padding[6];
-	u64	nvmm;
-	u64	num_pages;
+	u64	nvmm;               
+	u64	num_pages;           
 	u64	delete_epoch_id;
 } __attribute((__packed__));
 
+/* 
+ * PMEM structure pointing to a log comprised of snapshot_inode_entry and
+ * snapshot_file_write_entry objects.
+ *
+ * TODO: add checksum
+ */
 struct snapshot_nvmm_list {
 	__le64 padding;
 	__le64 num_pages;

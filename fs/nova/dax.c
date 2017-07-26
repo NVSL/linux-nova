@@ -22,6 +22,7 @@
 #include "inode.h"
 
 
+
 static inline int nova_copy_partial_block(struct super_block *sb,
 	struct nova_inode_info_header *sih,
 	struct nova_file_write_entry *entry, unsigned long index,
@@ -87,7 +88,7 @@ static inline int nova_handle_partial_block(struct super_block *sb,
  * Do nothing if fully covered; copy if original blocks present;
  * Fill zero otherwise.
  */
-static int nova_handle_head_tail_blocks(struct super_block *sb,
+int nova_handle_head_tail_blocks(struct super_block *sb,
 	struct inode *inode, loff_t pos, size_t count, void *kmem)
 {
 	struct nova_inode_info *si = NOVA_I(inode);
@@ -260,7 +261,7 @@ void nova_init_file_write_entry(struct super_block *sb,
 	entry->size = file_size;
 }
 
-static int nova_protect_file_data(struct super_block *sb, struct inode *inode,
+int nova_protect_file_data(struct super_block *sb, struct inode *inode,
 	loff_t pos, size_t count, const char __user *buf, unsigned long blocknr,
 	bool inplace)
 {
@@ -546,7 +547,7 @@ out:
 	return ent_blks;
 }
 
-static ssize_t nova_inplace_file_write(struct file *filp,
+ ssize_t nova_inplace_file_write(struct file *filp,
 	const char __user *buf,	size_t len, loff_t *ppos)
 {
 	struct address_space *mapping = filp->f_mapping;
@@ -804,7 +805,7 @@ out:
 }
 
 /* Check if existing entry overlap with vma regions */
-static int nova_check_overlap_vmas(struct super_block *sb,
+int nova_check_overlap_vmas(struct super_block *sb,
 	struct nova_inode_info_header *sih,
 	unsigned long pgoff, unsigned long num_pages)
 {
@@ -1144,7 +1145,7 @@ out:
 	return ret;
 }
 
-static int nova_insert_write_vma(struct vm_area_struct *vma)
+int nova_insert_write_vma(struct vm_area_struct *vma)
 {
 	struct address_space *mapping = vma->vm_file->f_mapping;
 	struct inode *inode = mapping->host;
@@ -1339,7 +1340,7 @@ static void nova_vma_close(struct vm_area_struct *vma)
 	nova_remove_write_vma(vma);
 }
 
-static const struct vm_operations_struct nova_dax_vm_ops = {
+const struct vm_operations_struct nova_dax_vm_ops = {
 	.fault	= nova_dax_fault,
 	.pmd_fault = nova_dax_pmd_fault,
 	.page_mkwrite = nova_dax_fault,

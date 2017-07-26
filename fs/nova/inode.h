@@ -1,7 +1,11 @@
 #ifndef __INODE_H
 #define __INODE_H
 
+struct nova_inode_info_header;
+struct nova_inode;
+
 #include "super.h"
+#include "log.h"
 
 enum nova_new_inode_type {
 	TYPE_CREATE = 0,

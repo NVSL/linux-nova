@@ -158,16 +158,6 @@ enum alloc_type {
 	DATA,
 };
 
-struct nova_inode_update {
-	u64 head;
-	u64 alter_head;
-	u64 tail;
-	u64 alter_tail;
-	u64 curr_entry;
-	u64 alter_entry;
-	struct nova_dentry *create_dentry;
-	struct nova_dentry *delete_dentry;
-};
 
 #define	MMAP_WRITE_BIT	0x20UL	// mmaped for write
 #define	IS_MAP_WRITE(p)	((p) & (MMAP_WRITE_BIT))
@@ -1001,6 +991,22 @@ int nova_iomap_begin(struct inode *inode, loff_t offset, loff_t length,
 	unsigned int flags, struct iomap *iomap, bool taking_lock);
 int nova_iomap_end(struct inode *inode, loff_t offset, loff_t length,
 	ssize_t written, unsigned int flags, struct iomap *iomap);
+int nova_insert_write_vma(struct vm_area_struct *vma);
+
+int nova_check_overlap_vmas(struct super_block *sb,
+			    struct nova_inode_info_header *sih,
+			    unsigned long pgoff, unsigned long num_pages);
+int nova_handle_head_tail_blocks(struct super_block *sb,
+				 struct inode *inode, loff_t pos,
+				 size_t count, void *kmem);
+int nova_protect_file_data(struct super_block *sb, struct inode *inode,
+	loff_t pos, size_t count, const char __user *buf, unsigned long blocknr,
+        bool inplace);
+ ssize_t nova_inplace_file_write(struct file *filp, const char __user *buf,
+				 size_t len, loff_t *ppos);
+
+extern const struct vm_operations_struct nova_dax_vm_ops;
+
 
 /* dir.c */
 extern const struct file_operations nova_dir_operations;

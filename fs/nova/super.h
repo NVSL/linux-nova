@@ -206,5 +206,6 @@ extern struct nova_range_node *nova_alloc_range_node(struct super_block *sb);
 extern void nova_free_range_node(struct nova_range_node *node);
 extern void nova_update_super_crc(struct super_block *sb);
 extern void nova_sync_super(struct super_block *sb);
-	
+
+struct snapshot_info *nova_alloc_snapshot_info(struct super_block *sb);
 #endif

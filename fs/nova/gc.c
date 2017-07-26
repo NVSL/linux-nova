@@ -294,7 +294,7 @@ static int nova_gc_assign_new_entry(struct super_block *sb,
 	return ret;
 }
 
-/* Copy alive log entries to the new log and atomically replace the old log */
+/* Copy live log entries to the new log and atomically replace the old log */
 static unsigned long nova_inode_log_thorough_gc(struct super_block *sb,
 	struct nova_inode *pi, struct nova_inode_info_header *sih,
 	unsigned long blocks, unsigned long checked_pages)
@@ -554,16 +554,9 @@ out:
 	return blocks;
 }
 
-static int need_thorough_gc(struct super_block *sb,
-	struct nova_inode_info_header *sih, unsigned long blocks,
-	unsigned long checked_pages)
-{
-	if (blocks && blocks * 2 < checked_pages)
-		return 1;
-
-	return 0;
-}
-
+/* 
+ * Scan pages in the log and remove those with no valid log entries.
+ */
 int nova_inode_log_fast_gc(struct super_block *sb,
 	struct nova_inode *pi, struct nova_inode_info_header *sih,
 	u64 curr_tail, u64 new_block, u64 alter_new_block,
@@ -660,6 +653,7 @@ int nova_inode_log_fast_gc(struct super_block *sb,
 	nova_dbgv("checked pages %lu, freed %d\n", checked_pages, freed_pages);
 	checked_pages -= freed_pages;
 
+	// TODO:  I think this belongs in nova_extend_inode_log.
 	if (num_pages > 0) {
 		curr = BLOCK_OFF(curr_tail);
 		curr_page = (struct nova_inode_log_page *)
@@ -720,13 +714,16 @@ int nova_inode_log_fast_gc(struct super_block *sb,
 	if (sih->num_entries == 0)
 		return 0;
 
-	/* Inaccurate count, correct later */
+	/* Estimate how many pages worth of valid entries the log contains.
+	 * 
+	 * If it is less than half the number pages that remain in the log,
+	 * compress them with thorough gc.
+	 */
 	blocks = (sih->valid_entries * checked_pages) / sih->num_entries;
 	if ((sih->valid_entries * checked_pages) % sih->num_entries)
 		blocks++;
 
-	if (force_thorough ||
-	    need_thorough_gc(sb, sih, blocks, checked_pages)) {
+	if (force_thorough || (blocks && blocks * 2 < checked_pages)) {
 		nova_dbgv("Thorough GC for inode %lu: checked pages %lu, "
 				"valid pages %lu\n", sih->ino,
 				checked_pages, blocks);

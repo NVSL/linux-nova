@@ -2,6 +2,7 @@
 #define __LOG_H
 
 #include "balloc.h"
+#include "inode.h"
 
 /* ======================= Log entry ========================= */
 /* Inode entry in the log */
@@ -179,6 +180,40 @@ struct nova_mmap_entry {
 #define MMENTRY(entry)	((struct nova_mmap_entry *) entry)
 
 /* 
+ * Log entry for the creation of a snapshot.  Only occurs in the log of the
+ * dedicated snapshot inode.
+ */
+struct nova_snapshot_info_entry {
+	u8	type;
+	u8	deleted;
+	u8	paddings[6];
+	__le64	epoch_id;
+	__le64	timestamp;
+	__le64	nvmm_page_addr;
+	__le32	csumpadding;
+	__le32	csum;
+} __attribute((__packed__));
+
+#define SNENTRY(entry)	((struct nova_snapshot_info_entry *) entry)
+
+
+/*
+ * Transient DRAM structure that describes changes needed to append a log entry
+ * to an inode
+ */
+struct nova_inode_update {
+	u64 head;
+	u64 alter_head;
+	u64 tail;
+	u64 alter_tail;
+	u64 curr_entry;
+	u64 alter_entry;
+	struct nova_dentry *create_dentry;
+	struct nova_dentry *delete_dentry;
+};
+
+
+/* 
  * Transient DRAM structure to parameterize the creation of a log entry.
  */
 struct nova_log_entry_info {
@@ -195,6 +230,8 @@ struct nova_log_entry_info {
 	int link_change;
 	int inplace;	/* For file write entry */
 };
+
+
 
 static inline size_t nova_get_log_entry_size(struct super_block *sb,
 	enum nova_entry_type type)

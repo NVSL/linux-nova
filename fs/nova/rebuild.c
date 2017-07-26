@@ -508,7 +508,7 @@ static inline void nova_rebuild_dir_time_and_size(struct super_block *sb,
 	reb->i_ctime = entryc->mtime;
 	reb->i_mtime = entryc->mtime;
 	reb->i_links_count = entryc->links_count;
-	reb->i_size = entryc->size;
+	//reb->i_size = entryc->size;
 }
 
 static void nova_reassign_last_dentry(struct super_block *sb,

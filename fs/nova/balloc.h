@@ -1,6 +1,8 @@
 #ifndef __BALLOC_H
 #define __BALLOC_H
 
+#include "inode.h"
+
 /* DRAM structure to hold a list of free PMEM blocks */
 struct free_list {
 	spinlock_t s_lock;
@@ -57,13 +59,15 @@ enum nova_alloc_direction {ALLOC_FROM_HEAD=0,
 			   ALLOC_FROM_TAIL=1};
 enum nova_alloc_init {ALLOC_NO_INIT=0,
 		      ALLOC_INIT_ZERO=1};
-		      
+
+
+
+
 int nova_alloc_block_free_lists(struct super_block *sb);
 void nova_delete_free_lists(struct super_block *sb);
 inline struct nova_range_node *nova_alloc_blocknode(struct super_block *sb);
 inline struct nova_range_node *nova_alloc_inode_node(struct super_block *sb);
 inline struct vma_item *nova_alloc_vma_item(struct super_block *sb);
-inline struct snapshot_info *nova_alloc_snapshot_info(struct super_block *sb);
 inline void nova_free_range_node(struct nova_range_node *node);
 inline void nova_free_snapshot_info(struct snapshot_info *info);
 inline void nova_free_blocknode(struct super_block *sb,
@@ -104,6 +108,4 @@ extern int nova_insert_range_node(struct rb_root *tree,
 extern int nova_find_range_node(struct nova_sb_info *sbi,
 				struct rb_root *tree, unsigned long range_low,
 				struct nova_range_node **ret_node);
-
-
 #endif

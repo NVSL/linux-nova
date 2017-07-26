@@ -180,7 +180,7 @@ static unsigned int nova_init_dentry(struct super_block *sb,
 	de_entry->name_len = 1;
 	de_entry->de_len = cpu_to_le16(de_len);
 	de_entry->mtime = CURRENT_TIME_SEC.tv_sec;
-	de_entry->size = sb->s_blocksize;
+	//de_entry->size = sb->s_blocksize;
 	de_entry->links_count = 1;
 	strncpy(de_entry->name, ".\0", 2);
 	nova_update_entry_csum(de_entry);
@@ -197,7 +197,7 @@ static unsigned int nova_init_dentry(struct super_block *sb,
 	de_entry->name_len = 2;
 	de_entry->de_len = cpu_to_le16(de_len);
 	de_entry->mtime = CURRENT_TIME_SEC.tv_sec;
-	de_entry->size = sb->s_blocksize;
+	//de_entry->size = sb->s_blocksize;
 	de_entry->links_count = 2;
 	strncpy(de_entry->name, "..\0", 3);
 	nova_update_entry_csum(de_entry);

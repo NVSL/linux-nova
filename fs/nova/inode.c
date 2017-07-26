@@ -26,7 +26,6 @@
 #include "nova.h"
 #include "inode.h"
 
-
 unsigned int blk_type_to_shift[NOVA_BLOCK_TYPE_MAX] = {12, 21, 30};
 uint32_t blk_type_to_size[NOVA_BLOCK_TYPE_MAX] = {0x1000, 0x200000, 0x40000000};
 

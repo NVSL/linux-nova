@@ -332,7 +332,7 @@ static int nova_update_new_dentry(struct super_block *sb,
 				dentry->d_name.len);
 	entry->name[dentry->d_name.len] = '\0';
 	entry->mtime = cpu_to_le32(dir->i_mtime.tv_sec);
-	entry->size = cpu_to_le64(dir->i_size);
+	//entry->size = cpu_to_le64(dir->i_size);
 
 	links_count = cpu_to_le16(dir->i_nlink);
 	if (links_count == 0 && link_change == -1)
@@ -1179,6 +1179,10 @@ static int nova_initialize_inode_log(struct super_block *sb,
 	return 0;
 }
 
+/*
+ * Extend the log.  If the log is less than EXTEND_THRESHOLD pages, double its
+ * allocated size.  Otherwise, increase by EXTEND_THRESHOLD. Then, do GC.
+ */
 static u64 nova_extend_inode_log(struct super_block *sb, struct nova_inode *pi,
 	struct nova_inode_info_header *sih, u64 curr_p)
 {

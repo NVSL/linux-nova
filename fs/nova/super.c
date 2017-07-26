@@ -59,7 +59,6 @@ MODULE_PARM_DESC(metadata_csum, "Protect metadata structures with replication an
 module_param(wprotect, int, S_IRUGO);
 MODULE_PARM_DESC(wprotect, "Write-protect pmem region and use CR0.WP to allow updates");
 
-
 module_param(data_csum, int, S_IRUGO);
 MODULE_PARM_DESC(data_csum, "Detect corruption of data pages using checksum");
 
@@ -942,6 +941,15 @@ inline void nova_free_vma_item(struct super_block *sb,
 	nova_free_range_node((struct nova_range_node *)item);
 }
 
+inline struct snapshot_info *nova_alloc_snapshot_info(struct super_block *sb)
+{
+	struct snapshot_info *p;
+
+	p = (struct snapshot_info *)
+		kmem_cache_alloc(nova_snapshot_info_cachep, GFP_NOFS);
+	return p;
+}
+
 inline void nova_free_snapshot_info(struct snapshot_info *info)
 {
 	kmem_cache_free(nova_snapshot_info_cachep, info);
@@ -967,14 +975,6 @@ inline struct vma_item *nova_alloc_vma_item(struct super_block *sb)
 	return (struct vma_item *)nova_alloc_range_node(sb);
 }
 
-inline struct snapshot_info *nova_alloc_snapshot_info(struct super_block *sb)
-{
-	struct snapshot_info *p;
-
-	p = (struct snapshot_info *)
-		kmem_cache_alloc(nova_snapshot_info_cachep, GFP_NOFS);
-	return p;
-}
 
 static struct inode *nova_alloc_inode(struct super_block *sb)
 {

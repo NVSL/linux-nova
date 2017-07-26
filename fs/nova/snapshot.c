@@ -20,6 +20,7 @@
 
 #include "nova.h"
 #include "inode.h"
+#include "super.h"
 
 static inline u64 next_list_page(u64 curr_p)
 {
