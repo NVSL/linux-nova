@@ -37,7 +37,7 @@ enum memcpy_call_id {
 };
 
 enum from_pmem_call_id {
-	memcpy_from_pmem_id = 0,
+	memcpy_mcsafe_id = 0,
 	NUM_FROM_PMEM_CALLS
 };
 

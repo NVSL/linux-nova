@@ -88,7 +88,7 @@ static int nova_init_inode_rebuild(struct super_block *sb,
 	struct nova_inode fake_pi;
 	int rc;
 
-	rc = memcpy_from_pmem(&fake_pi, pi, sizeof(struct nova_inode));
+	rc = memcpy_mcsafe(&fake_pi, pi, sizeof(struct nova_inode));
 	if (rc)
 		return rc;
 

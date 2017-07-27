@@ -37,7 +37,7 @@ static inline int nova_copy_partial_block(struct super_block *sb,
 
 	if (ptr != NULL) {
 		if (support_clwb)
-			rc = memcpy_from_pmem(kmem + offset, ptr + offset,
+			rc = memcpy_mcsafe(kmem + offset, ptr + offset,
 						length);
 		else
 			memcpy_to_pmem_nocache(kmem + offset, ptr + offset,
@@ -220,7 +220,7 @@ int nova_cleanup_incomplete_write(struct super_block *sb,
 		else {
 			/* skip entry check here as the entry checksum may not
 			 * be updated when this is called */
-			if (memcpy_from_pmem(entryc, entry,
+			if (memcpy_mcsafe(entryc, entry,
 					sizeof(struct nova_file_write_entry)))
 				return -EIO;
 		}
@@ -333,7 +333,7 @@ int nova_protect_file_data(struct super_block *sb, struct inode *inode,
 				}
 			}
 
-			ret = memcpy_from_pmem(blockbuf, blockptr, offset);
+			ret = memcpy_mcsafe(blockbuf, blockptr, offset);
 			if (ret < 0)
 				goto out;
 		} else {
@@ -404,7 +404,7 @@ eblk:
 				}
 			}
 
-			ret = memcpy_from_pmem(blockbuf + eblk_offset,
+			ret = memcpy_mcsafe(blockbuf + eblk_offset,
 						blockptr + eblk_offset,
 						blocksize - eblk_offset);
 			if (ret < 0)
@@ -450,7 +450,7 @@ static bool nova_get_verify_entry(struct super_block *sb,
 
 	if (locked == 0) {
 		/* Someone else may be updating the entry. Skip check */
-		ret = memcpy_from_pmem(entryc, entry,
+		ret = memcpy_mcsafe(entryc, entry,
 				sizeof(struct nova_file_write_entry));
 		if (ret < 0)
 			return false;

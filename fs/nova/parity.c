@@ -302,11 +302,11 @@ int nova_restore_data(struct super_block *sb, unsigned long blocknr,
 		offset = i << strp_shift;
 		if (i == badstrip_id)
 			/* parity strip has media errors */
-			ret = memcpy_from_pmem(block + offset,
+			ret = memcpy_mcsafe(block + offset,
 						parity, strp_size);
 		else
 			/* another data strip has media errors */
-			ret = memcpy_from_pmem(block + offset,
+			ret = memcpy_mcsafe(block + offset,
 						blockptr + offset, strp_size);
 		if (ret < 0) {
 			/* media error happens during recovery */
@@ -397,7 +397,7 @@ int nova_update_truncated_block_parity(struct super_block *sb,
 		goto out;
 	}
 
-	if (memcpy_from_pmem(block, nvmm_addr, blocksize) < 0) {
+	if (memcpy_mcsafe(block, nvmm_addr, blocksize) < 0) {
 		ret = -EIO;
 		goto out;
 	}

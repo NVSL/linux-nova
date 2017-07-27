@@ -52,7 +52,7 @@ static inline u8 nova_get_entry_type(void *p)
 	u8 type;
 	int rc;
 
-	rc = memcpy_from_pmem(&type, p, sizeof(u8));
+	rc = memcpy_mcsafe(&type, p, sizeof(u8));
 	if (rc)
 		return rc;
 

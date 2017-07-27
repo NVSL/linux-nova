@@ -54,13 +54,13 @@ static int from_pmem_call(char *dst, char *src, size_t off, size_t size)
 {
 	/* pin dst address to cache most writes, if size fits */
 	/* src address should point to pmem */
-	memcpy_from_pmem(dst, src + off, size);
+	memcpy_mcsafe(dst, src + off, size);
 	return 0;
 }
 
 static const memcpy_call_t from_pmem_calls[] = {
 	/* order should match enum from_pmem_call_id */
-	{ "memcpy_from_pmem", from_pmem_call }
+	{ "memcpy_mcsafe", from_pmem_call }
 };
 
 /* copy to pmem functions */

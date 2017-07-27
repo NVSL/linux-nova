@@ -116,7 +116,7 @@ static bool curr_page_invalid(struct super_block *sb,
 
 	curr_page = (struct nova_inode_log_page *)
 					nova_get_block(sb, page_head);
-	rc = memcpy_from_pmem(&page_tail, &curr_page->page_tail,
+	rc = memcpy_mcsafe(&page_tail, &curr_page->page_tail,
 					sizeof(struct nova_inode_page_tail));
 	if (rc) {
 		/* FIXME: Recover use replica log */

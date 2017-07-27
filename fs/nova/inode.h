@@ -146,7 +146,7 @@ static inline struct nova_inode *nova_get_alter_inode(struct super_block *sb,
 		return NULL;
 
 	addr = nova_get_block(sb, sih->alter_pi_addr);
-	rc = memcpy_from_pmem(&fake_pi, addr, sizeof(struct nova_inode));
+	rc = memcpy_mcsafe(&fake_pi, addr, sizeof(struct nova_inode));
 	if (rc)
 		return NULL;
 
@@ -346,7 +346,7 @@ static inline struct nova_inode *nova_get_inode(struct super_block *sb,
 	int rc;
 
 	addr = nova_get_block(sb, sih->pi_addr);
-	rc = memcpy_from_pmem(&fake_pi, addr, sizeof(struct nova_inode));
+	rc = memcpy_mcsafe(&fake_pi, addr, sizeof(struct nova_inode));
 	if (rc)
 		return NULL;
 

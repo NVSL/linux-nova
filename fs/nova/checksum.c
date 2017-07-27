@@ -25,18 +25,18 @@ static int nova_get_entry_copy(struct super_block *sb, void *entry,
 	struct nova_dentry *dentry;
 	int ret = 0;
 
-	ret = memcpy_from_pmem(&type, entry, sizeof(u8));
+	ret = memcpy_mcsafe(&type, entry, sizeof(u8));
 	if (ret < 0)
 		return ret;
 
 	switch (type) {
 	case DIR_LOG:
 		dentry = DENTRY(entry_copy);
-		ret = memcpy_from_pmem(dentry, entry, NOVA_DENTRY_HEADER_LEN);
+		ret = memcpy_mcsafe(dentry, entry, NOVA_DENTRY_HEADER_LEN);
 		if (ret < 0 || dentry->de_len > NOVA_MAX_ENTRY_LEN)
 			break;
 		*entry_size = dentry->de_len;
-		ret = memcpy_from_pmem((u8 *) dentry + NOVA_DENTRY_HEADER_LEN,
+		ret = memcpy_mcsafe((u8 *) dentry + NOVA_DENTRY_HEADER_LEN,
 					(u8 *) entry + NOVA_DENTRY_HEADER_LEN,
 					*entry_size - NOVA_DENTRY_HEADER_LEN);
 		if (ret < 0)
@@ -45,35 +45,35 @@ static int nova_get_entry_copy(struct super_block *sb, void *entry,
 		break;
 	case FILE_WRITE:
 		*entry_size = sizeof(struct nova_file_write_entry);
-		ret = memcpy_from_pmem(entry_copy, entry, *entry_size);
+		ret = memcpy_mcsafe(entry_copy, entry, *entry_size);
 		if (ret < 0)
 			break;
 		*entry_csum = WENTRY(entry_copy)->csum;
 		break;
 	case SET_ATTR:
 		*entry_size = sizeof(struct nova_setattr_logentry);
-		ret = memcpy_from_pmem(entry_copy, entry, *entry_size);
+		ret = memcpy_mcsafe(entry_copy, entry, *entry_size);
 		if (ret < 0)
 			break;
 		*entry_csum = SENTRY(entry_copy)->csum;
 		break;
 	case LINK_CHANGE:
 		*entry_size = sizeof(struct nova_link_change_entry);
-		ret = memcpy_from_pmem(entry_copy, entry, *entry_size);
+		ret = memcpy_mcsafe(entry_copy, entry, *entry_size);
 		if (ret < 0)
 			break;
 		*entry_csum = LCENTRY(entry_copy)->csum;
 		break;
 	case MMAP_WRITE:
 		*entry_size = sizeof(struct nova_mmap_entry);
-		ret = memcpy_from_pmem(entry_copy, entry, *entry_size);
+		ret = memcpy_mcsafe(entry_copy, entry, *entry_size);
 		if (ret < 0)
 			break;
 		*entry_csum = MMENTRY(entry_copy)->csum;
 		break;
 	case SNAPSHOT_INFO:
 		*entry_size = sizeof(struct nova_snapshot_info_entry);
-		ret = memcpy_from_pmem(entry_copy, entry, *entry_size);
+		ret = memcpy_mcsafe(entry_copy, entry, *entry_size);
 		if (ret < 0)
 			break;
 		*entry_csum = SNENTRY(entry_copy)->csum;
@@ -261,7 +261,7 @@ static int nova_repair_entry_pr(struct super_block *sb, void *entry)
 		BUG();
 
 	nova_memunlock_range(sb, entry_pr, POISON_RADIUS);
-	ret = memcpy_from_pmem(entry_pr, alter_pr, POISON_RADIUS);
+	ret = memcpy_mcsafe(entry_pr, alter_pr, POISON_RADIUS);
 	nova_memlock_range(sb, entry_pr, POISON_RADIUS);
 	nova_flush_buffer(entry_pr, POISON_RADIUS, 0);
 
@@ -411,7 +411,7 @@ static int nova_repair_inode_pr(struct super_block *sb,
 		BUG();
 
 	nova_memunlock_range(sb, bad_pr, POISON_RADIUS);
-	ret = memcpy_from_pmem(bad_pr, good_pr, POISON_RADIUS);
+	ret = memcpy_mcsafe(bad_pr, good_pr, POISON_RADIUS);
 	nova_memlock_range(sb, bad_pr, POISON_RADIUS);
 	nova_flush_buffer(bad_pr, POISON_RADIUS, 0);
 
@@ -459,7 +459,7 @@ int nova_check_inode_integrity(struct super_block *sb, u64 ino, u64 pi_addr,
 
 	pi = (struct nova_inode *)nova_get_block(sb, pi_addr);
 
-	ret = memcpy_from_pmem(pic, pi, sizeof(struct nova_inode));
+	ret = memcpy_mcsafe(pic, pi, sizeof(struct nova_inode));
 
 	if (metadata_csum == 0)
 		return ret;
@@ -471,7 +471,7 @@ int nova_check_inode_integrity(struct super_block *sb, u64 ino, u64 pi_addr,
 		if (ret < 0)
 			goto fail;
 		/* try again */
-		ret = memcpy_from_pmem(pic, pi, sizeof(struct nova_inode));
+		ret = memcpy_mcsafe(pic, pi, sizeof(struct nova_inode));
 		if (ret < 0)
 			goto fail;
 	}
@@ -482,7 +482,7 @@ int nova_check_inode_integrity(struct super_block *sb, u64 ino, u64 pi_addr,
 		return 0;
 
 	alter_pic = &alter_copy;
-	ret = memcpy_from_pmem(alter_pic, alter_pi, sizeof(struct nova_inode));
+	ret = memcpy_mcsafe(alter_pic, alter_pi, sizeof(struct nova_inode));
 	if (ret < 0) { /* media error */
 		if (inode_bad)
 			goto fail;
@@ -490,7 +490,7 @@ int nova_check_inode_integrity(struct super_block *sb, u64 ino, u64 pi_addr,
 		if (ret < 0)
 			goto fail;
 		/* try again */
-		ret = memcpy_from_pmem(alter_pic, alter_pi,
+		ret = memcpy_mcsafe(alter_pic, alter_pi,
 					sizeof(struct nova_inode));
 		if (ret < 0)
 			goto fail;
@@ -753,7 +753,7 @@ bool nova_verify_data_csum(struct super_block *sb,
 		csum_addr1 = nova_get_data_csum_addr(sb, strp_nr, 1);
 		csum_nvmm1 = le32_to_cpu(*csum_addr1);
 
-		error = memcpy_from_pmem(strip, strp_ptr, strp_size);
+		error = memcpy_mcsafe(strip, strp_ptr, strp_size);
 		if (error < 0) {
 			nova_dbg("%s: media error in data strip detected!\n",
 				__func__);
@@ -899,7 +899,7 @@ int nova_update_truncated_block_csum(struct super_block *sb,
 		if (tail_strp == NULL)
 			return -ENOMEM;
 
-		if (memcpy_from_pmem(tail_strp, strp_addr, strp_offset) < 0)
+		if (memcpy_mcsafe(tail_strp, strp_addr, strp_offset) < 0)
 			return -EIO;
 
 		nova_update_stripe_csum(sb, 1, strp_nr, tail_strp, 0);
