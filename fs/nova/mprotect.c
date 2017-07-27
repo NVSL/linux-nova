@@ -23,6 +23,7 @@
 #include <linux/mm.h>
 #include <linux/io.h>
 #include "nova.h"
+#include "inode.h"
 
 static inline void wprotect_disable(void)
 {
@@ -393,7 +394,9 @@ int nova_mmap_to_new_blocks(struct vm_area_struct *vma,
 			avail_blocks = end_blk - start_blk;
 
 		allocated = nova_new_data_blocks(sb, sih, &blocknr, start_blk,
-						avail_blocks, 0, ANY_CPU, 0);
+					 avail_blocks, ALLOC_NO_INIT, ANY_CPU,
+					 ALLOC_FROM_HEAD);
+		
 		nova_dbgv("%s: alloc %d blocks @ %lu\n", __func__,
 						allocated, blocknr);
 
@@ -570,9 +573,6 @@ int nova_set_vmas_readonly(struct super_block *sb)
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_inode_info_header *sih;
 
-	if (mmap_cow == 0)
-		return 0;
-
 	nova_dbgv("%s\n", __func__);
 	mutex_lock(&sbi->vma_mutex);
 	list_for_each_entry(sih, &sbi->mmap_sih_list, list)
@@ -588,9 +588,6 @@ int nova_destroy_vma_tree(struct super_block *sb)
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct vma_item *item;
 	struct rb_node *temp;
-
-	if (mmap_cow == 0)
-		return 0;
 
 	nova_dbgv("%s\n", __func__);
 	mutex_lock(&sbi->vma_mutex);

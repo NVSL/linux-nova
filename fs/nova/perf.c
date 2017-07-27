@@ -322,7 +322,8 @@ static void *nova_alloc_pmem_pool(struct super_block *sb,
 	sih->log_head = 0;
 	sih->log_tail = 0;
 
-	*allocated = nova_new_data_blocks(sb, sih, blocknr, 0, num, 0, cpu, 0);
+	*allocated = nova_new_data_blocks(sb, sih, blocknr, 0, num,
+					  ALLOC_NO_INIT, cpu, ALLOC_FROM_HEAD);
 	if (*allocated < num) {
 		nova_dbg("%s: allocated pmem blocks %d < requested blocks %d\n",
 						__func__, *allocated, num);

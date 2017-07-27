@@ -29,6 +29,10 @@
 #include <linux/random.h>
 #include <linux/delay.h>
 #include "nova.h"
+#include "journal.h"
+#include "super.h"
+#include "inode.h"
+#include "log.h"
 
 void nova_init_header(struct super_block *sb,
 	struct nova_inode_info_header *sih, u16 i_mode)
@@ -453,6 +457,7 @@ void nova_save_inode_list_to_log(struct super_block *sb)
 
 	sih.ino = NOVA_INODELIST1_INO;
 	sih.i_blk_type = NOVA_DEFAULT_BLOCK_TYPE;
+	sih.i_blocks = 0;
 
 	for (i = 0; i < sbi->cpus; i++) {
 		inode_map = &sbi->inode_maps[i];
@@ -814,7 +819,7 @@ static void nova_traverse_dir_inode_log(struct super_block *sb,
 	struct nova_inode *pi, struct scan_bitmap *bm)
 {
 	nova_traverse_inode_log(sb, pi, bm, pi->log_head);
-	if (replica_metadata)
+	if (metadata_csum)
 		nova_traverse_inode_log(sb, pi, bm, pi->alter_log_head);
 }
 
@@ -1041,7 +1046,7 @@ static int nova_traverse_file_inode_log(struct super_block *sb,
 	btype = pi->i_blk_type;
 	data_bits = blk_type_to_shift[btype];
 
-	if (replica_metadata)
+	if (metadata_csum)
 		nova_traverse_inode_log(sb, pi, bm, pi->alter_log_head);
 
 	entryc = (metadata_csum == 0) ? NULL : entry_copy;
@@ -1309,7 +1314,7 @@ static int failure_thread_func(void *data)
 			set_bm((curr >> PAGE_SHIFT) + i,
 					global_bm[cpuid], BM_4K);
 
-		if (replica_metadata) {
+		if (metadata_csum) {
 			for (i = 0; i < 512; i++)
 				set_bm((curr1 >> PAGE_SHIFT) + i,
 					global_bm[cpuid], BM_4K);
@@ -1379,10 +1384,10 @@ static int nova_failure_recovery_crawl(struct super_block *sb)
 	int count;
 	int cpuid;
 
-	root_addr = nova_get_basic_inode_addr(sb, NOVA_ROOT_INO);
+	root_addr = nova_get_reserved_inode_addr(sb, NOVA_ROOT_INO);
 
 	num_tables = 1;
-	if (replica_metadata)
+	if (metadata_csum)
 		num_tables = 2;
 
 	for (cpuid = 0; cpuid < sbi->cpus; cpuid++) {
@@ -1461,8 +1466,6 @@ int nova_failure_recovery(struct super_block *sb)
 
 	for (i = 0; i < sbi->cpus; i++) {
 		pair = nova_get_journal_pointers(sb, i);
-		if (!pair)
-			return -EINVAL;
 
 		set_bm(pair->journal_head >> PAGE_SHIFT, global_bm[i], BM_4K);
 	}

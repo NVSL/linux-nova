@@ -24,6 +24,7 @@
 #include <linux/types.h>
 #include <linux/ratelimit.h>
 #include "nova.h"
+#include "inode.h"
 
 unsigned int blk_type_to_shift[NOVA_BLOCK_TYPE_MAX] = {12, 21, 30};
 uint32_t blk_type_to_size[NOVA_BLOCK_TYPE_MAX] = {0x1000, 0x200000, 0x40000000};
@@ -82,8 +83,10 @@ static int nova_alloc_inode_table(struct super_block *sb,
 			return -EINVAL;
 
 		/* Allocate replicate inodes from tail */
-		allocated = nova_new_log_blocks(sb, sih, &blocknr, 1, 1,
-							i, version);
+		allocated = nova_new_log_blocks(sb, sih, &blocknr, 1,
+				ALLOC_INIT_ZERO, i,
+			        version ? ALLOC_FROM_TAIL : ALLOC_FROM_HEAD);
+
 		nova_dbgv("%s: allocate log @ 0x%lx\n", __func__,
 							blocknr);
 		if (allocated != 1 || blocknr == 0)
@@ -122,7 +125,7 @@ int nova_init_inode_table(struct super_block *sb)
 	sih.i_blk_type = NOVA_BLOCK_TYPE_2M;
 
 	num_tables = 1;
-	if (replica_metadata)
+	if (metadata_csum)
 		num_tables = 2;
 
 	for (i = 0; i < num_tables; i++) {
@@ -135,6 +138,35 @@ int nova_init_inode_table(struct super_block *sb)
 	return ret;
 }
 
+inline int nova_insert_inodetree(struct nova_sb_info *sbi,
+	struct nova_range_node *new_node, int cpu)
+{
+	struct rb_root *tree;
+	int ret;
+
+	tree = &sbi->inode_maps[cpu].inode_inuse_tree;
+	ret = nova_insert_range_node(tree, new_node);
+	if (ret)
+		nova_dbg("ERROR: %s failed %d\n", __func__, ret);
+
+	return ret;
+}
+
+inline int nova_search_inodetree(struct nova_sb_info *sbi,
+	unsigned long ino, struct nova_range_node **ret_node)
+{
+	struct rb_root *tree;
+	unsigned long internal_ino;
+	int cpu;
+
+	cpu = ino % sbi->cpus;
+	tree = &sbi->inode_maps[cpu].inode_inuse_tree;
+	internal_ino = ino / sbi->cpus;
+	return nova_find_range_node(sbi, tree, internal_ino, ret_node);
+}
+
+/* Get the address in PMEM of an inode by inode number.  Allocate additional
+ * block to store additional inodes if necessary. */
 int nova_get_inode_address(struct super_block *sb, u64 ino, int version,
 	u64 *pi_addr, int extendable, int extend_alternate)
 {
@@ -154,6 +186,11 @@ int nova_get_inode_address(struct super_block *sb, u64 ino, int version,
 	unsigned long blocknr;
 	unsigned long curr_addr;
 	int allocated;
+
+	if (ino < NOVA_NORMAL_INODE_START) {
+		*pi_addr = nova_get_reserved_inode_addr(sb, ino);
+		return 0;
+	}
 
 	sih.ino = NOVA_INODETABLE_INO;
 	sih.i_blk_type = NOVA_BLOCK_TYPE_2M;
@@ -187,7 +224,8 @@ int nova_get_inode_address(struct super_block *sb, u64 ino, int version,
 			extended = 1;
 
 			allocated = nova_new_log_blocks(sb, &sih, &blocknr,
-							1, 1, cpuid, version);
+				1, ALLOC_INIT_ZERO, cpuid,
+			        version ? ALLOC_FROM_TAIL : ALLOC_FROM_HEAD);
 
 			if (allocated != 1)
 				return allocated;
@@ -205,7 +243,7 @@ int nova_get_inode_address(struct super_block *sb, u64 ino, int version,
 	}
 
 	/* Extend alternate inode table */
-	if (extended && extend_alternate && replica_metadata)
+	if (extended && extend_alternate && metadata_csum)
 		nova_get_inode_address(sb, ino, version + 1,
 					&alternate_pi_addr, extendable, 0);
 
@@ -219,13 +257,13 @@ int nova_get_alter_inode_address(struct super_block *sb, u64 ino,
 {
 	int ret;
 
-	if (replica_metadata == 0) {
+	if (metadata_csum == 0) {
 		nova_err(sb, "Access alter inode when replica inode disabled\n");
 		return 0;
 	}
 
 	if (ino < NOVA_NORMAL_INODE_START) {
-		*alter_pi_addr = nova_get_alter_basic_inode_addr(sb, ino);
+		*alter_pi_addr = nova_get_alter_reserved_inode_addr(sb, ino);
 	} else {
 		ret = nova_get_inode_address(sb, ino, 1, alter_pi_addr, 0, 0);
 		if (ret)
@@ -327,6 +365,21 @@ static int nova_free_dram_resource(struct super_block *sb,
 	return freed;
 }
 
+static inline void check_eof_blocks(struct super_block *sb,
+	struct nova_inode *pi, struct inode *inode,
+	struct nova_inode_info_header *sih)
+{
+	if ((pi->i_flags & cpu_to_le32(NOVA_EOFBLOCKS_FL)) &&
+		(inode->i_size + sb->s_blocksize) > (sih->i_blocks
+			<< sb->s_blocksize_bits)) {
+		nova_memunlock_inode(sb, pi);
+		pi->i_flags &= cpu_to_le32(~NOVA_EOFBLOCKS_FL);
+		nova_update_inode_checksum(pi);
+		nova_update_alter_inode(sb, inode, pi);
+		nova_memlock_inode(sb, pi);
+	}
+}
+
 /*
  * Free data blocks from inode in the range start <=> end
  */
@@ -423,6 +476,7 @@ done:
 	return blocks;
 }
 
+/* copy persistent state to struct inode */
 static int nova_read_inode(struct super_block *sb, struct inode *inode,
 	u64 pi_addr)
 {
@@ -482,9 +536,9 @@ static int nova_read_inode(struct super_block *sb, struct inode *inode,
 
 	/* Update size and time after rebuild the tree */
 	inode->i_size = le64_to_cpu(sih->i_size);
-	inode->i_atime.tv_sec = le32_to_cpu(pi->i_atime);
-	inode->i_ctime.tv_sec = le32_to_cpu(pi->i_ctime);
-	inode->i_mtime.tv_sec = le32_to_cpu(pi->i_mtime);
+	inode->i_atime.tv_sec = (__s32)le32_to_cpu(pi->i_atime);
+	inode->i_ctime.tv_sec = (__s32)le32_to_cpu(pi->i_ctime);
+	inode->i_mtime.tv_sec = (__s32)le32_to_cpu(pi->i_mtime);
 	inode->i_atime.tv_nsec = inode->i_mtime.tv_nsec =
 					 inode->i_ctime.tv_nsec = 0;
 	set_nlink(inode, le16_to_cpu(pi->i_links_count));
@@ -719,29 +773,33 @@ struct inode *nova_iget(struct super_block *sb, unsigned long ino)
 
 	nova_dbgv("%s: inode %lu\n", __func__, ino);
 
-	if (ino < NOVA_NORMAL_INODE_START) {
-		pi_addr = nova_get_basic_inode_addr(sb, ino);
-	} else {
-		err = nova_get_inode_address(sb, ino, 0, &pi_addr, 0, 0);
-		if (err) {
-			nova_dbg("%s: get inode %lu address failed %d\n",
-					__func__, ino, err);
-			goto fail;
-		}
+	err = nova_get_inode_address(sb, ino, 0, &pi_addr, 0, 0);
+	if (err) {
+		nova_dbg("%s: get inode %lu address failed %d\n",
+			 __func__, ino, err);
+		goto fail;
 	}
 
 	if (pi_addr == 0) {
+		nova_dbg("%s: failed to get pi_addr for inode %lu\n",
+			 __func__, ino);
 		err = -EACCES;
 		goto fail;
 	}
 
 	err = nova_rebuild_inode(sb, si, ino, pi_addr, 1);
-	if (err)
+	if (err) {
+		nova_dbg("%s: failed to rebuild inode %lu\n", __func__, ino);
 		goto fail;
+	}
 
 	err = nova_read_inode(sb, inode, pi_addr);
-	if (unlikely(err))
+	if (unlikely(err)) {
+		nova_dbg("%s: failed to read inode %lu\n", __func__, ino);
 		goto fail;
+
+	}
+
 	inode->i_ino = ino;
 
 	unlock_new_inode(inode);
@@ -786,15 +844,21 @@ static int nova_free_inode_resource(struct super_block *sb,
 	unsigned long last_blocknr;
 	int ret = 0;
 	int freed = 0;
+	struct nova_inode *alter_pi;
 
 	nova_memunlock_inode(sb, pi);
-	/* FIXME: Update checksum */
 	pi->deleted = 1;
 
 	if (pi->valid) {
 		nova_dbg("%s: inode %lu still valid\n",
 				__func__, sih->ino);
 		pi->valid = 0;
+	}
+	nova_update_inode_checksum(pi);
+	if (metadata_csum && sih->alter_pi_addr) {
+		alter_pi = (struct nova_inode *)nova_get_block(sb,
+						sih->alter_pi_addr);
+		memcpy_to_pmem_nocache(alter_pi, pi, sizeof(struct nova_inode));
 	}
 	nova_memlock_inode(sb, pi);
 
@@ -851,7 +915,9 @@ void nova_evict_inode(struct inode *inode)
 		goto out;
 	}
 
-	if (pi->nova_ino != inode->i_ino) {
+	// pi can be NULL if the file has already been deleted, but a handle
+	// remains.
+	if (pi && pi->nova_ino != inode->i_ino) {
 		nova_err(sb, "%s: inode %lu ino does not match: %llu\n",
 				__func__, inode->i_ino, pi->nova_ino);
 		nova_dbg("inode size %llu, pi addr 0x%lx, pi head 0x%llx, "
@@ -865,7 +931,7 @@ void nova_evict_inode(struct inode *inode)
 	}
 
 	/* Check if this inode exists in at least one snapshot. */
-	if (pi->valid == 0) {
+	if (pi && pi->valid == 0) {
 		ret = nova_append_inode_to_snapshot(sb, pi);
 		if (ret == 0)
 			goto out;
@@ -876,9 +942,11 @@ void nova_evict_inode(struct inode *inode)
 		if (IS_APPEND(inode) || IS_IMMUTABLE(inode))
 			goto out;
 
-		ret = nova_free_inode_resource(sb, pi, sih);
-		if (ret)
-			goto out;
+		if (pi) {
+			ret = nova_free_inode_resource(sb, pi, sih);
+			if (ret)
+				goto out;
+		}
 
 		destroy = 1;
 		pi = NULL; /* we no longer own the nova_inode */
@@ -887,9 +955,10 @@ void nova_evict_inode(struct inode *inode)
 		inode->i_size = 0;
 	}
 out:
-	if (destroy == 0)
+	if (destroy == 0) {
+		nova_dbgv("%s: destroying %lu\n", __func__, inode->i_ino);
 		nova_free_dram_resource(sb, sih);
-
+	}
 	/* TODO: Since we don't use page-cache, do we really need the following
 	 * call?
 	 */
@@ -1004,7 +1073,7 @@ struct inode *nova_new_vfs_inode(enum nova_new_inode_type type,
 
 	inode_init_owner(inode, dir, mode);
 	inode->i_blocks = inode->i_size = 0;
-	inode->i_mtime = inode->i_atime = inode->i_ctime = CURRENT_TIME;
+	inode->i_mtime = inode->i_atime = inode->i_ctime = current_time(inode);
 
 	inode->i_generation = atomic_add_return(1, &sbi->next_generation);
 	inode->i_size = size;
@@ -1015,7 +1084,7 @@ struct inode *nova_new_vfs_inode(enum nova_new_inode_type type,
 		goto fail1;
 	}
 
-	if (replica_metadata) {
+	if (metadata_csum) {
 		/* Get alternate inode address */
 		errval = nova_get_alter_inode_address(sb, ino, &alter_pi_addr);
 		if (errval)
@@ -1069,7 +1138,7 @@ struct inode *nova_new_vfs_inode(enum nova_new_inode_type type,
 	pi->create_epoch_id = epoch_id;
 	nova_init_inode(inode, pi);
 
-	if (replica_metadata) {
+	if (metadata_csum) {
 		alter_pi = (struct nova_inode *)nova_get_block(sb,
 								alter_pi_addr);
 		memcpy_to_pmem_nocache(alter_pi, pi, sizeof(struct nova_inode));

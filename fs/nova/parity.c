@@ -409,31 +409,3 @@ out:
 	return ret;
 }
 
-int nova_data_parity_init_free_list(struct super_block *sb,
-	struct free_list *free_list)
-{
-	struct nova_sb_info *sbi = NOVA_SB(sb);
-	unsigned long blocksize, total_blocks, parity_blocks;
-	size_t strp_size = NOVA_STRIPE_SIZE;
-
-	/* Allocate blocks to store data block checksums.
-	 * Always reserve in case user turns it off at init mount but later
-	 * turns it on.
-	 */
-	blocksize = sb->s_blocksize;
-	total_blocks = sbi->initsize / blocksize;
-	parity_blocks = total_blocks / (blocksize / strp_size + 1);
-	if (total_blocks % (blocksize / strp_size + 1))
-		parity_blocks++;
-
-	free_list->parity_start = free_list->block_start;
-	free_list->block_start += parity_blocks / sbi->cpus;
-	if (parity_blocks % sbi->cpus)
-		free_list->block_start++;
-
-	free_list->num_parity_blocks =
-		free_list->block_start - free_list->parity_start;
-
-	return 0;
-}
-

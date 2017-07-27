@@ -527,7 +527,7 @@ void nova_print_nova_log(struct super_block *sb,
 	nova_dbg("Pi %lu: log head 0x%llx, tail 0x%llx\n",
 			sih->ino, curr, sih->log_tail);
 	while (curr != sih->log_tail) {
-		if ((curr & (PAGE_SIZE - 1)) == LAST_ENTRY) {
+		if ((curr & (PAGE_SIZE - 1)) == LOG_BLOCK_TAIL) {
 			struct nova_inode_page_tail *tail =
 					nova_get_block(sb, curr);
 			nova_dbg("Log tail, curr 0x%llx, next page 0x%llx, "

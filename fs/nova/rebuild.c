@@ -16,6 +16,7 @@
  */
 
 #include "nova.h"
+#include "inode.h"
 
 /* entry given to this function is a copy in dram */
 static void nova_apply_setattr_entry(struct super_block *sb,
@@ -151,7 +152,7 @@ static int nova_rebuild_inode_finish(struct super_block *sb,
 	nova_memunlock_inode(sb, pi);
 	nova_update_inode_with_rebuild(sb, reb, pi);
 	nova_update_inode_checksum(pi);
-	if (replica_metadata) {
+	if (metadata_csum) {
 		alter_pi = (struct nova_inode *)nova_get_block(sb,
 							sih->alter_pi_addr);
 		memcpy_to_pmem_nocache(alter_pi, pi, sizeof(struct nova_inode));
@@ -165,7 +166,7 @@ static int nova_rebuild_inode_finish(struct super_block *sb,
 		curr_p = next;
 	}
 
-	if (replica_metadata)
+	if (metadata_csum)
 		sih->log_pages *= 2;
 
 	return 0;
@@ -507,7 +508,7 @@ static inline void nova_rebuild_dir_time_and_size(struct super_block *sb,
 	reb->i_ctime = entryc->mtime;
 	reb->i_mtime = entryc->mtime;
 	reb->i_links_count = entryc->links_count;
-	reb->i_size = entryc->size;
+	//reb->i_size = entryc->size;
 }
 
 static void nova_reassign_last_dentry(struct super_block *sb,
@@ -684,6 +685,7 @@ out:
 	return ret;
 }
 
+/* initialize nova inode header and other DRAM data structures */
 int nova_rebuild_inode(struct super_block *sb, struct nova_inode_info *si,
 	u64 ino, u64 pi_addr, int rebuild_dir)
 {
@@ -693,22 +695,30 @@ int nova_rebuild_inode(struct super_block *sb, struct nova_inode_info *si,
 	u64 alter_pi_addr = 0;
 	int ret;
 
-	if (replica_metadata) {
+	if (metadata_csum) {
 		/* Get alternate inode address */
 		ret = nova_get_alter_inode_address(sb, ino, &alter_pi_addr);
-		if (ret)
+		if (ret)  {
+			nova_dbg("%s: failed alt ino addr for inode %llu\n",
+				 __func__, ino);
 			return ret;
+		}
 	}
 
 	ret = nova_check_inode_integrity(sb, ino, pi_addr, alter_pi_addr,
-							&inode_copy, 1);
+					 &inode_copy, 1);
+
 	if (ret)
 		return ret;
 
 	pi = (struct nova_inode *)nova_get_block(sb, pi_addr);
+	// We need this te valid in case we need to evect the inode.
+	sih->pi_addr = pi_addr;
 
-	if (pi->deleted == 1)
+	if (pi->deleted == 1) {
+		nova_dbg("%s: inode %llu has been deleted.\n", __func__, ino);
 		return -EINVAL;
+	}
 
 	nova_dbgv("%s: inode %llu, addr 0x%llx, valid %d, "
 			"head 0x%llx, tail 0x%llx\n",
@@ -718,7 +728,7 @@ int nova_rebuild_inode(struct super_block *sb, struct nova_inode_info *si,
 	nova_init_header(sb, sih, __le16_to_cpu(pi->i_mode));
 	sih->ino = ino;
 	sih->alter_pi_addr = alter_pi_addr;
-
+	
 	switch (__le16_to_cpu(pi->i_mode) & S_IFMT) {
 	case S_IFLNK:
 		/* Treat symlink files as normal files */
@@ -768,7 +778,7 @@ int nova_restore_snapshot_table(struct super_block *sb, int just_init)
 
 	entryc = (metadata_csum == 0) ? NULL : entry_copy;
 
-	pi = nova_get_basic_inode(sb, ino);
+	pi = nova_get_reserved_inode(sb, ino);
 	sih = &sbi->snapshot_si->header;
 	data_bits = blk_type_to_shift[sih->i_blk_type];
 	reb = &rebuild;

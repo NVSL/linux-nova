@@ -18,6 +18,7 @@
 #include <linux/fs.h>
 #include <linux/pagemap.h>
 #include "nova.h"
+#include "inode.h"
 
 #define DT2IF(dt) (((dt) << 12) & S_IFMT)
 #define IF2DT(sif) (((sif) & S_IFMT) >> 12)
@@ -179,7 +180,7 @@ static unsigned int nova_init_dentry(struct super_block *sb,
 	de_entry->name_len = 1;
 	de_entry->de_len = cpu_to_le16(de_len);
 	de_entry->mtime = CURRENT_TIME_SEC.tv_sec;
-	de_entry->size = sb->s_blocksize;
+	//de_entry->size = sb->s_blocksize;
 	de_entry->links_count = 1;
 	strncpy(de_entry->name, ".\0", 2);
 	nova_update_entry_csum(de_entry);
@@ -196,7 +197,7 @@ static unsigned int nova_init_dentry(struct super_block *sb,
 	de_entry->name_len = 2;
 	de_entry->de_len = cpu_to_le16(de_len);
 	de_entry->mtime = CURRENT_TIME_SEC.tv_sec;
-	de_entry->size = sb->s_blocksize;
+	//de_entry->size = sb->s_blocksize;
 	de_entry->links_count = 2;
 	strncpy(de_entry->name, "..\0", 3);
 	nova_update_entry_csum(de_entry);
@@ -208,7 +209,9 @@ static unsigned int nova_init_dentry(struct super_block *sb,
 	return length;
 }
 
-/* Append . and .. entries */
+/* Append . and .. entries 
+ *
+ * TODO: why is epoch_id a parameter when we pass in the sb? */
 int nova_append_dir_init_entries(struct super_block *sb,
 	struct nova_inode *pi, u64 self_ino, u64 parent_ino, u64 epoch_id)
 {
@@ -243,7 +246,7 @@ int nova_append_dir_init_entries(struct super_block *sb,
 
 	nova_memlock_inode(sb, pi);
 
-	if (replica_metadata == 0)
+	if (metadata_csum == 0)
 		return 0;
 
 	allocated = nova_allocate_inode_log_pages(sb, &sih, 1, &new_block,

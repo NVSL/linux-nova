@@ -22,6 +22,7 @@
 #include <linux/namei.h>
 #include <linux/version.h>
 #include "nova.h"
+#include "inode.h"
 
 int nova_block_symlink(struct super_block *sb, struct nova_inode *pi,
 	struct inode *inode, const char *symname, int len, u64 epoch_id)
@@ -40,8 +41,8 @@ int nova_block_symlink(struct super_block *sb, struct nova_inode *pi,
 	update.tail = sih->log_tail;
 	update.alter_tail = sih->alter_log_tail;
 
-	allocated = nova_new_data_blocks(sb, sih, &name_blocknr, 0, 1, 1,
-						ANY_CPU, 0);
+	allocated = nova_new_data_blocks(sb, sih, &name_blocknr, 0, 1,
+				 ALLOC_INIT_ZERO, ANY_CPU, ALLOC_FROM_TAIL);
 	if (allocated != 1 || name_blocknr == 0) {
 		ret = allocated;
 		return ret;

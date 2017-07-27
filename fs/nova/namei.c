@@ -17,6 +17,8 @@
 #include <linux/fs.h>
 #include <linux/pagemap.h>
 #include "nova.h"
+#include "journal.h"
+#include "inode.h"
 
 static ino_t nova_inode_by_name(struct inode *dir, struct qstr *entry,
 				 struct nova_dentry **res_entry)
@@ -89,6 +91,9 @@ static void nova_lite_transaction_for_new_inode(struct super_block *sb,
 	cpu = smp_processor_id();
 	spin_lock(&sbi->journal_locks[cpu]);
 	nova_memunlock_journal(sb);
+
+	// If you change what's required to create a new inode, you need to
+	// update this functions so the changes will be roll back on failure.
 	journal_tail = nova_create_inode_transaction(sb, inode, dir, cpu, 1, 0);
 
 	nova_update_inode(sb, dir, pidir, update, 0);
@@ -101,7 +106,7 @@ static void nova_lite_transaction_for_new_inode(struct super_block *sb,
 	nova_memlock_journal(sb);
 	spin_unlock(&sbi->journal_locks[cpu]);
 
-	if (replica_metadata) {
+	if (metadata_csum) {
 		nova_memunlock_inode(sb, pi);
 		nova_update_alter_inode(sb, inode, pi);
 		nova_update_alter_inode(sb, dir, pidir);
@@ -306,6 +311,9 @@ static void nova_lite_transaction_for_time_and_link(struct super_block *sb,
 	cpu = smp_processor_id();
 	spin_lock(&sbi->journal_locks[cpu]);
 	nova_memunlock_journal(sb);
+
+	// If you change what's required to create a new inode, you need to
+	// update this functions so the changes will be roll back on failure.
 	journal_tail = nova_create_inode_transaction(sb, inode, dir, cpu,
 						0, invalidate);
 
@@ -323,7 +331,7 @@ static void nova_lite_transaction_for_time_and_link(struct super_block *sb,
 	nova_memlock_journal(sb);
 	spin_unlock(&sbi->journal_locks[cpu]);
 
-	if (replica_metadata) {
+	if (metadata_csum) {
 		nova_memunlock_inode(sb, pi);
 		nova_update_alter_inode(sb, inode, pi);
 		nova_update_alter_inode(sb, dir, pidir);

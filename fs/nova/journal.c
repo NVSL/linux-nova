@@ -32,6 +32,7 @@
 #include <linux/mutex.h>
 #include <linux/sched.h>
 #include "nova.h"
+#include "journal.h"
 
 /**************************** Lite journal ******************************/
 
@@ -72,17 +73,21 @@ static inline int nova_check_entry_integrity(struct super_block *sb,
 		return 1;
 }
 
+// Get the next journal entry.  Journal entries are stored in a circular
+// buffer.  They live a 1-page circular buffer.
+//
+// TODO: Add check to ensure that the journal doesn't grow too large.
 static inline u64 next_lite_journal(u64 curr_p)
 {
 	size_t size = sizeof(struct nova_lite_journal_entry);
 
-	/* One page holds 128 entries with cacheline size */
 	if ((curr_p & (PAGE_SIZE - 1)) + size >= PAGE_SIZE)
 		return (curr_p & PAGE_MASK);
 
 	return curr_p + size;
 }
 
+// Walk the journal for one CPU, and verify the checksum on each entry.
 static int nova_check_journal_entries(struct super_block *sb,
 	struct journal_ptr_pair *pair)
 {
@@ -108,13 +113,13 @@ static int nova_check_journal_entries(struct super_block *sb,
 
 /**************************** Journal Recovery ******************************/
 
-static void nova_recover_journal_inode(struct super_block *sb,
+static void nova_undo_journal_inode(struct super_block *sb,
 	struct nova_lite_journal_entry *entry)
 {
 	struct nova_inode *pi, *alter_pi;
 	u64 pi_addr, alter_pi_addr;
 
-	if (replica_metadata == 0)
+	if (metadata_csum == 0)
 		return;
 
 	pi_addr = le64_to_cpu(entry->data1);
@@ -126,7 +131,7 @@ static void nova_recover_journal_inode(struct super_block *sb,
 	memcpy_to_pmem_nocache(pi, alter_pi, sizeof(struct nova_inode));
 }
 
-static void nova_recover_journal_entry(struct super_block *sb,
+static void nova_undo_journal_entry(struct super_block *sb,
 	struct nova_lite_journal_entry *entry)
 {
 	u64 addr, value;
@@ -147,10 +152,10 @@ static void nova_undo_lite_journal_entry(struct super_block *sb,
 
 	switch (type) {
 	case JOURNAL_INODE:
-		nova_recover_journal_inode(sb, entry);
+		nova_undo_journal_inode(sb, entry);
 		break;
 	case JOURNAL_ENTRY:
-		nova_recover_journal_entry(sb, entry);
+		nova_undo_journal_entry(sb, entry);
 		break;
 	default:
 		nova_dbg("%s: unknown data type %llu\n", __func__, type);
@@ -158,6 +163,7 @@ static void nova_undo_lite_journal_entry(struct super_block *sb,
 	}
 }
 
+/* Roll back all journal enries */
 static int nova_recover_lite_journal(struct super_block *sb,
 	struct journal_ptr_pair *pair)
 {
@@ -201,6 +207,7 @@ static u64 nova_append_replica_inode_journal(struct super_block *sb,
 	return curr_p;
 }
 
+/* Create and append an undo entry for a small update to PMEM. */
 static u64 nova_append_entry_journal(struct super_block *sb,
 	u64 curr_p, void *field)
 {
@@ -215,6 +222,7 @@ static u64 nova_append_entry_journal(struct super_block *sb,
 	entry->padding = 0;
 	/* Align to 8 bytes */
 	aligned_field = (u64 *)((unsigned long)field & ~7UL);
+	/* Store the offset from the start of Nova instead of the pointer */
 	addr = (u64)nova_get_addr_off(sbi, aligned_field);
 	entry->data1 = cpu_to_le64(addr);
 	entry->data2 = cpu_to_le64(*aligned_field);
@@ -228,19 +236,20 @@ static u64 nova_journal_inode_tail(struct super_block *sb,
 	u64 curr_p, struct nova_inode *pi)
 {
 	curr_p = nova_append_entry_journal(sb, curr_p, &pi->log_tail);
-	if (replica_metadata)
+	if (metadata_csum)
 		curr_p = nova_append_entry_journal(sb, curr_p,
 						&pi->alter_log_tail);
 	return curr_p;
 }
 
+/* Create and append undo log entries for creating a new file or directory. */
 static u64 nova_append_inode_journal(struct super_block *sb,
 	u64 curr_p, struct inode *inode, int new_inode,
 	int invalidate, int is_dir)
 {
 	struct nova_inode *pi = nova_get_inode(sb, inode);
 
-	if (replica_metadata)
+	if (metadata_csum)
 		return nova_append_replica_inode_journal(sb, curr_p, inode);
 
 	if (!pi) {
@@ -275,6 +284,7 @@ static u64 nova_append_dentry_journal(struct super_block *sb,
 	return curr_p;
 }
 
+/* Journaled transactions for inode creation */
 u64 nova_create_inode_transaction(struct super_block *sb,
 	struct inode *inode, struct inode *dir, int cpu,
 	int new_inode, int invalidate)
@@ -283,7 +293,7 @@ u64 nova_create_inode_transaction(struct super_block *sb,
 	u64 temp;
 
 	pair = nova_get_journal_pointers(sb, cpu);
-	if (!pair || pair->journal_head == 0 ||
+	if (pair->journal_head == 0 ||
 			pair->journal_head != pair->journal_tail)
 		BUG();
 
@@ -303,6 +313,7 @@ u64 nova_create_inode_transaction(struct super_block *sb,
 	return temp;
 }
 
+/* Journaled transactions for rename operations */
 u64 nova_create_rename_transaction(struct super_block *sb,
 	struct inode *old_inode, struct inode *old_dir, struct inode *new_inode,
 	struct inode *new_dir, struct nova_dentry *father_entry,
@@ -312,7 +323,7 @@ u64 nova_create_rename_transaction(struct super_block *sb,
 	u64 temp;
 
 	pair = nova_get_journal_pointers(sb, cpu);
-	if (!pair || pair->journal_head == 0 ||
+	if (pair->journal_head == 0 ||
 			pair->journal_head != pair->journal_tail)
 		BUG();
 
@@ -354,7 +365,7 @@ u64 nova_create_logentry_transaction(struct super_block *sb,
 	u64 temp;
 
 	pair = nova_get_journal_pointers(sb, cpu);
-	if (!pair || pair->journal_head == 0 ||
+	if (pair->journal_head == 0 ||
 			pair->journal_head != pair->journal_tail)
 		BUG();
 
@@ -376,78 +387,13 @@ u64 nova_create_logentry_transaction(struct super_block *sb,
 	return temp;
 }
 
-#if 0
-u64 nova_create_invalidate_reassign_transaction(struct super_block *sb,
-	void *entry, enum nova_entry_type type, int reassign, int cpu)
-{
-	struct journal_ptr_pair *pair;
-	u64 temp;
-
-	pair = nova_get_journal_pointers(sb, cpu);
-	if (!pair || pair->journal_head == 0 ||
-			pair->journal_head != pair->journal_tail)
-		BUG();
-
-	temp = pair->journal_head;
-
-	switch (type) {
-		case FILE_WRITE:
-			if (reassign)
-				temp = nova_append_entry_journal(sb, temp,
-					&((struct nova_file_write_entry *)entry)->reassigned);
-			else
-				temp = nova_append_entry_journal(sb, temp,
-					&((struct nova_file_write_entry *)entry)->invalid_pages);
-			temp = nova_append_entry_journal(sb, temp,
-				&((struct nova_file_write_entry *)entry)->csum);
-			break;
-		case DIR_LOG:
-			if (reassign)
-				temp = nova_append_entry_journal(sb, temp,
-					&((struct nova_dentry *)entry)->reassigned);
-			else
-				temp = nova_append_entry_journal(sb, temp,
-					&((struct nova_dentry *)entry)->invalid);
-			temp = nova_append_entry_journal(sb, temp,
-				&((struct nova_dentry *)entry)->csum);
-			break;
-		case SET_ATTR:
-			temp = nova_append_entry_journal(sb, temp,
-				&((struct nova_setattr_logentry *)entry)->invalid);
-			temp = nova_append_entry_journal(sb, temp,
-				&((struct nova_setattr_logentry *)entry)->csum);
-			break;
-		case LINK_CHANGE:
-			temp = nova_append_entry_journal(sb, temp,
-				&((struct nova_link_change_entry *)entry)->invalid);
-			temp = nova_append_entry_journal(sb, temp,
-				&((struct nova_link_change_entry *)entry)->csum);
-			break;
-		case MMAP_WRITE:
-			temp = nova_append_entry_journal(sb, temp,
-				&((struct nova_mmap_entry *)entry)->invalid);
-			temp = nova_append_entry_journal(sb, temp,
-				&((struct nova_mmap_entry *)entry)->csum);
-			break;
-		default:
-			break;
-	}
-
-	pair->journal_tail = temp;
-	nova_flush_buffer(&pair->journal_head, CACHELINE_SIZE, 1);
-
-	nova_dbgv("%s: head 0x%llx, tail 0x%llx\n",
-			__func__, pair->journal_head, pair->journal_tail);
-	return temp;
-}
-#endif
-
+/* Commit the transactions by dropping the journal entries */
 void nova_commit_lite_transaction(struct super_block *sb, u64 tail, int cpu)
 {
 	struct journal_ptr_pair *pair;
 
 	pair = nova_get_journal_pointers(sb, cpu);
-	if (!pair || pair->journal_tail != tail)
+	if (pair->journal_tail != tail)
 		BUG();
 
 	pair->journal_head = tail;
@@ -456,6 +402,7 @@ void nova_commit_lite_transaction(struct super_block *sb, u64 tail, int cpu)
 
 /**************************** Initialization ******************************/
 
+// Initialized DRAM journal state, validate, and recover
 int nova_lite_journal_soft_init(struct super_block *sb)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
@@ -490,6 +437,7 @@ int nova_lite_journal_soft_init(struct super_block *sb)
 	return ret;
 }
 
+/* Initialized persistent journal state */
 int nova_lite_journal_hard_init(struct super_block *sb)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
@@ -505,11 +453,9 @@ int nova_lite_journal_hard_init(struct super_block *sb)
 
 	for (i = 0; i < sbi->cpus; i++) {
 		pair = nova_get_journal_pointers(sb, i);
-		if (!pair)
-			return -EINVAL;
 
-		allocated = nova_new_log_blocks(sb, &sih, &blocknr, 1, 1,
-							ANY_CPU, 0);
+		allocated = nova_new_log_blocks(sb, &sih, &blocknr, 1,
+			ALLOC_INIT_ZERO, ANY_CPU, ALLOC_FROM_HEAD);
 		nova_dbg_verbose("%s: allocate log @ 0x%lx\n", __func__,
 							blocknr);
 		if (allocated != 1 || blocknr == 0)

@@ -16,6 +16,7 @@
  */
 
 #include "nova.h"
+#include "inode.h"
 
 static int nova_get_entry_copy(struct super_block *sb, void *entry,
 	u32 *entry_csum, size_t *entry_size, void *entry_copy)
@@ -165,8 +166,7 @@ void nova_update_entry_csum(void *entry)
 	u32 csum;
 	size_t entry_len = CACHELINE_SIZE;
 
-	/* No point to update csum if replica log is disabled */
-	if (replica_metadata == 0 || metadata_csum == 0)
+	if (metadata_csum == 0)
 		goto flush;
 
 	type = nova_get_entry_type(entry);
@@ -220,7 +220,7 @@ int nova_update_alter_entry(struct super_block *sb, void *entry)
 	char entry_copy[NOVA_MAX_ENTRY_LEN];
 	int ret;
 
-	if (replica_metadata == 0)
+	if (metadata_csum == 0)
 		return 0;
 
 	curr = nova_get_addr_off(sbi, entry);
@@ -306,13 +306,13 @@ bool nova_verify_entry_csum(struct super_block *sb, void *entry, void *entryc)
 	char alter_copy[NOVA_MAX_ENTRY_LEN];
 	timing_t verify_time;
 
-	if (metadata_csum == 0 || replica_metadata == 0)
+	if (metadata_csum == 0)
 		return true;
 
 	NOVA_START_TIMING(verify_entry_csum_t, verify_time);
 
 	ret = nova_get_entry_copy(sb, entry, &entry_csum, &entry_size,
-					entry_copy);
+				  entry_copy);
 	if (ret < 0) { /* media error */
 		ret = nova_repair_entry_pr(sb, entry);
 		if (ret < 0)
@@ -461,7 +461,7 @@ int nova_check_inode_integrity(struct super_block *sb, u64 ino, u64 pi_addr,
 
 	ret = memcpy_from_pmem(pic, pi, sizeof(struct nova_inode));
 
-	if (metadata_csum == 0 || replica_metadata == 0)
+	if (metadata_csum == 0)
 		return ret;
 
 	alter_pi = (struct nova_inode *)nova_get_block(sb, alter_pi_addr);
@@ -503,22 +503,22 @@ int nova_check_inode_integrity(struct super_block *sb, u64 ino, u64 pi_addr,
 			"verification\n", __func__);
 		goto fail;
 	} else if (inode_bad) {
-		nova_dbg("%s: inode %llu checksum error, trying to "
-			"repair using the replica\n", __func__, ino);
+		nova_dbg("%s: inode %llu checksum error, trying to repair using the replica\n",
+			 __func__, ino);
 		ret = nova_repair_inode(sb, pi, alter_pic);
 		if (ret != 0)
 			goto fail;
 
 		memcpy(pic, alter_pic, sizeof(struct nova_inode));
 	} else if (alter_bad) {
-		nova_dbg("%s: inode replica %llu checksum error, trying to "
-			"repair using the primary\n", __func__, ino);
+		nova_dbg("%s: inode replica %llu checksum error, trying to repair using the primary\n",
+			 __func__, ino);
 		ret = nova_repair_inode(sb, alter_pi, pic);
 		if (ret != 0)
 			goto fail;
 	} else if (memcmp(pic, alter_pic, sizeof(struct nova_inode))) {
-		nova_dbg("%s: inode replica %llu is stale, trying to "
-			"repair using the primary\n", __func__, ino);
+		nova_dbg("%s: inode replica %llu is stale, trying to repair using the primary\n",
+			 __func__, ino);
 		ret = nova_repair_inode(sb, alter_pi, pic);
 		if (ret != 0)
 			goto fail;
@@ -913,34 +913,6 @@ int nova_update_truncated_block_csum(struct super_block *sb,
 
 	if (tail_strp != NULL)
 		kfree(tail_strp);
-
-	return 0;
-}
-
-int nova_data_csum_init_free_list(struct super_block *sb,
-	struct free_list *free_list)
-{
-	struct nova_sb_info *sbi = NOVA_SB(sb);
-	unsigned long data_csum_blocks;
-	unsigned int strp_shift = NOVA_STRIPE_SHIFT;
-
-	/* Allocate blocks to store data block checksums.
-	 * Always reserve in case user turns it off at init mount but later
-	 * turns it on.
-	 */
-	data_csum_blocks = ((sbi->initsize >> strp_shift)
-				* NOVA_DATA_CSUM_LEN) >> PAGE_SHIFT;
-	free_list->csum_start = free_list->block_start;
-	free_list->block_start += data_csum_blocks / sbi->cpus;
-	if (data_csum_blocks % sbi->cpus)
-		free_list->block_start++;
-
-	free_list->num_csum_blocks =
-		free_list->block_start - free_list->csum_start;
-
-	free_list->replica_csum_start = free_list->block_end + 1 -
-						free_list->num_csum_blocks;
-	free_list->block_end -= free_list->num_csum_blocks;
 
 	return 0;
 }
