@@ -1036,9 +1036,9 @@ static struct iomap_ops nova_iomap_ops_lock = {
 	.iomap_end	= nova_iomap_end,
 };
 
-static int nova_dax_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
+static int nova_dax_fault(struct vm_fault *vmf)
 {
-	struct address_space *mapping = vma->vm_file->f_mapping;
+	struct address_space *mapping = vmf->vma->vm_file->f_mapping;
 	struct inode *inode = mapping->host;
 	int ret = 0;
 	timing_t fault_time;
@@ -1047,13 +1047,13 @@ static int nova_dax_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 
 	nova_dbgv("%s: inode %lu, pgoff %lu\n",
 			__func__, inode->i_ino, vmf->pgoff);
-	ret = dax_iomap_fault(vma, vmf, &nova_iomap_ops_lock);
+	ret = dax_iomap_fault(vmf, PE_SIZE_PTE, &nova_iomap_ops_lock);
 
 	NOVA_END_TIMING(mmap_fault_t, fault_time);
 	return ret;
 }
 
-static int nova_dax_pmd_fault(struct vm_area_struct *vma, unsigned long addr,
+/*static int nova_dax_pmd_fault(struct vm_area_struct *vma, unsigned long addr,
 	pmd_t *pmd, unsigned int flags)
 {
 	int ret = 0;
@@ -1065,12 +1065,11 @@ static int nova_dax_pmd_fault(struct vm_area_struct *vma, unsigned long addr,
 
 	NOVA_END_TIMING(pmd_fault_t, fault_time);
 	return ret;
-}
+	}*/
 
-static int nova_dax_pfn_mkwrite(struct vm_area_struct *vma,
-	struct vm_fault *vmf)
+static int nova_dax_pfn_mkwrite(struct vm_fault *vmf)
 {
-	struct inode *inode = file_inode(vma->vm_file);
+	struct inode *inode = file_inode(vmf->vma->vm_file);
 	loff_t size;
 	int ret = 0;
 	timing_t fault_time;
@@ -1082,7 +1081,7 @@ static int nova_dax_pfn_mkwrite(struct vm_area_struct *vma,
 	if (vmf->pgoff >= size)
 		ret = VM_FAULT_SIGBUS;
 	else
-		ret = dax_pfn_mkwrite(vma, vmf);
+		ret = dax_pfn_mkwrite(vmf);
 	inode_unlock(inode);
 
 	NOVA_END_TIMING(pfn_mkwrite_t, fault_time);
@@ -1342,7 +1341,7 @@ static void nova_vma_close(struct vm_area_struct *vma)
 
 const struct vm_operations_struct nova_dax_vm_ops = {
 	.fault	= nova_dax_fault,
-	.pmd_fault = nova_dax_pmd_fault,
+//	.pmd_fault = nova_dax_fault,
 	.page_mkwrite = nova_dax_fault,
 	.pfn_mkwrite = nova_dax_pfn_mkwrite,
 	.open = nova_vma_open,

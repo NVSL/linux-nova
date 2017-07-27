@@ -170,7 +170,7 @@ static unsigned int nova_init_dentry(struct super_block *sb,
 	struct nova_inode_log_page *curr_page = start;
 	unsigned int length;
 	unsigned short de_len;
-
+	
 	de_len = NOVA_DIR_LOG_REC_LEN(1);
 	memset(de_entry, 0, de_len);
 	de_entry->entry_type = DIR_LOG;
