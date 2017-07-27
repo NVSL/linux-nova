@@ -9108,6 +9108,14 @@ F:	drivers/power/supply/bq27xxx_battery_i2c.c
 F:	drivers/power/supply/isp1704_charger.c
 F:	drivers/power/supply/rx51_battery.c
 
+NOVA FILE SYSTEM
+M:	Andiry Xu <jix024@cs.ucsd.edu>
+M:	Steven Swanson <swanson@cs.ucsd.edu>
+L:	linux-fsdevel@vger.kernel.org
+L:	linux-nvdimm@lists.01.org
+F:	Documentation/filesystems/nova.txt
+F:	fs/nova/
+
 NTB DRIVER CORE
 M:	Jon Mason <jdmason@kudzu.us>
 M:	Dave Jiang <dave.jiang@intel.com>
