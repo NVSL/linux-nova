@@ -36,6 +36,7 @@
 #include <linux/random.h>
 #include <linux/cred.h>
 #include <linux/list.h>
+#include <linux/dax.h>
 #include "nova.h"
 #include "journal.h"
 #include "super.h"
@@ -117,17 +118,24 @@ static int nova_get_nvmm_info(struct super_block *sb,
 	void *virt_addr = NULL;
 	pfn_t __pfn_t;
 	long size;
+	struct dax_device * dax_dev;
 
-	if (!sb->s_bdev->bd_disk->fops->direct_access) {
+	if (!bdev_dax_supported(sb, PAGE_SIZE)) {
 		nova_err(sb, "device does not support DAX\n");
 		return -EINVAL;
 	}
 
 	sbi->s_bdev = sb->s_bdev;
 
-	size = sb->s_bdev->bd_disk->fops->direct_access(sb->s_bdev,
-					0, &virt_addr, &__pfn_t, 0);
-
+	
+	dax_dev = fs_dax_get_by_host(sb->s_bdev->bd_disk->disk_name);
+	if (!dax_dev) {
+		nova_err(sb, "Couldn't retrieve DAX device.\n");
+		return -EINVAL;
+	}
+	
+	size = dax_direct_access(dax_dev, 0, LONG_MAX/PAGE_SIZE,
+				 &virt_addr, &__pfn_t);
 	if (size <= 0) {
 		nova_err(sb, "direct_access failed\n");
 		return -EINVAL;
