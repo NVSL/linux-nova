@@ -383,7 +383,7 @@ static int nova_link(struct dentry *dest_dentry, struct inode *dir,
 		goto out;
 	}
 
-	inode->i_ctime = CURRENT_TIME_SEC;
+	inode->i_ctime = current_time(inode);
 	inc_nlink(inode);
 
 	update.tail = 0;
@@ -726,7 +726,7 @@ static int nova_rename(struct inode *old_dir,
 	old_pidir = nova_get_inode(sb, old_dir);
 
 	old_pi = nova_get_inode(sb, old_inode);
-	old_inode->i_ctime = CURRENT_TIME;
+	old_inode->i_ctime = current_time(old_inode);
 	update_old.tail = 0;
 	update_old.alter_tail = 0;
 	err = nova_append_link_change_entry(sb, old_pi, old_inode,
@@ -796,7 +796,7 @@ static int nova_rename(struct inode *old_dir,
 
 	if (new_inode) {
 		new_pi = nova_get_inode(sb, new_inode);
-		new_inode->i_ctime = CURRENT_TIME;
+		new_inode->i_ctime = current_time(new_inode);
 
 		if (S_ISDIR(old_inode->i_mode)) {
 			if (new_inode->i_nlink)

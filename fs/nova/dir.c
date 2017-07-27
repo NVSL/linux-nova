@@ -179,7 +179,8 @@ static unsigned int nova_init_dentry(struct super_block *sb,
 	de_entry->ino = cpu_to_le64(self_ino);
 	de_entry->name_len = 1;
 	de_entry->de_len = cpu_to_le16(de_len);
-	de_entry->mtime = CURRENT_TIME_SEC.tv_sec;
+	de_entry->mtime = timespec_trunc(current_kernel_time(),
+					 sb->s_time_gran).tv_sec;
 	//de_entry->size = sb->s_blocksize;
 	de_entry->links_count = 1;
 	strncpy(de_entry->name, ".\0", 2);
@@ -196,7 +197,8 @@ static unsigned int nova_init_dentry(struct super_block *sb,
 	de_entry->ino = cpu_to_le64(parent_ino);
 	de_entry->name_len = 2;
 	de_entry->de_len = cpu_to_le16(de_len);
-	de_entry->mtime = CURRENT_TIME_SEC.tv_sec;
+	de_entry->mtime = timespec_trunc(current_kernel_time(),
+					 sb->s_time_gran).tv_sec;
 	//de_entry->size = sb->s_blocksize;
 	de_entry->links_count = 2;
 	strncpy(de_entry->name, "..\0", 3);
@@ -318,7 +320,7 @@ int nova_add_dentry(struct dentry *dentry, u64 ino, int inc_link,
 	 * completion of syscall, but too many callers depend
 	 * on this.
 	 */
-	dir->i_mtime = dir->i_ctime = CURRENT_TIME_SEC;
+	dir->i_mtime = dir->i_ctime = current_time(dir);
 
 	loglen = NOVA_DIR_LOG_REC_LEN(namelen);
 	ret = nova_append_dentry(sb, pidir, dir, dentry,
@@ -414,7 +416,7 @@ int nova_remove_dentry(struct dentry *dentry, int dec_link,
 
 	pidir = nova_get_inode(sb, dir);
 
-	dir->i_mtime = dir->i_ctime = CURRENT_TIME_SEC;
+	dir->i_mtime = dir->i_ctime = current_time(dir);
 
 	if (nova_can_inplace_update_dentry(sb, old_dentry, epoch_id)) {
 		nova_inplace_update_dentry(sb, dir, old_dentry,

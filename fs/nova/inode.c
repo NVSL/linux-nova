@@ -394,7 +394,7 @@ static void nova_truncate_file_blocks(struct inode *inode, loff_t start,
 	unsigned long first_blocknr, last_blocknr;
 	int freed = 0;
 
-	inode->i_mtime = inode->i_ctime = CURRENT_TIME_SEC;
+	inode->i_mtime = inode->i_ctime = current_time(inode);
 
 	nova_dbg_verbose("truncate: pi %p iblocks %lx %llx %llx %llx\n", pi,
 			 sih->i_blocks, start, end, pi->i_size);
@@ -951,7 +951,7 @@ void nova_evict_inode(struct inode *inode)
 		destroy = 1;
 		pi = NULL; /* we no longer own the nova_inode */
 
-		inode->i_mtime = inode->i_ctime = CURRENT_TIME_SEC;
+		inode->i_mtime = inode->i_ctime = current_time(inode);
 		inode->i_size = 0;
 	}
 out:
@@ -1134,7 +1134,7 @@ struct inode *nova_new_vfs_inode(enum nova_new_inode_type type,
 	pi->i_blk_type = NOVA_DEFAULT_BLOCK_TYPE;
 	pi->i_flags = nova_mask_flags(mode, diri->i_flags);
 	pi->nova_ino = ino;
-	pi->i_create_time = CURRENT_TIME_SEC.tv_sec;
+	pi->i_create_time = current_time(inode).tv_sec;
 	pi->create_epoch_id = epoch_id;
 	nova_init_inode(inode, pi);
 

@@ -932,7 +932,8 @@ int nova_create_snapshot(struct super_block *sb)
 	 */
 	nova_info("%s: epoch id %llu\n", __func__, epoch_id);
 
-	timestamp = CURRENT_TIME_SEC.tv_sec;
+	
+	timestamp = timespec_trunc(current_kernel_time(), sb->s_time_gran);
 
 	ret = nova_initialize_snapshot_info(sb, &info, 1, epoch_id);
 	if (ret) {

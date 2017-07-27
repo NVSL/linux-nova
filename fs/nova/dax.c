@@ -625,8 +625,8 @@ out:
 	if (ret)
 		goto out;
 
-	inode->i_ctime = inode->i_mtime = CURRENT_TIME_SEC;
-	time = CURRENT_TIME_SEC.tv_sec;
+	inode->i_ctime = inode->i_mtime = current_time(inode);
+	time = current_time(inode).tv_sec;
 
 	epoch_id = nova_get_epoch_id(sb);
 
@@ -912,8 +912,8 @@ again:
 	}
 
 	pi = nova_get_inode(sb, inode);
-	inode->i_ctime = inode->i_mtime = CURRENT_TIME_SEC;
-	time = CURRENT_TIME_SEC.tv_sec;
+	inode->i_ctime = inode->i_mtime = current_time(inode);
+	time = current_time(inode).tv_sec;
 	update.tail = sih->log_tail;
 	update.alter_tail = sih->alter_log_tail;
 

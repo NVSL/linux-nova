@@ -78,7 +78,7 @@ long nova_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		epoch_id = nova_get_epoch_id(sb);
 		flags = flags & FS_FL_USER_MODIFIABLE;
 		flags |= oldflags & ~FS_FL_USER_MODIFIABLE;
-		inode->i_ctime = CURRENT_TIME_SEC;
+		inode->i_ctime = current_time(inode);
 		nova_set_inode_flags(inode, pi, flags);
 
 		update.tail = 0;
@@ -116,7 +116,7 @@ flags_out:
 
 		epoch_id = nova_get_epoch_id(sb);
 		inode_lock(inode);
-		inode->i_ctime = CURRENT_TIME_SEC;
+		inode->i_ctime = current_time(inode);
 		inode->i_generation = generation;
 
 		update.tail = 0;

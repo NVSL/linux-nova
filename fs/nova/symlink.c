@@ -58,7 +58,7 @@ int nova_block_symlink(struct super_block *sb, struct nova_inode *pi,
 	nova_memlock_block(sb, blockp);
 
 	/* Apply a write entry to the log page */
-	time = CURRENT_TIME_SEC.tv_sec;
+	time = current_time(inode).tv_sec;
 	nova_init_file_write_entry(sb, sih, &entry_data, epoch_id, 0, 1,
 					name_blocknr, time, len + 1);
 

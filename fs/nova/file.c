@@ -229,8 +229,8 @@ static long nova_fallocate(struct file *file, int mode, loff_t offset,
 		goto out;
 	}
 
-	inode->i_mtime = inode->i_ctime = CURRENT_TIME_SEC;
-	time = CURRENT_TIME_SEC.tv_sec;
+	inode->i_mtime = inode->i_ctime = current_time(inode);
+	time = current_time(inode).tv_sec;
 
 	blocksize_mask = sb->s_blocksize - 1;
 	start_blk = offset >> sb->s_blocksize_bits;
@@ -696,8 +696,8 @@ static ssize_t nova_cow_file_write(struct file *filp,
 	if (ret)
 		goto out;
 
-	inode->i_ctime = inode->i_mtime = CURRENT_TIME_SEC;
-	time = CURRENT_TIME_SEC.tv_sec;
+	inode->i_ctime = inode->i_mtime = current_time(inode);
+	time = current_time(inode).tv_sec;
 
 	nova_dbgv("%s: inode %lu, offset %lld, count %lu\n",
 			__func__, inode->i_ino,	pos, count);
