@@ -119,10 +119,13 @@ static int nova_get_nvmm_info(struct super_block *sb,
 	pfn_t __pfn_t;
 	long size;
 	struct dax_device * dax_dev;
-
-	if (!bdev_dax_supported(sb, PAGE_SIZE)) {
+	int ret;
+	
+	ret = bdev_dax_supported(sb, PAGE_SIZE);
+	nova_dbg_verbose("%s: dax_supported = %d; bdev->super=0x%p", __func__, ret, sb->s_bdev->bd_super);
+	if (ret) {
 		nova_err(sb, "device does not support DAX\n");
-		return -EINVAL;
+		return ret;
 	}
 
 	sbi->s_bdev = sb->s_bdev;
@@ -647,6 +650,8 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 	sbi->inode_maps = kzalloc(sbi->cpus * sizeof(struct inode_map),
 					GFP_KERNEL);
 	if (!sbi->inode_maps) {
+		nova_err(sb, "%s: Allocating inode maps failed.",
+			 __func__);
 		retval = -ENOMEM;
 		goto out;
 	}
@@ -661,6 +666,8 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 
 	sbi->zeroed_page = kzalloc(PAGE_SIZE, GFP_KERNEL);
 	if (!sbi->zeroed_page) {
+		nova_err(sb, "%s: sbi->zeroed_page failed.",
+			 __func__);
 		retval = -ENOMEM;
 		goto out;
 	}
@@ -672,6 +679,8 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 
 	if (!sbi->zero_parity) {
 		retval = -ENOMEM;
+		nova_err(sb, "%s: sbi->zero_parity failed.",
+			 __func__);
 		goto out;
 	}
 
@@ -687,6 +696,8 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 
 	if (nova_alloc_block_free_lists(sb)) {
 		retval = -ENOMEM;
+		nova_err(sb, "%s: Failed to allocate block free lists.",
+			 __func__);
 		goto out;
 	}
 
@@ -695,8 +706,13 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 	/* Init a new nova instance */
 	if (sbi->s_mount_opt & NOVA_MOUNT_FORMAT) {
 		root_pi = nova_init(sb, sbi->initsize);
-		if (IS_ERR(root_pi))
+		retval = -ENOMEM;
+		if (IS_ERR(root_pi)) {
+			nova_err(sb, "%s: root_pi error.",
+				 __func__);
+					
 			goto out;
+		}
 		goto setup_sb;
 	}
 
@@ -753,6 +769,9 @@ setup_sb:
 	root_i = nova_iget(sb, NOVA_ROOT_INO);
 	if (IS_ERR(root_i)) {
 		retval = PTR_ERR(root_i);
+		nova_err(sb, "%s: failed to get root inode",
+			 __func__);
+		
 		goto out;
 	}
 
