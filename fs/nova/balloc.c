@@ -535,12 +535,16 @@ static int not_enough_blocks(struct free_list *free_list,
 	struct nova_range_node *first = free_list->first_node;
 	struct nova_range_node *last = free_list->last_node;
 
-	if (free_list->num_free_blocks < num_blocks || !first || !last)
+	if (free_list->num_free_blocks < num_blocks || !first || !last) {
+		nova_dbgv("%s: num_free_blocks=%ld; num_blocks=%ld; first=0x%p; last=0x%p", __func__, free_list->num_free_blocks, num_blocks, first, last);
 		return 1;
+	}
 
 	if (atype == LOG &&
-		last->range_high - first->range_low < DEAD_ZONE_BLOCKS)
+	    last->range_high - first->range_low < DEAD_ZONE_BLOCKS) {
+		nova_dbgv("%s: allocation would cause deadzone violation", __func__);
 		return 1;
+	}
 
 	return 0;
 }
@@ -558,11 +562,15 @@ static long nova_alloc_blocks_in_free_list(struct super_block *sb,
 	bool found = 0;
 	unsigned long step = 0;
 
-	if (!free_list->first_node || free_list->num_free_blocks == 0)
+	if (!free_list->first_node || free_list->num_free_blocks == 0) {
+		nova_dbgv("%s: Can't alloc. free_list->first_node=0x%p free_list->num_free_blocks = %lu", __func__, free_list->first_node, free_list->num_free_blocks);
 		return -ENOSPC;
+	}
 
-	if (atype == LOG && not_enough_blocks(free_list, num_blocks, atype))
+	if (atype == LOG && not_enough_blocks(free_list, num_blocks, atype)) {
+		nova_dbgv("%s: Can't alloc.  not_enough_blocks() == true", __func__);
 		return -ENOSPC;
+	}
 
 	tree = &(free_list->block_free_tree);
 	if (from_tail == ALLOC_FROM_HEAD)
@@ -641,8 +649,10 @@ next:
 
 	if (found == 1)
 		free_list->num_free_blocks -= num_blocks;
-	else
+	else {
+		nova_dbgv("%s: Can't alloc.  found = %d", __func__, found);
 		return -ENOSPC;
+	}
 
 	NOVA_STATS_ADD(alloc_steps, step);
 
@@ -682,8 +692,10 @@ static int nova_new_blocks(struct super_block *sb, unsigned long *blocknr,
 	timing_t alloc_time;
 
 	num_blocks = num * nova_get_numblocks(btype);
-	if (num_blocks == 0)
+	if (num_blocks == 0) {
+		nova_dbg_verbose("%s: num_blocks == 0", __func__);
 		return -EINVAL;
+	}
 
 	NOVA_START_TIMING(new_blocks_t, alloc_time);
 	if (cpuid == ANY_CPU)
@@ -725,8 +737,11 @@ alloc:
 	spin_unlock(&free_list->s_lock);
 	NOVA_END_TIMING(new_blocks_t, alloc_time);
 
-	if (ret_blocks <= 0 || new_blocknr == 0)
+	if (ret_blocks <= 0 || new_blocknr == 0) {
+		nova_dbg_verbose("%s: not able to allocate %d blocks.  ret_blocks=%ld; new_blocknr=%lu",
+				 __func__, num, ret_blocks, new_blocknr);
 		return -ENOSPC;
+	}
 
 	if (zero) {
 		bp = nova_get_block(sb, nova_get_block_off(sb,
