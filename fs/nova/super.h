@@ -94,6 +94,7 @@ struct nova_sb_info {
 	struct super_block *sb;			/* VFS super block */
 	struct nova_super_block *nova_sb;	/* DRAM copy of SB */
 	struct block_device *s_bdev;
+	struct dax_device *s_dax_dev;
 
 	/*
 	 * base physical and virtual address of NOVA (which is also

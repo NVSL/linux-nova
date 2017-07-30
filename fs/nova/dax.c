@@ -984,6 +984,7 @@ out1:
 int nova_iomap_begin(struct inode *inode, loff_t offset, loff_t length,
 	unsigned int flags, struct iomap *iomap, bool taking_lock)
 {
+	struct nova_sb_info *sbi = NOVA_SB(inode->i_sb);
 	unsigned int blkbits = inode->i_blkbits;
 	unsigned long first_block = offset >> blkbits;
 	unsigned long max_blocks = (length + (1 << blkbits) - 1) >> blkbits;
@@ -1000,6 +1001,7 @@ int nova_iomap_begin(struct inode *inode, loff_t offset, loff_t length,
 
 	iomap->flags = 0;
 	iomap->bdev = inode->i_sb->s_bdev;
+	iomap->dax_dev = sbi->s_dax_dev;
 	iomap->offset = (u64)first_block << blkbits;
 
 	if (ret == 0) {
@@ -1040,36 +1042,34 @@ static struct iomap_ops nova_iomap_ops_lock = {
 	.iomap_end	= nova_iomap_end,
 };
 
+
+static int nova_dax_huge_fault(struct vm_fault *vmf,
+			      enum page_entry_size pe_size)
+{
+	int ret = 0;
+	timing_t fault_time;
+	struct address_space *mapping = vmf->vma->vm_file->f_mapping;
+	struct inode *inode = mapping->host;
+	
+	NOVA_START_TIMING(pmd_fault_t, fault_time);
+
+	nova_dbgv("%s: inode %lu, pgoff %lu\n",
+		  __func__, inode->i_ino, vmf->pgoff);
+
+	ret = dax_iomap_fault(vmf, pe_size, &nova_iomap_ops_lock);
+	
+	NOVA_END_TIMING(pmd_fault_t, fault_time);
+	return ret;
+}
 static int nova_dax_fault(struct vm_fault *vmf)
 {
 	struct address_space *mapping = vmf->vma->vm_file->f_mapping;
 	struct inode *inode = mapping->host;
-	int ret = 0;
-	timing_t fault_time;
-
-	NOVA_START_TIMING(mmap_fault_t, fault_time);
-
 	nova_dbgv("%s: inode %lu, pgoff %lu\n",
-			__func__, inode->i_ino, vmf->pgoff);
-	ret = dax_iomap_fault(vmf, PE_SIZE_PTE, &nova_iomap_ops_lock);
+		  __func__, inode->i_ino, vmf->pgoff);
 
-	NOVA_END_TIMING(mmap_fault_t, fault_time);
-	return ret;
+	return nova_dax_huge_fault(vmf, PE_SIZE_PTE);
 }
-
-/*static int nova_dax_pmd_fault(struct vm_area_struct *vma, unsigned long addr,
-	pmd_t *pmd, unsigned int flags)
-{
-	int ret = 0;
-	timing_t fault_time;
-
-	NOVA_START_TIMING(pmd_fault_t, fault_time);
-
-	ret = dax_iomap_pmd_fault(vma, addr, pmd, flags, &nova_iomap_ops_lock);
-
-	NOVA_END_TIMING(pmd_fault_t, fault_time);
-	return ret;
-	}*/
 
 static int nova_dax_pfn_mkwrite(struct vm_fault *vmf)
 {
@@ -1345,7 +1345,7 @@ static void nova_vma_close(struct vm_area_struct *vma)
 
 const struct vm_operations_struct nova_dax_vm_ops = {
 	.fault	= nova_dax_fault,
-//	.pmd_fault = nova_dax_fault,
+	.huge_fault = nova_dax_huge_fault,
 	.page_mkwrite = nova_dax_fault,
 	.pfn_mkwrite = nova_dax_pfn_mkwrite,
 	.open = nova_vma_open,
