@@ -937,7 +937,7 @@ again:
 	ret = nova_append_file_write_entry(sb, pi, inode,
 				&entry_data, &update);
 	if (ret) {
-		nova_dbg("%s: append inode entry failed\n", __func__);
+		nova_dbgv("%s: append inode entry failed\n", __func__);
 		ret = -ENOSPC;
 		goto out;
 	}
@@ -951,9 +951,11 @@ again:
 	nova_memlock_inode(sb, pi);
 
 	ret = nova_reassign_file_tree(sb, sih, update.curr_entry);
-	if (ret)
+	if (ret) {
+		nova_dbgv("%s: nova_reassign_file_tree failed: %d\n",
+			  __func__,  ret);
 		goto out;
-
+	}
 	inode->i_blocks = sih->i_blocks;
 	sih->trans_id++;
 	NOVA_STATS_ADD(dax_new_blocks, 1);
@@ -990,9 +992,11 @@ int nova_iomap_begin(struct inode *inode, loff_t offset, loff_t length,
 	int ret;
 
 	ret = nova_dax_get_blocks(inode, first_block, max_blocks, &bno, &new,
-				&boundary, flags & IOMAP_WRITE, taking_lock);
-	if (ret < 0)
+				  &boundary, flags & IOMAP_WRITE, taking_lock);
+	if (ret < 0) {
+		nova_dbgv("%s: nova_dax_get_blocks failed %d", __func__, ret);
 		return ret;
+	}
 
 	iomap->flags = 0;
 	iomap->bdev = inode->i_sb->s_bdev;
@@ -1330,10 +1334,10 @@ static void nova_vma_open(struct vm_area_struct *vma)
 static void nova_vma_close(struct vm_area_struct *vma)
 {
 	nova_dbgv("[%s:%d] MMAP 4KPAGE vm_start(0x%lx),"
-			" vm_end(0x%lx), vm_flags(0x%lx), "
-			"vm_page_prot(0x%lx)\n", __func__,
-			__LINE__, vma->vm_start, vma->vm_end,
-			vma->vm_flags, pgprot_val(vma->vm_page_prot));
+		  " vm_end(0x%lx), vm_flags(0x%lx), "
+		  "vm_page_prot(0x%lx)\n", __func__,
+		  __LINE__, vma->vm_start, vma->vm_end,
+		  vma->vm_flags, pgprot_val(vma->vm_page_prot));
 
 	vma->original_write = 0;
 	nova_remove_write_vma(vma);
