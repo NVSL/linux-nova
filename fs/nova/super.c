@@ -72,6 +72,9 @@ MODULE_PARM_DESC(inplace_data_updates, "Perform data updates in-place (i.e., not
 module_param(dram_struct_csum, int, S_IRUGO);
 MODULE_PARM_DESC(dram_struct_csum, "Protect key DRAM data structures with checksums");
 
+module_param(nova_dbgmask, int, S_IRUGO);
+MODULE_PARM_DESC(nova_dbgmask, "Control debugging output");
+
 static struct super_operations nova_sops;
 static const struct export_operations nova_export_ops;
 static struct kmem_cache *nova_inode_cachep;
