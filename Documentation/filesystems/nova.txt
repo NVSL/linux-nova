@@ -118,7 +118,7 @@ Source File Structure
 =====================
 
   * nova_def.h/nova.h
-        Defines NOVA macros and key inline functions.
+   Defines NOVA macros and key inline functions.
     
   * balloc.{h,c}
     NOVA's block allocator implementation.
@@ -213,6 +213,10 @@ Source File Structure
 
 FS Layout
 ======================
+
+A Nova file systems resides in single PMEM device. Nova divides the device int
+4KB blocks.
+
  block
 +-----------------------------------------------------+
 |  0  | primary super block (struct nova_super_block) |
