@@ -180,9 +180,9 @@ static int nova_dax_mmap_update_mapping(struct super_block *sb,
 	ret = nova_get_vma_overlap_range(sb, sih, vma, entry_data->pgoff,
 						entry_data->num_pages,
 						&start_pgoff, &num_pages);
-	if (ret == 0) {
+	if (ret == 0)
 		return ret;
-	}
+
 
 	NOVA_STATS_ADD(mapping_updated_pages, num_pages);
 
@@ -195,9 +195,9 @@ static int nova_dax_mmap_update_mapping(struct super_block *sb,
 
 	ret = nova_update_entry_pfn(sb, sih, vma, entry_data,
 						start_pgoff, num_pages);
-	if (ret) {
+	if (ret)
 		nova_err(sb, "update_pfn return %d\n", ret);
-	}
+
 
 	return ret;
 }
@@ -396,7 +396,7 @@ int nova_mmap_to_new_blocks(struct vm_area_struct *vma,
 		allocated = nova_new_data_blocks(sb, sih, &blocknr, start_blk,
 					 avail_blocks, ALLOC_NO_INIT, ANY_CPU,
 					 ALLOC_FROM_HEAD);
-		
+
 		nova_dbgv("%s: alloc %d blocks @ %lu\n", __func__,
 						allocated, blocknr);
 
@@ -461,17 +461,16 @@ int nova_mmap_to_new_blocks(struct vm_area_struct *vma,
 
 	/* Update file tree */
 	ret = nova_reassign_file_tree(sb, sih, begin_tail);
-	if (ret) {
+	if (ret)
 		goto out;
-	}
+
 
 	/* Update pfn and prot */
 	ret = nova_dax_cow_mmap_handler(sb, vma, sih, begin_tail);
-	if (ret) {
+	if (ret)
 		goto out;
-	}
 
-//	nova_print_nova_log(sb, pi);
+
 	sih->trans_id++;
 
 out:

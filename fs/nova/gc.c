@@ -36,7 +36,8 @@ static bool curr_log_entry_invalid(struct super_block *sb,
 	addr = (void *)nova_get_block(sb, curr_p);
 
 	/* FIXME: this check might hurt performance for workloads that
-	 * frequently invokes gc */
+	 * frequently invokes gc
+	 */
 	if (metadata_csum == 0)
 		entryc = addr;
 	else {
@@ -330,8 +331,8 @@ static unsigned long nova_inode_log_thorough_gc(struct super_block *sb,
 	allocated = nova_allocate_inode_log_pages(sb, sih, blocks,
 					&new_head, ANY_CPU, 0);
 	if (allocated != blocks) {
-		nova_err(sb, "%s: ERROR: no inode log page "
-					"available\n", __func__);
+		nova_err(sb, "%s: ERROR: no inode log page available\n",
+					__func__);
 		goto out;
 	}
 
@@ -460,8 +461,8 @@ static unsigned long nova_inode_alter_log_thorough_gc(struct super_block *sb,
 	allocated = nova_allocate_inode_log_pages(sb, sih, blocks,
 					&new_head, ANY_CPU, 1);
 	if (allocated != blocks) {
-		nova_err(sb, "%s: ERROR: no inode log page "
-					"available\n", __func__);
+		nova_err(sb, "%s: ERROR: no inode log page available\n",
+					__func__);
 		goto out;
 	}
 
@@ -554,7 +555,7 @@ out:
 	return blocks;
 }
 
-/* 
+/*
  * Scan pages in the log and remove those with no valid log entries.
  */
 int nova_inode_log_fast_gc(struct super_block *sb,
@@ -715,7 +716,7 @@ int nova_inode_log_fast_gc(struct super_block *sb,
 		return 0;
 
 	/* Estimate how many pages worth of valid entries the log contains.
-	 * 
+	 *
 	 * If it is less than half the number pages that remain in the log,
 	 * compress them with thorough gc.
 	 */
@@ -724,8 +725,8 @@ int nova_inode_log_fast_gc(struct super_block *sb,
 		blocks++;
 
 	if (force_thorough || (blocks && blocks * 2 < checked_pages)) {
-		nova_dbgv("Thorough GC for inode %lu: checked pages %lu, "
-				"valid pages %lu\n", sih->ino,
+		nova_dbgv("Thorough GC for inode %lu: checked pages %lu, valid pages %lu\n",
+				sih->ino,
 				checked_pages, blocks);
 		blocks = nova_inode_log_thorough_gc(sb, pi, sih,
 							blocks, checked_pages);
@@ -736,4 +737,3 @@ int nova_inode_log_fast_gc(struct super_block *sb,
 
 	return 0;
 }
-

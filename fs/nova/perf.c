@@ -352,6 +352,7 @@ static int nova_test_func_perf(struct super_block *sb, unsigned int func_id,
 	size_t poolsize, size_t size, unsigned int disks)
 {
 	u64 csum = 12345, xor = 0;
+
 	u64 volatile result; // avoid results being optimized out
 	const char *fname = NULL;
 	char *src = NULL, *dst = NULL, *pmem = NULL;

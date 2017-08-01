@@ -31,7 +31,7 @@ static int nova_seq_timing_show(struct seq_file *seq, void *v)
 
 	nova_get_timing_stats();
 
-	seq_printf(seq, "=========== NOVA kernel timing stats ===========\n");
+	seq_puts(seq, "=========== NOVA kernel timing stats ===========\n");
 	for (i = 0; i < TIMING_NUM; i++) {
 		/* Title */
 		if (Timingstring[i][0] == '=') {
@@ -40,8 +40,7 @@ static int nova_seq_timing_show(struct seq_file *seq, void *v)
 		}
 
 		if (measure_timing || Timingstats[i]) {
-			seq_printf(seq, "%s: count %llu, timing %llu, "
-				"average %llu\n",
+			seq_printf(seq, "%s: count %llu, timing %llu, average %llu\n",
 				Timingstring[i],
 				Countstats[i],
 				Timingstats[i],
@@ -54,7 +53,7 @@ static int nova_seq_timing_show(struct seq_file *seq, void *v)
 		}
 	}
 
-	seq_printf(seq, "\n");
+	seq_puts(seq, "\n");
 	return 0;
 }
 
@@ -101,7 +100,7 @@ static int nova_seq_IO_show(struct seq_file *seq, void *v)
 	nova_get_timing_stats();
 	nova_get_IO_stats();
 
-	seq_printf(seq, "============ NOVA allocation stats ============\n\n");
+	seq_puts(seq, "============ NOVA allocation stats ============\n\n");
 
 	for (i = 0; i < sbi->cpus; i++) {
 		free_list = nova_get_free_list(sb, i);
@@ -125,36 +124,32 @@ static int nova_seq_IO_show(struct seq_file *seq, void *v)
 		free_log_count, freed_log_pages,
 		free_data_count, freed_data_pages);
 
-	seq_printf(seq, "Fast GC %llu, check pages %llu, free pages %llu, "
-			"average %llu\n",
+	seq_printf(seq, "Fast GC %llu, check pages %llu, free pages %llu, average %llu\n",
 		Countstats[fast_gc_t], IOstats[fast_checked_pages],
 		IOstats[fast_gc_pages], Countstats[fast_gc_t] ?
 			IOstats[fast_gc_pages] / Countstats[fast_gc_t] : 0);
-	seq_printf(seq, "Thorough GC %llu, checked pages %llu, "
-			"free pages %llu, average %llu\n",
+	seq_printf(seq, "Thorough GC %llu, checked pages %llu, free pages %llu, average %llu\n",
 		Countstats[thorough_gc_t],
 		IOstats[thorough_checked_pages], IOstats[thorough_gc_pages],
 		Countstats[thorough_gc_t] ?
 			IOstats[thorough_gc_pages] / Countstats[thorough_gc_t]
 			: 0);
 
-	seq_printf(seq, "\n");
+	seq_puts(seq, "\n");
 
-	seq_printf(seq, "================ NOVA I/O stats ================\n\n");
+	seq_puts(seq, "================ NOVA I/O stats ================\n\n");
 	seq_printf(seq, "Read %llu, bytes %llu, average %llu\n",
 		Countstats[dax_read_t], IOstats[read_bytes],
 		Countstats[dax_read_t] ?
 			IOstats[read_bytes] / Countstats[dax_read_t] : 0);
-	seq_printf(seq, "COW write %llu, bytes %llu, average %llu, "
-		"write breaks %llu, average %llu\n",
+	seq_printf(seq, "COW write %llu, bytes %llu, average %llu, write breaks %llu, average %llu\n",
 		Countstats[cow_write_t], IOstats[cow_write_bytes],
 		Countstats[cow_write_t] ?
 			IOstats[cow_write_bytes] / Countstats[cow_write_t] : 0,
 		IOstats[cow_write_breaks], Countstats[cow_write_t] ?
 			IOstats[cow_write_breaks] / Countstats[cow_write_t]
 			: 0);
-	seq_printf(seq, "Inplace write %llu, bytes %llu, average %llu, "
-		"write breaks %llu, average %llu\n",
+	seq_printf(seq, "Inplace write %llu, bytes %llu, average %llu, write breaks %llu, average %llu\n",
 		Countstats[inplace_write_t], IOstats[inplace_write_bytes],
 		Countstats[inplace_write_t] ?
 			IOstats[inplace_write_bytes] /
@@ -171,10 +166,8 @@ static int nova_seq_IO_show(struct seq_file *seq, void *v)
 	seq_printf(seq, "Protect head %llu, tail %llu\n",
 			IOstats[protect_head], IOstats[protect_tail]);
 	seq_printf(seq, "Block csum parity %llu\n", IOstats[block_csum_parity]);
-	seq_printf(seq, "Page fault %llu, dax cow fault %llu, "
-			"dax cow fault during snapshot creation %llu\n"
-			"CoW write overlap mmap range %llu, "
-			"mapping/pfn updated pages %llu\n",
+	seq_printf(seq, "Page fault %llu, dax cow fault %llu, dax cow fault during snapshot creation %llu\n"
+			"CoW write overlap mmap range %llu, mapping/pfn updated pages %llu\n",
 			Countstats[mmap_fault_t], Countstats[mmap_cow_t],
 			IOstats[dax_cow_during_snapshot],
 			IOstats[cow_overlap_mmap],
@@ -182,10 +175,10 @@ static int nova_seq_IO_show(struct seq_file *seq, void *v)
 	seq_printf(seq, "fsync %llu, fdatasync %llu\n",
 			Countstats[fsync_t], IOstats[fdatasync]);
 
-	seq_printf(seq, "\n");
+	seq_puts(seq, "\n");
 
 	nova_print_snapshot_lists(sb, seq);
-	seq_printf(seq, "\n");
+	seq_puts(seq, "\n");
 
 	return 0;
 }
@@ -213,11 +206,10 @@ static int nova_seq_show_allocator(struct seq_file *seq, void *v)
 	unsigned long log_pages = 0;
 	unsigned long data_pages = 0;
 
-	seq_printf(seq, "======== NOVA per-CPU allocator stats ========\n");
+	seq_puts(seq, "======== NOVA per-CPU allocator stats ========\n");
 	for (i = 0; i < sbi->cpus; i++) {
 		free_list = nova_get_free_list(sb, i);
-		seq_printf(seq, "Free list %d: block start %lu, block end %lu, "
-			"num_blocks %lu, num_free_blocks %lu, blocknode %lu\n",
+		seq_printf(seq, "Free list %d: block start %lu, block end %lu, num_blocks %lu, num_free_blocks %lu, blocknode %lu\n",
 			i, free_list->block_start, free_list->block_end,
 			free_list->block_end - free_list->block_start + 1,
 			free_list->num_free_blocks, free_list->num_blocknode);
@@ -234,26 +226,21 @@ static int nova_seq_show_allocator(struct seq_file *seq, void *v)
 					free_list->last_node->range_high);
 		}
 
-		seq_printf(seq, "Free list %d: csum start %lu, "
-			"replica csum start %lu, csum blocks %lu, "
-			"parity start %lu, parity blocks %lu\n",
+		seq_printf(seq, "Free list %d: csum start %lu, replica csum start %lu, csum blocks %lu, parity start %lu, parity blocks %lu\n",
 			i, free_list->csum_start, free_list->replica_csum_start,
 			free_list->num_csum_blocks,
 			free_list->parity_start, free_list->num_parity_blocks);
 
-		seq_printf(seq, "Free list %d: alloc log count %lu, "
-			"allocated log pages %lu, alloc data count %lu, "
-			"allocated data pages %lu, free log count %lu, "
-			"freed log pages %lu, free data count %lu, "
-			"freed data pages %lu\n", i,
-			free_list->alloc_log_count,
-			free_list->alloc_log_pages,
-			free_list->alloc_data_count,
-			free_list->alloc_data_pages,
-			free_list->free_log_count,
-			free_list->freed_log_pages,
-			free_list->free_data_count,
-			free_list->freed_data_pages);
+		seq_printf(seq, "Free list %d: alloc log count %lu, allocated log pages %lu, alloc data count %lu, allocated data pages %lu, free log count %lu, freed log pages %lu, free data count %lu, freed data pages %lu\n",
+			   i,
+			   free_list->alloc_log_count,
+			   free_list->alloc_log_pages,
+			   free_list->alloc_data_count,
+			   free_list->alloc_data_pages,
+			   free_list->free_log_count,
+			   free_list->freed_log_pages,
+			   free_list->free_data_count,
+			   free_list->freed_data_pages);
 
 		log_pages += free_list->alloc_log_pages;
 		log_pages -= free_list->freed_log_pages;
@@ -285,7 +272,7 @@ static const struct file_operations nova_seq_allocator_fops = {
 /* ====================== Snapshot ======================== */
 static int nova_seq_create_snapshot_show(struct seq_file *seq, void *v)
 {
-	seq_printf(seq, "Write to create a snapshot\n");
+	seq_puts(seq, "Write to create a snapshot\n");
 	return 0;
 }
 
@@ -317,7 +304,7 @@ static const struct file_operations nova_seq_create_snapshot_fops = {
 
 static int nova_seq_delete_snapshot_show(struct seq_file *seq, void *v)
 {
-	seq_printf(seq, "Echo index to delete a snapshot\n");
+	seq_puts(seq, "Echo index to delete a snapshot\n");
 	return 0;
 }
 
@@ -334,9 +321,14 @@ ssize_t nova_seq_delete_snapshot(struct file *filp, const char __user *buf,
 	struct inode *inode = mapping->host;
 	struct super_block *sb = PDE_DATA(inode);
 	u64 epoch_id;
+	int ret;
 
-	sscanf(buf, "%llu", &epoch_id);
-	nova_delete_snapshot(sb, epoch_id);
+	ret = kstrtoull(buf, 10, &epoch_id);
+	if (ret < 0)
+		nova_warn("Couldn't parse snapshot id %s", buf);
+	else
+		nova_delete_snapshot(sb, epoch_id);
+
 	return len;
 }
 
@@ -374,10 +366,8 @@ static const struct file_operations nova_seq_show_snapshots_fops = {
 /* ====================== Performance ======================== */
 static int nova_seq_test_perf_show(struct seq_file *seq, void *v)
 {
-	seq_printf(seq, "Echo function:poolmb:size:disks to test function "
-			"performance working on size of data.\n"
-			"    example: echo 1:128:4096:8 > "
-			"/proc/fs/NOVA/pmem0/test_perf\n"
+	seq_printf(seq, "Echo function:poolmb:size:disks to test function performance working on size of data.\n"
+			"    example: echo 1:128:4096:8 > /proc/fs/NOVA/pmem0/test_perf\n"
 			"The disks value only matters for raid functions.\n"
 			"Set function to 0 to test all functions.\n");
 	return 0;
@@ -397,8 +387,10 @@ ssize_t nova_seq_test_perf(struct file *filp, const char __user *buf,
 	size_t size;
 	unsigned int func_id, poolmb, disks;
 
-	sscanf(buf, "%u:%u:%zu:%u", &func_id, &poolmb, &size, &disks);
-	nova_test_perf(sb, func_id, poolmb, size, disks);
+	if (sscanf(buf, "%u:%u:%zu:%u", &func_id, &poolmb, &size, &disks) == 4)
+		nova_test_perf(sb, func_id, poolmb, size, disks);
+	else
+		nova_warn("Couldn't parse test_perf request: %s", buf);
 
 	return len;
 }
@@ -443,10 +435,10 @@ ssize_t nova_seq_gc(struct file *filp, const char __user *buf,
 	char *_buf;
 	int retval = len;
 
-	_buf = (char *)kmalloc(len, GFP_KERNEL);
+	_buf = kmalloc(len, GFP_KERNEL);
 	if (_buf == NULL)  {
-		nova_info("%s: kmalloc failed\n", __func__);
 		retval = -ENOMEM;
+		nova_dbg("%s: kmalloc failed\n", __func__);
 		goto out;
 	}
 
@@ -513,19 +505,19 @@ void nova_sysfs_init(struct super_block *sb)
 					 nova_proc_root);
 
 	if (sbi->s_proc) {
-		proc_create_data("timing_stats", S_IRUGO, sbi->s_proc,
+		proc_create_data("timing_stats", 0444, sbi->s_proc,
 				 &nova_seq_timing_fops, sb);
-		proc_create_data("IO_stats", S_IRUGO, sbi->s_proc,
+		proc_create_data("IO_stats", 0444, sbi->s_proc,
 				 &nova_seq_IO_fops, sb);
-		proc_create_data("allocator", S_IRUGO, sbi->s_proc,
+		proc_create_data("allocator", 0444, sbi->s_proc,
 				 &nova_seq_allocator_fops, sb);
-		proc_create_data("create_snapshot", S_IRUGO, sbi->s_proc,
+		proc_create_data("create_snapshot", 0444, sbi->s_proc,
 				 &nova_seq_create_snapshot_fops, sb);
-		proc_create_data("delete_snapshot", S_IRUGO, sbi->s_proc,
+		proc_create_data("delete_snapshot", 0444, sbi->s_proc,
 				 &nova_seq_delete_snapshot_fops, sb);
-		proc_create_data("snapshots", S_IRUGO, sbi->s_proc,
+		proc_create_data("snapshots", 0444, sbi->s_proc,
 				 &nova_seq_show_snapshots_fops, sb);
-		proc_create_data("test_perf", S_IRUGO, sbi->s_proc,
+		proc_create_data("test_perf", 0444, sbi->s_proc,
 				 &nova_seq_test_perf_fops, sb);
 		proc_create_data("gc", 0444, sbi->s_proc,
 				 &nova_seq_gc_fops, sb);

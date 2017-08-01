@@ -180,20 +180,19 @@ static void nova_print_alloc_stats(struct super_block *sb)
 	unsigned long freed_data_pages = 0;
 	int i;
 
-	printk("=========== NOVA allocation stats ===========\n");
-	printk("Alloc %llu, alloc steps %llu, average %llu\n",
+	nova_info("=========== NOVA allocation stats ===========\n");
+	nova_info("Alloc %llu, alloc steps %llu, average %llu\n",
 		Countstats[new_data_blocks_t], IOstats[alloc_steps],
 		Countstats[new_data_blocks_t] ?
 			IOstats[alloc_steps] / Countstats[new_data_blocks_t]
 			: 0);
-	printk("Free %llu\n", Countstats[free_data_t]);
-	printk("Fast GC %llu, check pages %llu, free pages %llu, "
-		"average %llu\n",
+	nova_info("Free %llu\n", Countstats[free_data_t]);
+	nova_info("Fast GC %llu, check pages %llu, free pages %llu, average %llu\n",
 		Countstats[fast_gc_t], IOstats[fast_checked_pages],
 		IOstats[fast_gc_pages], Countstats[fast_gc_t] ?
 			IOstats[fast_gc_pages] / Countstats[fast_gc_t] : 0);
-	printk("Thorough GC %llu, checked pages %llu, free pages %llu, "
-		"average %llu\n", Countstats[thorough_gc_t],
+	nova_info("Thorough GC %llu, checked pages %llu, free pages %llu, average %llu\n",
+		Countstats[thorough_gc_t],
 		IOstats[thorough_checked_pages], IOstats[thorough_gc_pages],
 		Countstats[thorough_gc_t] ?
 			IOstats[thorough_gc_pages] / Countstats[thorough_gc_t]
@@ -212,10 +211,7 @@ static void nova_print_alloc_stats(struct super_block *sb)
 		freed_data_pages += free_list->freed_data_pages;
 	}
 
-	printk("alloc log count %lu, allocated log pages %lu, "
-		"alloc data count %lu, allocated data pages %lu, "
-		"free log count %lu, freed log pages %lu, "
-		"free data count %lu, freed data pages %lu\n",
+	nova_info("alloc log count %lu, allocated log pages %lu, alloc data count %lu, allocated data pages %lu, free log count %lu, freed log pages %lu, free data count %lu, freed data pages %lu\n",
 		alloc_log_count, alloc_log_pages,
 		alloc_data_count, alloc_data_pages,
 		free_log_count, freed_log_pages,
@@ -224,21 +220,19 @@ static void nova_print_alloc_stats(struct super_block *sb)
 
 static void nova_print_IO_stats(struct super_block *sb)
 {
-	printk("=========== NOVA I/O stats ===========\n");
-	printk("Read %llu, bytes %llu, average %llu\n",
+	nova_info("=========== NOVA I/O stats ===========\n");
+	nova_info("Read %llu, bytes %llu, average %llu\n",
 		Countstats[dax_read_t], IOstats[read_bytes],
 		Countstats[dax_read_t] ?
 			IOstats[read_bytes] / Countstats[dax_read_t] : 0);
-	printk("COW write %llu, bytes %llu, average %llu, "
-		"write breaks %llu, average %llu\n",
+	nova_info("COW write %llu, bytes %llu, average %llu, write breaks %llu, average %llu\n",
 		Countstats[cow_write_t], IOstats[cow_write_bytes],
 		Countstats[cow_write_t] ?
 			IOstats[cow_write_bytes] / Countstats[cow_write_t] : 0,
 		IOstats[cow_write_breaks], Countstats[cow_write_t] ?
 			IOstats[cow_write_breaks] / Countstats[cow_write_t]
 			: 0);
-	printk("Inplace write %llu, bytes %llu, average %llu, "
-		"write breaks %llu, average %llu\n",
+	nova_info("Inplace write %llu, bytes %llu, average %llu, write breaks %llu, average %llu\n",
 		Countstats[inplace_write_t], IOstats[inplace_write_bytes],
 		Countstats[inplace_write_t] ?
 			IOstats[inplace_write_bytes] /
@@ -282,29 +276,29 @@ void nova_print_timing_stats(struct super_block *sb)
 	nova_get_timing_stats();
 	nova_get_IO_stats();
 
-	printk("=========== NOVA kernel timing stats ============\n");
+	nova_info("=========== NOVA kernel timing stats ============\n");
 	for (i = 0; i < TIMING_NUM; i++) {
 		/* Title */
 		if (Timingstring[i][0] == '=') {
-			printk("\n%s\n\n", Timingstring[i]);
+			nova_info("\n%s\n\n", Timingstring[i]);
 			continue;
 		}
 
 		if (measure_timing || Timingstats[i]) {
-			printk("%s: count %llu, timing %llu, average %llu\n",
+			nova_info("%s: count %llu, timing %llu, average %llu\n",
 				Timingstring[i],
 				Countstats[i],
 				Timingstats[i],
 				Countstats[i] ?
 				Timingstats[i] / Countstats[i] : 0);
 		} else {
-			printk("%s: count %llu\n",
+			nova_info("%s: count %llu\n",
 				Timingstring[i],
 				Countstats[i]);
 		}
 	}
 
-	printk("\n");
+	nova_info("\n");
 	nova_print_alloc_stats(sb);
 	nova_print_IO_stats(sb);
 }
@@ -378,10 +372,7 @@ void nova_print_inode(struct nova_inode *pi)
 static inline void nova_print_file_write_entry(struct super_block *sb,
 	u64 curr, struct nova_file_write_entry *entry)
 {
-	nova_dbg("file write entry @ 0x%llx: epoch %llu, trans %llu, "
-			"pgoff %llu, pages %u, "
-			"blocknr %llu, reassigned %u, updating %u, "
-			"invalid count %u, size %llu, mtime %u\n",
+	nova_dbg("file write entry @ 0x%llx: epoch %llu, trans %llu, pgoff %llu, pages %u, blocknr %llu, reassigned %u, updating %u, invalid count %u, size %llu, mtime %u\n",
 			curr, entry->epoch_id, entry->trans_id,
 			entry->pgoff, entry->num_pages,
 			entry->block >> PAGE_SHIFT,
@@ -392,9 +383,7 @@ static inline void nova_print_file_write_entry(struct super_block *sb,
 static inline void nova_print_set_attr_entry(struct super_block *sb,
 	u64 curr, struct nova_setattr_logentry *entry)
 {
-	nova_dbg("set attr entry @ 0x%llx: epoch %llu, trans %llu, "
-			"invalid %u, mode %u, "
-			"size %llu, atime %u, mtime %u, ctime %u\n",
+	nova_dbg("set attr entry @ 0x%llx: epoch %llu, trans %llu, invalid %u, mode %u, size %llu, atime %u, mtime %u, ctime %u\n",
 			curr, entry->epoch_id, entry->trans_id,
 			entry->invalid, entry->mode,
 			entry->size, entry->atime, entry->mtime, entry->ctime);
@@ -403,8 +392,7 @@ static inline void nova_print_set_attr_entry(struct super_block *sb,
 static inline void nova_print_link_change_entry(struct super_block *sb,
 	u64 curr, struct nova_link_change_entry *entry)
 {
-	nova_dbg("link change entry @ 0x%llx: epoch %llu, trans %llu, "
-			"invalid %u, links %u, flags %u, ctime %u\n",
+	nova_dbg("link change entry @ 0x%llx: epoch %llu, trans %llu, invalid %u, links %u, flags %u, ctime %u\n",
 			curr, entry->epoch_id, entry->trans_id,
 			entry->invalid, entry->links,
 			entry->flags, entry->ctime);
@@ -413,8 +401,7 @@ static inline void nova_print_link_change_entry(struct super_block *sb,
 static inline void nova_print_mmap_entry(struct super_block *sb,
 	u64 curr, struct nova_mmap_entry *entry)
 {
-	nova_dbg("mmap write entry @ 0x%llx: epoch %llu, invalid %u, "
-			"pgoff %llu, pages %llu\n",
+	nova_dbg("mmap write entry @ 0x%llx: epoch %llu, invalid %u, pgoff %llu, pages %llu\n",
 			curr, entry->epoch_id, entry->invalid,
 			entry->pgoff, entry->num_pages);
 }
@@ -422,8 +409,7 @@ static inline void nova_print_mmap_entry(struct super_block *sb,
 static inline void nova_print_snapshot_info_entry(struct super_block *sb,
 	u64 curr, struct nova_snapshot_info_entry *entry)
 {
-	nova_dbg("snapshot info entry @ 0x%llx: epoch %llu, deleted %u, "
-			"timestamp %llu\n",
+	nova_dbg("snapshot info entry @ 0x%llx: epoch %llu, deleted %u, timestamp %llu\n",
 			curr, entry->epoch_id, entry->deleted,
 			entry->timestamp);
 }
@@ -431,9 +417,7 @@ static inline void nova_print_snapshot_info_entry(struct super_block *sb,
 static inline size_t nova_print_dentry(struct super_block *sb,
 	u64 curr, struct nova_dentry *entry)
 {
-	nova_dbg("dir logentry @ 0x%llx: epoch %llu, trans %llu, "
-			"reassigned %u, invalid %u, inode %llu, links %u, "
-			"namelen %u, rec len %u, name %s, mtime %u\n",
+	nova_dbg("dir logentry @ 0x%llx: epoch %llu, trans %llu, reassigned %u, invalid %u, inode %llu, links %u, namelen %u, rec len %u, name %s, mtime %u\n",
 			curr, entry->epoch_id, entry->trans_id,
 			entry->reassigned, entry->invalid,
 			le64_to_cpu(entry->ino),
@@ -509,8 +493,7 @@ void nova_print_curr_log_page(struct super_block *sb, u64 curr)
 		start = nova_print_log_entry(sb, start);
 
 	tail = nova_get_block(sb, end);
-	nova_dbg("Page tail. curr 0x%llx, next page 0x%llx, "
-			"%u entries, %u invalid\n",
+	nova_dbg("Page tail. curr 0x%llx, next page 0x%llx, %u entries, %u invalid\n",
 			start, tail->next_page,
 			tail->num_entries, tail->invalid_entries);
 }
@@ -530,8 +513,7 @@ void nova_print_nova_log(struct super_block *sb,
 		if ((curr & (PAGE_SIZE - 1)) == LOG_BLOCK_TAIL) {
 			struct nova_inode_page_tail *tail =
 					nova_get_block(sb, curr);
-			nova_dbg("Log tail, curr 0x%llx, next page 0x%llx, "
-					"%u entries, %u invalid\n",
+			nova_dbg("Log tail, curr 0x%llx, next page 0x%llx, %u entries, %u invalid\n",
 					curr, tail->next_page,
 					tail->num_entries,
 					tail->invalid_entries);
@@ -592,8 +574,7 @@ void nova_print_nova_log_pages(struct super_block *sb,
 			sih->ino, curr, sih->log_tail);
 	curr_page = (struct nova_inode_log_page *)nova_get_block(sb, curr);
 	while ((next = curr_page->page_tail.next_page) != 0) {
-		nova_dbg("Current page 0x%llx, next page 0x%llx, "
-			"%u entries, %u invalid\n",
+		nova_dbg("Current page 0x%llx, next page 0x%llx, %u entries, %u invalid\n",
 			curr >> PAGE_SHIFT, next >> PAGE_SHIFT,
 			curr_page->page_tail.num_entries,
 			curr_page->page_tail.invalid_entries);
@@ -606,8 +587,8 @@ void nova_print_nova_log_pages(struct super_block *sb,
 	}
 	if (sih->log_tail >> PAGE_SHIFT == curr >> PAGE_SHIFT)
 		used = count;
-	nova_dbg("Pi %lu: log used %d pages, has %d pages, "
-		"si reports %lu pages\n", sih->ino, used, count,
+	nova_dbg("Pi %lu: log used %d pages, has %d pages, si reports %lu pages\n",
+		sih->ino, used, count,
 		sih->log_pages);
 }
 
@@ -633,9 +614,8 @@ int nova_check_inode_logs(struct super_block *sb, struct nova_inode *pi)
 	while (curr && alter_curr) {
 		if (alter_log_page(sb, curr) != alter_curr ||
 				alter_log_page(sb, alter_curr) != curr)
-			nova_dbg("Inode %llu page %d: curr 0x%llx, "
-					"alter 0x%llx, alter_curr 0x%llx, "
-					"alter 0x%llx\n", pi->nova_ino, count1,
+			nova_dbg("Inode %llu page %d: curr 0x%llx, alter 0x%llx, alter_curr 0x%llx, alter 0x%llx\n",
+					pi->nova_ino, count1,
 					curr, alter_log_page(sb, curr),
 					alter_curr,
 					alter_log_page(sb, alter_curr));
@@ -681,31 +661,25 @@ void nova_print_free_lists(struct super_block *sb)
 	nova_dbg("======== NOVA per-CPU free list allocation stats ========\n");
 	for (i = 0; i < sbi->cpus; i++) {
 		free_list = nova_get_free_list(sb, i);
-		nova_dbg("Free list %d: block start %lu, block end %lu, "
-			"num_blocks %lu, num_free_blocks %lu, blocknode %lu\n",
+		nova_dbg("Free list %d: block start %lu, block end %lu, num_blocks %lu, num_free_blocks %lu, blocknode %lu\n",
 			i, free_list->block_start, free_list->block_end,
 			free_list->block_end - free_list->block_start + 1,
 			free_list->num_free_blocks, free_list->num_blocknode);
 
-		nova_dbg("Free list %d: csum start %lu, "
-			"replica csum start %lu, csum blocks %lu, "
-			"parity start %lu, parity blocks %lu\n",
+		nova_dbg("Free list %d: csum start %lu, replica csum start %lu, csum blocks %lu, parity start %lu, parity blocks %lu\n",
 			i, free_list->csum_start, free_list->replica_csum_start,
 			free_list->num_csum_blocks,
 			free_list->parity_start, free_list->num_parity_blocks);
 
-		nova_dbg("Free list %d: alloc log count %lu, "
-			"allocated log pages %lu, alloc data count %lu, "
-			"allocated data pages %lu, free log count %lu, "
-			"freed log pages %lu, free data count %lu, "
-			"freed data pages %lu\n", i,
-			free_list->alloc_log_count,
-			free_list->alloc_log_pages,
-			free_list->alloc_data_count,
-			free_list->alloc_data_pages,
-			free_list->free_log_count,
-			free_list->freed_log_pages,
-			free_list->free_data_count,
-			free_list->freed_data_pages);
+		nova_dbg("Free list %d: alloc log count %lu, allocated log pages %lu, alloc data count %lu, allocated data pages %lu, free log count %lu, freed log pages %lu, free data count %lu, freed data pages %lu\n",
+			 i,
+			 free_list->alloc_log_count,
+			 free_list->alloc_log_pages,
+			 free_list->alloc_data_count,
+			 free_list->alloc_data_pages,
+			 free_list->free_log_count,
+			 free_list->freed_log_pages,
+			 free_list->free_data_count,
+			 free_list->freed_data_pages);
 	}
 }

@@ -20,7 +20,7 @@
 
 
 /*
- * DRAM log of updates to a snapshot.  
+ * DRAM log of updates to a snapshot.
  */
 struct snapshot_list {
 	struct mutex list_mutex;
@@ -37,11 +37,11 @@ struct snapshot_info {
 	u64	epoch_id;
 	u64	timestamp;
 	unsigned long snapshot_entry; /* PMEM pointer to the struct
-				       * snapshot_info_entry for this 
-				       * snapshot 
+				       * snapshot_info_entry for this
+				       * snapshot
 				       */
 
-	struct snapshot_list *lists; 	/* Per-CPU snapshot list */
+	struct snapshot_list *lists;	/* Per-CPU snapshot list */
 };
 
 
@@ -73,12 +73,12 @@ struct snapshot_file_write_entry {
 	u8	type;
 	u8	deleted;
 	u8	padding[6];
-	u64	nvmm;               
-	u64	num_pages;           
+	u64	nvmm;
+	u64	num_pages;
 	u64	delete_epoch_id;
 } __attribute((__packed__));
 
-/* 
+/*
  * PMEM structure pointing to a log comprised of snapshot_inode_entry and
  * snapshot_file_write_entry objects.
  *

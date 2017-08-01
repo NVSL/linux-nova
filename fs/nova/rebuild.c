@@ -373,9 +373,8 @@ static void nova_rebuild_handle_write_entry(struct super_block *sb,
 		reb->trans_id = entryc->trans_id;
 	}
 
-	if (entryc->updating) {
+	if (entryc->updating)
 		nova_reset_data_csum_parity(sb, sih, entry, entryc);
-	}
 
 	/* Update sih->i_size for setattr apply operations */
 	sih->i_size = le64_to_cpu(reb->i_size);
@@ -555,8 +554,8 @@ static int nova_rebuild_handle_dentry(struct super_block *sb,
 {
 	int ret = 0;
 
-	nova_dbgv("curr_p: 0x%llx, type %d, ino %llu, "
-			"name %s, namelen %u, csum 0x%x, rec len %u\n", curr_p,
+	nova_dbgv("curr_p: 0x%llx, type %d, ino %llu, name %s, namelen %u, csum 0x%x, rec len %u\n",
+			curr_p,
 			entry->entry_type, le64_to_cpu(entry->ino),
 			entry->name, entry->name_len, entry->csum,
 			le16_to_cpu(entry->de_len));
@@ -720,15 +719,14 @@ int nova_rebuild_inode(struct super_block *sb, struct nova_inode_info *si,
 		return -EINVAL;
 	}
 
-	nova_dbgv("%s: inode %llu, addr 0x%llx, valid %d, "
-			"head 0x%llx, tail 0x%llx\n",
+	nova_dbgv("%s: inode %llu, addr 0x%llx, valid %d, head 0x%llx, tail 0x%llx\n",
 			__func__, ino, pi_addr, pi->valid,
 			pi->log_head, pi->log_tail);
 
 	nova_init_header(sb, sih, __le16_to_cpu(pi->i_mode));
 	sih->ino = ino;
 	sih->alter_pi_addr = alter_pi_addr;
-	
+
 	switch (__le16_to_cpu(pi->i_mode) & S_IFMT) {
 	case S_IFLNK:
 		/* Treat symlink files as normal files */
@@ -818,8 +816,8 @@ int nova_restore_snapshot_table(struct super_block *sb, int just_init)
 			ret = nova_restore_snapshot_entry(sb, entry,
 						curr_p, just_init);
 			if (ret) {
-				nova_err(sb, "Restore entry %llu "
-					"failed\n", entry->epoch_id);
+				nova_err(sb, "Restore entry %llu failed\n",
+					entry->epoch_id);
 				goto out;
 			}
 			if (SNENTRY(entryc)->deleted == 0)
@@ -847,4 +845,3 @@ out:
 
 	return ret;
 }
-

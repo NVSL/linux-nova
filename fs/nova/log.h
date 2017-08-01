@@ -74,7 +74,7 @@ struct nova_file_write_entry {
 	u8	reassigned;	/* Data is not latest */
 	u8	updating;	/* Data is being written */
 	u8	padding;
-	__le32	num_pages;      
+	__le32	num_pages;
 	__le64	block;          /* offset of first block in this write */
 	__le64	pgoff;          /* file offset at the beginning of this write */
 	__le32	invalid_pages;	/* For GC */
@@ -121,7 +121,7 @@ struct nova_dentry {
 
 #define NOVA_MAX_ENTRY_LEN		NOVA_DIR_LOG_REC_LEN(NOVA_NAME_LEN)
 
-/* 
+/*
  * Log entry for updating file attributes.
  */
 struct nova_setattr_logentry {
@@ -145,7 +145,7 @@ struct nova_setattr_logentry {
 
 /* Link change log entry.
  *
- * TODO: Do we need this to be 32 bytes? 
+ * TODO: Do we need this to be 32 bytes?
  */
 struct nova_link_change_entry {
 	u8	entry_type;
@@ -179,7 +179,7 @@ struct nova_mmap_entry {
 
 #define MMENTRY(entry)	((struct nova_mmap_entry *) entry)
 
-/* 
+/*
  * Log entry for the creation of a snapshot.  Only occurs in the log of the
  * dedicated snapshot inode.
  */
@@ -213,7 +213,7 @@ struct nova_inode_update {
 };
 
 
-/* 
+/*
  * Transient DRAM structure to parameterize the creation of a log entry.
  */
 struct nova_log_entry_info {

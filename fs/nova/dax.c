@@ -15,7 +15,7 @@
 
 #include <linux/module.h>
 #include <linux/buffer_head.h>
-#include <asm/cpufeature.h>
+#include <linux/cpufeature.h>
 #include <asm/pgtable.h>
 #include <linux/version.h>
 #include "nova.h"
@@ -55,6 +55,7 @@ static inline int nova_handle_partial_block(struct super_block *sb,
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_file_write_entry *entryc, entry_copy;
+
 	nova_memunlock_block(sb, kmem);
 	if (entry == NULL) {
 		/* Fill zero */
@@ -219,7 +220,8 @@ int nova_cleanup_incomplete_write(struct super_block *sb,
 			entryc = entry;
 		else {
 			/* skip entry check here as the entry checksum may not
-			 * be updated when this is called */
+			 * be updated when this is called
+			 */
 			if (memcpy_mcsafe(entryc, entry,
 					sizeof(struct nova_file_write_entry)))
 				return -EIO;
@@ -299,10 +301,8 @@ int nova_protect_file_data(struct super_block *sb, struct inode *inode,
 	left = copy_from_user(blockbuf + offset, buf, bytes);
 	NOVA_END_TIMING(protect_memcpy_t, memcpy_time);
 	if (unlikely(left != 0)) {
-		nova_err(sb, "%s: not all data is copied from user! "
-				"expect to copy %zu bytes, actually "
-				"copied %zu bytes\n", __func__,
-				bytes, bytes - left);
+		nova_err(sb, "%s: not all data is copied from user! expect to copy %zu bytes, actually copied %zu bytes\n",
+			 __func__, bytes, bytes - left);
 		ret = -EFAULT;
 		goto out;
 	}
@@ -368,10 +368,8 @@ int nova_protect_file_data(struct super_block *sb, struct inode *inode,
 		bytes = count < blocksize ? count : blocksize;
 		left = copy_from_user(blockbuf, buf, bytes);
 		if (unlikely(left != 0)) {
-			nova_err(sb, "%s: not all data is copied from user! "
-					"expect to copy %zu bytes, actually "
-					"copied %zu bytes\n", __func__,
-					bytes, bytes - left);
+			nova_err(sb, "%s: not all data is copied from user!  expect to copy %zu bytes, actually copied %zu bytes\n",
+				 __func__, bytes, bytes - left);
 			ret = -EFAULT;
 			goto out;
 		}
@@ -520,9 +518,8 @@ unsigned long nova_check_existing_entry(struct super_block *sb,
 
 			next_pgoff = entryc->pgoff;
 			if (next_pgoff <= start_blk) {
-				nova_err(sb, "iblock %lu, entry pgoff %lu, "
-						" num pages %lu\n", start_blk,
-						next_pgoff, entry->num_pages);
+				nova_err(sb, "iblock %lu, entry pgoff %lu, num pages %lu\n",
+				       start_blk, next_pgoff, entry->num_pages);
 				nova_print_inode_log(sb, inode);
 				BUG();
 				ent_blks = num_blocks;
@@ -547,7 +544,7 @@ out:
 	return ent_blks;
 }
 
- ssize_t nova_inplace_file_write(struct file *filp,
+ssize_t nova_inplace_file_write(struct file *filp,
 	const char __user *buf,	size_t len, loff_t *ppos)
 {
 	struct address_space *mapping = filp->f_mapping;
@@ -657,7 +654,7 @@ out:
 			allocated = nova_new_data_blocks(sb, sih, &blocknr,
 					 start_blk, ent_blks, ALLOC_NO_INIT,
 					 ANY_CPU, ALLOC_FROM_HEAD);
-			
+
 			nova_dbg_verbose("%s: alloc %d blocks @ %lu\n",
 						__func__, allocated, blocknr);
 
@@ -1050,21 +1047,23 @@ static int nova_dax_huge_fault(struct vm_fault *vmf,
 	timing_t fault_time;
 	struct address_space *mapping = vmf->vma->vm_file->f_mapping;
 	struct inode *inode = mapping->host;
-	
+
 	NOVA_START_TIMING(pmd_fault_t, fault_time);
 
 	nova_dbgv("%s: inode %lu, pgoff %lu\n",
 		  __func__, inode->i_ino, vmf->pgoff);
 
 	ret = dax_iomap_fault(vmf, pe_size, &nova_iomap_ops_lock);
-	
+
 	NOVA_END_TIMING(pmd_fault_t, fault_time);
 	return ret;
 }
+
 static int nova_dax_fault(struct vm_fault *vmf)
 {
 	struct address_space *mapping = vmf->vma->vm_file->f_mapping;
 	struct inode *inode = mapping->host;
+
 	nova_dbgv("%s: inode %lu, pgoff %lu\n",
 		  __func__, inode->i_ino, vmf->pgoff);
 
@@ -1130,8 +1129,7 @@ static int nova_append_write_mmap_to_log(struct super_block *sb,
 	data.num_pages = cpu_to_le64(num_pages);
 	data.invalid = 0;
 
-	nova_dbgv("%s : Appending mmap log entry for inode %lu, "
-			"pgoff %llu, %llu pages\n",
+	nova_dbgv("%s : Appending mmap log entry for inode %lu, pgoff %llu, %llu pages\n",
 			__func__, inode->i_ino,
 			data.pgoff, data.num_pages);
 
@@ -1178,8 +1176,7 @@ int nova_insert_write_vma(struct vm_area_struct *vma)
 
 	item->vma = vma;
 
-	nova_dbgv("Inode %lu insert vma %p, start 0x%lx, end 0x%lx, "
-			"pgoff %lu\n",
+	nova_dbgv("Inode %lu insert vma %p, start 0x%lx, end 0x%lx, pgoff %lu\n",
 			inode->i_ino, vma, vma->vm_start, vma->vm_end,
 			vma->vm_pgoff);
 
@@ -1276,10 +1273,9 @@ static int nova_remove_write_vma(struct vm_area_struct *vma)
 	inode_unlock(inode);
 
 	if (found) {
-		nova_dbgv("Inode %lu remove vma %p, start 0x%lx, end 0x%lx, "
-				"pgoff %lu\n", inode->i_ino,
-				curr->vma, curr->vma->vm_start,
-				curr->vma->vm_end, curr->vma->vm_pgoff);
+		nova_dbgv("Inode %lu remove vma %p, start 0x%lx, end 0x%lx, pgoff %lu\n",
+			  inode->i_ino,	curr->vma, curr->vma->vm_start,
+			  curr->vma->vm_end, curr->vma->vm_pgoff);
 		nova_free_vma_item(sb, curr);
 	}
 
@@ -1301,9 +1297,8 @@ static int nova_restore_page_write(struct vm_area_struct *vma,
 
 	down_write(&mm->mmap_sem);
 
-	nova_dbgv("Restore vma %p write, start 0x%lx, end 0x%lx, "
-			" address 0x%lx\n", vma, vma->vm_start,
-			vma->vm_end, address);
+	nova_dbgv("Restore vma %p write, start 0x%lx, end 0x%lx, address 0x%lx\n",
+		  vma, vma->vm_start, vma->vm_end, address);
 
 	/* Restore single page write */
 	nova_mmap_to_new_blocks(vma, address);
@@ -1318,9 +1313,7 @@ static void nova_vma_open(struct vm_area_struct *vma)
 	struct address_space *mapping = vma->vm_file->f_mapping;
 	struct inode *inode = mapping->host;
 
-	nova_dbg_mmap4k("[%s:%d] inode %lu, MMAP 4KPAGE vm_start(0x%lx),"
-			" vm_end(0x%lx), vm pgoff %lu, %lu blocks, "
-			"vm_flags(0x%lx), vm_page_prot(0x%lx)\n",
+	nova_dbg_mmap4k("[%s:%d] inode %lu, MMAP 4KPAGE vm_start(0x%lx), vm_end(0x%lx), vm pgoff %lu, %lu blocks, vm_flags(0x%lx), vm_page_prot(0x%lx)\n",
 			__func__, __LINE__,
 			inode->i_ino, vma->vm_start, vma->vm_end,
 			vma->vm_pgoff,
@@ -1333,10 +1326,8 @@ static void nova_vma_open(struct vm_area_struct *vma)
 
 static void nova_vma_close(struct vm_area_struct *vma)
 {
-	nova_dbgv("[%s:%d] MMAP 4KPAGE vm_start(0x%lx),"
-		  " vm_end(0x%lx), vm_flags(0x%lx), "
-		  "vm_page_prot(0x%lx)\n", __func__,
-		  __LINE__, vma->vm_start, vma->vm_end,
+	nova_dbgv("[%s:%d] MMAP 4KPAGE vm_start(0x%lx), vm_end(0x%lx), vm_flags(0x%lx), vm_page_prot(0x%lx)\n",
+		  __func__, __LINE__, vma->vm_start, vma->vm_end,
 		  vma->vm_flags, pgprot_val(vma->vm_page_prot));
 
 	vma->original_write = 0;

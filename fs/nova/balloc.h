@@ -8,12 +8,12 @@ struct free_list {
 	spinlock_t s_lock;
 	struct rb_root	block_free_tree;
 	struct nova_range_node *first_node; // lowest address free range
-	struct nova_range_node *last_node; // highest address free range 
+	struct nova_range_node *last_node; // highest address free range
 
 	int		index; // Which CPU do I belong to?
 
 	/* Where are the data checksum blocks */
-	unsigned long	csum_start; 
+	unsigned long	csum_start;
 	unsigned long	replica_csum_start;
 	unsigned long	num_csum_blocks;
 
@@ -23,10 +23,11 @@ struct free_list {
 	unsigned long	num_parity_blocks;
 
 	/* Start and end of allocatable range, inclusive. Excludes csum and
-	 * parity blocks. */
-	unsigned long	block_start;   
+	 * parity blocks.
+	 */
+	unsigned long	block_start;
 	unsigned long	block_end;
-	
+
 	unsigned long	num_free_blocks;
 
 	/* How many nodes in the rb tree? */
@@ -55,11 +56,11 @@ struct free_list *nova_get_free_list(struct super_block *sb, int cpu)
 	return &sbi->free_lists[cpu];
 }
 
-enum nova_alloc_direction {ALLOC_FROM_HEAD=0,
-			   ALLOC_FROM_TAIL=1};
+enum nova_alloc_direction {ALLOC_FROM_HEAD = 0,
+			   ALLOC_FROM_TAIL = 1};
 
-enum nova_alloc_init {ALLOC_NO_INIT=0,
-		      ALLOC_INIT_ZERO=1};
+enum nova_alloc_init {ALLOC_NO_INIT = 0,
+		      ALLOC_INIT_ZERO = 1};
 
 enum alloc_type {
 	LOG = 1,
@@ -96,7 +97,7 @@ extern int nova_new_log_blocks(struct super_block *sb,
 	struct nova_inode_info_header *sih,
 	unsigned long *blocknr, unsigned int num,
 	enum nova_alloc_init zero, int cpu,
-        enum nova_alloc_direction from_tail);
+	enum nova_alloc_direction from_tail);
 extern unsigned long nova_count_free_blocks(struct super_block *sb);
 inline int nova_search_inodetree(struct nova_sb_info *sbi,
 	unsigned long ino, struct nova_range_node **ret_node);

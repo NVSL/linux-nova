@@ -1097,7 +1097,7 @@ int nova_allocate_inode_log_pages(struct super_block *sb,
 	int ret_pages = 0;
 
 	allocated = nova_new_log_blocks(sb, sih, &new_inode_blocknr,
-		        num_pages, ALLOC_NO_INIT, cpuid, from_tail);
+			num_pages, ALLOC_NO_INIT, cpuid, from_tail);
 
 	if (allocated <= 0) {
 		nova_err(sb, "ERROR: no inode log page available: %d %d\n",
@@ -1123,8 +1123,8 @@ int nova_allocate_inode_log_pages(struct super_block *sb,
 		nova_dbg_verbose("Alloc %d log blocks @ 0x%lx\n",
 					allocated, new_inode_blocknr);
 		if (allocated <= 0) {
-			nova_dbg("%s: no inode log page available: "
-				"%lu %d\n", __func__, num_pages, allocated);
+			nova_dbg("%s: no inode log page available: %lu %d\n",
+				__func__, num_pages, allocated);
 			/* Return whatever we have */
 			break;
 		}
@@ -1152,8 +1152,8 @@ static int nova_initialize_inode_log(struct super_block *sb,
 					1, &new_block, ANY_CPU,
 					log_id == MAIN_LOG ? 0 : 1);
 	if (allocated != 1) {
-		nova_err(sb, "%s ERROR: no inode log page "
-					"available\n", __func__);
+		nova_err(sb, "%s ERROR: no inode log page available\n",
+					__func__);
 		return -ENOSPC;
 	}
 
@@ -1222,8 +1222,8 @@ static u64 nova_extend_inode_log(struct super_block *sb, struct nova_inode *pi,
 					curr_p >> PAGE_SHIFT,
 					new_block >> PAGE_SHIFT);
 	if (allocated <= 0) {
-		nova_err(sb, "%s ERROR: no inode log page "
-					"available\n", __func__);
+		nova_err(sb, "%s ERROR: no inode log page available\n",
+					__func__);
 		nova_dbg("curr_p 0x%llx, %lu pages\n", curr_p,
 					sih->log_pages);
 		return 0;
@@ -1233,8 +1233,8 @@ static u64 nova_extend_inode_log(struct super_block *sb, struct nova_inode *pi,
 		allocated = nova_allocate_inode_log_pages(sb, sih,
 				num_pages, &alter_new_block, ANY_CPU, 1);
 		if (allocated <= 0) {
-			nova_err(sb, "%s ERROR: no inode log page "
-					"available\n", __func__);
+			nova_err(sb, "%s ERROR: no inode log page available\n",
+					__func__);
 			nova_dbg("curr_p 0x%llx, %lu pages\n", curr_p,
 					sih->log_pages);
 			return 0;

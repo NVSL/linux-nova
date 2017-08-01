@@ -39,8 +39,8 @@
 static inline void
 nova_print_lite_transaction(struct nova_lite_journal_entry *entry)
 {
-	nova_dbg("Entry %p: Type %llu, data1 0x%llx, data2 0x%llx\n, "
-			"checksum %u\n", entry, entry->type,
+	nova_dbg("Entry %p: Type %llu, data1 0x%llx, data2 0x%llx\n, checksum %u\n",
+			entry, entry->type,
 			entry->data1, entry->data2, entry->csum);
 }
 
@@ -410,8 +410,8 @@ int nova_lite_journal_soft_init(struct super_block *sb)
 	int i;
 	int ret = 0;
 
-	sbi->journal_locks = kzalloc(sbi->cpus * sizeof(spinlock_t),
-					GFP_KERNEL);
+	sbi->journal_locks = kcalloc(sbi->cpus, sizeof(spinlock_t),
+				     GFP_KERNEL);
 	if (!sbi->journal_locks)
 		return -ENOMEM;
 

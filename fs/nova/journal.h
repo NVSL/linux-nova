@@ -24,7 +24,8 @@ struct nova_lite_journal_entry {
 } __attribute((__packed__));
 
 /* Head and tail pointers into a circular queue of journal entries.  There's
- * one of these per CPU. */
+ * one of these per CPU.
+ */
 struct journal_ptr_pair {
 	__le64 journal_head;
 	__le64 journal_tail;

@@ -504,8 +504,7 @@ static int nova_append_snapshot_file_write_entry(struct super_block *sb,
 	}
 
 	NOVA_START_TIMING(append_snapshot_file_t, append_time);
-	nova_dbgv("Append file write entry: block %llu, %llu pages, "
-			"delete epoch ID %llu to Snapshot epoch ID %llu\n",
+	nova_dbgv("Append file write entry: block %llu, %llu pages, delete epoch ID %llu to Snapshot epoch ID %llu\n",
 			nvmm, num_pages, delete_epoch_id,
 			info->epoch_id);
 
@@ -553,8 +552,7 @@ static int nova_append_snapshot_inode_entry(struct super_block *sb,
 	}
 
 	NOVA_START_TIMING(append_snapshot_inode_t, append_time);
-	nova_dbgv("Append inode entry: inode %llu, delete epoch ID %llu "
-			"to Snapshot epoch ID %llu\n",
+	nova_dbgv("Append inode entry: inode %llu, delete epoch ID %llu to Snapshot epoch ID %llu\n",
 			pi->nova_ino, pi->delete_epoch_id,
 			info->epoch_id);
 
@@ -932,7 +930,7 @@ int nova_create_snapshot(struct super_block *sb)
 	 */
 	nova_info("%s: epoch id %llu\n", __func__, epoch_id);
 
-	
+
 	timestamp = timespec_trunc(current_kernel_time(),
 				   sb->s_time_gran).tv_sec;
 
@@ -997,8 +995,7 @@ static int nova_link_to_next_snapshot(struct super_block *sb,
 			prev_info->epoch_id, next_info->epoch_id);
 
 	if (prev_info->epoch_id >= next_info->epoch_id)
-		nova_dbg("Error: prev epoch ID %llu higher than "
-			"next epoch ID %llu\n",
+		nova_dbg("Error: prev epoch ID %llu higher than next epoch ID %llu\n",
 			prev_info->epoch_id, next_info->epoch_id);
 
 	for (i = 0; i < sbi->cpus; i++) {
@@ -1210,8 +1207,8 @@ int nova_print_snapshots(struct super_block *sb, struct seq_file *seq)
 	int count = 0;
 	int i;
 
-	seq_printf(seq, "========== NOVA snapshot table ==========\n");
-	seq_printf(seq, "Epoch ID\t      Date\t    Time\n");
+	seq_puts(seq, "========== NOVA snapshot table ==========\n");
+	seq_puts(seq, "Epoch ID\t      Date\t    Time\n");
 
 	/* Print in epoch ID increasing order */
 	do {
@@ -1243,7 +1240,7 @@ int nova_print_snapshot_lists(struct super_block *sb, struct seq_file *seq)
 	int sum;
 	int i, j;
 
-	seq_printf(seq, "========== NOVA snapshot statistics ==========\n");
+	seq_puts(seq, "========== NOVA snapshot statistics ==========\n");
 
 	/* Print in epoch ID increasing order */
 	do {
@@ -1258,8 +1255,7 @@ int nova_print_snapshot_lists(struct super_block *sb, struct seq_file *seq)
 				list = &info->lists[j];
 				sum += list->num_pages;
 			}
-			seq_printf(seq, "Snapshot epoch ID %llu, "
-					"%d list pages\n",
+			seq_printf(seq, "Snapshot epoch ID %llu, %d list pages\n",
 					epoch_id, sum);
 			count++;
 		}

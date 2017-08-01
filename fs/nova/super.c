@@ -42,37 +42,37 @@
 #include "super.h"
 #include "inode.h"
 
-int measure_timing = 0;
-int metadata_csum = 0;
-int wprotect = 0;
-int data_csum = 0;
-int data_parity = 0;
-int dram_struct_csum = 0;
-int support_clwb = 0;
-int inplace_data_updates = 0;
+int measure_timing;
+int metadata_csum;
+int wprotect;
+int data_csum;
+int data_parity;
+int dram_struct_csum;
+int support_clwb;
+int inplace_data_updates;
 
-module_param(measure_timing, int, S_IRUGO);
+module_param(measure_timing, int, 0444);
 MODULE_PARM_DESC(measure_timing, "Timing measurement");
 
-module_param(metadata_csum, int, S_IRUGO);
+module_param(metadata_csum, int, 0444);
 MODULE_PARM_DESC(metadata_csum, "Protect metadata structures with replication and checksums");
 
-module_param(wprotect, int, S_IRUGO);
+module_param(wprotect, int, 0444);
 MODULE_PARM_DESC(wprotect, "Write-protect pmem region and use CR0.WP to allow updates");
 
-module_param(data_csum, int, S_IRUGO);
+module_param(data_csum, int, 0444);
 MODULE_PARM_DESC(data_csum, "Detect corruption of data pages using checksum");
 
-module_param(data_parity, int, S_IRUGO);
+module_param(data_parity, int, 0444);
 MODULE_PARM_DESC(data_parity, "Protect file data using RAID-5 style parity.");
 
-module_param(inplace_data_updates, int, S_IRUGO);
+module_param(inplace_data_updates, int, 0444);
 MODULE_PARM_DESC(inplace_data_updates, "Perform data updates in-place (i.e., not atomically)");
 
-module_param(dram_struct_csum, int, S_IRUGO);
+module_param(dram_struct_csum, int, 0444);
 MODULE_PARM_DESC(dram_struct_csum, "Protect key DRAM data structures with checksums");
 
-module_param(nova_dbgmask, int, S_IRUGO);
+module_param(nova_dbgmask, int, 0444);
 MODULE_PARM_DESC(nova_dbgmask, "Control debugging output");
 
 static struct super_operations nova_sops;
@@ -82,13 +82,13 @@ static struct kmem_cache *nova_range_node_cachep;
 static struct kmem_cache *nova_snapshot_info_cachep;
 
 /* FIXME: should the following variable be one per NOVA instance? */
-unsigned int nova_dbgmask = 0;
+unsigned int nova_dbgmask;
 
 void nova_error_mng(struct super_block *sb, const char *fmt, ...)
 {
 	va_list args;
 
-	printk("nova error: ");
+	printk(KERN_CRIT "nova error: ");
 	va_start(args, fmt);
 	vprintk(fmt, args);
 	va_end(args);
@@ -121,25 +121,26 @@ static int nova_get_nvmm_info(struct super_block *sb,
 	void *virt_addr = NULL;
 	pfn_t __pfn_t;
 	long size;
-	struct dax_device * dax_dev;
+	struct dax_device *dax_dev;
 	int ret;
-	
+
 	ret = bdev_dax_supported(sb, PAGE_SIZE);
-	nova_dbg_verbose("%s: dax_supported = %d; bdev->super=0x%p", __func__, ret, sb->s_bdev->bd_super);
+	nova_dbg_verbose("%s: dax_supported = %d; bdev->super=0x%p",
+			 __func__, ret, sb->s_bdev->bd_super);
 	if (ret) {
 		nova_err(sb, "device does not support DAX\n");
 		return ret;
 	}
 
 	sbi->s_bdev = sb->s_bdev;
-	
+
 	dax_dev = fs_dax_get_by_host(sb->s_bdev->bd_disk->disk_name);
 	if (!dax_dev) {
 		nova_err(sb, "Couldn't retrieve DAX device.\n");
 		return -EINVAL;
 	}
 	sbi->s_dax_dev = dax_dev;
-	
+
 	size = dax_direct_access(sbi->s_dax_dev, 0, LONG_MAX/PAGE_SIZE,
 				 &virt_addr, &__pfn_t) * PAGE_SIZE;
 	if (size <= 0) {
@@ -148,9 +149,9 @@ static int nova_get_nvmm_info(struct super_block *sb,
 	}
 
 	sbi->virt_addr = virt_addr;
-	
+
 	if (!sbi->virt_addr) {
-		printk(KERN_ERR "ioremap of the nova image failed(1)\n");
+		nova_err(sb, "ioremap of the nova image failed(1)\n");
 		return -EINVAL;
 	}
 
@@ -276,8 +277,7 @@ static int nova_parse_options(char *options, struct nova_sb_info *sbi,
 			if (remount)
 				goto bad_opt;
 			set_opt(sbi->s_mount_opt, PROTECT);
-			nova_info("NOVA: Enabling new Write Protection "
-				"(CR0.WP)\n");
+			nova_info("NOVA: Enabling new Write Protection (CR0.WP)\n");
 			break;
 		case Opt_dbgmask:
 			if (match_int(&args[0], &option))
@@ -293,11 +293,11 @@ static int nova_parse_options(char *options, struct nova_sb_info *sbi,
 	return 0;
 
 bad_val:
-	printk(KERN_INFO "Bad value '%s' for mount option '%s'\n", args[0].from,
+	nova_info("Bad value '%s' for mount option '%s'\n", args[0].from,
 	       p);
 	return -EINVAL;
 bad_opt:
-	printk(KERN_INFO "Bad mount option: \"%s\"\n", p);
+	nova_info("Bad mount option: \"%s\"\n", p);
 	return -EINVAL;
 }
 
@@ -309,7 +309,7 @@ static bool nova_check_size(struct super_block *sb, unsigned long size)
 
 	/* space required for super block and root directory.*/
 	minimum_size = (HEAD_RESERVED_BLOCKS + TAIL_RESERVED_BLOCKS + 1)
-		          << sb->s_blocksize_bits;
+			  << sb->s_blocksize_bits;
 
 	if (size < minimum_size)
 		return false;
@@ -325,7 +325,7 @@ static inline int nova_check_super_checksum(struct super_block *sb)
 	// Check CRC but skip c_sum, which is the 4 bytes at the beginning
 	crc = nova_crc32c(~0, (__u8 *)sbi->nova_sb + sizeof(__le32),
 			sizeof(struct nova_super_block) - sizeof(__le32));
-	
+
 	if (sbi->nova_sb->s_sum == cpu_to_le32(crc))
 		return 0;
 	else
@@ -345,7 +345,7 @@ inline void nova_sync_super(struct super_block *sb)
 	memcpy_to_pmem_nocache((void *)super, (void *)sbi->nova_sb,
 		sizeof(struct nova_super_block));
 	PERSISTENT_BARRIER();
-	
+
 	memcpy_to_pmem_nocache((void *)super_redund, (void *)sbi->nova_sb,
 		sizeof(struct nova_super_block));
 	PERSISTENT_BARRIER();
@@ -420,7 +420,7 @@ static struct nova_inode *nova_init(struct super_block *sb,
 	pi = nova_get_inode_by_ino(sb, NOVA_SNAPSHOT_INO);
 	pi->nova_ino = NOVA_SNAPSHOT_INO;
 	nova_flush_buffer(pi, CACHELINE_SIZE, 1);
-	
+
 	memset(&update, 0, sizeof(struct nova_inode_update));
 	nova_update_inode(sb, &sbi->snapshot_si->vfs_inode, pi, &update, 1);
 
@@ -429,7 +429,7 @@ static struct nova_inode *nova_init(struct super_block *sb,
 	nova_init_blockmap(sb, 0);
 
 	if (nova_lite_journal_hard_init(sb) < 0) {
-		printk(KERN_ERR "Lite journal hard initialization failed\n");
+		nova_err(sb, "Lite journal hard initialization failed\n");
 		return ERR_PTR(-EINVAL);
 	}
 
@@ -447,7 +447,7 @@ static struct nova_inode *nova_init(struct super_block *sb,
 	sbi->nova_sb->s_metadata_csum = metadata_csum;
 	sbi->nova_sb->s_data_csum = data_csum;
 	sbi->nova_sb->s_data_parity = data_parity;
- 	nova_update_super_crc(sb);
+	nova_update_super_crc(sb);
 
 	nova_sync_super(sb);
 
@@ -559,12 +559,11 @@ static int nova_check_integrity(struct super_block *sb)
 	if (rc < 0) {
 		rc = nova_check_super(sb, super_redund);
 		if (rc < 0) {
-			printk(KERN_ERR "Can't find a valid nova partition\n");
+			nova_err(sb, "Can't find a valid nova partition\n");
 			return rc;
-		} else {
-			nova_warn("Error in super block: try to repair it with "
-				"the other copy\n");
-		}
+		} else
+			nova_warn("Error in super block: try to repair it with the other copy\n");
+		
 	}
 
 	nova_sync_super(sb);
@@ -591,7 +590,7 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 	BUILD_BUG_ON(sizeof(struct nova_super_block) > NOVA_SB_SIZE);
 	BUILD_BUG_ON(sizeof(struct nova_inode) > NOVA_INODE_SIZE);
 	BUILD_BUG_ON(sizeof(struct nova_inode_log_page) != PAGE_SIZE);
-	
+
 	BUILD_BUG_ON(sizeof(struct journal_ptr_pair) > CACHELINE_SIZE);
 	BUILD_BUG_ON(PAGE_SIZE/sizeof(struct journal_ptr_pair) < MAX_CPUS);
 	BUILD_BUG_ON(PAGE_SIZE/sizeof(struct nova_lite_journal_entry) <
@@ -616,8 +615,8 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 
 	/* Currently the log page supports 64 journal pointer pairs */
 	if (sbi->cpus > MAX_CPUS) {
-		nova_err(sb, "NOVA needs more log pointer pages "
-			 "to support more than " __stringify(MAX_CPUS) " cpus.\n");
+		nova_err(sb, "NOVA needs more log pointer pages to support more than "
+			  __stringify(MAX_CPUS) " cpus.\n");
 		goto out;
 	}
 
@@ -628,20 +627,17 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 		goto out;
 	}
 
-	
-	nova_dbg("measure timing %d, metadata checksum %d, "
-		"inplace update %d, wprotect %d, "
-		"data checksum %d, data parity %d, "
-		"DRAM checksum %d\n",
+
+	nova_dbg("measure timing %d, metadata checksum %d, inplace update %d, wprotect %d, data checksum %d, data parity %d, DRAM checksum %d\n",
 		measure_timing, metadata_csum,
-		inplace_data_updates, wprotect,  data_csum,
+		inplace_data_updates, wprotect,	 data_csum,
 		data_parity, dram_struct_csum);
 
 	get_random_bytes(&random, sizeof(u32));
 	atomic_set(&sbi->next_generation, random);
 
 	/* Init with default values */
-	sbi->mode = (S_IRUGO | S_IXUGO | S_IWUSR);
+	sbi->mode = (0755);
 	sbi->uid = current_fsuid();
 	sbi->gid = current_fsgid();
 	set_opt(sbi->s_mount_opt, DAX);
@@ -650,12 +646,12 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 	mutex_init(&sbi->vma_mutex);
 	INIT_LIST_HEAD(&sbi->mmap_sih_list);
 
-	sbi->inode_maps = kzalloc(sbi->cpus * sizeof(struct inode_map),
+	sbi->inode_maps = kcalloc(sbi->cpus, sizeof(struct inode_map),
 					GFP_KERNEL);
 	if (!sbi->inode_maps) {
-		nova_err(sb, "%s: Allocating inode maps failed.",
-			 __func__);
 		retval = -ENOMEM;
+		nova_dbg("%s: Allocating inode maps failed.",
+			 __func__);
 		goto out;
 	}
 
@@ -669,9 +665,9 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 
 	sbi->zeroed_page = kzalloc(PAGE_SIZE, GFP_KERNEL);
 	if (!sbi->zeroed_page) {
-		nova_err(sb, "%s: sbi->zeroed_page failed.",
-			 __func__);
 		retval = -ENOMEM;
+		nova_dbg("%s: sbi->zeroed_page failed.",
+			 __func__);
 		goto out;
 	}
 
@@ -713,7 +709,7 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 		if (IS_ERR(root_pi)) {
 			nova_err(sb, "%s: root_pi error.",
 				 __func__);
-					
+
 			goto out;
 		}
 		goto setup_sb;
@@ -730,14 +726,14 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 
 	if (nova_lite_journal_soft_init(sb)) {
 		retval = -EINVAL;
-		printk(KERN_ERR "Lite journal initialization failed\n");
+		nova_err(sb, "Lite journal initialization failed\n");
 		goto out;
 	}
 
 	if (sbi->mount_snapshot) {
 		retval = nova_mount_snapshot(sb);
 		if (retval) {
-			printk(KERN_ERR "Mount snapshot failed\n");
+			nova_err(sb, "Mount snapshot failed\n");
 			goto out;
 		}
 	}
@@ -774,13 +770,13 @@ setup_sb:
 		retval = PTR_ERR(root_i);
 		nova_err(sb, "%s: failed to get root inode",
 			 __func__);
-		
+
 		goto out;
 	}
 
 	sb->s_root = d_make_root(root_i);
 	if (!sb->s_root) {
-		printk(KERN_ERR "get nova root inode failed\n");
+		nova_err(sb, "get nova root inode failed\n");
 		retval = -ENOMEM;
 		goto out;
 	}
@@ -794,30 +790,20 @@ setup_sb:
 	NOVA_END_TIMING(mount_t, mount_time);
 	return retval;
 out:
-	if (sbi->zeroed_page) {
-		kfree(sbi->zeroed_page);
-		sbi->zeroed_page = NULL;
-	}
+	kfree(sbi->zeroed_page);
+	sbi->zeroed_page = NULL;
 
-	if (sbi->zero_parity) {
-		kfree(sbi->zero_parity);
-		sbi->zero_parity = NULL;
-	}
+	kfree(sbi->zero_parity);
+	sbi->zero_parity = NULL;
 
-	if (sbi->free_lists) {
-		kfree(sbi->free_lists);
-		sbi->free_lists = NULL;
-	}
+	kfree(sbi->free_lists);
+	sbi->free_lists = NULL;
 
-	if (sbi->journal_locks) {
-		kfree(sbi->journal_locks);
-		sbi->journal_locks = NULL;
-	}
+	kfree(sbi->journal_locks);
+	sbi->journal_locks = NULL;
 
-	if (sbi->inode_maps) {
-		kfree(sbi->inode_maps);
-		sbi->inode_maps = NULL;
-	}
+	kfree(sbi->inode_maps);
+	sbi->inode_maps = NULL;
 
 	nova_sysfs_exit(sb);
 
@@ -855,7 +841,7 @@ static int nova_show_options(struct seq_file *seq, struct dentry *root)
 	//	 seq_printf(seq, ",bs=%lu", sbi->blocksize);
 	//if (sbi->bpi)
 	//	seq_printf(seq, ",bpi=%lu", sbi->bpi);
-	if (sbi->mode != (S_IRWXUGO | S_ISVTX))
+	if (sbi->mode != (0777 | S_ISVTX))
 		seq_printf(seq, ",mode=%03o", sbi->mode);
 	if (uid_valid(sbi->uid))
 		seq_printf(seq, ",uid=%u", from_kuid(&init_user_ns, sbi->uid));
@@ -1183,9 +1169,7 @@ static int __init init_nova_fs(void)
 
 	nova_proc_root = proc_mkdir(proc_dirname, NULL);
 
-	nova_dbg("Data structure size: inode %lu, log_page %lu, "
-		"file_write_entry %lu, dir_entry(max) %d, "
-		"setattr_entry %lu, link_change_entry %lu\n",
+	nova_dbg("Data structure size: inode %lu, log_page %lu, file_write_entry %lu, dir_entry(max) %d, setattr_entry %lu, link_change_entry %lu\n",
 		sizeof(struct nova_inode),
 		sizeof(struct nova_inode_log_page),
 		sizeof(struct nova_file_write_entry),

@@ -63,24 +63,24 @@ struct nova_inode {
 	/* Leave 8 bytes for inode table tail pointer */
 } __attribute((__packed__));
 
-/* 
+/*
  * Inode table.  It's a linked list of pages.
  */
 struct inode_table {
 	__le64 log_head;
 };
 
-/* 
- * NOVA-specific inode state kept in DRAM 
+/*
+ * NOVA-specific inode state kept in DRAM
  */
 struct nova_inode_info_header {
-	/* For files, tree holds a map from file offsets to 
+	/* For files, tree holds a map from file offsets to
 	 * write log entries.
 	 *
 	 * For directories, tree holds a map from a hash of the file name to
 	 * dentry log entry.
 	 */
-	struct radix_tree_root tree;	
+	struct radix_tree_root tree;
 	struct rb_root vma_tree;	/* Write vmas */
 	struct list_head list;		/* SB list of mmap sih */
 	int num_vmas;
@@ -119,7 +119,7 @@ struct nova_inode_rebuild {
 	u64	trans_id;
 };
 
-/* 
+/*
  * DRAM state for inodes
  */
 struct nova_inode_info {
@@ -371,7 +371,7 @@ extern void nova_evict_inode(struct inode *inode);
 extern int nova_write_inode(struct inode *inode, struct writeback_control *wbc);
 extern void nova_dirty_inode(struct inode *inode, int flags);
 extern int nova_notify_change(struct dentry *dentry, struct iattr *attr);
-extern int nova_getattr(const struct path * path, struct kstat *stat,
+extern int nova_getattr(const struct path *path, struct kstat *stat,
 			u32 request_mask, unsigned int flags);
 extern void nova_set_inode_flags(struct inode *inode, struct nova_inode *pi,
 	unsigned int flags);

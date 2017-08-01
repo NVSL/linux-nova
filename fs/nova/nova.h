@@ -55,11 +55,6 @@
 #define PAGE_SHIFT_2M 21
 #define PAGE_SHIFT_1G 30
 
-#define NOVA_ASSERT(x) do {                                             \
-	if (!(x))                                                       \
-		printk(KERN_WARNING "assertion failed %s:%d: %s\n",     \
-				__FILE__, __LINE__, #x);                \
-	} while (0)
 
 /*
  * Debug code
@@ -69,19 +64,19 @@
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 #endif
 
-/* #define nova_dbg(s, args...)         pr_debug(s, ## args) */
-#define nova_dbg(s, args ...)           pr_info(s, ## args)
+/* #define nova_dbg(s, args...)		pr_debug(s, ## args) */
+#define nova_dbg(s, args ...)		pr_info(s, ## args)
 #define nova_dbg1(s, args ...)
-#define nova_err(sb, s, args ...)       nova_error_mng(sb, s, ## args)
-#define nova_warn(s, args ...)          pr_warning(s, ## args)
-#define nova_info(s, args ...)          pr_info(s, ## args)
+#define nova_err(sb, s, args ...)	nova_error_mng(sb, s, ## args)
+#define nova_warn(s, args ...)		pr_warn(s, ## args)
+#define nova_info(s, args ...)		pr_info(s, ## args)
 
 extern unsigned int nova_dbgmask;
-#define NOVA_DBGMASK_MMAPHUGE          (0x00000001)
-#define NOVA_DBGMASK_MMAP4K            (0x00000002)
+#define NOVA_DBGMASK_MMAPHUGE	       (0x00000001)
+#define NOVA_DBGMASK_MMAP4K	       (0x00000002)
 #define NOVA_DBGMASK_MMAPVERBOSE       (0x00000004)
 #define NOVA_DBGMASK_MMAPVVERBOSE      (0x00000008)
-#define NOVA_DBGMASK_VERBOSE           (0x00000010)
+#define NOVA_DBGMASK_VERBOSE	       (0x00000010)
 #define NOVA_DBGMASK_TRANSACTION       (0x00000020)
 
 #define nova_dbg_mmap4k(s, args ...)		 \
@@ -97,13 +92,19 @@ extern unsigned int nova_dbgmask;
 #define nova_dbg_trans(s, args ...)		 \
 	((nova_dbgmask & NOVA_DBGMASK_TRANSACTION) ? nova_dbg(s, ##args) : 0)
 
-#define nova_set_bit                   __test_and_set_bit_le
-#define nova_clear_bit                 __test_and_clear_bit_le
-#define nova_find_next_zero_bit        find_next_zero_bit_le
+#define NOVA_ASSERT(x) do {\
+			       if (!(x))\
+				       nova_warn("assertion failed %s:%d: %s\n", \
+			       __FILE__, __LINE__, #x);\
+		       } while (0)
 
-#define clear_opt(o, opt)       (o &= ~NOVA_MOUNT_ ## opt)
-#define set_opt(o, opt)         (o |= NOVA_MOUNT_ ## opt)
-#define test_opt(sb, opt)       (NOVA_SB(sb)->s_mount_opt & NOVA_MOUNT_ ## opt)
+#define nova_set_bit		       __test_and_set_bit_le
+#define nova_clear_bit		       __test_and_clear_bit_le
+#define nova_find_next_zero_bit	       find_next_zero_bit_le
+
+#define clear_opt(o, opt)	(o &= ~NOVA_MOUNT_ ## opt)
+#define set_opt(o, opt)		(o |= NOVA_MOUNT_ ## opt)
+#define test_opt(sb, opt)	(NOVA_SB(sb)->s_mount_opt & NOVA_MOUNT_ ## opt)
 
 #define NOVA_LARGE_INODE_TABLE_SIZE    (0x200000)
 /* NOVA size threshold for using 2M blocks for inode table */
@@ -278,26 +279,26 @@ static inline void memset_nt(void *dest, uint32_t dword, size_t length)
 		"andl $63,%%edx\n"
 		"shrl $6,%%ecx\n"
 		"jz 9f\n"
-		"1:      movnti %%rax,(%%rdi)\n"
-		"2:      movnti %%rax,1*8(%%rdi)\n"
-		"3:      movnti %%rax,2*8(%%rdi)\n"
-		"4:      movnti %%rax,3*8(%%rdi)\n"
-		"5:      movnti %%rax,4*8(%%rdi)\n"
-		"8:      movnti %%rax,5*8(%%rdi)\n"
-		"7:      movnti %%rax,6*8(%%rdi)\n"
-		"8:      movnti %%rax,7*8(%%rdi)\n"
+		"1:	 movnti %%rax,(%%rdi)\n"
+		"2:	 movnti %%rax,1*8(%%rdi)\n"
+		"3:	 movnti %%rax,2*8(%%rdi)\n"
+		"4:	 movnti %%rax,3*8(%%rdi)\n"
+		"5:	 movnti %%rax,4*8(%%rdi)\n"
+		"8:	 movnti %%rax,5*8(%%rdi)\n"
+		"7:	 movnti %%rax,6*8(%%rdi)\n"
+		"8:	 movnti %%rax,7*8(%%rdi)\n"
 		"leaq 64(%%rdi),%%rdi\n"
 		"decl %%ecx\n"
 		"jnz 1b\n"
-		"9:     movl %%edx,%%ecx\n"
+		"9:	movl %%edx,%%ecx\n"
 		"andl $7,%%edx\n"
 		"shrl $3,%%ecx\n"
 		"jz 11f\n"
-		"10:     movnti %%rax,(%%rdi)\n"
+		"10:	 movnti %%rax,(%%rdi)\n"
 		"leaq 8(%%rdi),%%rdi\n"
 		"decl %%ecx\n"
 		"jnz 10b\n"
-		"11:     movl %%edx,%%ecx\n"
+		"11:	 movl %%edx,%%ecx\n"
 		"shrl $2,%%ecx\n"
 		"jz 12f\n"
 		"movnti %%eax,(%%rdi)\n"
@@ -436,11 +437,9 @@ static inline bool nova_range_node_checksum_ok(struct nova_range_node *node)
 
 	ret = node->csum == nova_calculate_range_node_csum(node);
 	if (!ret) {
-		nova_dbg("%s: checksum failure, "
-				"vma %p, range low %lu, range high %lu, "
-				"csum 0x%x\n", __func__,
-				node->vma, node->range_low, node->range_high,
-				node->csum);
+		nova_dbg("%s: checksum failure, vma %p, range low %lu, range high %lu, csum 0x%x\n",
+			 __func__, node->vma, node->range_low, node->range_high,
+			 node->csum);
 	}
 
 	return ret;
@@ -467,12 +466,12 @@ struct scan_bitmap {
 
 
 struct inode_map {
-	struct mutex            inode_table_mutex;
-	struct rb_root	        inode_inuse_tree;
-	unsigned long	        num_range_node_inode;
-	struct nova_range_node* first_inode_range;
-	int                     allocated;
-	int                     freed;
+	struct mutex		inode_table_mutex;
+	struct rb_root		inode_inuse_tree;
+	unsigned long		num_range_node_inode;
+	struct nova_range_node *first_inode_range;
+	int			allocated;
+	int			freed;
 };
 
 
@@ -533,7 +532,7 @@ nova_get_write_entry(struct super_block *sb,
 }
 
 
-/* 
+/*
  * Find data at a file offset (pgoff) in the data pointed to by a write log
  * entry.
  */
@@ -551,8 +550,8 @@ static inline unsigned long get_nvmm(struct super_block *sb,
 		u64 curr;
 
 		curr = nova_get_addr_off(sbi, entry);
-		nova_dbg("Entry ERROR: inode %lu, curr 0x%llx, pgoff %lu, "
-			"entry pgoff %llu, num %u\n", sih->ino,
+		nova_dbg("Entry ERROR: inode %lu, curr 0x%llx, pgoff %lu, entry pgoff %llu, num %u\n",
+			sih->ino,
 			curr, pgoff, entry->pgoff, entry->num_pages);
 		nova_print_nova_log_pages(sb, sih);
 		nova_print_nova_log(sb, sih);
@@ -578,17 +577,9 @@ static inline u64 nova_find_nvmm_block(struct super_block *sb,
 			return 0;
 	}
 
-	/*
-	if (metadata_csum == 0)
-		entryc = entry;
-	else {
-		entryc = &entry_copy;
-		if (!nova_verify_entry_csum(sb, entry, entryc))
-			return 0;
-	}
-	*/
-	/* don't check entry here as someone else may be modifying it
-	 * when called from reset_vma_csum_parity */
+	/* Don't check entry here as someone else may be modifying it
+	 * when called from reset_vma_csum_parity
+	 */
 	entryc = &entry_copy;
 	if (memcpy_mcsafe(entryc, entry,
 			sizeof(struct nova_file_write_entry)) < 0)
@@ -993,9 +984,9 @@ int nova_handle_head_tail_blocks(struct super_block *sb,
 				 size_t count, void *kmem);
 int nova_protect_file_data(struct super_block *sb, struct inode *inode,
 	loff_t pos, size_t count, const char __user *buf, unsigned long blocknr,
-        bool inplace);
- ssize_t nova_inplace_file_write(struct file *filp, const char __user *buf,
-				 size_t len, loff_t *ppos);
+	bool inplace);
+ssize_t nova_inplace_file_write(struct file *filp, const char __user *buf,
+				size_t len, loff_t *ppos);
 
 extern const struct vm_operations_struct nova_dax_vm_ops;
 

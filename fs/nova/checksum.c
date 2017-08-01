@@ -81,9 +81,8 @@ static int nova_get_entry_copy(struct super_block *sb, void *entry,
 	default:
 		*entry_csum = 0;
 		*entry_size = 0;
-		nova_dbg("%s: unknown or unsupported entry type (%d)"
-			" for checksum, 0x%llx\n", __func__, type,
-			(u64)entry);
+		nova_dbg("%s: unknown or unsupported entry type (%d) for checksum, 0x%llx\n",
+			 __func__, type, (u64)entry);
 		ret = -EINVAL;
 		dump_stack();
 		break;
@@ -134,9 +133,8 @@ static u32 nova_calc_entry_csum(void *entry)
 	default:
 		entry_len = 0;
 		csum_addr = NULL;
-		nova_dbg("%s: unknown or unsupported entry type (%d) "
-			"for checksum, 0x%llx\n", __func__, type,
-			(u64) entry);
+		nova_dbg("%s: unknown or unsupported entry type (%d) for checksum, 0x%llx\n",
+			 __func__, type, (u64) entry);
 		break;
 	}
 
@@ -352,20 +350,20 @@ bool nova_verify_entry_csum(struct super_block *sb, void *entry, void *entryc)
 	alter_csum_calc = nova_calc_entry_csum(alter_copy);
 
 	if (entry_csum != entry_csum_calc && alter_csum != alter_csum_calc) {
-		nova_err(sb, "%s: both entry and its replica fail checksum "
-			"verification\n", __func__);
+		nova_err(sb, "%s: both entry and its replica fail checksum verification\n",
+			 __func__);
 		goto fail;
 	} else if (entry_csum != entry_csum_calc) {
-		nova_dbg("%s: entry %p checksum error, trying to "
-			"repair using the replica\n", __func__, entry);
+		nova_dbg("%s: entry %p checksum error, trying to repair using the replica\n",
+			 __func__, entry);
 		ret = nova_repair_entry(sb, entry, alter_copy, alter_size);
 		if (ret != 0)
 			goto fail;
 
 		memcpy(entryc, alter_copy, alter_size);
 	} else if (alter_csum != alter_csum_calc) {
-		nova_dbg("%s: entry replica %p checksum error, trying to "
-			"repair using the primary\n", __func__, alter);
+		nova_dbg("%s: entry replica %p checksum error, trying to repair using the primary\n",
+			 __func__, alter);
 		ret = nova_repair_entry(sb, alter, entry_copy, entry_size);
 		if (ret != 0)
 			goto fail;
@@ -376,8 +374,8 @@ bool nova_verify_entry_csum(struct super_block *sb, void *entry, void *entryc)
 		 * is trusted if their buffers don't match
 		 */
 		if (memcmp(entry_copy, alter_copy, entry_size)) {
-			nova_dbg("%s: entry replica %p error, trying to "
-				"repair using the primary\n", __func__, alter);
+			nova_dbg("%s: entry replica %p error, trying to repair using the primary\n",
+				 __func__, alter);
 			ret = nova_repair_entry(sb, alter, entry_copy,
 						entry_size);
 			if (ret != 0)
@@ -499,8 +497,8 @@ int nova_check_inode_integrity(struct super_block *sb, u64 ino, u64 pi_addr,
 	alter_bad = nova_check_inode_checksum(alter_pic);
 
 	if (inode_bad && alter_bad) {
-		nova_err(sb, "%s: both inode and its replica fail checksum "
-			"verification\n", __func__);
+		nova_err(sb, "%s: both inode and its replica fail checksum verification\n",
+			 __func__);
 		goto fail;
 	} else if (inode_bad) {
 		nova_dbg("%s: inode %llu checksum error, trying to repair using the replica\n",
@@ -583,8 +581,10 @@ copy:
 		}
 		nova_memlock_range(sb, csum_addr, NOVA_DATA_CSUM_LEN * 8);
 		if (support_clwb) {
-			nova_flush_buffer(csum_addr, NOVA_DATA_CSUM_LEN * 8, 0);
-			nova_flush_buffer(csum_addr1, NOVA_DATA_CSUM_LEN * 8, 0);
+			nova_flush_buffer(csum_addr,
+					  NOVA_DATA_CSUM_LEN * 8, 0);
+			nova_flush_buffer(csum_addr1,
+					  NOVA_DATA_CSUM_LEN * 8, 0);
 		}
 
 		strp_nr += 8;
@@ -774,16 +774,12 @@ bool nova_verify_data_csum(struct super_block *sb,
 			 *     at least one csum is corrupted, also need to run
 			 *     data recovery to see if one csum is still good
 			 */
-			nova_dbg("%s: nova data corruption detected! "
-				"inode %lu, strp %lu of %lu, block offset %lu, "
-				"stripe nr %lu, csum calc 0x%08x, "
-				"csum nvmm 0x%08x, csum nvmm replica 0x%08x\n",
+			nova_dbg("%s: nova data corruption detected! inode %lu, strp %lu of %lu, block offset %lu, stripe nr %lu, csum calc 0x%08x, csum nvmm 0x%08x, csum nvmm replica 0x%08x\n",
 				__func__, sih->ino, strp, strps, blockoff,
 				strp_nr, csum_calc, csum_nvmm0, csum_nvmm1);
 
 			if (data_parity == 0) {
-				nova_dbg("%s: no data redundancy available, "
-					"can not repair data corruption!\n",
+				nova_dbg("%s: no data redundancy available, can not repair data corruption!\n",
 					 __func__);
 				break;
 			}
@@ -815,10 +811,7 @@ bool nova_verify_data_csum(struct super_block *sb,
 			/* Getting here, data is known good but one checksum is
 			 * considered corrupted.
 			 */
-			nova_dbg("%s: nova checksum corruption detected! "
-				"inode %lu, strp %lu of %lu, block offset %lu, "
-				"stripe nr %lu, csum calc 0x%08x, "
-				"csum nvmm 0x%08x, csum nvmm replica 0x%08x\n",
+			nova_dbg("%s: nova checksum corruption detected! inode %lu, strp %lu of %lu, block offset %lu, stripe nr %lu, csum calc 0x%08x, csum nvmm 0x%08x, csum nvmm replica 0x%08x\n",
 				__func__, sih->ino, strp, strps, blockoff,
 				strp_nr, csum_calc, csum_nvmm0, csum_nvmm1);
 

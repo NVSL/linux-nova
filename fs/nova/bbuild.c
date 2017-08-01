@@ -199,9 +199,9 @@ static void nova_destroy_blocknode_trees(struct super_block *sb)
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	int i;
 
-	for (i = 0; i < sbi->cpus; i++) {
+	for (i = 0; i < sbi->cpus; i++)
 		nova_destroy_blocknode_tree(sb, i);
-	}
+
 }
 
 static int nova_init_blockmap_from_inode(struct super_block *sb)
@@ -229,9 +229,8 @@ static int nova_init_blockmap_from_inode(struct super_block *sb)
 	}
 
 	while (curr_p != sih.log_tail) {
-		if (is_last_entry(curr_p, size)) {
+		if (is_last_entry(curr_p, size))
 			curr_p = next_log_page(sb, curr_p);
-		}
 
 		if (curr_p == 0) {
 			nova_dbg("%s: curr_p is NULL!\n", __func__);
@@ -316,9 +315,8 @@ static int nova_init_inode_list_from_inode(struct super_block *sb)
 	}
 
 	while (curr_p != sih.log_tail) {
-		if (is_last_entry(curr_p, size)) {
+		if (is_last_entry(curr_p, size))
 			curr_p = next_log_page(sb, curr_p);
-		}
 
 		if (curr_p == 0) {
 			nova_dbg("%s: curr_p is NULL!\n", __func__);
@@ -529,9 +527,8 @@ void nova_save_blocknode_mappings_to_log(struct super_block *sb)
 	}
 
 	temp_tail = new_block;
-	for (i = 0; i < sbi->cpus; i++) {
+	for (i = 0; i < sbi->cpus; i++)
 		temp_tail = nova_save_free_list_blocknodes(sb, i, temp_tail);
-	}
 
 	/* Finally update log head and tail */
 	nova_memunlock_inode(sb, pi);
@@ -541,9 +538,9 @@ void nova_save_blocknode_mappings_to_log(struct super_block *sb)
 	nova_flush_buffer(&pi->log_head, CACHELINE_SIZE, 0);
 	nova_memlock_inode(sb, pi);
 
-	nova_dbg("%s: %lu blocknodes, %lu log pages, pi head 0x%llx, "
-		"tail 0x%llx\n", __func__, num_blocknode, num_pages,
-		pi->log_head, pi->log_tail);
+	nova_dbg("%s: %lu blocknodes, %lu log pages, pi head 0x%llx, tail 0x%llx\n",
+		  __func__, num_blocknode, num_pages,
+		  pi->log_head, pi->log_tail);
 }
 
 static int nova_insert_blocknode_map(struct super_block *sb,
@@ -1203,7 +1200,7 @@ static int allocate_resources(struct super_block *sb, int cpus)
 	struct task_ring *ring;
 	int i;
 
-	task_rings = kzalloc(cpus * sizeof(struct task_ring), GFP_KERNEL);
+	task_rings = kcalloc(cpus, sizeof(struct task_ring), GFP_KERNEL);
 	if (!task_rings)
 		goto fail;
 
@@ -1219,11 +1216,11 @@ static int allocate_resources(struct super_block *sb, int cpus)
 			goto fail;
 	}
 
-	threads = kzalloc(cpus * sizeof(struct task_struct *), GFP_KERNEL);
+	threads = kcalloc(cpus, sizeof(struct task_struct *), GFP_KERNEL);
 	if (!threads)
 		goto fail;
 
-	finished = kzalloc(cpus * sizeof(int), GFP_KERNEL);
+	finished = kcalloc(cpus, sizeof(int), GFP_KERNEL);
 	if (!finished)
 		goto fail;
 
@@ -1402,8 +1399,8 @@ static int nova_failure_recovery_crawl(struct super_block *sb)
 			curr = inode_table->log_head;
 			while (curr) {
 				if (ring->num >= 512) {
-					nova_err(sb, "%s: ring size "
-						"too small\n", __func__);
+					nova_err(sb, "%s: ring size too small\n",
+						 __func__);
 					return -EINVAL;
 				}
 
@@ -1511,15 +1508,13 @@ static bool nova_try_normal_recovery(struct super_block *sb)
 
 	ret = nova_init_blockmap_from_inode(sb);
 	if (ret) {
-		nova_err(sb, "init blockmap failed, "
-				"fall back to failure recovery\n");
+		nova_err(sb, "init blockmap failed, fall back to failure recovery\n");
 		return false;
 	}
 
 	ret = nova_init_inode_list_from_inode(sb);
 	if (ret) {
-		nova_err(sb, "init inode list failed, "
-				"fall back to failure recovery\n");
+		nova_err(sb, "init inode list failed, fall back to failure recovery\n");
 		nova_destroy_blocknode_trees(sb);
 		return false;
 	}
@@ -1527,8 +1522,7 @@ static bool nova_try_normal_recovery(struct super_block *sb)
 	if (sbi->mount_snapshot == 0) {
 		ret = nova_restore_snapshot_table(sb, 0);
 		if (ret) {
-			nova_err(sb, "Restore snapshot table failed, "
-					"fall back to failure recovery\n");
+			nova_err(sb, "Restore snapshot table failed, fall back to failure recovery\n");
 			nova_destroy_snapshot_infos(sb);
 			return false;
 		}

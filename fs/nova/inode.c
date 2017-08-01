@@ -85,7 +85,7 @@ static int nova_alloc_inode_table(struct super_block *sb,
 		/* Allocate replicate inodes from tail */
 		allocated = nova_new_log_blocks(sb, sih, &blocknr, 1,
 				ALLOC_INIT_ZERO, i,
-			        version ? ALLOC_FROM_TAIL : ALLOC_FROM_HEAD);
+				version ? ALLOC_FROM_TAIL : ALLOC_FROM_HEAD);
 
 		nova_dbgv("%s: allocate log @ 0x%lx\n", __func__,
 							blocknr);
@@ -166,7 +166,8 @@ inline int nova_search_inodetree(struct nova_sb_info *sbi,
 }
 
 /* Get the address in PMEM of an inode by inode number.  Allocate additional
- * block to store additional inodes if necessary. */
+ * block to store additional inodes if necessary.
+ */
 int nova_get_inode_address(struct super_block *sb, u64 ino, int version,
 	u64 *pi_addr, int extendable, int extend_alternate)
 {
@@ -225,7 +226,7 @@ int nova_get_inode_address(struct super_block *sb, u64 ino, int version,
 
 			allocated = nova_new_log_blocks(sb, &sih, &blocknr,
 				1, ALLOC_INIT_ZERO, cpuid,
-			        version ? ALLOC_FROM_TAIL : ALLOC_FROM_HEAD);
+				version ? ALLOC_FROM_TAIL : ALLOC_FROM_HEAD);
 
 			if (allocated != 1)
 				return allocated;
@@ -336,8 +337,7 @@ int nova_delete_file_tree(struct super_block *sb,
 		freed += num_free;
 	}
 
-	nova_dbgv("Inode %lu: delete file tree from pgoff %lu to %lu, "
-			"%d blocks freed\n",
+	nova_dbgv("Inode %lu: delete file tree from pgoff %lu to %lu, %d blocks freed\n",
 			sih->ino, start_blocknr, last_blocknr, freed);
 
 	NOVA_END_TIMING(delete_file_tree_t, delete_time);
@@ -418,7 +418,6 @@ static void nova_truncate_file_blocks(struct inode *inode, loff_t start,
 	/* Check for the flag EOFBLOCKS is still valid after the set size */
 	check_eof_blocks(sb, pi, inode, sih);
 
-	return;
 }
 
 /* search the radix tree to find hole or data
@@ -920,12 +919,11 @@ void nova_evict_inode(struct inode *inode)
 	if (pi && pi->nova_ino != inode->i_ino) {
 		nova_err(sb, "%s: inode %lu ino does not match: %llu\n",
 				__func__, inode->i_ino, pi->nova_ino);
-		nova_dbg("inode size %llu, pi addr 0x%lx, pi head 0x%llx, "
-				"tail 0x%llx, mode %u\n",
+		nova_dbg("inode size %llu, pi addr 0x%lx, pi head 0x%llx, tail 0x%llx, mode %u\n",
 				inode->i_size, sih->pi_addr, sih->log_head,
 				sih->log_tail, pi->i_mode);
-		nova_dbg("sih: ino %lu, inode size %lu, mode %u, "
-				"inode mode %u\n", sih->ino, sih->i_size,
+		nova_dbg("sih: ino %lu, inode size %lu, mode %u, inode mode %u\n",
+				sih->ino, sih->i_size,
 				sih->i_mode, inode->i_mode);
 		nova_print_inode_log(sb, inode);
 	}
@@ -1259,7 +1257,7 @@ static void nova_setsize(struct inode *inode, loff_t oldsize, loff_t newsize,
 	NOVA_END_TIMING(setsize_t, setsize_time);
 }
 
-int nova_getattr(const struct path * path, struct kstat *stat,
+int nova_getattr(const struct path *path, struct kstat *stat,
 		 u32 request_mask, unsigned int flags)
 {
 	struct inode *inode;
@@ -1411,8 +1409,7 @@ unsigned long nova_find_region(struct inode *inode, loff_t *offset, int hole)
 	first_blocknr = *offset >> data_bits;
 	last_blocknr = inode->i_size >> data_bits;
 
-	nova_dbg_verbose("find_region offset %llx, first_blocknr %lx,"
-		" last_blocknr %lx hole %d\n",
+	nova_dbg_verbose("find_region offset %llx, first_blocknr %lx, last_blocknr %lx hole %d\n",
 		  *offset, first_blocknr, last_blocknr, hole);
 
 	blocks = nova_lookup_hole_in_range(inode->i_sb, sih,

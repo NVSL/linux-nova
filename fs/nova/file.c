@@ -507,8 +507,8 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 
 		entry = nova_get_write_entry(sb, sih, index);
 		if (unlikely(entry == NULL)) {
-			nova_dbgv("Required extent not found: pgoff %lu, "
-				"inode size %lld\n", index, isize);
+			nova_dbgv("Required extent not found: pgoff %lu, inode size %lld\n",
+				index, isize);
 			nr = PAGE_SIZE;
 			zero = 1;
 			goto memcpy;
@@ -522,8 +522,8 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 		/* Find contiguous blocks */
 		if (index < entryc->pgoff ||
 			index - entryc->pgoff >= entryc->num_pages) {
-			nova_err(sb, "%s ERROR: %lu, entry pgoff %llu, num %u, "
-				"blocknr %llu\n", __func__, index, entry->pgoff,
+			nova_err(sb, "%s ERROR: %lu, entry pgoff %llu, num %u, blocknr %llu\n",
+				__func__, index, entry->pgoff,
 				entry->num_pages, entry->block >> PAGE_SHIFT);
 			return -EINVAL;
 		}
@@ -547,13 +547,9 @@ memcpy:
 				goto skip_verify;
 
 			if (!nova_verify_data_csum(sb, sih, nvmm, offset, nr)) {
-				nova_err(sb, "%s: nova data checksum and "
-					"recovery fail! "
-					"inode %lu, offset %lu, "
-					"entry pgoff %lu, %u pages, "
-					"pgoff %lu\n", __func__,
-					inode->i_ino, offset, entry->pgoff,
-					entry->num_pages, index);
+				nova_err(sb, "%s: nova data checksum and recovery fail! inode %lu, offset %lu, entry pgoff %lu, %u pages, pgoff %lu\n",
+					 __func__, inode->i_ino, offset,
+					 entry->pgoff, entry->num_pages, index);
 				error = -EIO;
 				goto out;
 			}
@@ -681,8 +677,7 @@ static ssize_t nova_cow_file_write(struct file *filp,
 	start_blk = pos >> sb->s_blocksize_bits;
 
 	if (nova_check_overlap_vmas(sb, sih, start_blk, num_blocks)) {
-		nova_dbgv("COW write overlaps with vma: "
-				"inode %lu, pgoff %lu, %lu blocks\n",
+		nova_dbgv("COW write overlaps with vma: inode %lu, pgoff %lu, %lu blocks\n",
 				inode->i_ino, start_blk, num_blocks);
 		NOVA_STATS_ADD(cow_overlap_mmap, 1);
 		try_inplace = 1;
@@ -713,7 +708,7 @@ static ssize_t nova_cow_file_write(struct file *filp,
 		allocated = nova_new_data_blocks(sb, sih, &blocknr, start_blk,
 				 num_blocks, ALLOC_NO_INIT, ANY_CPU,
 				 ALLOC_FROM_HEAD);
-		
+
 		nova_dbg_verbose("%s: alloc %d blocks @ %lu\n", __func__,
 						allocated, blocknr);
 
@@ -855,9 +850,7 @@ static int nova_dax_file_mmap(struct file *file, struct vm_area_struct *vma)
 
 	nova_insert_write_vma(vma);
 
-	nova_dbg_mmap4k("[%s:%d] inode %lu, MMAP 4KPAGE vm_start(0x%lx),"
-			" vm_end(0x%lx), vm pgoff %lu, %lu blocks, "
-			"vm_flags(0x%lx), vm_page_prot(0x%lx)\n",
+	nova_dbg_mmap4k("[%s:%d] inode %lu, MMAP 4KPAGE vm_start(0x%lx), vm_end(0x%lx), vm pgoff %lu, %lu blocks, vm_flags(0x%lx), vm_page_prot(0x%lx)\n",
 			__func__, __LINE__,
 			inode->i_ino, vma->vm_start, vma->vm_end,
 			vma->vm_pgoff,

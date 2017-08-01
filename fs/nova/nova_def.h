@@ -79,8 +79,6 @@
 #define CACHELINE_MASK  (~(CACHELINE_SIZE - 1))
 #define CACHELINE_ALIGN(addr) (((addr)+CACHELINE_SIZE-1) & CACHELINE_MASK)
 
-#define X86_FEATURE_CLFLUSHOPT	( 9*32+23) /* CLFLUSHOPT instruction */
-#define X86_FEATURE_CLWB	( 9*32+24) /* CLWB instruction */
 
 static inline bool arch_has_clwb(void)
 {
@@ -92,9 +90,11 @@ extern int support_clwb;
 #define _mm_clflush(addr)\
 	asm volatile("clflush %0" : "+m" (*(volatile char *)(addr)))
 #define _mm_clflushopt(addr)\
-	asm volatile(".byte 0x66; clflush %0" : "+m" (*(volatile char *)(addr)))
+	asm volatile(".byte 0x66; clflush %0" : "+m" \
+		     (*(volatile char *)(addr)))
 #define _mm_clwb(addr)\
-	asm volatile(".byte 0x66; xsaveopt %0" : "+m" (*(volatile char *)(addr)))
+	asm volatile(".byte 0x66; xsaveopt %0" : "+m" \
+		     (*(volatile char *)(addr)))
 
 /* Provides ordering from all previous clflush too */
 static inline void PERSISTENT_MARK(void)

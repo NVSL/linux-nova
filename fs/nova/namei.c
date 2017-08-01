@@ -266,7 +266,7 @@ static int nova_symlink(struct inode *dir, struct dentry *dentry,
 		goto out_fail;
 
 	inode = nova_new_vfs_inode(TYPE_SYMLINK, dir, pi_addr, ino,
-					S_IFLNK|S_IRWXUGO, len, 0,
+					S_IFLNK|0777, len, 0,
 					&dentry->d_name, epoch_id);
 	if (IS_ERR(inode)) {
 		err = PTR_ERR(inode);
@@ -754,8 +754,8 @@ static int nova_rename(struct inode *old_dir,
 		}
 
 		if (le64_to_cpu(father_entryc->ino) != old_dir->i_ino)
-			nova_err(sb, "%s: dir %lu parent should be %lu, "
-				"but actually %lu\n", __func__,
+			nova_err(sb, "%s: dir %lu parent should be %lu, but actually %lu\n",
+				__func__,
 				old_inode->i_ino, old_dir->i_ino,
 				le64_to_cpu(father_entry->ino));
 	}
