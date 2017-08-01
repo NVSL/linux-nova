@@ -599,8 +599,6 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 
 	BUILD_BUG_ON(sizeof(struct nova_inode_page_tail) +
 		     LOG_BLOCK_TAIL != PAGE_SIZE);
-	
-	nova_dbgmask |=  (0x00000010);
 
 	sbi = kzalloc(sizeof(struct nova_sb_info), GFP_KERNEL);
 	if (!sbi)
