@@ -99,7 +99,7 @@ static loff_t nova_llseek(struct file *file, loff_t offset, int origin)
 	if ((offset < 0 && !(file->f_mode & FMODE_UNSIGNED_OFFSET)) ||
 	    offset > inode->i_sb->s_maxbytes) {
 		inode_unlock(inode);
-		return -EINVAL;
+		return -ENXIO;
 	}
 
 	if (offset != file->f_pos) {
