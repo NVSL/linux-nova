@@ -82,7 +82,8 @@ Nova support several module command line options:
  * inplace_data_updates:  Update data in place rather than with COW (default: 0)
 
  * wprotect: Make PMEM unwritable and then use CR0.WP to enable writes as
-   needed (default: 0).
+   needed (default: 0).  You must also install the nd_pmem module as with
+   wprotect =1 (e.g., modprobe nd_pmem readonly=1).
 
 For instance to enable all Nova's data protection features:
 
@@ -422,7 +423,7 @@ Then, it estimates how many pages the logs valid entries would fill.  If this
 is less than half the number of pages in the log, the second GC phase copies
 the valid entries to new pages.
 
-For example:
+For example (V=valid; I=invalid):
 
 +---+          +---+	        +---+
 | I |	       | I |  	      	| V |
@@ -528,6 +529,9 @@ PMEM device as read-only and then disabling _all_ write protection by clearing
 the WP bit the CR0 control register when Nova needs to perform a write.  The
 wprotect mount-time option controls this behavior.
 
+To map the PMEM device as read-only, we have added a readonly module command
+line option to nd_pmem.  There is probably a better approach to achieving this
+goal. 
 
 Unsafe modes
 ============
@@ -614,6 +618,41 @@ epoch_id: If the delete epoch_id for an entry in the log is less than or equal
 to the snapshot's epoch_id, it means the log entry and/or the associated data
 blocks are now dead.
 
+Snapshots and DAX
+-----------------
+
+Taking consistent snapshots while applications are modifying files using
+DAX-style mmap requires NOVA to reckon with the order in which stores to NVMM
+become persistent (i.e., reach physical NVMM so they will survive a system
+failure).  These applications rely on the processor's ``memory persistence
+model'' [http://dl.acm.org/citation.cfm?id=2665671.2665712] to make guarantees
+about when and in what order stores become persistent.  These guarantees allow
+the application to restore their data to a consistent state during recovery
+from a system failure.
+
+From the application's perspective, reading a snapshot is equivalent to
+recovering from a system failure.  In both cases, the contents of the
+memory-mapped file reflect its state at a moment when application operations
+might be in-flight and when the application had no chance to shut down cleanly.
+
+A naive approach to checkpointing mmap()'d files in NOVA would simply mark each
+of the read/write mapped pages as read-only and then do copy-on-write when a
+store occurs to preserve the old pages as part of the snapshot.
+
+However, this approach can leave the snapshot in an inconsistent state:
+Setting the page to read-only captures its contents for the
+snapshot, and the kernel requires NOVA to set the pages as read-only
+one at a time.  So, if the order in which NOVA marks pages as read-only
+is incompatible with ordering that the application requires, the snapshot will
+contain an inconsistent version of the file.
+
+To resolve this problem, when NOVA starts marking pages as read-only, it blocks
+page faults to the read-only mmap()'d pages until it has marked all the pages
+read-only and finished taking the snapshot.
+
+More detail is available in the technical report referenced at the top of this
+document.
+
 
 Saving Snapshot State
 ---------------------
@@ -636,7 +675,7 @@ Superblock
 +--------------------+
 | Reserved Inodes    |
 +---+----------------+
-|   |     ..         |
+|   |     ...        |
 +---+----------------+
 | 7 | Snapshot Inode |
 |   | head           |
