@@ -35,7 +35,7 @@
 #include "pfn.h"
 #include "nd.h"
 
-int readonly = 0;
+int readonly;
 
 module_param(readonly, int, S_IRUGO);
 MODULE_PARM_DESC(readonly, "Mount readonly");
@@ -317,7 +317,6 @@ static int pmem_attach_disk(struct device *dev,
 
 	pmem->pfn_flags = PFN_DEV;
 	if (is_nd_pfn(dev)) {
-		dev_warn(dev, "is nd pfn\n");
 		addr = devm_memremap_pages(dev, &pfn_res, &q->q_usage_counter,
 				altmap);
 		pfn_sb = nd_pfn->pfn_sb;
@@ -327,12 +326,10 @@ static int pmem_attach_disk(struct device *dev,
 		res = &pfn_res; /* for badblocks populate */
 		res->start += pmem->data_offset;
 	} else if (pmem_should_map_pages(dev)) {
-		dev_warn(dev, "should map pages\n");
 		addr = devm_memremap_pages(dev, &nsio->res,
 				&q->q_usage_counter, NULL);
 		pmem->pfn_flags |= PFN_MAP;
 	} else {
-		dev_warn(dev, "otherwise\n");
 		if (readonly == 0)
 			addr = devm_memremap(dev, pmem->phys_addr,
 				pmem->size, ARCH_MEMREMAP_PMEM);
