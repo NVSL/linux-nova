@@ -653,6 +653,14 @@ read-only and finished taking the snapshot.
 More detail is available in the technical report referenced at the top of this
 document.
 
+We have implemented this functionality in NOVA by adding the 'original_write'
+flag to struct vm_area_struct that tracks whether the vm_area_struct is created
+with write permission, but has been marked read-only in the course of taking a
+snapshot.  We have also added a 'dax_cow' operation to struct
+vm_operations_struct that the page fault handler runs when applications write
+to a page with original_write = 1.  NOVA's dax_cow operation
+(nova_restore_page_write()) performs the COW, maps the page to a new physical
+page and allows writing.
 
 Saving Snapshot State
 ---------------------
