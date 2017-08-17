@@ -40,7 +40,6 @@
 #include <linux/kthread.h>
 #include <linux/buffer_head.h>
 #include <linux/uio.h>
-#include <linux/pmem.h>
 #include <linux/iomap.h>
 #include <linux/crc32c.h>
 #include <asm/tlbflush.h>
