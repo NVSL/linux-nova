@@ -987,6 +987,8 @@ int nova_protect_file_data(struct super_block *sb, struct inode *inode,
 	bool inplace);
 ssize_t nova_inplace_file_write(struct file *filp, const char __user *buf,
 				size_t len, loff_t *ppos);
+ssize_t do_nova_inplace_file_write(struct file *filp, const char __user *buf,
+				   size_t len, loff_t *ppos);
 
 extern const struct vm_operations_struct nova_dax_vm_ops;
 
