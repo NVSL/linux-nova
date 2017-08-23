@@ -545,8 +545,8 @@ out:
 }
 
 
-/* 
- * * Do an inplace write.  This function assumes that the lock on the inode is
+/*
+ * Do an inplace write.  This function assumes that the lock on the inode is
  * already held.
  */
 ssize_t do_nova_inplace_file_write(struct file *filp,
