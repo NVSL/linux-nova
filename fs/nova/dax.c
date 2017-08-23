@@ -544,7 +544,12 @@ out:
 	return ent_blks;
 }
 
-ssize_t nova_inplace_file_write(struct file *filp,
+
+/*
+ * Do an inplace write.  This function assumes that the lock on the inode is
+ * already held.
+ */
+ssize_t do_nova_inplace_file_write(struct file *filp,
 	const char __user *buf,	size_t len, loff_t *ppos)
 {
 	struct address_space *mapping = filp->f_mapping;
@@ -587,8 +592,6 @@ ssize_t nova_inplace_file_write(struct file *filp,
 
 	NOVA_START_TIMING(inplace_write_t, inplace_write_time);
 
-	sb_start_write(inode->i_sb);
-	inode_lock(inode);
 
 	if (!access_ok(VERIFY_READ, buf, len)) {
 		ret = -EFAULT;
@@ -794,10 +797,32 @@ out:
 		nova_cleanup_incomplete_write(sb, sih, blocknr, allocated,
 						begin_tail, update.tail);
 
-	inode_unlock(inode);
-	sb_end_write(inode->i_sb);
 	NOVA_END_TIMING(inplace_write_t, inplace_write_time);
 	NOVA_STATS_ADD(inplace_write_bytes, written);
+	return ret;
+}
+
+/* 
+ * Acquire locks and perform an inplace update.
+ */
+ssize_t nova_inplace_file_write(struct file *filp,
+				const char __user *buf,	size_t len, loff_t *ppos)
+{
+	struct address_space *mapping = filp->f_mapping;
+	struct inode *inode = mapping->host;
+	int ret;
+
+	if (len == 0)
+		return 0;
+			
+	sb_start_write(inode->i_sb);
+	inode_lock(inode);
+
+	ret = do_nova_inplace_file_write(filp, buf, len, ppos);
+	
+	inode_unlock(inode);
+	sb_end_write(inode->i_sb);
+
 	return ret;
 }
 

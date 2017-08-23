@@ -609,7 +609,10 @@ static ssize_t nova_dax_file_read(struct file *filp, char __user *buf,
 	return res;
 }
 
-static ssize_t nova_cow_file_write(struct file *filp,
+/*
+ * Perform a COW write.   Must hold the inode lock before calling.
+ */
+static ssize_t do_nova_cow_file_write(struct file *filp,
 	const char __user *buf,	size_t len, loff_t *ppos)
 {
 	struct address_space *mapping = filp->f_mapping;
@@ -645,9 +648,6 @@ static ssize_t nova_cow_file_write(struct file *filp,
 		return 0;
 
 	NOVA_START_TIMING(cow_write_t, cow_write_time);
-
-	sb_start_write(inode->i_sb);
-	inode_lock(inode);
 
 	if (!access_ok(VERIFY_READ, buf, len)) {
 		ret = -EFAULT;
@@ -818,25 +818,58 @@ out:
 		nova_cleanup_incomplete_write(sb, sih, blocknr, allocated,
 						begin_tail, update.tail);
 
-	inode_unlock(inode);
-	sb_end_write(inode->i_sb);
 	NOVA_END_TIMING(cow_write_t, cow_write_time);
 	NOVA_STATS_ADD(cow_write_bytes, written);
 
 	if (try_inplace)
-		return nova_inplace_file_write(filp, buf, len, ppos);
+		return do_nova_inplace_file_write(filp, buf, len, ppos);
 
 	return ret;
 }
 
+/*
+ * Acquire locks and perform COW write.
+ */
+ssize_t nova_cow_file_write(struct file *filp,
+	const char __user *buf,	size_t len, loff_t *ppos)
+{
+	struct address_space *mapping = filp->f_mapping;
+	struct inode *inode = mapping->host;
+	int ret;
+
+	if (len == 0)
+		return 0;
+	
+	sb_start_write(inode->i_sb);
+	inode_lock(inode);
+
+	ret = do_nova_cow_file_write(filp, buf, len, ppos);
+
+	inode_unlock(inode);
+	sb_end_write(inode->i_sb);
+
+	return ret;
+}
+
+
 static ssize_t nova_dax_file_write(struct file *filp, const char __user *buf,
-	size_t len, loff_t *ppos)
+				   size_t len, loff_t *ppos)
 {
 	if (inplace_data_updates)
 		return nova_inplace_file_write(filp, buf, len, ppos);
 	else
 		return nova_cow_file_write(filp, buf, len, ppos);
 }
+
+static ssize_t do_nova_dax_file_write(struct file *filp, const char __user *buf,
+				   size_t len, loff_t *ppos)
+{
+	if (inplace_data_updates)
+		return do_nova_inplace_file_write(filp, buf, len, ppos);
+	else
+		return do_nova_cow_file_write(filp, buf, len, ppos);
+}
+
 
 static int nova_dax_file_mmap(struct file *file, struct vm_area_struct *vma)
 {
@@ -882,6 +915,7 @@ const struct file_operations nova_dax_file_operations = {
 static ssize_t nova_wrap_rw_iter(struct kiocb *iocb, struct iov_iter *iter)
 {
 	struct file *filp = iocb->ki_filp;
+	struct inode *inode = filp->f_mapping->host;
 	ssize_t ret = -EIO;
 	ssize_t written = 0;
 	unsigned long seg;
@@ -891,14 +925,24 @@ static ssize_t nova_wrap_rw_iter(struct kiocb *iocb, struct iov_iter *iter)
 	nova_dbgv("%s %s: %lu segs\n", __func__,
 			iov_iter_rw(iter) == READ ? "read" : "write",
 			nr_segs);
+
+	if (iov_iter_rw(iter) == WRITE)  {
+		sb_start_write(inode->i_sb);
+		inode_lock(inode);
+	} else {
+		inode_lock_shared(inode);
+	}
+		
 	iv = iter->iov;
 	for (seg = 0; seg < nr_segs; seg++) {
 		if (iov_iter_rw(iter) == READ) {
-			ret = nova_dax_file_read(filp, iv->iov_base,
-					iv->iov_len, &iocb->ki_pos);
+			ret = do_dax_mapping_read(filp, iv->iov_base,
+						  iv->iov_len, &iocb->ki_pos);
 		} else if (iov_iter_rw(iter) == WRITE) {
-			ret = nova_dax_file_write(filp, iv->iov_base,
-					iv->iov_len, &iocb->ki_pos);
+			ret = do_nova_dax_file_write(filp, iv->iov_base,
+						     iv->iov_len, &iocb->ki_pos);
+		} else {
+			BUG();
 		}
 		if (ret < 0)
 			goto err;
@@ -914,6 +958,13 @@ static ssize_t nova_wrap_rw_iter(struct kiocb *iocb, struct iov_iter *iter)
 	}
 	ret = written;
 err:
+	if (iov_iter_rw(iter) == WRITE)  {
+		inode_unlock(inode);
+		sb_end_write(inode->i_sb);
+	} else {
+		inode_unlock_shared(inode);
+	}
+
 	return ret;
 }
 
