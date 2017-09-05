@@ -30,6 +30,10 @@ threads can scan logs in parallel.
 NOVA replicates and checksums all metadata structures and protects file data
 with RAID-4-style parity.  It supports checkpoints to facilitate backups.
 
+This repository contains a version of the mainline kernel with NOVA
+added.  You can check the current version by looking at the first
+lines of the Makefile.
+
 A more thorough discussion of NOVA's design is avaialable in these two papers:
 
 **NOVA: A Log-structured File system for Hybrid Volatile/Non-volatile Main Memories** 
