@@ -257,6 +257,7 @@ static int nova_parse_options(char *options, struct nova_sb_info *sbi,
 				goto bad_val;
 			sbi->mount_snapshot = 1;
 			sbi->mount_snapshot_epoch_id = option;
+			sbi->sb->s_flags |= MS_RDONLY;
 			break;
 		case Opt_err_panic:
 			clear_opt(sbi->s_mount_opt, ERRORS_CONT);
