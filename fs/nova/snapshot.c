@@ -914,6 +914,11 @@ int nova_create_snapshot(struct super_block *sb)
 	int ret;
 	timing_t create_snapshot_time;
 
+	if (sbi->sb->s_flags & MS_RDONLY) {
+		nova_dbg_verbose("Can't create snapshot in read-only FS");
+		return -EROFS;
+	}
+
 	NOVA_START_TIMING(create_snapshot_t, create_snapshot_time);
 
 	mutex_lock(&sbi->s_lock);
@@ -1047,6 +1052,11 @@ int nova_delete_snapshot(struct super_block *sb, u64 epoch_id)
 	int delete = 0;
 	int ret;
 	timing_t delete_snapshot_time;
+
+	if (sbi->sb->s_flags & MS_RDONLY) {
+		nova_dbg_verbose("Can't delete snapshot in read-only FS");
+		return -EROFS;
+	}
 
 	NOVA_START_TIMING(delete_snapshot_t, delete_snapshot_time);
 	mutex_lock(&sbi->s_lock);

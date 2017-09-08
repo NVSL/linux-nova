@@ -288,9 +288,12 @@ ssize_t nova_seq_create_snapshot(struct file *filp, const char __user *buf,
 	struct address_space *mapping = filp->f_mapping;
 	struct inode *inode = mapping->host;
 	struct super_block *sb = PDE_DATA(inode);
+	int ret;
 
-	nova_create_snapshot(sb);
-	return len;
+	ret = nova_create_snapshot(sb);
+
+	return ret != 0 ? ret : len;
+
 }
 
 static const struct file_operations nova_seq_create_snapshot_fops = {
@@ -322,12 +325,35 @@ ssize_t nova_seq_delete_snapshot(struct file *filp, const char __user *buf,
 	struct super_block *sb = PDE_DATA(inode);
 	u64 epoch_id;
 	int ret;
+	char *_buf;
 
-	ret = kstrtoull(buf, 10, &epoch_id);
+	nova_warn("%s: Trying to delete a checkpoint %lu", __func__, len);
+	if (sb->s_flags & MS_RDONLY) {
+		nova_warn("%s: couldn't delete checkpoint in readonly file system\n", __func__);
+		return -EROFS;
+	}
+
+	_buf = kmalloc(len + 1, GFP_KERNEL);
+	if (_buf == NULL)  {
+		nova_dbg("%s: kmalloc failed\n", __func__);
+		return -ENOMEM;
+	}
+	if (copy_from_user(_buf, buf, len + 1)) {
+		nova_dbg("%s: copy from user failed\n", __func__);
+		return -EFAULT;
+	}
+	_buf[len] = 0;
+
+	nova_warn("len = %lu", len);
+	//return len;
+	ret = kstrtoull(_buf, 10, &epoch_id);
+	nova_warn("epoch_id = %llu", epoch_id);
 	if (ret < 0)
-		nova_warn("Couldn't parse snapshot id %s", buf);
-	else
+		nova_warn("%s: Couldn't parse snapshot id", __func__);
+	else {
+		nova_warn("%s: deleting checkpoint %llu\n", __func__, epoch_id);
 		nova_delete_snapshot(sb, epoch_id);
+	}
 
 	return len;
 }
@@ -434,6 +460,9 @@ ssize_t nova_seq_gc(struct file *filp, const char __user *buf,
 	int ret;
 	char *_buf;
 	int retval = len;
+
+	if (sb->s_flags & MS_RDONLY)
+		return -EROFS;
 
 	_buf = kmalloc(len, GFP_KERNEL);
 	if (_buf == NULL)  {
