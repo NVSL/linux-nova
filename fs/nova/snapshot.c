@@ -1310,11 +1310,11 @@ int nova_save_snapshots(struct super_block *sb)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 
-	if (sbi->snapshot_cleaner_thread)
-		kthread_stop(sbi->snapshot_cleaner_thread);
-
 	if (sbi->mount_snapshot)
 		return 0;
+
+	if (sbi->snapshot_cleaner_thread)
+		kthread_stop(sbi->snapshot_cleaner_thread);
 
 	return nova_traverse_and_delete_snapshot_infos(sb, 1);
 }
@@ -1382,6 +1382,11 @@ static int nova_snapshot_cleaner_init(struct nova_sb_info *sbi)
 {
 	int ret = 0;
 
+	if (sbi->mount_snapshot) {
+		sbi->snapshot_cleaner_thread = NULL;
+		nova_info("Not starting snapshot cleaner, since we have mounted a snapshot\n");
+		return ret;
+	}
 	init_waitqueue_head(&sbi->snapshot_cleaner_wait);
 
 	sbi->snapshot_cleaner_thread = kthread_run(nova_snapshot_cleaner,

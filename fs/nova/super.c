@@ -719,7 +719,8 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 	nova_dbg_verbose("checking physical address 0x%016llx for nova image\n",
 		  (u64)sbi->phys_addr);
 
-	if (nova_check_integrity(sb) < 0) {
+	retval = nova_check_integrity(sb);
+	if (retval < 0) {
 		nova_dbg("Memory contains invalid nova %x:%x\n",
 			le32_to_cpu(sbi->nova_sb->s_magic), NOVA_SUPER_MAGIC);
 		goto out;
