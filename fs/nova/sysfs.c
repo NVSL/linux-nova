@@ -461,8 +461,10 @@ ssize_t nova_seq_gc(struct file *filp, const char __user *buf,
 	char *_buf;
 	int retval = len;
 
-	if (sb->s_flags & MS_RDONLY)
+	if (sb->s_flags & MS_RDONLY) {
+		nova_warn("%s: Can't trigger GC on read-only file system", __func__);
 		return -EROFS;
+	}
 
 	_buf = kmalloc(len, GFP_KERNEL);
 	if (_buf == NULL)  {
