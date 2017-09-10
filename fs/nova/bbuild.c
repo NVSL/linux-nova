@@ -1499,7 +1499,6 @@ int nova_failure_recovery(struct super_block *sb)
 /* Return TRUE if we can do a normal unmount recovery */
 static bool nova_try_normal_recovery(struct super_block *sb)
 {
-	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_inode *pi =  nova_get_inode_by_ino(sb, NOVA_BLOCKNODE_INO);
 	int ret;
 
@@ -1518,14 +1517,13 @@ static bool nova_try_normal_recovery(struct super_block *sb)
 		nova_destroy_blocknode_trees(sb);
 		return false;
 	}
-
-	if (sbi->mount_snapshot == 0) {
-		ret = nova_restore_snapshot_table(sb, 0);
-		if (ret) {
-			nova_err(sb, "Restore snapshot table failed, fall back to failure recovery\n");
-			nova_destroy_snapshot_infos(sb);
-			return false;
-		}
+	
+	/* Initialize the snapshot infos */
+	ret = nova_restore_snapshot_table(sb, 0);
+	if (ret) {
+		nova_err(sb, "Restore snapshot table failed, fall back to failure recovery\n");
+		nova_destroy_snapshot_infos(sb);
+		return false;
 	}
 
 	return true;
@@ -1567,14 +1565,12 @@ int nova_recovery(struct super_block *sb)
 		if (ret)
 			goto out;
 
-		if (sbi->mount_snapshot == 0) {
-			/* Initialize the snapshot infos */
-			ret = nova_restore_snapshot_table(sb, 1);
-			if (ret) {
-				nova_dbg("Initialize snapshot infos failed\n");
-				nova_destroy_snapshot_infos(sb);
-				goto out;
-			}
+		/* Initialize the snapshot infos */
+		ret = nova_restore_snapshot_table(sb, 1);
+		if (ret) {
+			nova_dbg("Initialize snapshot infos failed\n");
+			nova_destroy_snapshot_infos(sb);
+			goto out;
 		}
 
 		sbi->s_inodes_used_count = 0;

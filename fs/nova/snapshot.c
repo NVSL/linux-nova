@@ -779,11 +779,15 @@ fail:
 int nova_mount_snapshot(struct super_block *sb)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
-	u64 epoch_id;
+	void * snapshot = radix_tree_lookup(&sbi->snapshot_info_tree, sbi->mount_snapshot_epoch_id);
 
-	epoch_id = sbi->mount_snapshot_epoch_id;
-	nova_dbg("Mount snapshot %llu\n", epoch_id);
-	return 0;
+	if (!snapshot) {
+		nova_warn("Snapshot %llu doesn't exist", sbi->mount_snapshot_epoch_id);
+		return -EINVAL;
+	} else {
+		nova_dbg("Mount snapshot %llu\n", sbi->mount_snapshot_epoch_id);
+		return 0;
+	}
 }
 
 static int nova_free_nvmm_page(struct super_block *sb,
@@ -1309,9 +1313,6 @@ static int nova_traverse_and_delete_snapshot_infos(struct super_block *sb,
 int nova_save_snapshots(struct super_block *sb)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
-
-	if (sbi->mount_snapshot)
-		return 0;
 
 	if (sbi->snapshot_cleaner_thread)
 		kthread_stop(sbi->snapshot_cleaner_thread);

@@ -732,13 +732,6 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 		goto out;
 	}
 
-	if (sbi->mount_snapshot) {
-		retval = nova_mount_snapshot(sb);
-		if (retval) {
-			nova_err(sb, "Mount snapshot failed\n");
-			goto out;
-		}
-	}
 
 	blocksize = le32_to_cpu(sbi->nova_sb->s_blocksize);
 	nova_set_blocksize(sb, blocksize);
@@ -766,6 +759,15 @@ setup_sb:
 	 */
 	if ((sbi->s_mount_opt & NOVA_MOUNT_FORMAT) == 0)
 		nova_recovery(sb);
+
+	if (sbi->mount_snapshot) {
+		retval = nova_mount_snapshot(sb);
+		if (retval) {
+			nova_err(sb, "Mount snapshot failed\n");
+			goto out;
+		}
+	}
+
 
 	root_i = nova_iget(sb, NOVA_ROOT_INO);
 	if (IS_ERR(root_i)) {
@@ -895,6 +897,9 @@ restore_opt:
 	return ret;
 }
 
+/*
+ * Unmount the file system.
+ */
 static void nova_put_super(struct super_block *sb)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
