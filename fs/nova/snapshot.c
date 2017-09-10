@@ -1236,7 +1236,8 @@ int nova_print_snapshots(struct super_block *sb, struct seq_file *seq)
 			count++;
 		}
 		epoch_id++;
-	} while (nr_infos == FREE_BATCH);
+		
+	} while (nr_infos > 0);
 
 	seq_printf(seq, "=========== Total %d snapshots ===========\n", count);
 	return 0;
@@ -1274,7 +1275,7 @@ int nova_print_snapshot_lists(struct super_block *sb, struct seq_file *seq)
 			count++;
 		}
 		epoch_id++;
-	} while (nr_infos == FREE_BATCH);
+	} while (nr_infos > 0);
 
 	seq_printf(seq, "============= Total %d snapshots =============\n",
 			count);
@@ -1305,7 +1306,7 @@ static int nova_traverse_and_delete_snapshot_infos(struct super_block *sb,
 			nova_free_snapshot_info(info);
 		}
 		epoch_id++;
-	} while (nr_infos == FREE_BATCH);
+	} while (nr_infos > 0);
 
 	return 0;
 }
