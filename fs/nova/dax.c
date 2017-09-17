@@ -1109,7 +1109,7 @@ static int nova_dax_pfn_mkwrite(struct vm_fault *vmf)
 	if (vmf->pgoff >= size)
 		ret = VM_FAULT_SIGBUS;
 	else
-		ret = dax_pfn_mkwrite(vmf);
+		ret = dax_iomap_fault(vmf, PE_SIZE_PTE, &nova_iomap_ops_lock);
 	inode_unlock(inode);
 
 	NOVA_END_TIMING(pfn_mkwrite_t, fault_time);
