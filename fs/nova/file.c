@@ -139,6 +139,10 @@ static int nova_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 	nova_dbgv("%s: msync pgoff range %lu to %lu\n",
 			__func__, start_pgoff, end_pgoff);
 
+	inode_lock(inode);
+	inode->i_mtime = inode->i_ctime = current_time(inode);
+	inode_unlock(inode);
+
 	/*
 	 * Set csum and parity.
 	 * We do not protect data integrity during mmap, but we have to
