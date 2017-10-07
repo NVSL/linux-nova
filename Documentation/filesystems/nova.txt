@@ -215,7 +215,7 @@ Source File Structure
 FS Layout
 ======================
 
-A Nova file systems resides in single PMEM device. Nova divides the device int
+A Nova file systems resides in single PMEM device. Nova divides the device into
 4KB blocks.
 
  block
@@ -341,7 +341,7 @@ There are eight kinds of log entry, documented in log.h.  The log entries have
 several entries in common:
 
    1.  'epoch_id' gives the epoch during which the log entry was created.
-   Creating a snapshot increiments the epoch_id for the file systems.
+   Creating a snapshot increments the epoch_id for the file systems.
 
    2.  'trans_id' is filesystem-wide, monotone increasing, number assigned each
    log entry.  It provides an ordering over all FS operations.
@@ -412,6 +412,15 @@ MMap and DAX
 NOVA leverages the kernel's DAX mechanisms for mmap and file data access.  Nova
 maintains a red-black tree in DRAM (nova_inode_info_header.vma_tree) to track
 which portions of a file have been mapped.
+
+Mtime and ctime of mmaped access
+------------------------
+The mtime and ctime are updated during dax-page fault in accessing mmaped pages
+and fsync. For any data page, NOVA has control on how dax-page fault and fsync 
+are handled, but the load and store operations (from applications after the 
+page is mapped) bypass NOVA. Since the actual write-back to NVMM is ensured
+after fsync, we only update mtime and ctime for mmaped access during dax-page 
+fault and fsync.
 
 Garbage Collection
 ==================
