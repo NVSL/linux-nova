@@ -1154,6 +1154,38 @@ static const struct export_operations nova_export_ops = {
 	.get_parent	= nova_get_parent,
 };
 
+static void zsa_test1(void) {
+	struct file *file;
+	loff_t pos = 10;
+	char* name = "zta\0";
+    mm_segment_t oldfs;
+	nova_info("ZSA test1 in.\n");
+    oldfs = get_fs();
+    set_fs(get_ds());
+	file = filp_open("/dev/sda", O_WRONLY, 0644);
+	vfs_write(file, name, sizeof(char)*4, &pos);
+    set_fs(oldfs);
+	nova_info("ZSA test1 out.\n");
+}
+
+static void zsa_test2(void) {
+	struct file *file;
+	loff_t pos = 10;
+	// char* get = kzalloc(sizeof(char)*10, GFP_KERNEL);
+	char* c = kzalloc(sizeof(char)*10, GFP_KERNEL);
+    mm_segment_t oldfs;
+	nova_info("ZSA test2 in.\n");
+
+    oldfs = get_fs();
+	set_fs(get_ds());
+	file = filp_open("/dev/sda", O_RDONLY, 0644);
+	
+	vfs_read(file, c,sizeof(char)*4, &pos);
+	nova_info("ZSA test2 %s.\n",c);
+	nova_info("ZSA test2 out.\n");
+    set_fs(oldfs);
+}
+
 static int __init init_nova_fs(void)
 {
 	int rc = 0;
@@ -1164,8 +1196,12 @@ static int __init init_nova_fs(void)
 	if (arch_has_clwb())
 		support_clwb = 1;
 
+	// zsa_test1();
+
 	nova_info("Arch new instructions support: CLWB %s\n",
 			support_clwb ? "YES" : "NO");
+
+	zsa_test2();
 
 	nova_proc_root = proc_mkdir(proc_dirname, NULL);
 
