@@ -1163,6 +1163,7 @@ static void zsa_test1(void) {
     oldfs = get_fs();
     set_fs(get_ds());
 	file = filp_open("/dev/sda", O_WRONLY, 0644);
+
 	vfs_write(file, name, sizeof(char)*4, &pos);
     set_fs(oldfs);
 	nova_info("ZSA test1 out.\n");
@@ -1171,6 +1172,9 @@ static void zsa_test1(void) {
 static void zsa_test2(void) {
 	struct file *file;
 	loff_t pos = 10;
+	struct inode *blk_inode;
+	struct address_space *blk_mapping;
+	struct address_space *blk_data;
 	// char* get = kzalloc(sizeof(char)*10, GFP_KERNEL);
 	char* c = kzalloc(sizeof(char)*10, GFP_KERNEL);
     mm_segment_t oldfs;
@@ -1180,6 +1184,22 @@ static void zsa_test2(void) {
 	set_fs(get_ds());
 	file = filp_open("/dev/sda", O_RDONLY, 0644);
 	
+	blk_inode = file->f_inode;
+	nova_info("ZSA test2 mid1.\n");
+
+	nova_info("ZSA test2 i_rdev:%u, i_size:%lld.\n",blk_inode->i_rdev,blk_inode->i_size);
+
+	nova_info("ZSA test2 i_ino:%lu.\n",blk_inode->i_ino);
+	blk_mapping = blk_inode->i_mapping;
+	blk_data = &blk_inode->i_data;
+	// address space i_mapping
+	nova_info("ZSA test2 mapping: i_ino:%lu.\n",blk_mapping->host->i_ino);
+	nova_info("ZSA test2 mapping: nrpages:%lu.\n",blk_mapping->nrpages);
+
+	// address space i_data
+	nova_info("ZSA test2 data: i_ino:%lu.\n",blk_data->host->i_ino);
+	nova_info("ZSA test2 data: nrpages:%lu.\n",blk_data->nrpages);
+
 	vfs_read(file, c,sizeof(char)*4, &pos);
 	nova_info("ZSA test2 %s.\n",c);
 	nova_info("ZSA test2 out.\n");
@@ -1196,7 +1216,7 @@ static int __init init_nova_fs(void)
 	if (arch_has_clwb())
 		support_clwb = 1;
 
-	// zsa_test1();
+	zsa_test1();
 
 	nova_info("Arch new instructions support: CLWB %s\n",
 			support_clwb ? "YES" : "NO");
