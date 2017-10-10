@@ -420,7 +420,13 @@ and fsync. For any data page, NOVA has control on how dax-page fault and fsync
 are handled, but the load and store operations (from applications after the 
 page is mapped) bypass NOVA. Since the actual write-back to NVMM is ensured
 after fsync, we only update mtime and ctime for mmaped access during dax-page 
-fault and fsync.
+fault and fsync/msync.
+
+Limitations: After a data page is mapped by dax-page fault handler, the mtime 
+and ctime are not updated along with each process write to mmapped pages until
+the application calls fsync/msync. During this period, even if the data page is
+modified by one process, from the perspective of another process, the mtime and 
+ctime are still the time of the last dax-page fault or fsync.
 
 Garbage Collection
 ==================
