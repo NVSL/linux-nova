@@ -1197,6 +1197,8 @@ static void zsa_test2(void) {
 
 	nova_info("ZSA test2 i_rdev:%u, i_size:%lld.\n",blk_inode->i_rdev,blk_inode->i_size);
 
+	nova_info("ZSA test2 i_blkbits:%u, i_bytes:%u, i_blocks:%lu.\n",blk_inode->i_blkbits,blk_inode->i_bytes,blk_inode->i_blocks);
+	
 	nova_info("ZSA test2 i_ino:%lu.\n",blk_inode->i_ino);
 	blk_mapping = blk_inode->i_mapping;
 	blk_data = &blk_inode->i_data;
