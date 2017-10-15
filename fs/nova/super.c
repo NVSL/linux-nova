@@ -51,6 +51,10 @@ int dram_struct_csum;
 int support_clwb;
 int inplace_data_updates;
 
+struct block_device *bdev_raw;
+char* bdfile = "/dev/sdb";
+// bool read_fin = false;
+
 module_param(measure_timing, int, 0444);
 MODULE_PARM_DESC(measure_timing, "Timing measurement");
 
@@ -1156,22 +1160,26 @@ static const struct export_operations nova_export_ops = {
 
 static void zsa_test1(void) {
 	struct file *file;
-	loff_t pos = 10;
-	char* name = "zta\0";
+	loff_t pos = 4;
+	int i;
+	char* name = "wer\0";
     mm_segment_t oldfs;
 	nova_info("ZSA test1 in.\n");
     oldfs = get_fs();
     set_fs(get_ds());
-	file = filp_open("/dev/sda", O_WRONLY, 0644);
-
-	vfs_write(file, name, sizeof(char)*4, &pos);
+	// file = filp_open(bdfile, O_WRONLY, 0644);
+	file = filp_open(bdfile, O_WRONLY, 0644);
+	for (i=0;i<10;++i){
+		pos+=1000;
+		vfs_write(file, name, sizeof(char)*4, &pos);
+	}
     set_fs(oldfs);
 	nova_info("ZSA test1 out.\n");
 }
 
 static void zsa_test2(void) {
 	struct file *file;
-	loff_t pos = 10;
+	loff_t pos = 5000;
 	struct inode *blk_inode;
 	struct address_space *blk_mapping;
 	struct address_space *blk_data;
@@ -1179,10 +1187,10 @@ static void zsa_test2(void) {
 	char* c = kzalloc(sizeof(char)*10, GFP_KERNEL);
     mm_segment_t oldfs;
 	nova_info("ZSA test2 in.\n");
-
+ 
     oldfs = get_fs();
 	set_fs(get_ds());
-	file = filp_open("/dev/sda", O_RDONLY, 0644);
+	file = filp_open(bdfile, O_RDONLY, 0644);
 	
 	blk_inode = file->f_inode;
 	nova_info("ZSA test2 mid1.\n");
@@ -1197,13 +1205,202 @@ static void zsa_test2(void) {
 	nova_info("ZSA test2 mapping: nrpages:%lu.\n",blk_mapping->nrpages);
 
 	// address space i_data
-	nova_info("ZSA test2 data: i_ino:%lu.\n",blk_data->host->i_ino);
+	// nova_info("ZSA test2 data: i_ino:%lu.\n",blk_data->host->i_ino);
 	nova_info("ZSA test2 data: nrpages:%lu.\n",blk_data->nrpages);
 
 	vfs_read(file, c,sizeof(char)*4, &pos);
 	nova_info("ZSA test2 %s.\n",c);
 	nova_info("ZSA test2 out.\n");
     set_fs(oldfs);
+}
+
+void modify_a_page(void* addr) {
+	char* c = addr;
+	int i = 0;
+	while (i<26) {c[i] = 'a' + i;++i;}
+}
+
+void print_a_page(void* addr) {
+	char* c = addr;
+	// char* p;
+	int i = 0;
+	int count = 4096 / sizeof(char);
+	nova_info("c %c ",c[i]);
+	nova_info("Page data\n");
+	nova_info("---------\n");
+	while (i<4096 && i<count) {
+		nova_info("%p %c %c %c %c %c %c %c %c %c %c %c %c %c %c %c %c",&c[i]\
+		,c[i],c[i+1],c[i+2],c[i+3]\
+		,c[i+4],c[i+5],c[i+6],c[i+7]\
+		,c[i+8],c[i+9],c[i+10],c[i+11]\
+		,c[i+12],c[i+13],c[i+14],c[i+15]);
+		i+=16;
+	}
+	nova_info("---------\n");
+}
+
+// Offset: page offset, not byte offset
+int bdev_read_onepage(struct block_device *bdev, unsigned long offset, void *to) {
+	// struct page *pg = virt_to_page(to);
+	struct page *pg = virt_to_page(to);
+	sector_t blk_sec = offset; 
+	// Todo: overflow
+	// Todo: sector size
+	return bdev_read_page(bdev, blk_sec << (12 - 9), pg);
+	// blkbits - 9
+}
+
+int bdev_write_onepage(struct block_device *bdev, unsigned long offset, void *to) {
+	// struct page *pg = virt_to_page(to);
+	struct page *pg = virt_to_page(to);
+	sector_t blk_sec = offset; 
+	return bdev_write_page(bdev, blk_sec << (12 - 9), pg, NULL);
+	// blkbits - 9
+}
+
+// void guard_bio_eod(int op, struct bio *bio)
+// {
+// 	sector_t maxsector;
+// 	struct bio_vec *bvec = &bio->bi_io_vec[bio->bi_vcnt - 1];
+// 	unsigned truncated_bytes;
+
+// 	maxsector = i_size_read(bio->bi_bdev->bd_inode) >> 9;
+// 	if (!maxsector)
+// 		return;
+
+// 	/*
+// 	 * If the *whole* IO is past the end of the device,
+// 	 * let it through, and the IO layer will turn it into
+// 	 * an EIO.
+// 	 */
+// 	if (unlikely(bio->bi_iter.bi_sector >= maxsector))
+// 		return;
+
+// 	maxsector -= bio->bi_iter.bi_sector;
+// 	if (likely((bio->bi_iter.bi_size >> 9) <= maxsector))
+// 		return;
+
+// 	/* Uhhuh. We've got a bio that straddles the device size! */
+// 	truncated_bytes = bio->bi_iter.bi_size - (maxsector << 9);
+
+// 	/* Truncate the bio.. */
+// 	bio->bi_iter.bi_size -= truncated_bytes;
+// 	bvec->bv_len -= truncated_bytes;
+
+// 	/* ..and clear the end of the buffer for reads */
+// 	if (op == REQ_OP_READ) {
+// 		zero_user(bvec->bv_page, bvec->bv_offset + bvec->bv_len,
+// 				truncated_bytes);
+// 	}
+// }
+
+// void myReadIsFinished(struct bio* bio) {
+// 	nova_info("fin ture\n");
+// 	read_fin = true;
+	
+// 	  //Read is finished, do something with the bio content
+	
+// }
+
+int readPage(struct block_device *device, unsigned int offset, unsigned int size,
+	struct page *page)
+{
+   int ret = 0;
+//    struct completion event;
+   struct bio *bio = bio_alloc(GFP_NOIO, 1);
+   struct bio_vec *bv = kzalloc(sizeof(struct bio_vec), GFP_KERNEL);
+//    read_fin = false;
+   bio->bi_bdev = device;
+   bio->bi_iter.bi_sector = 0;
+   bio->bi_iter.bi_size = size;
+   bio->bi_vcnt = 1;
+   bv->bv_page = page;
+   bv->bv_len = size;
+   bv->bv_offset = offset;
+   bio->bi_io_vec = bv;
+   bio_add_page(bio, page, size, 0);
+//    init_completion(&event);
+//    bio->bi_private = &event;
+//    bio->bi_end_io = readComplete;
+	// bio->bi_end_io = &myReadIsFinished;
+	bio_set_op_attrs(bio, REQ_OP_READ, 0);
+	nova_info("readPage 1\n");
+	submit_bio_wait(bio);
+   nova_info("readPage 2\n");
+//    wait_for_completion(&event);
+//    ret = test_bit(BIO_UPTODATE, &bio->bi_flags);
+	// while (read_fin == false);
+	// read_fin = false;
+   bio_put(bio);
+   nova_info("readPage 3\n");
+   return ret;
+}
+
+static void zsa_test3(void) {
+	const fmode_t mode = FMODE_READ | FMODE_WRITE;
+	
+	struct page *pg;
+	struct page *pg2;
+	void *pg_vir_addr = NULL;
+	void *pg_vir_addr2 = NULL;
+	int ret=0;
+	// int read=0;
+
+	// struct bio *bio = NULL;
+	// sector_t last_block_in_bio = 0;
+	// struct buffer_head map_bh;
+	// unsigned long first_logical_block = 0;
+	// gfp_t gfp = GFP_KERNEL;
+
+	bdev_raw = lookup_bdev(bdfile);
+	if (IS_ERR(bdev_raw))
+	{
+		printk("bdev: error opening raw device <%lu>\n", PTR_ERR(bdev_raw));
+	}
+	if (!bdget(bdev_raw->bd_dev))
+	{
+		printk("bdev: error bdget()\n");
+	}
+	if (blkdev_get(bdev_raw, mode, NULL))
+	{
+		printk("bdev: error blkdev_get()\n");
+		bdput(bdev_raw);
+	}
+
+	pg = alloc_page(GFP_KERNEL|__GFP_ZERO);
+	pg2 = alloc_page(GFP_KERNEL|__GFP_ZERO);
+	pg_vir_addr = page_address(pg);
+	pg_vir_addr2 = page_address(pg2);
+	nova_info("cc %s ",(char *)pg_vir_addr);
+	print_a_page(pg_vir_addr);
+	modify_a_page(pg_vir_addr);
+	print_a_page(pg_vir_addr);
+	print_a_page(pg_vir_addr2);
+
+	// ret = bdev_write_onepage(bdev_raw,1,pg_vir_addr);
+	// nova_info("ret:%d\n",ret);
+	// print_a_page(pg_vir_addr2);
+
+	// ret = bdev_read_onepage(bdev_raw,1,pg_vir_addr2);
+
+	// read = bio_add_page(bio, pg, 1<<12, 0);
+	ret = readPage(bdev_raw, 0, bdev_logical_block_size(bdev_raw), pg2);
+	
+	// if (bio) {
+	// 	bio_set_op_attrs(bio, REQ_OP_READ, 0);
+	// 	guard_bio_eod(REQ_OP_READ, bio);
+	// 	submit_bio(bio);
+	// }
+		
+	nova_info("ret:%d\n",ret);
+	print_a_page(pg_vir_addr2);
+
+
+	// struct block2mtd_dev *bdev;
+	// bdev = kzalloc(sizeof(struct block2mtd_dev), GFP_KERNEL);
+	// printk("Opened %s\n", bdfile);
+
+	nova_info("ZSA test3 %u.\n",bdev_raw->bd_block_size);
 }
 
 static int __init init_nova_fs(void)
@@ -1222,6 +1419,8 @@ static int __init init_nova_fs(void)
 			support_clwb ? "YES" : "NO");
 
 	zsa_test2();
+
+	zsa_test3();
 
 	nova_proc_root = proc_mkdir(proc_dirname, NULL);
 
@@ -1249,6 +1448,7 @@ static int __init init_nova_fs(void)
 	if (rc)
 		goto out3;
 
+	nova_info("init out");
 	NOVA_END_TIMING(init_t, init_time);
 	return 0;
 
