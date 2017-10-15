@@ -1227,12 +1227,12 @@ int modify_a_page(void* addr, int key) {
 	char* c = addr;
 	int i = 0;
 	char* word = kmalloc(26*sizeof(char)*5+1,GFP_KERNEL);
-	while (i<26*3) {
+	while (i<26*5) {
 		word[i]='A'+i%26;
 		i++;
 	}
 	for (i=0;i<64;++i) {
-		strncat(c+i*64,&word[key],64);
+		strncat(c+i*64,&word[key+i%26],64);
 	}
 	if (i<64) return -1;
 	return 0;
@@ -1277,6 +1277,43 @@ int bdev_write_onepage(struct block_device *bdev, unsigned long offset, void *to
 	sector_t blk_sec = offset; 
 	return bdev_write_page(bdev, blk_sec << (12 - 9), pg, NULL);
 	// blkbits - 9
+}
+
+int writePage(struct block_device *device, unsigned int offset, unsigned int size,
+	struct page *page)
+{
+   int ret = 0;
+//    struct completion event;
+   struct bio *bio = bio_alloc(GFP_NOIO, 1);
+   struct bio_vec *bv = kzalloc(sizeof(struct bio_vec), GFP_KERNEL);
+   nova_info("size: %u\n",size);
+//    read_fin = false;
+   bio->bi_bdev = device;
+   bio->bi_iter.bi_sector = 0;
+   bio->bi_iter.bi_size = size;
+   bio->bi_vcnt = 1;
+   bv->bv_page = page;
+   bv->bv_len = size;
+   bv->bv_offset = offset;
+   bio->bi_io_vec = bv;
+//    bio_add_page(bio, page, size, 0);
+//    init_completion(&event);
+//    bio->bi_private = &event;
+//    bio->bi_end_io = readComplete;
+	// bio->bi_end_io = &myReadIsFinished;
+	bio_set_op_attrs(bio, REQ_OP_WRITE, 0);
+	nova_info("writePage 1\n");
+	// This is synchronized bio. 
+	// Call submit_bio for asynchronized bio.
+	submit_bio_wait(bio);
+   nova_info("writePage 2\n");
+//    wait_for_completion(&event);
+//    ret = test_bit(BIO_UPTODATE, &bio->bi_flags);
+	// while (read_fin == false);
+	// read_fin = false;
+   bio_put(bio);
+   nova_info("writePage 3\n");
+   return ret;
 }
 
 int readPage(struct block_device *device, unsigned int offset, unsigned int size,
@@ -1357,6 +1394,7 @@ static void zsa_test3(void) {
 	print_a_page(pg_vir_addr);
 	print_a_page(pg_vir_addr2);
 
+	ret = writePage(bdev_raw, 0, bdev_logical_block_size(bdev_raw), pg);
 	// ret = bdev_write_onepage(bdev_raw,1,pg_vir_addr);
 	// nova_info("ret:%d\n",ret);
 	// print_a_page(pg_vir_addr2);
