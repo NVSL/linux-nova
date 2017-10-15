@@ -1240,16 +1240,20 @@ int modify_a_page(void* addr, int key) {
 
 void print_a_page(void* addr) {
 	char* c = addr;
-	int wordline = 64;
+	int wordline = 128;
 	char* p = kmalloc(wordline*sizeof(char)+1,GFP_KERNEL);
 	int i = 0;
-	int count = 4096 / sizeof(char);
+	int j = 0;
+	char space = ' ';
 	p[wordline]='\0';
 	nova_info("Page data (Start with: %c)\n",c[i]);
 	nova_info("----------------\n");
-	while (i<4096 && i<count) {
+	while (i<4096) {
 		p[0]='\0';
-		strncat(p,c+i,wordline);
+		for (j=0;j<wordline;j+=32) {
+			strncat(p,c+i+j,32);
+			strcat(p,&space);
+		}
 		nova_info("%p %s\n",addr+i,p);
 		i+=wordline;
 	}
