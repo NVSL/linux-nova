@@ -1,6 +1,6 @@
 #include "nova.h"
 
-
+#define SECTOR_SIZE_BIT 9
 #define IO_BLOCK_SIZE_BIT 12
 #define IO_BLOCK_SIZE 4096
 #define VFS_IO_TEST 0
@@ -28,8 +28,13 @@ char* find_a_raw_bdev(void) {
 void print_a_bdev(char *bdfile) {
 	struct block_device *bdev_raw = lookup_bdev(bdfile);
 	struct gendisk*	bd_disk = bdev_raw->bd_disk;
-	
-	nova_info("size: %lu\n",get_capacity(bd_disk));
+	unsigned long nsector = get_capacity(bd_disk);
+	nova_info("----------------\n");
+	nova_info("New block device: %s\n", bdfile);
+	nova_info("Major: %d Minor: %d\n", bd_disk->major ,bd_disk->minors);
+	nova_info("Size: %lu sectors (%luMB)\n",nsector,nsector/2048);
+	nova_info("Disk name: %s\n", bd_disk->disk_name);
+	nova_info("----------------\n");
 }
 
 // VFS write to disk
@@ -100,9 +105,10 @@ static void vfs_read_test(void) {
 
 // Key: the first character
 // 0 = A | 1 = B | ... | 25 = Z
-int modify_a_page(void* addr, int key) {
+int modify_a_page(void* addr, int keychar) {
 	char* c = addr;
 	int i = 0;
+	int key = keychar - 'A';
 	char* word = kmalloc(26*sizeof(char)*5+1,GFP_KERNEL);
 	while (i<26*5) {
 		word[i]='A'+i%26;
@@ -203,7 +209,13 @@ void bdev_test(void) {
     nova_info("Block device test in.\n");
     
 	bdfile = find_a_raw_bdev();
-	nova_info("Find raw block device: %s\n",bdfile);
+	if (unlikely(!bdfile)) {
+		nova_info("Raw block device not found\n");
+		return;
+	}
+	nova_info("Found raw block device: %s\n",bdfile);
+
+	print_a_bdev(bdfile);
 
 	bdev_raw = lookup_bdev(bdfile);
 	if (IS_ERR(bdev_raw))
@@ -224,9 +236,9 @@ void bdev_test(void) {
 	pg2 = alloc_page(GFP_KERNEL|__GFP_ZERO);
 	pg_vir_addr = page_address(pg);
 	pg_vir_addr2 = page_address(pg2);
-	nova_info("cc %s ",(char *)pg_vir_addr);
+	
 	print_a_page(pg_vir_addr);
-	modify_a_page(pg_vir_addr,9);
+	modify_a_page(pg_vir_addr,'E');
 	print_a_page(pg_vir_addr);
 	print_a_page(pg_vir_addr2);
 
