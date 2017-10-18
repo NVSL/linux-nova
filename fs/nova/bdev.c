@@ -25,6 +25,13 @@ char* find_a_raw_bdev(void) {
 	return NULL;
 }
 
+void print_a_bdev(char *bdfile) {
+	struct block_device *bdev_raw = lookup_bdev(bdfile);
+	struct gendisk*	bd_disk = bdev_raw->bd_disk;
+	
+	nova_info("size: %lu\n",get_capacity(bd_disk));
+}
+
 // VFS write to disk
 static void vfs_write_test(void) {
 	struct file *file;
@@ -196,7 +203,7 @@ void bdev_test(void) {
     nova_info("Block device test in.\n");
     
 	bdfile = find_a_raw_bdev();
-	nova_info("Find raw block device: %s\n",bdev);
+	nova_info("Find raw block device: %s\n",bdfile);
 
 	bdev_raw = lookup_bdev(bdfile);
 	if (IS_ERR(bdev_raw))
@@ -211,9 +218,7 @@ void bdev_test(void) {
 	{
 		printk("bdev: error blkdev_get()\n");
 		bdput(bdev_raw);
-	}
-	
-	nova_info("size: %u\n",bdev_raw->bd_block_size);
+	}	
 
 	pg = alloc_page(GFP_KERNEL|__GFP_ZERO);
 	pg2 = alloc_page(GFP_KERNEL|__GFP_ZERO);
