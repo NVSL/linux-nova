@@ -1,11 +1,11 @@
 #include "nova.h"
 
-struct block_device *bdev_raw;
-char* bdfile = "/dev/sda";
+
 #define IO_BLOCK_SIZE_BIT 12
 #define IO_BLOCK_SIZE 4096
 #define VFS_IO_TEST 0
 
+// This function is used for a raw block device lookup in /dev
 char* find_a_raw_bdev(void) {
 	struct file *fp;
 	char* bdev = kzalloc(20*sizeof(char),GFP_KERNEL);
@@ -38,8 +38,7 @@ static void vfs_write_test(void) {
 	nova_info("vfs write test in %lu.\n",sizeof(char));
     oldfs = get_fs();
     set_fs(get_ds());
-	// file = filp_open(bdfile, O_WRONLY, 0644);
-	file = filp_open(bdfile, O_WRONLY, 0644);
+	file = filp_open("/dev/sda", O_WRONLY, 0644);
 	for (i=0;i<10000;++i){
 		name[2]='a'+i%26;
 		pos+=16;
@@ -65,7 +64,7 @@ static void vfs_read_test(void) {
  
     oldfs = get_fs();
 	set_fs(get_ds());
-	file = filp_open(bdfile, O_RDONLY, 0644);
+	file = filp_open("/dev/sda", O_RDONLY, 0644);
 	
 	blk_inode = file->f_inode;
 	nova_info("vfs read test mid1.\n");
@@ -184,6 +183,7 @@ int nova_bdev_read_byte(struct block_device *device, unsigned int offset,
 }
 
 void bdev_test(void) {
+	struct block_device *bdev_raw;
 	const fmode_t mode = FMODE_READ | FMODE_WRITE;
 	
 	struct page *pg;
@@ -191,13 +191,12 @@ void bdev_test(void) {
 	void *pg_vir_addr = NULL;
 	void *pg_vir_addr2 = NULL;
 	int ret=0;
-	char *bdev;
+	char *bdfile;
 
     nova_info("Block device test in.\n");
     
-	bdev = find_a_raw_bdev();
-	nova_info("%s\n",bdev);
-	return;
+	bdfile = find_a_raw_bdev();
+	nova_info("Find raw block device: %s\n",bdev);
 
 	bdev_raw = lookup_bdev(bdfile);
 	if (IS_ERR(bdev_raw))
@@ -213,6 +212,8 @@ void bdev_test(void) {
 		printk("bdev: error blkdev_get()\n");
 		bdput(bdev_raw);
 	}
+	
+	nova_info("size: %u\n",bdev_raw->bd_block_size);
 
 	pg = alloc_page(GFP_KERNEL|__GFP_ZERO);
 	pg2 = alloc_page(GFP_KERNEL|__GFP_ZERO);
