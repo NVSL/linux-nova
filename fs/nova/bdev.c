@@ -6,6 +6,25 @@ char* bdfile = "/dev/sda";
 #define IO_BLOCK_SIZE 4096
 #define VFS_IO_TEST 0
 
+char* find_a_raw_bdev(void) {
+	struct file *fp;
+	char* bdev = kzalloc(20*sizeof(char),GFP_KERNEL);
+		
+	fp = filp_open("/dev/sda1", O_RDONLY, 0644);
+	if(fp == (struct file *)-ENOENT) {
+		strcat(bdev, "/dev/sda\0");
+		nova_info("sda\n");
+		return bdev;
+	}
+	fp = filp_open("/dev/sdb1", O_RDONLY, 0644);
+	if(fp == (struct file *)-ENOENT) {
+		strcat(bdev, "/dev/sdb\0");
+		nova_info("sdb\n");
+		return bdev;
+	}
+	return NULL;
+}
+
 // VFS write to disk
 static void vfs_write_test(void) {
 	struct file *file;
@@ -172,9 +191,14 @@ void bdev_test(void) {
 	void *pg_vir_addr = NULL;
 	void *pg_vir_addr2 = NULL;
 	int ret=0;
+	char *bdev;
 
     nova_info("Block device test in.\n");
     
+	bdev = find_a_raw_bdev();
+	nova_info("%s\n",bdev);
+	return;
+
 	bdev_raw = lookup_bdev(bdfile);
 	if (IS_ERR(bdev_raw))
 	{
