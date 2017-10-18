@@ -246,7 +246,7 @@ void bdev_test(void) {
 	pg_vir_addr2 = page_address(pg2);
 	
 	print_a_page(pg_vir_addr);
-	modify_a_page(pg_vir_addr,'I');
+	modify_a_page(pg_vir_addr,'Q');
 	print_a_page(pg_vir_addr);
 	print_a_page(pg_vir_addr2);
 
@@ -265,7 +265,7 @@ void bdev_test(void) {
 	// Page read
 	for (i=0;i<nsector/8;++i) {
 		if (i>2&&i<nsector/8-2) continue;
-		ret = nova_bdev_read_byte(bdev_raw, 2*IO_BLOCK_SIZE, IO_BLOCK_SIZE, pg2, 0);
+		ret = nova_bdev_read_byte(bdev_raw, i*IO_BLOCK_SIZE, IO_BLOCK_SIZE, pg2, 0);
 		nova_info("[Block %d]\n",i);
 		print_a_page(pg_vir_addr2);
 	}
