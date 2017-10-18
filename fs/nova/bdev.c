@@ -5,6 +5,7 @@
 #define IO_BLOCK_SIZE 4096
 #define VFS_IO_TEST 0
 
+
 // This function is used for a raw block device lookup in /dev
 char* find_a_raw_bdev(void) {
 	struct file *fp;
@@ -25,12 +26,11 @@ char* find_a_raw_bdev(void) {
 	return NULL;
 }
 
-void print_a_bdev(char *bdfile) {
-	struct block_device *bdev_raw = lookup_bdev(bdfile);
+void print_a_bdev(struct block_device *bdev_raw) {
 	struct gendisk*	bd_disk = bdev_raw->bd_disk;
 	unsigned long nsector = get_capacity(bd_disk);
 	nova_info("----------------\n");
-	nova_info("New block device: %s\n", bdfile);
+	nova_info("[New block device]\n");
 	nova_info("Major: %d Minor: %d\n", bd_disk->major ,bd_disk->minors);
 	nova_info("Size: %lu sectors (%luMB)\n",nsector,nsector/2048);
 	nova_info("Disk name: %s\n", bd_disk->disk_name);
@@ -131,7 +131,7 @@ void print_a_page(void* addr) {
 	int j = 0;
 	char space = ' ';
 	p[wordline]='\0';
-	nova_info("Page data (Start with: %c)\n",c[i]);
+	nova_info("[Page data] (Start with: %c)\n",c[i]);
 	nova_info("----------------\n");
 	while (i<IO_BLOCK_SIZE) {
 		p[0]='\0';
@@ -145,19 +145,19 @@ void print_a_page(void* addr) {
 	nova_info("----------------\n");
 }
 
-int nova_bdev_write_byte(struct block_device *device, unsigned int offset,
-	unsigned int size, struct page *page) {
+int nova_bdev_write_byte(struct block_device *device, unsigned long offset,
+	unsigned long size, struct page *page, unsigned long page_offset) {
    	int ret = 0;
 	struct bio *bio = bio_alloc(GFP_NOIO, 1);
 	struct bio_vec *bv = kzalloc(sizeof(struct bio_vec), GFP_KERNEL);
-	nova_info("size: %u\n",size);
+	nova_info("size: %lu\n",size);
 	bio->bi_bdev = device;
-	bio->bi_iter.bi_sector = 0;
+	bio->bi_iter.bi_sector = offset >> 9;
 	bio->bi_iter.bi_size = size;
 	bio->bi_vcnt = 1;
 	bv->bv_page = page;
 	bv->bv_len = size;
-	bv->bv_offset = offset;
+	bv->bv_offset = page_offset;
 	bio->bi_io_vec = bv;
 	bio_set_op_attrs(bio, REQ_OP_WRITE, 0);
 	nova_info("writePage 1\n");
@@ -170,19 +170,20 @@ int nova_bdev_write_byte(struct block_device *device, unsigned int offset,
 	return ret;
 }
 
-int nova_bdev_read_byte(struct block_device *device, unsigned int offset,
-	unsigned int size, struct page *page) {
+int nova_bdev_read_byte(struct block_device *device, unsigned long offset,
+	unsigned long size, struct page *page, unsigned long page_offset) {
 	int ret = 0;
 	struct bio *bio = bio_alloc(GFP_NOIO, 1);
 	struct bio_vec *bv = kzalloc(sizeof(struct bio_vec), GFP_KERNEL);
-	nova_info("size: %u\n",size);
+	nova_info("size: %lu\n",size);
+	// bio is about block and bv is about page
 	bio->bi_bdev = device;
-	bio->bi_iter.bi_sector = 0;
+	bio->bi_iter.bi_sector = offset >> 9;
 	bio->bi_iter.bi_size = size;
 	bio->bi_vcnt = 1;
 	bv->bv_page = page;
 	bv->bv_len = size;
-	bv->bv_offset = offset;
+	bv->bv_offset = page_offset;
 	bio->bi_io_vec = bv;
 	bio_set_op_attrs(bio, REQ_OP_READ, 0);
 	nova_info("readPage 1\n");
@@ -204,7 +205,11 @@ void bdev_test(void) {
 	void *pg_vir_addr = NULL;
 	void *pg_vir_addr2 = NULL;
 	int ret=0;
+	int i=0;
+
 	char *bdfile;
+	struct gendisk*	bd_disk;
+	unsigned long nsector;
 
     nova_info("Block device test in.\n");
     
@@ -215,7 +220,6 @@ void bdev_test(void) {
 	}
 	nova_info("Found raw block device: %s\n",bdfile);
 
-	print_a_bdev(bdfile);
 
 	bdev_raw = lookup_bdev(bdfile);
 	if (IS_ERR(bdev_raw))
@@ -232,13 +236,17 @@ void bdev_test(void) {
 		bdput(bdev_raw);
 	}	
 
+	print_a_bdev(bdev_raw);
+	bd_disk = bdev_raw->bd_disk;
+	nsector = get_capacity(bd_disk);
+
 	pg = alloc_page(GFP_KERNEL|__GFP_ZERO);
 	pg2 = alloc_page(GFP_KERNEL|__GFP_ZERO);
 	pg_vir_addr = page_address(pg);
 	pg_vir_addr2 = page_address(pg2);
 	
 	print_a_page(pg_vir_addr);
-	modify_a_page(pg_vir_addr,'E');
+	modify_a_page(pg_vir_addr,'I');
 	print_a_page(pg_vir_addr);
 	print_a_page(pg_vir_addr2);
 
@@ -253,15 +261,14 @@ void bdev_test(void) {
 	// ret = readPage(bdev_raw, 0, bdev_logical_block_size(bdev_raw), pg2);
 
 	// Page write
-	ret = nova_bdev_write_byte(bdev_raw, 0, IO_BLOCK_SIZE, pg);
+	ret = nova_bdev_write_byte(bdev_raw, 1*IO_BLOCK_SIZE, IO_BLOCK_SIZE, pg, 0);
 	// Page read
-	ret = nova_bdev_read_byte(bdev_raw, 0, IO_BLOCK_SIZE, pg2);
+	for (i=0;i<nsector/8;++i) {
+		if (i>2&&i<nsector/8-2) continue;
+		ret = nova_bdev_read_byte(bdev_raw, 2*IO_BLOCK_SIZE, IO_BLOCK_SIZE, pg2, 0);
+		nova_info("[Block %d]\n",i);
+		print_a_page(pg_vir_addr2);
+	}
 	
-	// vfs_write_test(void);
-	// vfs_read_test(void);
-
-	nova_info("ret:%d\n",ret);
-	print_a_page(pg_vir_addr2);
-
 	nova_info("Block device test out %u.\n",bdev_raw->bd_block_size);
 }
