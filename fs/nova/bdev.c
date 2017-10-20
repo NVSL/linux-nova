@@ -1,10 +1,13 @@
 #include "nova.h"
+#include "bdev.h"
 
 #define SECTOR_SIZE_BIT 9
 #define IO_BLOCK_SIZE_BIT 12
 #define IO_BLOCK_SIZE 4096
 #define VFS_IO_TEST 0
 
+#define BIO_ASYNC 0
+#define BIO_SYNC 1
 
 // This function is used for a raw block device lookup in /dev
 char* find_a_raw_bdev(void) {
@@ -26,14 +29,15 @@ char* find_a_raw_bdev(void) {
 	return NULL;
 }
 
-void print_a_bdev(struct block_device *bdev_raw) {
-	struct gendisk*	bd_disk = bdev_raw->bd_disk;
-	unsigned long nsector = get_capacity(bd_disk);
+void print_a_bdev(struct nova_sb_info *sbi) {
+	struct bdev_info* bdi = sbi->bdev_list;
+	
 	nova_info("----------------\n");
 	nova_info("[New block device]\n");
-	nova_info("Major: %d Minor: %d\n", bd_disk->major ,bd_disk->minors);
-	nova_info("Size: %lu sectors (%luMB)\n",nsector,nsector/2048);
-	nova_info("Disk name: %s\n", bd_disk->disk_name);
+	nova_info("Disk path: %s\n", bdi->bdev_path);
+	nova_info("Disk name: %s\n", bdi->bdev_name);
+	nova_info("Major: %d Minor: %d\n", bdi->major ,bdi->minors);
+	nova_info("Size: %lu sectors (%luMB)\n",bdi->capacity_sector,bdi->capacity_page);
 	nova_info("----------------\n");
 }
 
@@ -146,7 +150,7 @@ void print_a_page(void* addr) {
 }
 
 int nova_bdev_write_byte(struct block_device *device, unsigned long offset,
-	unsigned long size, struct page *page, unsigned long page_offset) {
+	unsigned long size, struct page *page, unsigned long page_offset, bool sync) {
    	int ret = 0;
 	struct bio *bio = bio_alloc(GFP_NOIO, 1);
 	struct bio_vec *bv = kzalloc(sizeof(struct bio_vec), GFP_KERNEL);
@@ -161,17 +165,22 @@ int nova_bdev_write_byte(struct block_device *device, unsigned long offset,
 	bio->bi_io_vec = bv;
 	bio_set_op_attrs(bio, REQ_OP_WRITE, 0);
 	nova_info("writePage 1\n");
-	// This is synchronized bio. 
-	// Call submit_bio for asynchronized bio.
-	submit_bio_wait(bio);
+	if (sync) submit_bio_wait(bio);
+	else submit_bio(bio);
    	nova_info("writePage 2\n");
 	bio_put(bio);
 	nova_info("writePage 3\n");
 	return ret;
 }
 
+int nova_bdev_write_block(struct block_device *device, unsigned long offset,
+	unsigned long size, struct page *page, bool sync) {
+	return nova_bdev_write_byte(device,offset<<IO_BLOCK_SIZE_BIT,
+		size<<IO_BLOCK_SIZE_BIT, page, 0, sync);
+}
+
 int nova_bdev_read_byte(struct block_device *device, unsigned long offset,
-	unsigned long size, struct page *page, unsigned long page_offset) {
+	unsigned long size, struct page *page, unsigned long page_offset, bool sync) {
 	int ret = 0;
 	struct bio *bio = bio_alloc(GFP_NOIO, 1);
 	struct bio_vec *bv = kzalloc(sizeof(struct bio_vec), GFP_KERNEL);
@@ -187,18 +196,24 @@ int nova_bdev_read_byte(struct block_device *device, unsigned long offset,
 	bio->bi_io_vec = bv;
 	bio_set_op_attrs(bio, REQ_OP_READ, 0);
 	nova_info("readPage 1\n");
-	// This is synchronized bio. 
-	// Call submit_bio for asynchronized bio.
-	submit_bio_wait(bio);
+	if (sync==BIO_SYNC)	submit_bio_wait(bio);
+	else submit_bio(bio);
 	nova_info("readPage 2\n");
 	bio_put(bio);
 	nova_info("readPage 3\n");
 	return ret;
 }
 
-void bdev_test(void) {
-	struct block_device *bdev_raw;
-	const fmode_t mode = FMODE_READ | FMODE_WRITE;
+int nova_bdev_read_block(struct block_device *device, unsigned long offset,
+	unsigned long size, struct page *page, bool sync) {
+	return nova_bdev_read_byte(device,offset<<IO_BLOCK_SIZE_BIT,
+		size<<IO_BLOCK_SIZE_BIT, page, 0, sync);
+}
+
+// bool
+
+void bdev_test(struct nova_sb_info *sbi) {
+	struct block_device *bdev_raw = sbi->bdev_list->bdev_raw;
 	
 	struct page *pg;
 	struct page *pg2;
@@ -207,38 +222,11 @@ void bdev_test(void) {
 	int ret=0;
 	int i=0;
 
-	char *bdfile;
-	struct gendisk*	bd_disk;
-	unsigned long nsector;
+	unsigned long capacity_page = sbi->bdev_list->capacity_page;
 
     nova_info("Block device test in.\n");
     
-	bdfile = find_a_raw_bdev();
-	if (unlikely(!bdfile)) {
-		nova_info("Raw block device not found\n");
-		return;
-	}
-	nova_info("Found raw block device: %s\n",bdfile);
-
-
-	bdev_raw = lookup_bdev(bdfile);
-	if (IS_ERR(bdev_raw))
-	{
-		printk("bdev: error opening raw device <%lu>\n", PTR_ERR(bdev_raw));
-	}
-	if (!bdget(bdev_raw->bd_dev))
-	{
-		printk("bdev: error bdget()\n");
-	}
-	if (blkdev_get(bdev_raw, mode, NULL))
-	{
-		printk("bdev: error blkdev_get()\n");
-		bdput(bdev_raw);
-	}	
-
-	print_a_bdev(bdev_raw);
-	bd_disk = bdev_raw->bd_disk;
-	nsector = get_capacity(bd_disk);
+	print_a_bdev(sbi);
 
 	pg = alloc_page(GFP_KERNEL|__GFP_ZERO);
 	pg2 = alloc_page(GFP_KERNEL|__GFP_ZERO);
@@ -261,11 +249,11 @@ void bdev_test(void) {
 	// ret = readPage(bdev_raw, 0, bdev_logical_block_size(bdev_raw), pg2);
 
 	// Page write
-	ret = nova_bdev_write_byte(bdev_raw, 1*IO_BLOCK_SIZE, IO_BLOCK_SIZE, pg, 0);
+	ret = nova_bdev_write_block(bdev_raw, 1, 1, pg, BIO_SYNC);
 	// Page read
-	for (i=0;i<nsector/8;++i) {
-		if (i>2&&i<nsector/8-2) continue;
-		ret = nova_bdev_read_byte(bdev_raw, i*IO_BLOCK_SIZE, IO_BLOCK_SIZE, pg2, 0);
+	for (i=0;i<capacity_page;++i) {
+		if (i>2&&i<capacity_page-2) continue;
+		ret = nova_bdev_read_block(bdev_raw, i, 1, pg2, BIO_SYNC);
 		nova_info("[Block %d]\n",i);
 		print_a_page(pg_vir_addr2);
 	}

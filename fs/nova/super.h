@@ -86,7 +86,6 @@ struct nova_super_block {
 #define NOVA_NORMAL_INODE_START      (32)
 
 
-
 /*
  * NOVA super-block data in DRAM
  */
@@ -160,6 +159,9 @@ struct nova_sb_info {
 	/* Checksum and parity for zero block */
 	u32 zero_csum[8];
 	void *zero_parity;
+
+	/* NOVA-tiering */
+	struct bdev_info *bdev_list;
 
 	/* Per-CPU journal lock */
 	spinlock_t *journal_locks;
