@@ -212,8 +212,8 @@ static int nova_get_bdev_info(struct nova_sb_info *sbi){
 	sbi->bdev_list->major = bd_disk->major;
 	sbi->bdev_list->minors = bd_disk->minors;
 	sbi->bdev_list->capacity_sector = nsector;
-	sbi->bdev_list->capacity_page = nsector/2048;
-	strcat(sbi->bdev_list->bdev_path,bd_disk->disk_name);
+	sbi->bdev_list->capacity_page = nsector>>3;
+	strcat(sbi->bdev_list->bdev_name,bd_disk->disk_name);
 	nova_info("nova_get_bdev_info out\n");
 
 	return 0;
