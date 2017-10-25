@@ -79,7 +79,7 @@ gate_desc debug_idt_table[NR_VECTORS] __page_aligned_bss;
 #include <asm/proto.h>
 #endif
 
-bool (*custom_general_protection_handler)(struct pt_regs *, unsigned long, unsigned long)=0;
+bool (*custom_general_protection_handler)(struct pt_regs *, long)=0;
 
 bool install_custom_general_protection_handler(bool (*fn)(struct pt_regs *, long))
 {
