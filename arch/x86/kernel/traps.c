@@ -79,6 +79,15 @@ gate_desc debug_idt_table[NR_VECTORS] __page_aligned_bss;
 #include <asm/proto.h>
 #endif
 
+bool (*custom_general_protection_handler)(struct pt_regs *, unsigned long, unsigned long)=0;
+
+bool install_custom_general_protection_handler(bool (*fn)(struct pt_regs *, long))
+{
+        custom_general_protection_handler = fn;
+        return true;
+}
+EXPORT_SYMBOL(install_custom_general_protection_handler);
+
 /* Must be page-aligned because the real IDT is used in a fixmap. */
 gate_desc idt_table[NR_VECTORS] __page_aligned_bss;
 
@@ -522,6 +531,10 @@ dotraplinkage void
 do_general_protection(struct pt_regs *regs, long error_code)
 {
 	struct task_struct *tsk;
+
+	if(custom_general_protection_handler)
+		if(custom_general_protection_handler(regs, error_code)) return;
+
 
 	RCU_LOCKDEP_WARN(!rcu_is_watching(), "entry code didn't wake RCU");
 	cond_local_irq_enable(regs);

@@ -28,6 +28,17 @@
 #define CREATE_TRACE_POINTS
 #include <asm/trace/exceptions.h>
 
+//struct pt_regs *regs, unsigned long error_code, unsigned long address
+
+bool (*custom_page_fault_handler)(struct pt_regs *, unsigned long, unsigned long)=0;
+
+bool install_custom_page_fault_handler(bool (*fn)(struct pt_regs *, unsigned long, unsigned long))
+{
+	custom_page_fault_handler = fn;
+        return true;
+}
+EXPORT_SYMBOL(install_custom_page_fault_handler);
+
 /*
  * Page fault error code bits:
  *
@@ -1268,6 +1279,10 @@ __do_page_fault(struct pt_regs *regs, unsigned long error_code,
 	struct mm_struct *mm;
 	int fault, major = 0;
 	unsigned int flags = FAULT_FLAG_ALLOW_RETRY | FAULT_FLAG_KILLABLE;
+
+	if(custom_page_fault_handler) 
+		if(custom_page_fault_handler(regs, error_code, address))
+			return;
 
 	tsk = current;
 	mm = tsk->mm;

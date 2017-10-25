@@ -7,6 +7,14 @@
 #include <asm/debugreg.h>
 #include <asm/siginfo.h>			/* TRAP_TRACE, ... */
 
+extern bool install_custom_page_fault_handler(
+    bool (*fn)(struct pt_regs *, unsigned long, unsigned long)
+);
+
+extern bool install_custom_general_protection_handler(
+    bool (*fn)(struct pt_regs *, long)
+);
+
 #define dotraplinkage __visible
 
 asmlinkage void divide_error(void);
