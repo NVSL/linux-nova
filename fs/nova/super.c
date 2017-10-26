@@ -169,11 +169,6 @@ static int nova_get_nvmm_info(struct super_block *sb,
 	return 0;
 }
 
-// TODO: Link with mount option
-static char *find_block_devices(void) {
-	return find_a_raw_bdev();
-}
-
 // TODO: more than one block device
 static int nova_get_bdev_info(struct nova_sb_info *sbi, char *bdev_path){
 	struct block_device *bdev_raw;
@@ -331,9 +326,8 @@ static int nova_parse_options(char *options, struct nova_sb_info *sbi,
 			break;
 		case Opt_bdev: 
 			bdev_paths[bdev_count] = match_strdup(args);
-			if (!p) {
-				ret = -ENOMEM;
-				goto out;
+			if (!bdev_paths[bdev_count]) {
+				goto bad_opt;
 			}
 			nova_info("NOVA: Tier %d is set to %s\n", bdev_count+2, bdev_paths[bdev_count]);
 			bdev_count++;
