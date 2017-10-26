@@ -175,9 +175,8 @@ static char *find_block_devices(void) {
 }
 
 // TODO: more than one block device
-static int nova_get_bdev_info(struct nova_sb_info *sbi){
+static int nova_get_bdev_info(struct nova_sb_info *sbi, char *bdev_path){
 	struct block_device *bdev_raw;
-	char *bdev_path = NULL;
 
 	struct gendisk*	bd_disk = NULL;
 	unsigned long nsector;
@@ -186,7 +185,6 @@ static int nova_get_bdev_info(struct nova_sb_info *sbi){
 	
 	sbi->bdev_list = kzalloc(sizeof(struct bdev_info), GFP_KERNEL);	
 	if (!sbi->bdev_list) return -ENOMEM;
-	bdev_path = find_block_devices();
 	if (!bdev_path) return -ENOENT;
 
 	bdev_raw = lookup_bdev(bdev_path);
@@ -234,7 +232,7 @@ static loff_t nova_max_size(int bits)
 
 enum {
 	Opt_bpi, Opt_init, Opt_snapshot, Opt_mode, Opt_uid,
-	Opt_gid, Opt_blocksize, Opt_wprotect,
+	Opt_gid, Opt_blocksize, Opt_wprotect, Opt_bdev, 
 	Opt_err_cont, Opt_err_panic, Opt_err_ro,
 	Opt_dbgmask, Opt_err
 };
@@ -247,6 +245,7 @@ static const match_table_t tokens = {
 	{ Opt_uid,	     "uid=%u"		  },
 	{ Opt_gid,	     "gid=%u"		  },
 	{ Opt_wprotect,	     "wprotect"		  },
+	{ Opt_bdev,	     "bdev=%s"		  },
 	{ Opt_err_cont,	     "errors=continue"	  },
 	{ Opt_err_panic,     "errors=panic"	  },
 	{ Opt_err_ro,	     "errors=remount-ro"  },
@@ -329,6 +328,15 @@ static int nova_parse_options(char *options, struct nova_sb_info *sbi,
 				goto bad_opt;
 			set_opt(sbi->s_mount_opt, PROTECT);
 			nova_info("NOVA: Enabling new Write Protection (CR0.WP)\n");
+			break;
+		case Opt_bdev: 
+			bdev_paths[bdev_count] = match_strdup(args);
+			if (!p) {
+				ret = -ENOMEM;
+				goto out;
+			}
+			nova_info("NOVA: Tier %d is set to %s\n", bdev_count+2, bdev_paths[bdev_count]);
+			bdev_count++;
 			break;
 		case Opt_dbgmask:
 			if (match_int(&args[0], &option))
@@ -633,7 +641,7 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 	size_t strp_size = NOVA_STRIPE_SIZE;
 	u32 random = 0;
 	int retval = -EINVAL;
-	int i;
+	int i, iretval = -EINVAL;
 	timing_t mount_time;
 
 	NOVA_START_TIMING(mount_t, mount_time);
@@ -659,7 +667,7 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 		return -ENOMEM;
 	}
 
-	sb->s_fs_info = sbi;
+	sb->s_fs_info = sbi; 
 	sbi->sb = sb;
 
 	set_default_opts(sbi);
@@ -669,8 +677,8 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 		nova_err(sb, "NOVA needs more log pointer pages to support more than "
 			  __stringify(MAX_CPUS) " cpus.\n");
 		goto out;
-	}
-
+	} 
+ 
 	retval = nova_get_nvmm_info(sb, sbi);
 	if (retval) {
 		nova_err(sb, "%s: Failed to get nvmm info.",
@@ -679,16 +687,21 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 	}
 
 	// TODO: tiering option
-	retval = nova_get_bdev_info(sbi);
-	if (retval) {
-		nova_err(sb, "%s: Failed to get block device info.",
-			 __func__);
-		goto out;
+	for(i = 0; i < bdev_count; i++) {
+		iretval = nova_get_bdev_info(sbi);
+		if (iretval) {
+			nova_err(sb, "%s: Failed to get block device info.",
+				__func__);
+				iretval = i;
+			for(; i < bdev_count; i++) {
+				kfree(bdev_paths[i]);
+			}
+			bdev_count = iretval;
+			break;
+		}
+		print_a_bdev(sbi);
+		bdev_test(sbi);
 	}
-
-	print_a_bdev(sbi);
-	
-	bdev_test(sbi);
 
 	nova_dbg("measure timing %d, metadata checksum %d, inplace update %d, wprotect %d, data checksum %d, data parity %d, DRAM checksum %d\n",
 		measure_timing, metadata_csum,
@@ -1274,6 +1287,10 @@ out1:
 
 static void __exit exit_nova_fs(void)
 {
+	int i;
+	for(i = 0; i < bdev_count; i++) {
+		kfree(bdev_paths[i]);
+	}
 	unregister_filesystem(&nova_fs_type);
 	remove_proc_entry(proc_dirname, NULL);
 	destroy_snapshot_info_cache();

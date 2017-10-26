@@ -9,25 +9,8 @@
 #define BIO_ASYNC 0
 #define BIO_SYNC 1
 
-// This function is used for a raw block device lookup in /dev
-char* find_a_raw_bdev(void) {
-	struct file *fp;
-	char* bdev = kzalloc(20*sizeof(char),GFP_KERNEL);
-		
-	fp = filp_open("/dev/sda1", O_RDONLY, 0644);
-	if(fp == (struct file *)-ENOENT) {
-		strcat(bdev, "/dev/sda\0");
-		nova_info("sda\n");
-		return bdev;
-	}
-	fp = filp_open("/dev/sdb1", O_RDONLY, 0644);
-	if(fp == (struct file *)-ENOENT) {
-		strcat(bdev, "/dev/sdb\0");
-		nova_info("sdb\n");
-		return bdev;
-	}
-	return NULL;
-}
+char *bdev_paths[MAX_TIERS] = {0};
+int bdev_count = 0;
 
 void print_a_bdev(struct nova_sb_info *sbi) {
 	struct bdev_info* bdi = sbi->bdev_list;

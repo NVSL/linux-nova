@@ -5,6 +5,7 @@
  * Block device static status
  */
 struct bdev_info {
+    bool valid;
 	char bdev_path[16];
 	char bdev_name[16];
     unsigned int major;
@@ -14,8 +15,11 @@ struct bdev_info {
 	struct block_device *bdev_raw;
 };
 
-char* find_a_raw_bdev(void);
 void print_a_bdev(struct nova_sb_info *sbi);
-void bdev_test(struct nova_sb_info *sbi);
+void bdev_test(struct nova_sb_info *sbi); 
+
+#define MAX_TIERS 4
+char *bdev_paths[MAX_TIERS]; // block devices for tiering
+int bdev_count;
 
 #endif
