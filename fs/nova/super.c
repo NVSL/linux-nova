@@ -172,7 +172,7 @@ static int nova_get_nvmm_info(struct super_block *sb,
 // TODO: more than one block device
 static int nova_get_bdev_info(struct nova_sb_info *sbi, char *bdev_path, int i){
 	struct block_device *bdev_raw;
-	struct bdev_info *dbi=&bdev_list[i];
+	struct bdev_info *bdi=&bdev_list[i];
 	struct gendisk*	bd_disk = NULL;
 	unsigned long nsector;
 
