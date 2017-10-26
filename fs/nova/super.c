@@ -676,23 +676,6 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 		goto out;
 	}
 
-	// TODO: tiering option
-	for(i = 0; i < bdev_count; i++) {
-		iretval = nova_get_bdev_info(sbi, bdev_paths[i], i);
-		if (iretval) {
-			nova_err(sb, "%s: Failed to get block device info.",
-				__func__);
-				iretval = i;
-			for(; i < bdev_count; i++) {
-				kfree(bdev_paths[i]);
-			}
-			bdev_count = iretval;
-			break;
-		}
-		print_a_bdev(&bdev_list[i]);
-		bdev_test(&bdev_list[i]);
-	}
-
 	nova_dbg("measure timing %d, metadata checksum %d, inplace update %d, wprotect %d, data checksum %d, data parity %d, DRAM checksum %d\n",
 		measure_timing, metadata_csum,
 		inplace_data_updates, wprotect,	 data_csum,
@@ -756,6 +739,24 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 		nova_err(sb, "%s: Failed to parse nova command line options.",
 			 __func__);
 		goto out;
+	}
+	
+	// tiering option
+	for(i = 0; i < bdev_count; i++) {
+		nova_info("Checking %s as tier %d\n", bdev_paths[i], i+2);
+		iretval = nova_get_bdev_info(sbi, bdev_paths[i], i);
+		if (iretval) {
+			nova_err(sb, "%s: Failed to get block device info.",
+				__func__);
+				iretval = i;
+			for(; i < bdev_count; i++) {
+				kfree(bdev_paths[i]);
+			}
+			bdev_count = iretval;
+			break;
+		}
+		print_a_bdev(&bdev_list[i]);
+		bdev_test(&bdev_list[i]);
 	}
 
 	if (nova_alloc_block_free_lists(sb)) {
