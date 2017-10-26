@@ -245,6 +245,24 @@ static pte_t *fill_pte(pmd_t *pmd, unsigned long vaddr)
 	return pte_offset_kernel(pmd, vaddr);
 }
 
+pte_t *fill_pte_kernel(unsigned long vaddr)
+{
+	pgd_t *pgd;
+	p4d_t *p4d;
+	pud_t *pud;
+	pmd_t *pmd;
+	pte_t *pte;
+
+	pgd = (pgd_t *)__va(read_cr3_pa()) + pgd_index(vaddr);
+	p4d = fill_p4d(pgd, vaddr);
+	pud = fill_pud(p4d, vaddr);
+	pmd = fill_pmd(pud, vaddr);
+	pte = fill_pte(pmd, vaddr);
+
+	return pte;
+}
+EXPORT_SYMBOL(fill_pte_kernel);
+
 static void __set_pte_vaddr(pud_t *pud, unsigned long vaddr, pte_t new_pte)
 {
 	pmd_t *pmd = fill_pmd(pud, vaddr);

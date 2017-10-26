@@ -50,6 +50,7 @@ extern void paging_init(void);
 
 struct mm_struct;
 
+pte_t *fill_pte_kernel(unsigned long vaddr);
 void set_pte_vaddr_p4d(p4d_t *p4d_page, unsigned long vaddr, pte_t new_pte);
 void set_pte_vaddr_pud(pud_t *pud_page, unsigned long vaddr, pte_t new_pte);
 
