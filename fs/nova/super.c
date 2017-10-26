@@ -170,17 +170,13 @@ static int nova_get_nvmm_info(struct super_block *sb,
 }
 
 // TODO: more than one block device
-static int nova_get_bdev_info(struct nova_sb_info *sbi, char *bdev_path){
+static int nova_get_bdev_info(struct nova_sb_info *sbi, char *bdev_path, int i){
 	struct block_device *bdev_raw;
-
+	struct bdev_info *dbi=&bdev_list[i];
 	struct gendisk*	bd_disk = NULL;
 	unsigned long nsector;
 
 	const fmode_t mode = FMODE_READ | FMODE_WRITE;
-	
-	sbi->bdev_list = kzalloc(sizeof(struct bdev_info), GFP_KERNEL);	
-	if (!sbi->bdev_list) return -ENOMEM;
-	if (!bdev_path) return -ENOENT;
 
 	bdev_raw = lookup_bdev(bdev_path);
 	if (IS_ERR(bdev_raw))
@@ -197,16 +193,16 @@ static int nova_get_bdev_info(struct nova_sb_info *sbi, char *bdev_path){
 		bdput(bdev_raw);
 	}	
 
-	sbi->bdev_list->bdev_raw = bdev_raw;
-	strcat(sbi->bdev_list->bdev_path, bdev_path);
+	bdi->bdev_raw = bdev_raw;
+	strcat(bdi->bdev_path, bdev_path);
 
 	bd_disk = bdev_raw->bd_disk;
 	nsector = get_capacity(bd_disk);
-	sbi->bdev_list->major = bd_disk->major;
-	sbi->bdev_list->minors = bd_disk->minors;
-	sbi->bdev_list->capacity_sector = nsector;
-	sbi->bdev_list->capacity_page = nsector>>3;
-	strcat(sbi->bdev_list->bdev_name,bd_disk->disk_name);
+	bdi->major = bd_disk->major;
+	bdi->minors = bd_disk->minors;
+	bdi->capacity_sector = nsector;
+	bdi->capacity_page = nsector>>3;
+	strcat(bdi->bdev_name,bd_disk->disk_name);
 	nova_info("nova_get_bdev_info out\n");
 
 	return 0;
@@ -682,7 +678,7 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 
 	// TODO: tiering option
 	for(i = 0; i < bdev_count; i++) {
-		iretval = nova_get_bdev_info(sbi, bdev_paths[i]);
+		iretval = nova_get_bdev_info(sbi, bdev_paths[i], i);
 		if (iretval) {
 			nova_err(sb, "%s: Failed to get block device info.",
 				__func__);
@@ -868,9 +864,6 @@ out:
 	kfree(sbi->free_lists);
 	sbi->free_lists = NULL;
 
-	kfree(sbi->bdev_list);
-	sbi->bdev_list = NULL;
-
 	kfree(sbi->journal_locks);
 	sbi->journal_locks = NULL;
 
@@ -990,7 +983,6 @@ static void nova_put_super(struct super_block *sb)
 	kfree(sbi->zero_parity);
 	nova_dbgmask = 0;
 	kfree(sbi->free_lists);
-	kfree(sbi->bdev_list);
 	kfree(sbi->journal_locks);
 
 	for (i = 0; i < sbi->cpus; i++) {

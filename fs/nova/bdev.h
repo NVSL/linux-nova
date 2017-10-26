@@ -15,10 +15,11 @@ struct bdev_info {
 	struct block_device *bdev_raw;
 };
 
-void print_a_bdev(struct nova_sb_info *sbi);
-void bdev_test(struct nova_sb_info *sbi); 
+void print_a_bdev(struct bdev_info *bdi);
+void bdev_test(struct bdev_info *bdi); 
 
 #define MAX_TIERS 4
+extern bdev_info bdev_list[MAX_TIERS];
 extern char *bdev_paths[MAX_TIERS]; // block devices for tiering
 extern int bdev_count;
 

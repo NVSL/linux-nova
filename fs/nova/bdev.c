@@ -12,14 +12,12 @@
 char *bdev_paths[MAX_TIERS] = {0};
 int bdev_count = 0;
 
-void print_a_bdev(struct nova_sb_info *sbi) {
-	struct bdev_info* bdi = sbi->bdev_list;
-	
+void print_a_bdev(struct bdev_info *bdi) {	
 	nova_info("----------------\n");
 	nova_info("[New block device]\n");
 	nova_info("Disk path: %s\n", bdi->bdev_path);
 	nova_info("Disk name: %s\n", bdi->bdev_name);
-	nova_info("Major: %d Minor: %d\n", bdi->major ,bdi->minors);
+	nova_info("Major: %d Minor: %d\n", bdi->major, bdi->minors);
 	nova_info("Size: %lu sectors (%luMB)\n",bdi->capacity_sector,bdi->capacity_page);
 	nova_info("----------------\n");
 }
@@ -192,8 +190,8 @@ int nova_bdev_read_block(struct block_device *device, unsigned long offset,
 
 // bool
 
-void bdev_test(struct nova_sb_info *sbi) {
-	struct block_device *bdev_raw = sbi->bdev_list->bdev_raw;
+void bdev_test(struct bdev_info *bdi) {
+	struct block_device *bdev_raw = bdi->bdev_raw;
 	
 	struct page *pg;
 	struct page *pg2;
@@ -202,9 +200,9 @@ void bdev_test(struct nova_sb_info *sbi) {
 	int ret=0;
 	int i=0;
 
-	char *bdev_name = sbi->bdev_list->bdev_path;
+	char *bdev_name = bdi->bdev_path;
 
-	unsigned long capacity_page = sbi->bdev_list->capacity_page;
+	unsigned long capacity_page = bdi->capacity_page;
 
     nova_info("Block device test in.\n");
     

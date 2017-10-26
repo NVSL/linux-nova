@@ -160,9 +160,6 @@ struct nova_sb_info {
 	u32 zero_csum[8];
 	void *zero_parity;
 
-	/* NOVA-tiering */
-	struct bdev_info *bdev_list;
-
 	/* Per-CPU journal lock */
 	spinlock_t *journal_locks;
 
