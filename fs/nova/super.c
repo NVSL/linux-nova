@@ -41,6 +41,7 @@
 #include "journal.h"
 #include "super.h"
 #include "inode.h"
+#include "bdev.h"
 
 int measure_timing;
 int metadata_csum;
@@ -164,6 +165,56 @@ static int nova_get_nvmm_info(struct super_block *sb,
 	nova_dbg("%s: dev %s, phys_addr 0x%llx, virt_addr %p, size %ld\n",
 		__func__, sbi->s_bdev->bd_disk->disk_name,
 		sbi->phys_addr, sbi->virt_addr, sbi->initsize);
+
+	return 0;
+}
+
+// TODO: Link with mount option
+static char *find_block_devices(void) {
+	return find_a_raw_bdev();
+}
+
+// TODO: more than one block device
+static int nova_get_bdev_info(struct nova_sb_info *sbi){
+	struct block_device *bdev_raw;
+	char *bdev_path = NULL;
+
+	struct gendisk*	bd_disk = NULL;
+	unsigned long nsector;
+
+	const fmode_t mode = FMODE_READ | FMODE_WRITE;
+	
+	sbi->bdev_list = kzalloc(sizeof(struct bdev_info), GFP_KERNEL);	
+	if (!sbi->bdev_list) return -ENOMEM;
+	bdev_path = find_block_devices();
+	if (!bdev_path) return -ENOENT;
+
+	bdev_raw = lookup_bdev(bdev_path);
+	if (IS_ERR(bdev_raw))
+	{
+		nova_info("bdev: error opening raw device <%lu>\n", PTR_ERR(bdev_raw));
+	}
+	if (!bdget(bdev_raw->bd_dev))
+	{
+		nova_info("bdev: error bdget()\n");
+	}
+	if (blkdev_get(bdev_raw, mode, NULL))
+	{
+		nova_info("bdev: error blkdev_get()\n");
+		bdput(bdev_raw);
+	}	
+
+	sbi->bdev_list->bdev_raw = bdev_raw;
+	strcat(sbi->bdev_list->bdev_path, bdev_path);
+
+	bd_disk = bdev_raw->bd_disk;
+	nsector = get_capacity(bd_disk);
+	sbi->bdev_list->major = bd_disk->major;
+	sbi->bdev_list->minors = bd_disk->minors;
+	sbi->bdev_list->capacity_sector = nsector;
+	sbi->bdev_list->capacity_page = nsector>>3;
+	strcat(sbi->bdev_list->bdev_name,bd_disk->disk_name);
+	nova_info("nova_get_bdev_info out\n");
 
 	return 0;
 }
@@ -627,6 +678,17 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 		goto out;
 	}
 
+	// TODO: tiering option
+	retval = nova_get_bdev_info(sbi);
+	if (retval) {
+		nova_err(sb, "%s: Failed to get block device info.",
+			 __func__);
+		goto out;
+	}
+
+	print_a_bdev(sbi);
+	
+	bdev_test(sbi);
 
 	nova_dbg("measure timing %d, metadata checksum %d, inplace update %d, wprotect %d, data checksum %d, data parity %d, DRAM checksum %d\n",
 		measure_timing, metadata_csum,
@@ -799,6 +861,9 @@ out:
 	kfree(sbi->free_lists);
 	sbi->free_lists = NULL;
 
+	kfree(sbi->bdev_list);
+	sbi->bdev_list = NULL;
+
 	kfree(sbi->journal_locks);
 	sbi->journal_locks = NULL;
 
@@ -918,6 +983,7 @@ static void nova_put_super(struct super_block *sb)
 	kfree(sbi->zero_parity);
 	nova_dbgmask = 0;
 	kfree(sbi->free_lists);
+	kfree(sbi->bdev_list);
 	kfree(sbi->journal_locks);
 
 	for (i = 0; i < sbi->cpus; i++) {
@@ -1193,6 +1259,7 @@ static int __init init_nova_fs(void)
 	if (rc)
 		goto out3;
 
+	nova_info("init out");
 	NOVA_END_TIMING(init_t, init_time);
 	return 0;
 
