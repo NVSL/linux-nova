@@ -266,6 +266,7 @@ void set_pte_vaddr_p4d(p4d_t *p4d_page, unsigned long vaddr, pte_t new_pte)
 
 	__set_pte_vaddr(pud, vaddr, new_pte);
 }
+EXPORT_SYMBOL(set_pte_vaddr_p4d);
 
 void set_pte_vaddr_pud(pud_t *pud_page, unsigned long vaddr, pte_t new_pte)
 {
@@ -273,6 +274,7 @@ void set_pte_vaddr_pud(pud_t *pud_page, unsigned long vaddr, pte_t new_pte)
 
 	__set_pte_vaddr(pud, vaddr, new_pte);
 }
+EXPORT_SYMBOL(set_pte_vaddr_pud);
 
 void set_pte_vaddr(unsigned long vaddr, pte_t pteval)
 {

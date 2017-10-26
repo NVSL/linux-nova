@@ -3919,7 +3919,7 @@ int handle_mm_fault(struct vm_area_struct *vma, unsigned long address,
 
 	return ret;
 }
-EXPORT_SYMBOL_GPL(handle_mm_fault);
+EXPORT_SYMBOL(handle_mm_fault);
 
 #ifndef __PAGETABLE_P4D_FOLDED
 /*
