@@ -682,7 +682,7 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 
 	// TODO: tiering option
 	for(i = 0; i < bdev_count; i++) {
-		iretval = nova_get_bdev_info(sbi);
+		iretval = nova_get_bdev_info(sbi, bdev_paths[i]);
 		if (iretval) {
 			nova_err(sb, "%s: Failed to get block device info.",
 				__func__);
