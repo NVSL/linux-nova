@@ -19,7 +19,7 @@ void print_a_bdev(struct nova_sb_info *sbi);
 void bdev_test(struct nova_sb_info *sbi); 
 
 #define MAX_TIERS 4
-char *bdev_paths[MAX_TIERS]; // block devices for tiering
-int bdev_count;
+export char *bdev_paths[MAX_TIERS]; // block devices for tiering
+export int bdev_count;
 
 #endif
