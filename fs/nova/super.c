@@ -689,8 +689,8 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 			bdev_count = iretval;
 			break;
 		}
-		print_a_bdev(sbi);
-		bdev_test(sbi);
+		print_a_bdev(&bdev_list[i]);
+		bdev_test(&bdev_list[i]);
 	}
 
 	nova_dbg("measure timing %d, metadata checksum %d, inplace update %d, wprotect %d, data checksum %d, data parity %d, DRAM checksum %d\n",

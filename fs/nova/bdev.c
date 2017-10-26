@@ -9,6 +9,7 @@
 #define BIO_ASYNC 0
 #define BIO_SYNC 1
 
+struct bdev_info bdev_list[MAX_TIERS];
 char *bdev_paths[MAX_TIERS] = {0};
 int bdev_count = 0;
 

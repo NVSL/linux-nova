@@ -19,7 +19,7 @@ void print_a_bdev(struct bdev_info *bdi);
 void bdev_test(struct bdev_info *bdi); 
 
 #define MAX_TIERS 4
-extern bdev_info bdev_list[MAX_TIERS];
+extern struct bdev_info bdev_list[MAX_TIERS];
 extern char *bdev_paths[MAX_TIERS]; // block devices for tiering
 extern int bdev_count;
 
