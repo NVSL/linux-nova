@@ -170,7 +170,7 @@ static int nova_get_nvmm_info(struct super_block *sb,
 }
 
 // TODO: more than one block device
-static int nova_get_bdev_info(struct nova_sb_info *sbi, char *bdev_path, int i){
+static int nova_get_bdev_info(char *bdev_path, int i){
 	struct block_device *bdev_raw;
 	struct bdev_info *bdi=&bdev_list[i];
 	struct gendisk*	bd_disk = NULL;
@@ -744,7 +744,7 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 	// tiering option
 	for(i = 0; i < bdev_count; i++) {
 		nova_info("Checking %s as tier %d\n", bdev_paths[i], i+2);
-		iretval = nova_get_bdev_info(sbi, bdev_paths[i], i);
+		iretval = nova_get_bdev_info(bdev_paths[i], i);
 		if (iretval) {
 			nova_err(sb, "%s: Failed to get block device info.",
 				__func__);

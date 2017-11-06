@@ -19,7 +19,7 @@ void print_a_bdev(struct bdev_info *bdi) {
 	nova_info("Disk path: %s\n", bdi->bdev_path);
 	nova_info("Disk name: %s\n", bdi->bdev_name);
 	nova_info("Major: %d Minor: %d\n", bdi->major, bdi->minors);
-	nova_info("Size: %lu sectors (%luMB)\n",bdi->capacity_sector,bdi->capacity_page);
+	nova_info("Size: %lu sectors (%lu of 4K pages)\n",bdi->capacity_sector, bdi->capacity_page);
 	nova_info("----------------\n");
 }
 
