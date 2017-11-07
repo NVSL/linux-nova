@@ -206,8 +206,7 @@ static const match_table_t tokens = {
 	{ Opt_err,	     NULL		  },
 };
 
-static int nova_parse_options(char *options, struct nova_sb_info *sbi,
-			       bool remount)
+static int nova_parse_tiering_options(char *options)
 {
 	char *p;
 	substring_t args[MAX_OPT_ARGS];
@@ -215,6 +214,37 @@ static int nova_parse_options(char *options, struct nova_sb_info *sbi,
 	kuid_t uid;
 
 	nova_reset_tiering();
+
+	if (!options)
+		return 0;
+
+	while ((p = strsep(&options, ",")) != NULL) {
+		int token;
+
+		if (!*p)
+			continue;
+
+		token = match_token(p, tokens, args);
+		if(token == Opt_bdev) {
+			bdev_paths[bdev_count] = match_strdup(args);
+			if (!bdev_paths[bdev_count]) {
+				goto bad_opt;
+			}
+			nova_info("NOVA: Tier %d is set to %s\n", bdev_count+2, bdev_paths[bdev_count]);
+			bdev_count++;
+		}
+	}
+
+	return 0;
+}
+
+static int nova_parse_options(char *options, struct nova_sb_info *sbi,
+			       bool remount)
+{
+	char *p;
+	substring_t args[MAX_OPT_ARGS];
+	int option;
+	kuid_t uid;
 
 	if (!options)
 		return 0;
@@ -283,14 +313,6 @@ static int nova_parse_options(char *options, struct nova_sb_info *sbi,
 				goto bad_opt;
 			set_opt(sbi->s_mount_opt, PROTECT);
 			nova_info("NOVA: Enabling new Write Protection (CR0.WP)\n");
-			break;
-		case Opt_bdev: 
-			bdev_paths[bdev_count] = match_strdup(args);
-			if (!bdev_paths[bdev_count]) {
-				goto bad_opt;
-			}
-			nova_info("NOVA: Tier %d is set to %s\n", bdev_count+2, bdev_paths[bdev_count]);
-			bdev_count++;
 			break;
 		case Opt_dbgmask:
 			if (match_int(&args[0], &option))
@@ -633,12 +655,18 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 		goto out;
 	} 
  
+	nova_parse_tiering_options(options);
+	
 	retval = nova_get_nvmm_info(sb, sbi);
 	if (retval) {
 		nova_err(sb, "%s: Failed to get nvmm info.",
 			 __func__);
 		goto out;
 	}
+
+	nova_setup_tiering(sbi);
+	nova_dbg("%s: dev vpmem, phys_addr 0x%llx, virt_addr %p, size %ld\n",
+		__func__, sbi->phys_addr, sbi->virt_addr, sbi->initsize);
 
 	nova_dbg("measure timing %d, metadata checksum %d, inplace update %d, wprotect %d, data checksum %d, data parity %d, DRAM checksum %d\n",
 		measure_timing, metadata_csum,
