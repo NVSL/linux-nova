@@ -22,8 +22,10 @@
 #define KERN_INFO
 #endif
 
+#define MAX_PAGES 32
+
 char *vpmem=0;
-void *pgcache=0;
+//void *pgcache=0;
 int pgidx=0;
 bool full=false;
 unsigned long map_page[MAX_TIERS]={0};
@@ -130,7 +132,7 @@ static page_t* tail=0;
 page_t *newpage(unsigned long vaddr) {
     page_t *p = (page_t*)kmalloc(sizeof(page_t), GFP_KERNEL|GFP_ATOMIC);
     p->next=p->prev=0;
-    p->idx=pgidx=(pgidx+1)%16;
+    p->idx=pgidx=(pgidx+1)%MAX_PAGES;
     p->page=alloc_page(GFP_KERNEL|__GFP_ZERO);
     if(head==0) head=p;
     if(tail) {
@@ -174,7 +176,7 @@ inline int get_bdev(unsigned long pgidx) {
 
 struct page *get_new_page(unsigned long vaddr) {
     page_t *p=newpage(vaddr);
-    if(pgidx==15) full=true;
+    if(pgidx==MAX_PAGES-1) full=true;
     if(full) {
         unsigned long address = (unsigned long)page_address(head->page);
         pte_t pte = *get_pte(address);
@@ -209,7 +211,7 @@ bool nova_do_page_fault(struct pt_regs *regs, unsigned long error_code, unsigned
         if (!(vaddr >= (unsigned long)vpmem && vaddr < VMALLOC_END))
             return false;
 
-        printk(KERN_INFO "nova: a page fault happened at address %016lx\n", vaddr);
+//        printk(KERN_INFO "nova: a page fault happened at address %016lx\n", vaddr);
 
         page = get_new_page(vaddr);
         address = (unsigned long)page_address(page);
@@ -217,7 +219,7 @@ bool nova_do_page_fault(struct pt_regs *regs, unsigned long error_code, unsigned
         if(bdev_idx == -1) {
             // TODO: physical pmem 
         } else {
-            printk(KERN_INFO "nova: reading page %ld from tier %d (%s)\n", phys_page, bdev_idx, bdev_list[bdev_idx].bdev_path);
+            //printk(KERN_INFO "nova: reading page %ld from tier %d (%s)\n", phys_page, bdev_idx, bdev_list[bdev_idx].bdev_path);
             nova_bdev_read_block(bdev_list[bdev_idx].bdev_raw, phys_page, 1, page, BIO_SYNC);
         }
         pgd = (pgd_t *)__va(read_cr3_pa()) + pgd_index(vaddr);

@@ -210,8 +210,6 @@ static int nova_parse_tiering_options(char *options)
 {
 	char *p;
 	substring_t args[MAX_OPT_ARGS];
-	int option;
-	kuid_t uid;
 
 	nova_reset_tiering();
 
@@ -228,7 +226,7 @@ static int nova_parse_tiering_options(char *options)
 		if(token == Opt_bdev) {
 			bdev_paths[bdev_count] = match_strdup(args);
 			if (!bdev_paths[bdev_count]) {
-				goto bad_opt;
+				return -EINVAL;
 			}
 			nova_info("NOVA: Tier %d is set to %s\n", bdev_count+2, bdev_paths[bdev_count]);
 			bdev_count++;
@@ -655,7 +653,7 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 		goto out;
 	} 
  
-	nova_parse_tiering_options(options);
+	nova_parse_tiering_options(data);
 	
 	retval = nova_get_nvmm_info(sb, sbi);
 	if (retval) {

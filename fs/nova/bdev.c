@@ -130,8 +130,8 @@ int nova_bdev_write_byte(struct block_device *device, unsigned long offset,
    	int ret = 0;
 	struct bio *bio = bio_alloc(GFP_NOIO, 1);
 	struct bio_vec *bv = kzalloc(sizeof(struct bio_vec), GFP_KERNEL);
-	nova_info("[Bdev Write] Offset %7lu <- Page %p (size: %lu)\n",offset>>12,
-	page_address(page)+page_offset,size);
+//	nova_info("[Bdev Write] Offset %7lu <- Page %p (size: %lu)\n",offset>>12,
+//	page_address(page)+page_offset,size);
 	bio->bi_bdev = device;
 	bio->bi_iter.bi_sector = offset >> 9;
 	bio->bi_iter.bi_size = size;
@@ -159,8 +159,8 @@ int nova_bdev_read_byte(struct block_device *device, unsigned long offset,
 	struct bio *bio = bio_alloc(GFP_NOIO, 1);
 	struct bio_vec *bv = kzalloc(sizeof(struct bio_vec), GFP_KERNEL);
 	// bio is about block and bv is about page
-	nova_info("[Bdev Read ] Offset %7lu -> Page %p (size: %lu)\n",offset>>12,
-	page_address(page)+page_offset,size);
+//	nova_info("[Bdev Read ] Offset %7lu -> Page %p (size: %lu)\n",offset>>12,
+//	page_address(page)+page_offset,size);
 	bio->bi_bdev = device;
 	bio->bi_iter.bi_sector = offset >> 9;
 	bio->bi_iter.bi_size = size;
