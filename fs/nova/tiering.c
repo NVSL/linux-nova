@@ -188,11 +188,11 @@ struct page *get_new_page(unsigned long vaddr) {
         }
         rmpage(head);
     }
-    printk(KERN_INFO "tnova: page %d is created\n", p->idx);
+    //printk(KERN_INFO "nova: page %d is created\n", p->idx);
     return p->page;
 }
 
-bool tnova_do_page_fault(struct pt_regs *regs, unsigned long error_code, unsigned long vaddr)
+bool nova_do_page_fault(struct pt_regs *regs, unsigned long error_code, unsigned long vaddr)
 {
     if (vaddr >= TASK_SIZE_MAX) {
         pgd_t *pgd;
@@ -203,18 +203,21 @@ bool tnova_do_page_fault(struct pt_regs *regs, unsigned long error_code, unsigne
         struct page *page;
         unsigned long address;// = (unsigned long)pgcache + ((unsigned long)(pgidx=(pgidx+1)%16) << PAGE_SHIFT);
         unsigned long phys_page = virt_to_phys_page(vaddr);
+	int bdev_idx = get_bdev(phys_page);
 
         /* Make sure we are in reserved area: */
         if (!(vaddr >= (unsigned long)vpmem && vaddr < VMALLOC_END))
             return false;
 
+        printk(KERN_INFO "nova: a page fault happened at address %016lx\n", vaddr);
+
         page = get_new_page(vaddr);
         address = (unsigned long)page_address(page);
 
-        int bdev_idx = get_bdev(phys_page);
         if(bdev_idx == -1) {
             // TODO: physical pmem 
         } else {
+            printk(KERN_INFO "nova: reading page %ld from tier %d (%s)\n", phys_page, bdev_idx, bdev_list[bdev_idx].bdev_path);
             nova_bdev_read_block(bdev_list[bdev_idx].bdev_raw, phys_page, 1, page, BIO_SYNC);
         }
         pgd = (pgd_t *)__va(read_cr3_pa()) + pgd_index(vaddr);
@@ -233,30 +236,75 @@ bool tnova_do_page_fault(struct pt_regs *regs, unsigned long error_code, unsigne
     return false;
 }
 
-unsigned long tnova_init_tiering(unsigned long offset)
+int nova_init_tiering(unsigned long offset)
+{
+    __flush_tlb_all();
+    vpmem = (char*)(VMALLOC_START + offset);
+    install_custom_page_fault_handler(nova_do_page_fault);
+
+    return 0;
+} 
+
+int nova_setup_tiering(struct nova_sb_info *sbi) 
 {
     int i;
     unsigned long size=0;
-    __flush_tlb_all();
-    vpmem = (char*)(VMALLOC_START + offset);
-    install_custom_page_fault_handler(tnova_do_page_fault);
-    
     for(i=0; i<bdev_count; i++) {
-        nova_get_bdev_info(bdev_list[i]->bdev_path, i);
+        nova_get_bdev_info(bdev_paths[i], i);
         size += bdev_list[i].capacity_page;
         map_page[i] = size;
         map_valid[i] = true;
         print_a_bdev(&bdev_list[i]);
+//        bdev_test(&bdev_list[i]);
     }
 
-    printk(KERN_INFO "tnova: vpmem starts at %016lx (%lu GB)\n", 
+    printk(KERN_INFO "nova: vpmem starts at %016lx (%lu GB)\n", 
         (unsigned long)vpmem, 
         size >> 18);
+    nova_total_size = (size <<= 12);
 
-    return size << 12;
+    if (size > 0) {
+        sbi->virt_addr = vpmem;
+        sbi->initsize = size;
+        sbi->replica_reserved_inodes_addr = vpmem + size -
+             (sbi->tail_reserved_blocks << PAGE_SHIFT);
+        sbi->replica_sb_addr = vpmem + size - PAGE_SIZE;
+    }
+
+    printk(KERN_INFO "nova: nova_setup_tiering finished (size = %lu B)\n", size);
+
+    return 0;
 }
 
-void tnova_cleanup_tiering()
+void nova_cleanup_tiering(void)
 {
     install_custom_page_fault_handler(0);
+    nova_persist_page_cache();
+}
+
+void nova_reset_tiering(void)
+{
+    int i;
+    bdev_count = 0;
+    nova_total_size = 0;
+    for(i=0; i<MAX_TIERS; i++) {
+        map_valid[i] = false;
+        map_page[i] = 0;
+    }
+}
+
+void nova_persist_page_cache(void) {
+    while(head) {
+        unsigned long address = (unsigned long)page_address(head->page);
+        pte_t pte = *get_pte(address);
+        if(pte_dirty(pte)) {
+            int bdev_idx = get_bdev(head->pgidx);
+            if(bdev_idx == -1) {
+                // TODO: physical pmem
+            } else {
+                nova_bdev_write_block(bdev_list[bdev_idx].bdev_raw, head->pgidx, 1, head->page, BIO_SYNC);
+            }
+        }
+        rmpage(head);
+    }
 }

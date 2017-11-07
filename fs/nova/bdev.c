@@ -1,17 +1,10 @@
 #include "nova.h"
 #include "bdev.h"
 
-#define SECTOR_SIZE_BIT 9
-#define IO_BLOCK_SIZE_BIT 12
-#define IO_BLOCK_SIZE 4096
-#define VFS_IO_TEST 0
-
-#define BIO_ASYNC 0
-#define BIO_SYNC 1
-
 struct bdev_info bdev_list[MAX_TIERS];
 char *bdev_paths[MAX_TIERS] = {0};
 int bdev_count = 0;
+unsigned long nova_total_size=0;
 
 void print_a_bdev(struct bdev_info *bdi) {	
 	nova_info("----------------\n");
@@ -187,6 +180,43 @@ int nova_bdev_read_block(struct block_device *device, unsigned long offset,
 	unsigned long size, struct page *page, bool sync) {
 	return nova_bdev_read_byte(device,offset<<IO_BLOCK_SIZE_BIT,
 		size<<IO_BLOCK_SIZE_BIT, page, 0, sync);
+}
+
+int nova_get_bdev_info(char *bdev_path, int i) {
+    struct block_device *bdev_raw;
+    struct bdev_info *bdi=&bdev_list[i];
+    struct gendisk *bd_disk = NULL;
+    unsigned long nsector;
+
+    const fmode_t mode = FMODE_READ | FMODE_WRITE;
+
+    bdev_raw = lookup_bdev(bdev_path);
+    if (IS_ERR(bdev_raw))
+    {
+        printk(KERN_INFO "bdev: error opening raw device <%lu>\n", PTR_ERR(bdev_raw));
+    }
+    if (!bdget(bdev_raw->bd_dev))
+    {
+        printk(KERN_INFO "bdev: error bdget()\n");
+    }
+    if (blkdev_get(bdev_raw, mode, NULL))
+    {
+        printk(KERN_INFO "bdev: error blkdev_get()\n");
+        bdput(bdev_raw);
+    }
+
+    bdi->bdev_raw = bdev_raw;
+    strcat(bdi->bdev_path, bdev_path);
+
+    bd_disk = bdev_raw->bd_disk;
+    nsector = get_capacity(bd_disk);
+    bdi->major = bd_disk->major;
+    bdi->minors = bd_disk->minors;
+    bdi->capacity_sector = nsector;
+    bdi->capacity_page = nsector>>3;
+    strcat(bdi->bdev_name,bd_disk->disk_name);
+
+    return 0;
 }
 
 // bool

@@ -42,6 +42,7 @@
 #include "super.h"
 #include "inode.h"
 #include "bdev.h"
+#include "tiering.h"
 
 int measure_timing;
 int metadata_csum;
@@ -169,45 +170,6 @@ static int nova_get_nvmm_info(struct super_block *sb,
 	return 0;
 }
 
-// TODO: more than one block device
-static int nova_get_bdev_info(char *bdev_path, int i){
-	struct block_device *bdev_raw;
-	struct bdev_info *bdi=&bdev_list[i];
-	struct gendisk*	bd_disk = NULL;
-	unsigned long nsector;
-
-	const fmode_t mode = FMODE_READ | FMODE_WRITE;
-
-	bdev_raw = lookup_bdev(bdev_path);
-	if (IS_ERR(bdev_raw))
-	{
-		nova_info("bdev: error opening raw device <%lu>\n", PTR_ERR(bdev_raw));
-	}
-	if (!bdget(bdev_raw->bd_dev))
-	{
-		nova_info("bdev: error bdget()\n");
-	}
-	if (blkdev_get(bdev_raw, mode, NULL))
-	{
-		nova_info("bdev: error blkdev_get()\n");
-		bdput(bdev_raw);
-	}	
-
-	bdi->bdev_raw = bdev_raw;
-	strcat(bdi->bdev_path, bdev_path);
-
-	bd_disk = bdev_raw->bd_disk;
-	nsector = get_capacity(bd_disk);
-	bdi->major = bd_disk->major;
-	bdi->minors = bd_disk->minors;
-	bdi->capacity_sector = nsector;
-	bdi->capacity_page = nsector>>3;
-	strcat(bdi->bdev_name,bd_disk->disk_name);
-	nova_info("nova_get_bdev_info out\n");
-
-	return 0;
-}
-
 static loff_t nova_max_size(int bits)
 {
 	loff_t res;
@@ -251,6 +213,8 @@ static int nova_parse_options(char *options, struct nova_sb_info *sbi,
 	substring_t args[MAX_OPT_ARGS];
 	int option;
 	kuid_t uid;
+
+	nova_reset_tiering();
 
 	if (!options)
 		return 0;
@@ -631,7 +595,7 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 	size_t strp_size = NOVA_STRIPE_SIZE;
 	u32 random = 0;
 	int retval = -EINVAL;
-	int i, iretval = -EINVAL;
+	int i;
 	timing_t mount_time;
 
 	NOVA_START_TIMING(mount_t, mount_time);
@@ -741,24 +705,6 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 		goto out;
 	}
 	
-	// tiering option
-	for(i = 0; i < bdev_count; i++) {
-		nova_info("Checking %s as tier %d\n", bdev_paths[i], i+2);
-		iretval = nova_get_bdev_info(bdev_paths[i], i);
-		if (iretval) {
-			nova_err(sb, "%s: Failed to get block device info.",
-				__func__);
-				iretval = i;
-			for(; i < bdev_count; i++) {
-				kfree(bdev_paths[i]);
-			}
-			bdev_count = iretval;
-			break;
-		}
-		print_a_bdev(&bdev_list[i]);
-		bdev_test(&bdev_list[i]);
-	}
-
 	if (nova_alloc_block_free_lists(sb)) {
 		retval = -ENOMEM;
 		nova_err(sb, "%s: Failed to allocate block free lists.",
@@ -852,6 +798,8 @@ setup_sb:
 
 	nova_print_curr_epoch_id(sb);
 
+	nova_setup_tiering(sbi);
+
 	retval = 0;
 	NOVA_END_TIMING(mount_t, mount_time);
 	return retval;
@@ -939,6 +887,9 @@ int nova_remount(struct super_block *sb, int *mntflags, char *data)
 	old_mount_opt = sbi->s_mount_opt;
 
 	if (nova_parse_options(data, sbi, 1))
+		goto restore_opt;
+
+	if (nova_setup_tiering(sbi))
 		goto restore_opt;
 
 	sb->s_flags = (sb->s_flags & ~MS_POSIXACL) |
@@ -1259,10 +1210,15 @@ static int __init init_nova_fs(void)
 	if (rc)
 		goto out3;
 
+	rc = nova_init_tiering(1UL << 40);
+	if (rc)
+		goto out4;
+
 	nova_info("init out");
 	NOVA_END_TIMING(init_t, init_time);
 	return 0;
-
+out4:
+	nova_cleanup_tiering();
 out3:
 	destroy_snapshot_info_cache();
 out2:
@@ -1274,12 +1230,9 @@ out1:
 
 static void __exit exit_nova_fs(void)
 {
-	int i;
-	for(i = 0; i < bdev_count; i++) {
-		kfree(bdev_paths[i]);
-	}
 	unregister_filesystem(&nova_fs_type);
 	remove_proc_entry(proc_dirname, NULL);
+	nova_cleanup_tiering();
 	destroy_snapshot_info_cache();
 	destroy_inodecache();
 	destroy_rangenode_cache();
