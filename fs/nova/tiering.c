@@ -165,7 +165,6 @@ void rmpage(page_t *p) {
     if(p==tail) tail=p->prev;
     if(p==head) head=p->next;
     if(pte_dirty(p->pte)) {
-        printk(KERN_INFO "tnova: page %d was written (dirty) -> writeback\n", pgidx);
         nova_bdev_write_block(bdev_raw, p->pgidx, 1, p->page, BIO_SYNC);
     }
     kfree(p);
@@ -185,7 +184,6 @@ struct page_t *create_page(unsigned long vaddr) {
     set_page_address(p->page, vaddr);
     nova_bdev_read_block(bdev_raw, p->pgidx, 1, p->page, BIO_SYNC);
     if(pgidx==MAX_PAGES-1) rmpage(head);
-    printk(KERN_INFO "tnova: page %d is created\n", p->idx);
     return p;
 }
 
@@ -200,11 +198,9 @@ void insert_tlb(struct page_t *page) {
     __flush_tlb_one(vaddr);
 }
 
-bool tnova_do_page_fault(struct pt_regs *regs, unsigned long error_code, unsigned long vaddr)
+bool nova_do_page_fault(struct pt_regs *regs, unsigned long error_code, unsigned long vaddr)
 {
     if (vaddr >= TASK_SIZE_MAX) {
-        printk(KERN_INFO "tnova: a page fault happened at %016lx [%p %016lx] %d %d\n", vaddr, (void*)vpmem, VMALLOC_END, vaddr >= VMALLOC_START, vaddr < VMALLOC_END);
-        
         /* Make sure we are in reserved area: */
         if (!(vaddr >= (unsigned long)vpmem && vaddr < VMALLOC_END))
             return false;
