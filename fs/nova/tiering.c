@@ -25,7 +25,7 @@
 #define MAX_PAGES 32
 
 char *vpmem=0;
-//void *pgcache=0;
+void *pgcache=0;
 int pgidx=0;
 bool full=false;
 unsigned long map_page[MAX_TIERS]={0};
@@ -117,54 +117,6 @@ inline unsigned long virt_to_phys_page(unsigned long vaddr) {
     return (vaddr-(unsigned long)vpmem) >> 30;
 }
 
-typedef struct page_t page_t;
-struct page_t {
-    int idx;
-    struct page_t *next;
-    struct page_t *prev;
-    struct page *page;
-    unsigned long pgidx;
-};
-
-static page_t* head=0;
-static page_t* tail=0;
-
-page_t *newpage(unsigned long vaddr) {
-    page_t *p = (page_t*)kmalloc(sizeof(page_t), GFP_KERNEL|GFP_ATOMIC);
-    p->next=p->prev=0;
-    p->idx=pgidx=(pgidx+1)%MAX_PAGES;
-    p->page=alloc_page(GFP_KERNEL|__GFP_ZERO);
-    if(head==0) head=p;
-    if(tail) {
-        tail->next=p;
-        p->prev=tail;
-    }
-    tail=p;
-    p->pgidx = virt_to_phys_page(vaddr);
-    return p;
-}
-
-void rmpage(page_t *p) {
-    if(p->prev) p->prev->next = p->next;
-    if(p->next) p->next->prev = p->prev;
-    if(p==tail) tail=p->prev;
-    if(p==head) head=p->next;
-    __free_page(p->page);
-    kfree(p);
-}
-
-inline pte_t *get_pte(unsigned long address) {
-    return pte_offset_kernel(
-        pmd_offset(
-            pud_offset(
-                p4d_offset(
-                    (pgd_t *)__va(read_cr3_pa()) + pgd_index(address),
-                    address),
-                address),
-            address),
-        address);
-}
-
 inline int get_bdev(unsigned long pgidx) {
     int i,r=-1;
     for(i=0; i<bdev_count; i++) {
@@ -174,67 +126,91 @@ inline int get_bdev(unsigned long pgidx) {
     return r;
 }
 
-struct page *get_new_page(unsigned long vaddr) {
-    page_t *p=newpage(vaddr);
-    if(pgidx==MAX_PAGES-1) full=true;
-    if(full) {
-        unsigned long address = (unsigned long)page_address(head->page);
-        pte_t pte = *get_pte(address);
-        if(pte_dirty(pte)) {
-            int bdev_idx = get_bdev(head->pgidx);
-            if(bdev_idx == -1) {
-                // TODO: physical pmem
-            } else {
-                nova_bdev_write_block(bdev_list[bdev_idx].bdev_raw, head->pgidx, 1, head->page, BIO_SYNC);
-            }
-        }
-        rmpage(head);
+typedef struct page_t page_t;
+struct page_t {
+    int idx;
+    struct page_t *next;
+    struct page_t *prev;
+    struct page *page;
+    pte_t pte;
+    int devidx;
+    unsigned long pgidx;
+    unsigned long vaddr;
+};
+
+static page_t* head=0;
+static page_t* tail=0;
+
+page_t *newpage(unsigned long vaddr) {
+    page_t *p = (page_t*)kmalloc(sizeof(page_t), GFP_KERNEL|GFP_ATOMIC);
+    p->next=p->prev=0;
+    p->idx=pgidx=((pgidx+1)%MAX_PAGES);
+    p->page = 0;
+    if(head==0) head=p;
+    if(tail) {
+        tail->next=p;
+        p->prev=tail;
     }
-    //printk(KERN_INFO "nova: page %d is created\n", p->idx);
-    return p->page;
+    tail=p;
+    p->pgidx = virt_to_phys_page(vaddr);
+    p->devidx = get_bdev(p->pgidx);
+    p->vaddr = vaddr;
+    return p;
 }
 
-bool nova_do_page_fault(struct pt_regs *regs, unsigned long error_code, unsigned long vaddr)
+void rmpage(page_t *p) {
+    struct block_device *bdev_raw = bdev_list[p->devidx].bdev_raw;
+    if(p->prev) p->prev->next = p->next;
+    if(p->next) p->next->prev = p->prev;
+    if(p==tail) tail=p->prev;
+    if(p==head) head=p->next;
+    if(pte_dirty(p->pte)) {
+        printk(KERN_INFO "tnova: page %d was written (dirty) -> writeback\n", pgidx);
+        nova_bdev_write_block(bdev_raw, p->pgidx, 1, p->page, BIO_SYNC);
+    }
+    kfree(p);
+}
+
+struct page_t *create_page(unsigned long vaddr) {
+    page_t *p=newpage(vaddr);
+    struct block_device *bdev_raw = bdev_list[p->devidx].bdev_raw;
+    unsigned long address = (unsigned long)pgcache + ((unsigned long)p->idx << PAGE_SHIFT);
+    pgd_t *pgd = (pgd_t *)__va(read_cr3_pa()) + pgd_index(address);
+    p4d_t *p4d = p4d_offset(pgd, address);
+    pud_t *pud = pud_offset(p4d, address);
+    pmd_t *pmd = pmd_offset(pud, address);
+    pte_t *pte = pte_offset_kernel(pmd, address);
+    p->pte = *pte;
+    p->page = pte_page(*pte);
+    set_page_address(p->page, vaddr);
+    nova_bdev_read_block(bdev_raw, p->pgidx, 1, p->page, BIO_SYNC);
+    if(pgidx==MAX_PAGES-1) rmpage(head);
+    printk(KERN_INFO "tnova: page %d is created\n", p->idx);
+    return p;
+}
+
+void insert_tlb(struct page_t *page) {
+    unsigned long vaddr = page->vaddr;
+    pgd_t *pgd = (pgd_t *)__va(read_cr3_pa()) + pgd_index(vaddr);
+    p4d_t *p4d = fill_p4d(pgd, vaddr);
+    pud_t *pud = fill_pud(p4d, vaddr);
+    pmd_t *pmd = fill_pmd(pud, vaddr);
+    pte_t *pte = fill_pte(pmd, vaddr);
+    set_pte(pte, page->pte);
+    __flush_tlb_one(vaddr);
+}
+
+bool tnova_do_page_fault(struct pt_regs *regs, unsigned long error_code, unsigned long vaddr)
 {
     if (vaddr >= TASK_SIZE_MAX) {
-        pgd_t *pgd;
-        p4d_t *p4d;
-        pud_t *pud;
-        pmd_t *pmd;
-        pte_t *pte;
-        struct page *page;
-        unsigned long address;// = (unsigned long)pgcache + ((unsigned long)(pgidx=(pgidx+1)%16) << PAGE_SHIFT);
-        unsigned long phys_page = virt_to_phys_page(vaddr);
-	int bdev_idx = get_bdev(phys_page);
-
+        printk(KERN_INFO "tnova: a page fault happened at %016lx [%p %016lx] %d %d\n", vaddr, (void*)vpmem, VMALLOC_END, vaddr >= VMALLOC_START, vaddr < VMALLOC_END);
+        
         /* Make sure we are in reserved area: */
         if (!(vaddr >= (unsigned long)vpmem && vaddr < VMALLOC_END))
             return false;
-
-//        printk(KERN_INFO "nova: a page fault happened at address %016lx\n", vaddr);
-
-        page = get_new_page(vaddr);
-        address = (unsigned long)page_address(page);
-
-        if(bdev_idx == -1) {
-            // TODO: physical pmem 
-        } else {
-            //printk(KERN_INFO "nova: reading page %ld from tier %d (%s)\n", phys_page, bdev_idx, bdev_list[bdev_idx].bdev_path);
-            nova_bdev_read_block(bdev_list[bdev_idx].bdev_raw, phys_page, 1, page, BIO_SYNC);
-        }
-        pgd = (pgd_t *)__va(read_cr3_pa()) + pgd_index(vaddr);
-        p4d = fill_p4d(pgd, vaddr);
-        pud = fill_pud(p4d, vaddr);
-        pmd = fill_pmd(pud, vaddr);
-        pte = fill_pte(pmd, vaddr);
-        pte_mkclean(*pte);
-
-        set_pte(pte, *get_pte(address));
-
-        __flush_tlb_one(vaddr);
+        insert_tlb(create_page( vaddr & PAGE_MASK ));
         return true;
     }
-
     return false;
 }
 
@@ -243,6 +219,7 @@ int nova_init_tiering(unsigned long offset)
     __flush_tlb_all();
     vpmem = (char*)(VMALLOC_START + offset);
     install_custom_page_fault_handler(nova_do_page_fault);
+    pgcache = kmalloc(MAX_PAGES*PAGE_SIZE, GFP_KERNEL|GFP_ATOMIC);
 
     return 0;
 } 
@@ -257,7 +234,6 @@ int nova_setup_tiering(struct nova_sb_info *sbi)
         map_page[i] = size;
         map_valid[i] = true;
         print_a_bdev(&bdev_list[i]);
-//        bdev_test(&bdev_list[i]);
     }
 
     printk(KERN_INFO "nova: vpmem starts at %016lx (%lu GB)\n", 
@@ -282,6 +258,8 @@ void nova_cleanup_tiering(void)
 {
     install_custom_page_fault_handler(0);
     nova_persist_page_cache();
+    if(pgcache) kfree(pgcache);
+    __flush_tlb_all();
 }
 
 void nova_reset_tiering(void)
@@ -297,16 +275,6 @@ void nova_reset_tiering(void)
 
 void nova_persist_page_cache(void) {
     while(head) {
-        unsigned long address = (unsigned long)page_address(head->page);
-        pte_t pte = *get_pte(address);
-        if(pte_dirty(pte)) {
-            int bdev_idx = get_bdev(head->pgidx);
-            if(bdev_idx == -1) {
-                // TODO: physical pmem
-            } else {
-                nova_bdev_write_block(bdev_list[bdev_idx].bdev_raw, head->pgidx, 1, head->page, BIO_SYNC);
-            }
-        }
         rmpage(head);
     }
 }
