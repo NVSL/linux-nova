@@ -479,6 +479,8 @@ static struct nova_inode *nova_init(struct super_block *sb,
 
 	nova_init_blockmap(sb, 0);
 
+	nova_init_bdev_blockmap(sb, 0);
+
 	if (nova_lite_journal_hard_init(sb) < 0) {
 		nova_err(sb, "Lite journal hard initialization failed\n");
 		return ERR_PTR(-EINVAL);
@@ -762,6 +764,15 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 		goto out;
 	}
 
+	if (nova_alloc_bdev_block_free_lists(sb)) {
+		retval = -ENOMEM;
+		nova_err(sb, "%s: Failed to allocate bdev block free lists.",
+			 __func__);
+		goto out;
+	}
+
+	bfl_test(sbi);
+
 	nova_sysfs_init(sb);
 
 	/* Init a new nova instance */
@@ -860,6 +871,9 @@ out:
 
 	kfree(sbi->free_lists);
 	sbi->free_lists = NULL;
+
+	kfree(sbi->bdev_free_list);
+	sbi->bdev_free_list = NULL;
 
 	kfree(sbi->bdev_list);
 	sbi->bdev_list = NULL;
@@ -978,11 +992,13 @@ static void nova_put_super(struct super_block *sb)
 	}
 
 	nova_delete_free_lists(sb);
+	nova_delete_bdev_free_list(sb);
 
 	kfree(sbi->zeroed_page);
 	kfree(sbi->zero_parity);
 	nova_dbgmask = 0;
 	kfree(sbi->free_lists);
+	kfree(sbi->bdev_free_list);
 	kfree(sbi->bdev_list);
 	kfree(sbi->journal_locks);
 

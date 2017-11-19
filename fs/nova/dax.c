@@ -242,6 +242,8 @@ int nova_cleanup_incomplete_write(struct super_block *sb,
 	return 0;
 }
 
+// pgoff: in-file offset
+// block: data block address
 void nova_init_file_write_entry(struct super_block *sb,
 	struct nova_inode_info_header *sih, struct nova_file_write_entry *entry,
 	u64 epoch_id, u64 pgoff, int num_pages, u64 blocknr, u32 time,

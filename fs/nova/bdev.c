@@ -207,7 +207,348 @@ int nova_bdev_read_block(struct block_device *device, unsigned long offset,
 		size<<IO_BLOCK_SIZE_BIT, page, 0, sync);
 }
 
-// bool
+// int nova_bdev
+
+void nova_delete_bdev_free_list(struct super_block *sb) {
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+
+	/* Each tree is freed in save_blocknode_mappings */
+	kfree(sbi->bdev_free_list);
+	sbi->bdev_free_list = NULL;
+}
+
+
+int nova_alloc_bdev_block_free_lists(struct super_block *sb) {
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	struct bdev_free_list *bdev_free_list;
+
+	sbi->bdev_free_list = kmalloc(sizeof(struct bdev_free_list), GFP_KERNEL);
+
+	if (!sbi->bdev_free_list)
+		return -ENOMEM;
+
+	bdev_free_list = nova_get_bdev_free_list(sb);
+	bdev_free_list->block_free_tree = RB_ROOT;
+	spin_lock_init(&bdev_free_list->s_lock);
+
+	return 0;
+}
+
+static void nova_init_bdev_free_list(struct super_block *sb,
+	struct bdev_free_list *bfl) {
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+
+	bfl->num_total_blocks = sbi->bdev_list->capacity_page;
+	
+	bfl->block_start = sbi->num_blocks;
+	bfl->block_end = sbi->num_blocks + sbi->bdev_list->capacity_page-1;
+
+}
+
+void nova_init_bdev_blockmap(struct super_block *sb, int recovery) {
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	struct rb_root *tree;
+	struct nova_range_node *blknode;
+	struct bdev_free_list *bfl;
+	int ret;
+	
+	bfl = nova_get_bdev_free_list(sb);
+	tree = &(bfl->block_free_tree);
+	nova_init_bdev_free_list(sb, bfl);
+
+	/* For recovery, update these fields later */
+	if (recovery == 0) {
+		bfl->num_free_blocks = bfl->block_end - bfl->block_start + 1;
+
+		blknode = nova_alloc_blocknode(sb);
+		if (blknode == NULL)
+			BUG();
+		blknode->range_low = bfl->block_start;
+		blknode->range_high = bfl->block_end;
+		nova_update_range_node_checksum(blknode);
+		ret = nova_insert_blocktree(sbi, tree, blknode);
+		if (ret) {
+			nova_err(sb, "%s failed\n", __func__);
+			nova_free_blocknode(sb, blknode);
+			return;
+		}
+		bfl->first_node = blknode;
+		bfl->last_node = blknode;
+		bfl->num_blocknode = 1;
+	}
+
+	nova_dbgv("%s: free list of bdev: block start %lu, end %lu, %lu free blocks\n",
+			__func__,
+			bfl->block_start,
+			bfl->block_end,
+			bfl->num_free_blocks);
+			
+}
+
+/* Return how many blocks allocated */
+static long nova_alloc_blocks_in_bdev_free_list(struct super_block *sb,
+	struct bdev_free_list *bfl, unsigned long num_blocks,
+	unsigned long *new_blocknr, enum nova_alloc_direction from_tail) {
+		
+	struct rb_root *tree;
+	struct nova_range_node *curr, *next = NULL, *prev = NULL;
+	struct rb_node *temp, *next_node, *prev_node;
+	unsigned long curr_blocks;
+	bool found = 0;
+
+	if (!bfl->first_node || bfl->num_free_blocks == 0) {
+		nova_dbgv("%s:[Bdev] Can't alloc. free_list->first_node=0x%p free_list->num_free_blocks = %lu",
+			  __func__, bfl->first_node, bfl->num_free_blocks);
+		return -ENOSPC;
+	}
+
+	tree = &(bfl->block_free_tree);
+	if (from_tail == ALLOC_FROM_HEAD)
+		temp = &(bfl->first_node->node);
+	else
+		temp = &(bfl->last_node->node);
+
+	while (temp) {
+		curr = container_of(temp, struct nova_range_node, node);
+
+		if (!nova_range_node_checksum_ok(curr)) {
+			nova_err(sb, "%s curr failed\n", __func__);
+			goto next;
+		}
+
+		curr_blocks = curr->range_high - curr->range_low + 1;
+
+		if (num_blocks >= curr_blocks) {
+			/* Superpage allocation must succeed */
+			if (num_blocks > curr_blocks)
+				goto next;
+
+			/* Otherwise, allocate the whole blocknode */
+			if (curr == bfl->first_node) {
+				next_node = rb_next(temp);
+				if (next_node)
+					next = container_of(next_node,
+						struct nova_range_node, node);
+				bfl->first_node = next;
+			}
+
+			if (curr == bfl->last_node) {
+				prev_node = rb_prev(temp);
+				if (prev_node)
+					prev = container_of(prev_node,
+						struct nova_range_node, node);
+				bfl->last_node = prev;
+			}
+
+			rb_erase(&curr->node, tree);
+			bfl->num_blocknode--;
+			num_blocks = curr_blocks;
+			*new_blocknr = curr->range_low;
+			nova_free_blocknode(sb, curr);
+			found = 1;
+			break;
+		}
+
+		/* Allocate partial blocknode */
+		if (from_tail == ALLOC_FROM_HEAD) {
+			*new_blocknr = curr->range_low;
+			curr->range_low += num_blocks;
+		} else {
+			*new_blocknr = curr->range_high + 1 - num_blocks;
+			curr->range_high -= num_blocks;
+		}
+
+		nova_update_range_node_checksum(curr);
+		found = 1;
+		break;
+next:
+		if (from_tail == ALLOC_FROM_HEAD)
+			temp = rb_next(temp);
+		else
+			temp = rb_prev(temp);
+	}
+
+	if (bfl->num_free_blocks < num_blocks) {
+		nova_dbg("%s: free list of block device has %lu free blocks, but allocated %lu blocks?\n",
+				__func__, bfl->num_free_blocks, num_blocks);
+		return -ENOSPC;
+	}
+
+	if (found == 1)
+		bfl->num_free_blocks -= num_blocks;
+	else {
+		nova_dbgv("%s: Can't alloc.  found = %d", __func__, found);
+		return -ENOSPC;
+	}
+
+	return num_blocks;
+}
+
+/*
+ * Allocate data block from block device, return the block number
+ * *blocknr: Returns the offset of block
+ * num_block: Number of blocks of the request
+ * from_tail: Direction
+ */ 
+static int nova_new_blocks_from_bdev(struct super_block *sb, unsigned long *blocknr,
+	unsigned int num_blocks, enum nova_alloc_direction from_tail) {
+
+	struct bdev_free_list *bfl;
+	unsigned long new_blocknr = 0;
+	long ret_blocks = 0;
+
+	if (num_blocks == 0) {
+		nova_dbg_verbose("%s: num_blocks == 0", __func__);
+		return -EINVAL;
+	}
+
+	bfl = nova_get_bdev_free_list(sb);
+	spin_lock(&bfl->s_lock);
+
+	ret_blocks = nova_alloc_blocks_in_bdev_free_list(sb, bfl, num_blocks, &new_blocknr, from_tail);
+
+	if (ret_blocks > 0) {
+		bfl->num_blocknode +=1;
+		bfl->num_free_blocks -= ret_blocks;
+	}
+
+	spin_unlock(&bfl->s_lock);
+
+	if (ret_blocks <= 0 || new_blocknr == 0) {
+		nova_dbg_verbose("%s: not able to allocate %d blocks from bdev.  ret_blocks=%ld; new_blocknr=%lu",
+				 __func__, num_blocks, ret_blocks, new_blocknr);
+		return -ENOSPC;
+	}
+
+	*blocknr = new_blocknr;
+
+	nova_dbg_verbose("[Bdev] Alloc %lu NVMM blocks 0x%lx\n", ret_blocks, *blocknr);
+	return ret_blocks;
+}
+
+
+static int nova_free_blocks_from_bdev(struct super_block *sb, unsigned long blocknr,
+	unsigned int num_blocks)
+{
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	struct rb_root *tree;
+	unsigned long block_low;
+	unsigned long block_high;
+	struct nova_range_node *prev = NULL;
+	struct nova_range_node *next = NULL;
+	struct nova_range_node *curr_node;
+	struct bdev_free_list *bfl;
+	int new_node_used = 0;
+	int ret;
+
+	if (num_blocks <= 0) {
+		nova_dbg("%s ERROR: free %d\n", __func__, num_blocks);
+		return -EINVAL;
+	}
+
+	/* Pre-allocate blocknode */
+	curr_node = nova_alloc_blocknode(sb);
+	if (curr_node == NULL) {
+		/* returning without freeing the block*/
+		return -ENOMEM;
+	}
+
+	bfl = nova_get_bdev_free_list(sb);
+	spin_lock(&bfl->s_lock);
+
+	tree = &(bfl->block_free_tree);
+
+	block_low = blocknr;
+	block_high = blocknr + num_blocks - 1;
+
+	nova_dbgv("Free: %lu - %lu\n", block_low, block_high);
+
+	if (blocknr < bfl->block_start ||
+			blocknr + num_blocks > bfl->block_end + 1) {
+		nova_err(sb, "free blocks %lu to %lu, free list in bdev, start %lu, end %lu\n",
+				blocknr, blocknr + num_blocks - 1,
+				bfl->block_start,
+				bfl->block_end);
+		ret = -EIO;
+		goto out;
+	}
+
+	ret = nova_find_free_slot(sbi, tree, block_low,
+					block_high, &prev, &next);
+
+	if (ret) {
+		nova_dbg("%s: find free slot fail: %d\n", __func__, ret);
+		goto out;
+	}
+
+	if (prev && next && (block_low == prev->range_high + 1) &&
+			(block_high + 1 == next->range_low)) {
+		/* fits the hole */
+		rb_erase(&next->node, tree);
+		bfl->num_blocknode--;
+		prev->range_high = next->range_high;
+		nova_update_range_node_checksum(prev);
+		if (bfl->last_node == next)
+			bfl->last_node = prev;
+		nova_free_blocknode(sb, next);
+		goto block_found;
+	}
+	if (prev && (block_low == prev->range_high + 1)) {
+		/* Aligns left */
+		prev->range_high += num_blocks;
+		nova_update_range_node_checksum(prev);
+		goto block_found;
+	}
+	if (next && (block_high + 1 == next->range_low)) {
+		/* Aligns right */
+		next->range_low -= num_blocks;
+		nova_update_range_node_checksum(next);
+		goto block_found;
+	}
+
+	/* Aligns somewhere in the middle */
+	curr_node->range_low = block_low;
+	curr_node->range_high = block_high;
+	nova_update_range_node_checksum(curr_node);
+	new_node_used = 1;
+	ret = nova_insert_blocktree(sbi, tree, curr_node);
+	if (ret) {
+		new_node_used = 0;
+		goto out;
+	}
+	if (!prev)
+		bfl->first_node = curr_node;
+	if (!next)
+		bfl->last_node = curr_node;
+
+	bfl->num_blocknode++;
+
+block_found:
+	bfl->num_free_blocks += num_blocks;
+
+out:
+	spin_unlock(&bfl->s_lock);
+	if (new_node_used == 0)
+		nova_free_blocknode(sb, curr_node);
+
+	return ret;
+}
+
+
+static int nova_bdev_alloc_blocks(struct super_block *sb, unsigned long *blocknr,
+	unsigned int num_blocks) {
+	
+	return nova_new_blocks_from_bdev(sb, blocknr, num_blocks, ALLOC_FROM_HEAD);
+}
+
+static int nova_bdev_free_blocks(struct super_block *sb, unsigned long blocknr,
+	unsigned int num_blocks) {
+	
+	return nova_free_blocks_from_bdev(sb, blocknr, num_blocks);
+}
+
+
+// bool check
 
 void bdev_test(struct nova_sb_info *sbi) {
 	struct block_device *bdev_raw = sbi->bdev_list->bdev_raw;
@@ -257,4 +598,20 @@ void bdev_test(struct nova_sb_info *sbi) {
 	}
 	
 	nova_info("Block device test out %u.\n",bdev_raw->bd_block_size);
+}
+
+void bfl_test(struct nova_sb_info *sbi) {
+	struct super_block *sb = sbi->sb;
+	unsigned long tmp;
+	int ret;
+	ret = nova_bdev_alloc_blocks(sb, &tmp, 1);
+	nova_info("[bfl1] ret:%d, offset:%lu" ,ret, tmp);
+	ret = nova_bdev_alloc_blocks(sb, &tmp, 2);
+	nova_info("[bfl1] ret:%d, offset:%lu" ,ret, tmp);
+	ret = nova_bdev_alloc_blocks(sb, &tmp, 3);
+	nova_info("[bfl1] ret:%d, offset:%lu" ,ret, tmp);
+	ret = nova_bdev_free_blocks(sb, 1, 2);
+	nova_info("[bfl1] ret:%d" ,ret);
+	ret = nova_bdev_alloc_blocks(sb, &tmp, 2);
+	nova_info("[bfl1] ret:%d, offset:%lu" ,ret, tmp);
 }

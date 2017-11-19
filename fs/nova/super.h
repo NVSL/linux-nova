@@ -174,6 +174,11 @@ struct nova_sb_info {
 
 	/* Per-CPU free block list */
 	struct free_list *free_lists;
+
+	/* Free block list for block */
+	// TODO: Multi-bdev
+	struct bdev_free_list *bdev_free_list;
+
 	unsigned long per_list_blocks;
 };
 

@@ -10,6 +10,3 @@ nova-y := balloc.o bbuild.o bdev.o checksum.o dax.o dir.o file.o gc.o inode.o io
 
 all:
 		make -C ../.. M=`pwd`
-
-clean:
-		make -C ../.. clean

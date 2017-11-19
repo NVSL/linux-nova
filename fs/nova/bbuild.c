@@ -1558,6 +1558,9 @@ int nova_recovery(struct super_block *sb)
 	/* initialize free list info */
 	nova_init_blockmap(sb, 1);
 
+	/* initialize bdev free list info */
+	nova_init_bdev_blockmap(sb, 1);
+
 	value = nova_try_normal_recovery(sb);
 	if (value) {
 		nova_dbg("NOVA: Normal shutdown\n");

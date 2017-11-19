@@ -341,6 +341,7 @@ nova_get_addr_off(struct nova_sb_info *sbi, void *addr)
 	return (u64)(addr - sbi->virt_addr);
 }
 
+// Change block number to an address
 static inline u64
 nova_get_block_off(struct super_block *sb, unsigned long blocknr,
 		    unsigned short btype)
@@ -929,6 +930,10 @@ void nova_save_inode_list_to_log(struct super_block *sb);
 void nova_init_header(struct super_block *sb,
 	struct nova_inode_info_header *sih, u16 i_mode);
 int nova_recovery(struct super_block *sb);
+
+/* bdev.c */
+int nova_alloc_bdev_block_free_lists(struct super_block *sb);
+void nova_init_bdev_blockmap(struct super_block *sb, int recovery);
 
 /* checksum.c */
 void nova_update_entry_csum(void *entry);
