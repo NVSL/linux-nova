@@ -771,8 +771,6 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 		goto out;
 	}
 
-	bfl_test(sbi);
-
 	nova_sysfs_init(sb);
 
 	/* Init a new nova instance */
@@ -860,6 +858,9 @@ setup_sb:
 	nova_print_curr_epoch_id(sb);
 
 	retval = 0;
+
+	bfl_test(sbi);
+
 	NOVA_END_TIMING(mount_t, mount_time);
 	return retval;
 out:

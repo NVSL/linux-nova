@@ -243,6 +243,8 @@ static void nova_init_bdev_free_list(struct super_block *sb,
 	bfl->block_start = sbi->num_blocks;
 	bfl->block_end = sbi->num_blocks + sbi->bdev_list->capacity_page-1;
 
+	nova_info("bfl->block_end = %lu\n",bfl->block_end);
+
 }
 
 void nova_init_bdev_blockmap(struct super_block *sb, int recovery) {
@@ -537,14 +539,19 @@ out:
 
 static int nova_bdev_alloc_blocks(struct super_block *sb, unsigned long *blocknr,
 	unsigned int num_blocks) {
-	
-	return nova_new_blocks_from_bdev(sb, blocknr, num_blocks, ALLOC_FROM_HEAD);
+
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	int ret = 0;
+	ret = nova_new_blocks_from_bdev(sb, blocknr, num_blocks, ALLOC_FROM_HEAD);
+	*blocknr -= sbi->num_blocks;
+	return ret;
 }
 
 static int nova_bdev_free_blocks(struct super_block *sb, unsigned long blocknr,
 	unsigned int num_blocks) {
 	
-	return nova_free_blocks_from_bdev(sb, blocknr, num_blocks);
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	return nova_free_blocks_from_bdev(sb, blocknr + sbi->num_blocks, num_blocks);
 }
 
 
@@ -607,11 +614,11 @@ void bfl_test(struct nova_sb_info *sbi) {
 	ret = nova_bdev_alloc_blocks(sb, &tmp, 1);
 	nova_info("[bfl1] ret:%d, offset:%lu" ,ret, tmp);
 	ret = nova_bdev_alloc_blocks(sb, &tmp, 2);
-	nova_info("[bfl1] ret:%d, offset:%lu" ,ret, tmp);
+	nova_info("[bfl2] ret:%d, offset:%lu" ,ret, tmp);
 	ret = nova_bdev_alloc_blocks(sb, &tmp, 3);
-	nova_info("[bfl1] ret:%d, offset:%lu" ,ret, tmp);
+	nova_info("[bfl3] ret:%d, offset:%lu" ,ret, tmp);
 	ret = nova_bdev_free_blocks(sb, 1, 2);
-	nova_info("[bfl1] ret:%d" ,ret);
+	nova_info("[bfl4] ret:%d" ,ret);
 	ret = nova_bdev_alloc_blocks(sb, &tmp, 2);
-	nova_info("[bfl1] ret:%d, offset:%lu" ,ret, tmp);
+	nova_info("[bfl5] ret:%d, offset:%lu" ,ret, tmp);
 }
