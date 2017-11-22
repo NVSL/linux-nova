@@ -166,6 +166,7 @@ struct nova_sb_info {
 	/* Mini DRAM buffer */
 	
 	spinlock_t *mb_locks;
+	struct page **mb_pages;
 	char *mini_buffer;
 
 	/* Per-CPU journal lock */

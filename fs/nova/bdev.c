@@ -1,5 +1,6 @@
 #include "nova.h"
 #include "bdev.h"
+#include <asm/tlbflush.h>
 
 #define SECTOR_SIZE_BIT 9
 #define VFS_IO_TEST 0
@@ -115,8 +116,10 @@ int modify_a_page(void* addr, int keychar) {
 		i++;
 	}
 	for (i=0;i<64;++i) {
-		strncat(c+i*64,&word[key+i%26],64);
+		memcpy(c+i*64,&word[key+i%26],64);
 	}
+	
+	kfree(word);	
 	if (i<64) return -1;
 	return 0;
 }
@@ -162,8 +165,8 @@ int nova_bdev_write_byte(struct block_device *device, unsigned long offset,
 	bv->bv_offset = page_offset;
 	bio->bi_io_vec = bv;
 	bio_set_op_attrs(bio, REQ_OP_WRITE, 0);
-	if (sync) submit_bio_wait(bio);
-	else submit_bio(bio);
+	if (sync) ret = submit_bio_wait(bio);
+	else ret = submit_bio(bio);
 	bio_put(bio);
 	return ret;
 }
@@ -594,7 +597,9 @@ void bdev_test(struct nova_sb_info *sbi) {
 	ret = nova_bdev_write_block(bdev_raw, capacity_page-1, 1, pg, BIO_SYNC);
 	// Page read
 	for (i=0;i<capacity_page;++i) {
-		if (i>2&&i<capacity_page-2) continue;
+		if (i>30&&i<capacity_page-2) continue;
+		modify_a_page(pg_vir_addr,'B'+i%20);
+		ret = nova_bdev_write_block(bdev_raw, i, 1, pg, BIO_SYNC);
 		ret = nova_bdev_read_block(bdev_raw, i, 1, pg2, BIO_SYNC);
 		nova_info("[%s] [Block %d]\n",bdev_name,i);
 		print_a_page(pg_vir_addr2);
