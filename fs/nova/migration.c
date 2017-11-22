@@ -34,6 +34,7 @@ int buffer_data_block_from_bdev(struct nova_sb_info *sbi, int tier, int blockoff
     int i = 0;
     int ret = 0;
 	struct page *pg;
+	nova_info("[Buffering] block:%d\n" ,blockoff);
 	for (i = blockoff%MINI_BUFFER_PAGES; i < blockoff%MINI_BUFFER_PAGES+MINI_BUFFER_PAGES; i++)
 		if(spin_trylock(&sbi->mb_locks[i%MINI_BUFFER_PAGES])) goto copy;
     // All mini-buffers are full
@@ -44,7 +45,7 @@ copy:
     pg = sbi->mb_pages[i];
     ret = nova_bdev_read_block(sbi->bdev_list[tier-1].bdev_raw, blockoff, 1, pg, BIO_SYNC);
 
-    print_a_page(&sbi->mini_buffer[i]);
+    // print_a_page(&sbi->mini_buffer[i]);
     if (ret) return -ret;
     else return i;
 }

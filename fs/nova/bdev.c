@@ -596,13 +596,15 @@ void bdev_test(struct nova_sb_info *sbi) {
 	ret = nova_bdev_write_block(bdev_raw, 1, 1, pg, BIO_SYNC);
 	ret = nova_bdev_write_block(bdev_raw, capacity_page-1, 1, pg, BIO_SYNC);
 	// Page read
-	for (i=0;i<capacity_page;++i) {
-		if (i>30&&i<capacity_page-2) continue;
-		modify_a_page(pg_vir_addr,'B'+i%20);
+	for (i=0;i<20;++i) {
+		if (i>capacity_page-2) continue;
+		modify_a_page(pg_vir_addr,'C'+i%20);
 		ret = nova_bdev_write_block(bdev_raw, i, 1, pg, BIO_SYNC);
 		ret = nova_bdev_read_block(bdev_raw, i, 1, pg2, BIO_SYNC);
-		nova_info("[%s] [Block %d]\n",bdev_name,i);
-		print_a_page(pg_vir_addr2);
+		if(i%100==50) {
+			nova_info("[%s] [Block %d]\n",bdev_name,i);
+		 	print_a_page(pg_vir_addr2);
+		}
 	}
 	
 	nova_info("Block device test out %u.\n",bdev_raw->bd_block_size);
@@ -613,6 +615,7 @@ void bfl_test(struct nova_sb_info *sbi) {
 	unsigned long tmp;
 	int ret;
 	int i = 0;
+
 	ret = nova_bdev_alloc_blocks(sb, &tmp, 1);
 	nova_info("[bfl1] ret:%d, offset:%lu" ,ret, tmp);
 	ret = nova_bdev_alloc_blocks(sb, &tmp, 2);
