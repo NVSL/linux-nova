@@ -727,6 +727,14 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 
 	mutex_init(&sbi->s_lock);
 
+	/* tiering */
+	retval = init_dram_buffer(sbi);
+	if (retval) {
+		nova_err(sb, "%s: Failed to allocate DRAM buffer.",
+			 __func__);
+		goto out;
+	}
+
 	sbi->zeroed_page = kzalloc(PAGE_SIZE, GFP_KERNEL);
 	if (!sbi->zeroed_page) {
 		retval = -ENOMEM;
@@ -882,6 +890,12 @@ out:
 	kfree(sbi->journal_locks);
 	sbi->journal_locks = NULL;
 
+	kfree(sbi->mb_locks);
+	sbi->mb_locks = NULL;
+
+	kfree(sbi->mini_buffer);
+	sbi->mini_buffer = NULL;
+
 	kfree(sbi->inode_maps);
 	sbi->inode_maps = NULL;
 
@@ -1002,6 +1016,8 @@ static void nova_put_super(struct super_block *sb)
 	kfree(sbi->bdev_free_list);
 	kfree(sbi->bdev_list);
 	kfree(sbi->journal_locks);
+	kfree(sbi->mb_locks);
+	kfree(sbi->mini_buffer);
 
 	for (i = 0; i < sbi->cpus; i++) {
 		inode_map = &sbi->inode_maps[i];

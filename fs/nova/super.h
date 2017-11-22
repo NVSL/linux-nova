@@ -162,6 +162,11 @@ struct nova_sb_info {
 
 	/* NOVA-tiering */
 	struct bdev_info *bdev_list;
+	
+	/* Mini DRAM buffer */
+	
+	spinlock_t *mb_locks;
+	char *mini_buffer;
 
 	/* Per-CPU journal lock */
 	spinlock_t *journal_locks;

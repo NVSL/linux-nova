@@ -159,6 +159,7 @@ persist:
 /* This callback is called when a file is closed */
 static int nova_flush(struct file *file, fl_owner_t id)
 {
+	nova_info("nova_flush is called\n");
 	PERSISTENT_BARRIER();
 	return 0;
 }

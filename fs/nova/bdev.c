@@ -2,12 +2,8 @@
 #include "bdev.h"
 
 #define SECTOR_SIZE_BIT 9
-#define IO_BLOCK_SIZE_BIT 12
-#define IO_BLOCK_SIZE 4096
 #define VFS_IO_TEST 0
 
-#define BIO_ASYNC 0
-#define BIO_SYNC 1
 
 // This function is used for a raw block device lookup in /dev
 char* find_a_raw_bdev(void) {
@@ -611,6 +607,7 @@ void bfl_test(struct nova_sb_info *sbi) {
 	struct super_block *sb = sbi->sb;
 	unsigned long tmp;
 	int ret;
+	int i = 0;
 	ret = nova_bdev_alloc_blocks(sb, &tmp, 1);
 	nova_info("[bfl1] ret:%d, offset:%lu" ,ret, tmp);
 	ret = nova_bdev_alloc_blocks(sb, &tmp, 2);
@@ -621,4 +618,11 @@ void bfl_test(struct nova_sb_info *sbi) {
 	nova_info("[bfl4] ret:%d" ,ret);
 	ret = nova_bdev_alloc_blocks(sb, &tmp, 2);
 	nova_info("[bfl5] ret:%d, offset:%lu" ,ret, tmp);
+
+	for (i=0;i<33;++i) {
+		nova_info("[bfl6] block %d\n", i); 
+		ret = buffer_data_block_from_bdev(sbi,1,i);
+		nova_info("[bfl6] buffer %d\n", ret); 
+		put_dram_buffer(sbi, ret);
+	}
 }

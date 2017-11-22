@@ -54,6 +54,13 @@
 #define PAGE_SHIFT_2M 21
 #define PAGE_SHIFT_1G 30
 
+/* tiering */
+#define	MINI_BUFFER_PAGES 16
+#define IO_BLOCK_SIZE_BIT 12
+#define IO_BLOCK_SIZE 4096
+#define BIO_ASYNC 0
+#define BIO_SYNC 1
+
 
 /*
  * Debug code
@@ -935,6 +942,12 @@ int nova_recovery(struct super_block *sb);
 int nova_alloc_bdev_block_free_lists(struct super_block *sb);
 void nova_init_bdev_blockmap(struct super_block *sb, int recovery);
 
+int nova_bdev_write_block(struct block_device *device, unsigned long offset,
+	unsigned long size, struct page *page, bool sync);
+int nova_bdev_read_block(struct block_device *device, unsigned long offset,
+	unsigned long size, struct page *page, bool sync);
+void print_a_page(void* addr);
+
 /* checksum.c */
 void nova_update_entry_csum(void *entry);
 int nova_update_block_csum(struct super_block *sb,
@@ -1045,6 +1058,10 @@ extern long nova_compat_ioctl(struct file *file, unsigned int cmd,
 #endif
 
 
+/* migration.c */
+int init_dram_buffer(struct nova_sb_info *sbi);
+int buffer_data_block_from_bdev(struct nova_sb_info *sbi, int tier, int blockoff);
+int put_dram_buffer(struct nova_sb_info *sbi, int number);
 
 /* mprotect.c */
 extern int nova_dax_mem_protect(struct super_block *sb,
