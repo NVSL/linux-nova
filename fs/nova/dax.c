@@ -21,8 +21,6 @@
 #include "nova.h"
 #include "inode.h"
 
-
-
 static inline int nova_copy_partial_block(struct super_block *sb,
 	struct nova_inode_info_header *sih,
 	struct nova_file_write_entry *entry, unsigned long index,

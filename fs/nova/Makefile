@@ -9,4 +9,7 @@ nova-y := balloc.o bbuild.o bdev.o migration.o checksum.o dax.o dir.o file.o gc.
 		rebuild.o snapshot.o stats.o super.o symlink.o sysfs.o perf.o
 
 all:
-		make -C ../.. M=`pwd`
+	make -C /lib/modules/$(shell uname -r)/build M=`pwd`
+
+clean:
+	make -C /lib/modules/$(shell uname -r)/build M=`pwd` clean
