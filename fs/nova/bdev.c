@@ -172,6 +172,7 @@ int nova_bdev_write_byte(struct block_device *device, unsigned long offset,
 	return ret;
 }
 
+// Return 0 on success
 int nova_bdev_write_block(struct block_device *device, unsigned long offset,
 	unsigned long size, struct page *page, bool sync) {
 	return nova_bdev_write_byte(device,offset<<IO_BLOCK_SIZE_BIT,
@@ -424,7 +425,7 @@ static int nova_new_blocks_from_bdev(struct super_block *sb, unsigned long *bloc
 
 	*blocknr = new_blocknr;
 
-	nova_dbg_verbose("[Bdev] Alloc %lu NVMM blocks 0x%lx\n", ret_blocks, *blocknr);
+	nova_info("[Bdev] Alloc %lu NVMM blocks 0x%lx\n", ret_blocks, *blocknr);
 	return ret_blocks;
 }
 

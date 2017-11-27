@@ -326,11 +326,36 @@ static inline void memset_nt(void *dest, uint32_t dword, size_t length)
  * If this is part of a read-modify-write of the block,
  * nova_memunlock_block() before calling!
  */
+
+// Convert from DRAM buffer to logical address for nova_get_block()
+static inline unsigned long convert_to_logical_offset(unsigned long block) {
+	// unsigned long header = 0x8ffffffffffff;
+	unsigned long header = 0x9000000000000;
+	// nova_info("to %p %p %p\n",block,header,block | header);
+	return block | header;
+}
+
+static inline unsigned long long convert_from_logical_offset(unsigned long long block) {
+	unsigned long long header = 0x9000000000000000;
+	// nova_info("from %p %p %p\n",block,header,block | header);
+	return block | header;
+}
+
+static inline bool is_logical_offset(unsigned long block) {
+	if (block >> 63) return true;
+	else return false;
+}
+
 static inline void *nova_get_block(struct super_block *sb, u64 block)
 {
 	struct nova_super_block *ps = nova_get_super(sb);
-
-	return block ? ((void *)ps + block) : NULL;
+	// nova_info("get %p\n",block);
+	if (is_logical_offset(block)){
+		// nova_info("nova_get_block: %llu\n",convert_from_logical_offset(block));
+		return block ? ((void *)convert_from_logical_offset(block)) : NULL;
+	}
+	else
+		return block ? ((void *)ps + block) : NULL;
 }
 
 static inline int nova_get_reference(struct super_block *sb, u64 block,
@@ -557,11 +582,14 @@ static inline unsigned long get_nvmm(struct super_block *sb,
 {
 	int mb_index = 0;
 	struct nova_sb_info *sbi = NOVA_SB(sb);
+	unsigned long long ret = 0;
+	unsigned long rett = 0;
 	/* entry is already verified before this call and resides in dram
 	 * or we can do memcpy_mcsafe here but have to avoid double copy and
 	 * verification of the entry.
 	 */
 	if (entry->tier == TIER_PMEM) {
+		nova_info("[Get] Get from TIER_PMEM\n");
 		if (entry->pgoff > pgoff || (unsigned long) entry->pgoff +
 				(unsigned long) entry->num_pages <= pgoff) {
 			struct nova_sb_info *sbi = NOVA_SB(sb);
@@ -580,13 +608,19 @@ static inline unsigned long get_nvmm(struct super_block *sb,
 			- entry->pgoff;
 	}
 	if (entry->tier == TIER_BDEV) {
-		mb_index = buffer_data_block_from_bdev_range(sbi, entry->tier, entry->block >> PAGE_SHIFT, entry->num_pages);
+		nova_info("[Get] Get from TIER_BDEV\n");
+		mb_index = buffer_data_block_from_bdev_range(sbi, entry->tier, entry->block, entry->num_pages);
 		if(mb_index<0) {
 			nova_info("get_nvmm failed\n");
 			return 0;
 		}
 		nova_update_entry_csum(entry);
-		return (unsigned long) (&sbi->mini_buffer + (mb_index << PAGE_SHIFT));
+		// nova_info("ret %p, %llu,%d\n",sbi->mini_buffer,((unsigned long long)(sbi->mini_buffer) >> PAGE_SHIFT),mb_index);
+		ret = ((unsigned long long)(sbi->mini_buffer) >> PAGE_SHIFT) + (unsigned long long)mb_index;
+		// nova_info("ret %p",ret);
+		rett = (unsigned long)ret;
+		// nova_info("ret %p",rett);
+		return convert_to_logical_offset(rett);
 	}
 	return 0;
 }
@@ -1087,6 +1121,7 @@ extern long nova_compat_ioctl(struct file *file, unsigned int cmd,
 int init_dram_buffer(struct nova_sb_info *sbi);
 int buffer_data_block_from_bdev(struct nova_sb_info *sbi, int tier, int blockoff);
 int put_dram_buffer(struct nova_sb_info *sbi, int number);
+int migrate_a_file_to_bdev(struct file *filp);
 
 /* mprotect.c */
 extern int nova_dax_mem_protect(struct super_block *sb,

@@ -161,7 +161,7 @@ static int nova_flush(struct file *file, fl_owner_t id)
 {
 	nova_info("nova_flush is called\n");
 	// Tiering migration
-
+	migrate_a_file_to_bdev(file);
 
 	PERSISTENT_BARRIER();
 	return 0;
@@ -540,6 +540,7 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 
 		nvmm = get_nvmm(sb, sih, entryc, index);
 		dax_mem = nova_get_block(sb, (nvmm << PAGE_SHIFT));
+		// nova_info("nvmm: %p, dax_mem: %p\n",nvmm, dax_mem);
 
 memcpy:
 		nr = nr - offset;
@@ -561,10 +562,11 @@ memcpy:
 skip_verify:
 		NOVA_START_TIMING(memcpy_r_nvmm_t, memcpy_time);
 
-		if (!zero)
-		
+		if (!zero) {
+			nova_info("[Read] Read from:%p\n",dax_mem);
 			left = __copy_to_user(buf + copied,
 						dax_mem + offset, nr);
+		}
 		else
 			left = __clear_user(buf + copied, nr);
 
