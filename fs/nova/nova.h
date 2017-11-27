@@ -55,12 +55,16 @@
 #define PAGE_SHIFT_1G 30
 
 /* tiering */
-#define	MINI_BUFFER_PAGES 16
+#define	MINI_BUFFER_PAGES 256
 #define IO_BLOCK_SIZE_BIT 12
 #define IO_BLOCK_SIZE 4096
 #define BIO_ASYNC 0
 #define BIO_SYNC 1
 
+/* Start number of tiering */
+#define TIER_PMEM 0
+#define TIER_BDEV 1
+#define TIER_DRAM 255
 
 /*
  * Debug code
@@ -539,34 +543,52 @@ nova_get_write_entry(struct super_block *sb,
 }
 
 
+int buffer_data_block_from_bdev_range(struct nova_sb_info *sbi, int tier, int blockoff, int length);
+void nova_update_entry_csum(void *entry);
+
 /*
  * Find data at a file offset (pgoff) in the data pointed to by a write log
  * entry.
  */
+// TODOzsa: check boundary
 static inline unsigned long get_nvmm(struct super_block *sb,
 	struct nova_inode_info_header *sih,
 	struct nova_file_write_entry *entry, unsigned long pgoff)
 {
+	int mb_index = 0;
+	struct nova_sb_info *sbi = NOVA_SB(sb);
 	/* entry is already verified before this call and resides in dram
 	 * or we can do memcpy_mcsafe here but have to avoid double copy and
 	 * verification of the entry.
 	 */
-	if (entry->pgoff > pgoff || (unsigned long) entry->pgoff +
-			(unsigned long) entry->num_pages <= pgoff) {
-		struct nova_sb_info *sbi = NOVA_SB(sb);
-		u64 curr;
+	if (entry->tier == TIER_PMEM) {
+		if (entry->pgoff > pgoff || (unsigned long) entry->pgoff +
+				(unsigned long) entry->num_pages <= pgoff) {
+			struct nova_sb_info *sbi = NOVA_SB(sb);
+			u64 curr;
 
-		curr = nova_get_addr_off(sbi, entry);
-		nova_dbg("Entry ERROR: inode %lu, curr 0x%llx, pgoff %lu, entry pgoff %llu, num %u\n",
-			sih->ino,
-			curr, pgoff, entry->pgoff, entry->num_pages);
-		nova_print_nova_log_pages(sb, sih);
-		nova_print_nova_log(sb, sih);
-		NOVA_ASSERT(0);
+			curr = nova_get_addr_off(sbi, entry);
+			nova_dbg("Entry ERROR: inode %lu, curr 0x%llx, pgoff %lu, entry pgoff %llu, num %u\n",
+				sih->ino,
+				curr, pgoff, entry->pgoff, entry->num_pages);
+			nova_print_nova_log_pages(sb, sih);
+			nova_print_nova_log(sb, sih);
+			NOVA_ASSERT(0);
+		}
+
+		return (unsigned long) (entry->block >> PAGE_SHIFT) + pgoff
+			- entry->pgoff;
 	}
-
-	return (unsigned long) (entry->block >> PAGE_SHIFT) + pgoff
-		- entry->pgoff;
+	if (entry->tier == TIER_BDEV) {
+		mb_index = buffer_data_block_from_bdev_range(sbi, entry->tier, entry->block >> PAGE_SHIFT, entry->num_pages);
+		if(mb_index<0) {
+			nova_info("get_nvmm failed\n");
+			return 0;
+		}
+		nova_update_entry_csum(entry);
+		return (unsigned long) (&sbi->mini_buffer + (mb_index << PAGE_SHIFT));
+	}
+	return 0;
 }
 
 bool nova_verify_entry_csum(struct super_block *sb, void *entry, void *entryc);
@@ -928,6 +950,9 @@ static inline void *nova_get_parity_addr(struct super_block *sb,
 /* Function Prototypes */
 
 
+/* balloc.c */
+int nova_free_blocks(struct super_block *sb, unsigned long blocknr,
+	int num, unsigned short btype, int log_page);
 
 /* bbuild.c */
 inline void set_bm(unsigned long bit, struct scan_bitmap *bm,

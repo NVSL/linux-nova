@@ -52,10 +52,25 @@ struct bdev_free_list *nova_get_bdev_free_list(struct super_block *sb)
 	return sbi->bdev_free_list;
 }
 
+// tier of bdevs starts from TIER_BDEV
+static inline struct block_device *get_bdev_raw(struct nova_sb_info *sbi, int tier) {
+	return sbi->bdev_list[tier-TIER_BDEV].bdev_raw;
+}
+
+static inline struct page *address_to_page(void *dax_mem) {
+	return virt_to_page(dax_mem);
+}
+
+static inline void *page_to_address(struct page *pg) {
+	return page_address(pg);
+}
+
 char* find_a_raw_bdev(void);
 void print_a_bdev(struct nova_sb_info *sbi);
 void bdev_test(struct nova_sb_info *sbi);
 void bfl_test(struct nova_sb_info *sbi);
 void nova_delete_bdev_free_list(struct super_block *sb);
+int nova_bdev_alloc_blocks(struct nova_sb_info *sbi, unsigned long *blocknr,
+	unsigned int num_blocks);
 
 #endif

@@ -350,7 +350,7 @@ int nova_find_free_slot(struct nova_sb_info *sbi,
 	return 0;
 }
 
-static int nova_free_blocks(struct super_block *sb, unsigned long blocknr,
+int nova_free_blocks(struct super_block *sb, unsigned long blocknr,
 	int num, unsigned short btype, int log_page)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);

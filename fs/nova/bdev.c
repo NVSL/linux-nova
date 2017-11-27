@@ -149,6 +149,7 @@ void print_a_page(void* addr) {
 	nova_info("----------------\n");
 }
 
+// Return 0 on success
 int nova_bdev_write_byte(struct block_device *device, unsigned long offset,
 	unsigned long size, struct page *page, unsigned long page_offset, bool sync) {
    	int ret = 0;
@@ -386,7 +387,7 @@ next:
 }
 
 /*
- * Allocate data block from block device, return the block number
+ * Allocate data block from block device, return how many blocks allocated
  * *blocknr: Returns the offset of block
  * num_block: Number of blocks of the request
  * from_tail: Direction
@@ -535,11 +536,17 @@ out:
 	return ret;
 }
 
-
-static int nova_bdev_alloc_blocks(struct super_block *sb, unsigned long *blocknr,
+/* 
+ * Allocate blocks in block device
+ * ret:	If unsuccess, return error number.
+ * 		If success, return how many blocks it allocates 
+ * 			(could be not enough, since it forces continuous)
+ * blocknr: the block number
+ * TODOzsa: multi-tier
+ */ 
+int nova_bdev_alloc_blocks(struct nova_sb_info *sbi, unsigned long *blocknr,
 	unsigned int num_blocks) {
-
-	struct nova_sb_info *sbi = NOVA_SB(sb);
+	struct super_block *sb = sbi->sb;
 	int ret = 0;
 	ret = nova_new_blocks_from_bdev(sb, blocknr, num_blocks, ALLOC_FROM_HEAD);
 	*blocknr -= sbi->num_blocks;
@@ -616,15 +623,15 @@ void bfl_test(struct nova_sb_info *sbi) {
 	int ret;
 	int i = 0;
 
-	ret = nova_bdev_alloc_blocks(sb, &tmp, 1);
+	ret = nova_bdev_alloc_blocks(sbi, &tmp, 1);
 	nova_info("[bfl1] ret:%d, offset:%lu" ,ret, tmp);
-	ret = nova_bdev_alloc_blocks(sb, &tmp, 2);
+	ret = nova_bdev_alloc_blocks(sbi, &tmp, 2);
 	nova_info("[bfl2] ret:%d, offset:%lu" ,ret, tmp);
-	ret = nova_bdev_alloc_blocks(sb, &tmp, 3);
+	ret = nova_bdev_alloc_blocks(sbi, &tmp, 3);
 	nova_info("[bfl3] ret:%d, offset:%lu" ,ret, tmp);
 	ret = nova_bdev_free_blocks(sb, 1, 2);
 	nova_info("[bfl4] ret:%d" ,ret);
-	ret = nova_bdev_alloc_blocks(sb, &tmp, 2);
+	ret = nova_bdev_alloc_blocks(sbi, &tmp, 2);
 	nova_info("[bfl5] ret:%d, offset:%lu" ,ret, tmp);
 
 	for (i=0;i<33;++i) {

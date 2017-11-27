@@ -160,6 +160,9 @@ persist:
 static int nova_flush(struct file *file, fl_owner_t id)
 {
 	nova_info("nova_flush is called\n");
+	// Tiering migration
+
+
 	PERSISTENT_BARRIER();
 	return 0;
 }
@@ -559,6 +562,7 @@ skip_verify:
 		NOVA_START_TIMING(memcpy_r_nvmm_t, memcpy_time);
 
 		if (!zero)
+		
 			left = __copy_to_user(buf + copied,
 						dax_mem + offset, nr);
 		else

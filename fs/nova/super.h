@@ -163,9 +163,10 @@ struct nova_sb_info {
 	/* NOVA-tiering */
 	struct bdev_info *bdev_list;
 	
-	/* Mini DRAM buffer */
-	
+	/* Mini DRAM buffer */	
 	spinlock_t *mb_locks;
+	int *tier;
+	unsigned long *blockoff;
 	struct page **mb_pages;
 	char *mini_buffer;
 
