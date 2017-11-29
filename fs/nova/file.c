@@ -140,7 +140,7 @@ static int nova_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 			__func__, start_pgoff, end_pgoff);
 
 	inode_lock(inode);
-	inode->i_mtime = inode->i_ctime = current_time(inode);
+	file_update_time(file);
 	inode_unlock(inode);
 
 	/*

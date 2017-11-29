@@ -1090,7 +1090,7 @@ static int nova_dax_fault(struct vm_fault *vmf)
 	struct inode *inode = mapping->host;
 
 	inode_lock(inode);
-	inode->i_mtime = inode->i_ctime = current_time(inode);
+	file_update_time(vmf->vma->vm_file);
 	inode_unlock(inode);
 
 	nova_dbgv("%s: inode %lu, pgoff %lu\n",
