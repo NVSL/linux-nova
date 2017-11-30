@@ -425,7 +425,7 @@ static int nova_new_blocks_from_bdev(struct super_block *sb, unsigned long *bloc
 
 	*blocknr = new_blocknr;
 
-	nova_info("[Bdev] Alloc %lu NVMM blocks 0x%lx\n", ret_blocks, *blocknr);
+	nova_info("[Bdev] Alloc %lu BDEV blocks 0x%lx\n", ret_blocks, *blocknr);
 	return ret_blocks;
 }
 

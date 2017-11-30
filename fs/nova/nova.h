@@ -617,7 +617,8 @@ static unsigned long get_nvmm(struct super_block *sb,
 		nova_update_entry_csum(entry);
 		// nova_info("ret %p, %llu,%d\n",sbi->mini_buffer,((unsigned long long)(sbi->mini_buffer) >> PAGE_SHIFT),mb_index);
 		// nova_info("ret %p",ret);
-		ret = (unsigned long)((unsigned long long)(sbi->mini_buffer) >> PAGE_SHIFT) + (unsigned long long)mb_index;
+		ret = (unsigned long)((unsigned long long)(sbi->mini_buffer) >> PAGE_SHIFT) + 
+		(unsigned long long)mb_index + pgoff - entry->pgoff;
 		// nova_info("ret %p",rett);
 		return convert_to_logical_offset(ret);
 	}

@@ -470,7 +470,6 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 	size_t copied = 0, error = 0;
 	timing_t memcpy_time;
 	unsigned long mb_offset = 0;
-	unsigned long i = 0;
 
 	pos = *ppos;
 	index = pos >> PAGE_SHIFT;
@@ -575,15 +574,16 @@ skip_verify:
 
 		NOVA_END_TIMING(memcpy_r_nvmm_t, memcpy_time);
 
-		for (i=mb_offset; i<mb_offset+(unsigned long)entry->num_pages; ++i) {
-			nova_info("i=%lu\n",i);
-			print_a_page(sbi->mini_buffer+(i<<PAGE_SHIFT));
-		}
+		// for (i=mb_offset; i<mb_offset+(unsigned long)entry->num_pages; ++i) {
+		// 	nova_info("i=%lu\n",i);
+		// 	print_a_page(sbi->mini_buffer+(i<<PAGE_SHIFT));
+		// }
+		print_all_wb_locks(sbi);
 
 		if (is_dram_buffer_addr(sbi, dax_mem)) {
 			mb_offset = get_dram_buffer_offset(sbi, dax_mem);
-			nova_info("put off %lu, nr %lu", mb_offset, (unsigned long)entry->num_pages);
-			put_dram_buffer_range(sbi, mb_offset, entry->num_pages);
+			nova_info("put off %lu, nr %lu", mb_offset - index + (unsigned long)entry->pgoff, (unsigned long)entry->num_pages);
+			put_dram_buffer_range(sbi, mb_offset - index + entry->pgoff, entry->num_pages);
 		}
 
 		if (left) {
@@ -592,7 +592,7 @@ skip_verify:
 			error = -EFAULT;
 			goto out;
 		}
-		// print_all_wb_locks(sbi);
+		print_all_wb_locks(sbi);
 
 		copied += (nr - left);
 		offset += (nr - left);
@@ -604,7 +604,7 @@ out:
 	*ppos = pos + copied;
 	if (filp)
 		file_accessed(filp);
-
+	nova_info("End read\n");
 	NOVA_STATS_ADD(read_bytes, copied);
 
 	nova_dbgv("%s returned %zu\n", __func__, copied);
