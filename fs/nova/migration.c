@@ -11,7 +11,6 @@
  *      mb_pages: actual mini-buffer page
  */
 
-
 // Allocate a DRAM buffer in sbi
 int init_dram_buffer(struct nova_sb_info *sbi) {
     unsigned int i = 0;
@@ -38,12 +37,15 @@ int init_dram_buffer(struct nova_sb_info *sbi) {
     return 0;
 }
 
-// buffer a data block from bdev to DRAM
-// tier: pmem-0; DRAM-1; bdev-2,3,... 
-// Strategy: 
-//      Find the first unlock page
-//      If none, wait on one according to page offset
-// Return buffer number (locked buffer)
+/*
+ * Buffer a data block from bdev to DRAM
+ *
+ * tier: pmem-0; DRAM-1; bdev-2,3,... 
+ * Strategy: 
+ *      Find the first unlock page
+ *      If none, wait on one according to page offset
+ * Return buffer number (locked buffer)
+ */ 
 int buffer_data_block_from_bdev(struct nova_sb_info *sbi, int tier, int blockoff) {
     int i = 0;
     int ret = 0;
@@ -68,17 +70,67 @@ copy:
     return i;
 }
 
-int put_dram_buffer(struct nova_sb_info *sbi, int number) {
-    spin_unlock(&sbi->mb_locks[number]);
-
+/*
+ * put_dram_buffer(): Release the spin lock of the buffer
+ *      The buffer is still valid after put()
+ * clear_dram_buffer(): Clear the metadata (and data) of the buffer
+ *      The buffer is invalid after clear()
+ * Must call put() before clear()
+ * There is NO DIRTY BUFFER in NOVA, since COW is applied to every write
+ */ 
+inline int clear_dram_buffer(struct nova_sb_info *sbi, unsigned long number) {
     sbi->tier[number] = TIER_PMEM;
     sbi->blockoff[number] = 0;
-
-    // Clear the buffer?
     return 0;
 }
 
-// First continuous buffer
+inline int put_dram_buffer(struct nova_sb_info *sbi, unsigned long number) {
+    spin_unlock(&sbi->mb_locks[number]);
+    return 0;
+}
+
+int clear_dram_buffer_range(struct nova_sb_info *sbi, unsigned long number, int length) {
+    unsigned long i;
+    for (i=number; i<number+length; ++i) {
+        clear_dram_buffer(sbi,i);
+    }    
+    return 0;
+}
+
+int put_dram_buffer_range(struct nova_sb_info *sbi, unsigned long number, int length) {
+    unsigned long i;
+    for (i=number; i<number+length; ++i) {
+        put_dram_buffer(sbi,i);
+    }    
+    return 0;
+}
+
+inline bool is_dram_buffer_addr(struct nova_sb_info *sbi, void *addr) {
+    nova_info("A%llu\n",(unsigned long long)(sbi->mini_buffer) >> (PAGE_SHIFT+MINI_BUFFER_PAGES_BIT));
+    nova_info("B%llu\n",(unsigned long long)addr >> (PAGE_SHIFT+MINI_BUFFER_PAGES_BIT));
+    return ((unsigned long long)(sbi->mini_buffer) >> (PAGE_SHIFT+MINI_BUFFER_PAGES_BIT) == 
+    (unsigned long long)addr >> (PAGE_SHIFT+MINI_BUFFER_PAGES_BIT));
+}
+
+inline unsigned long get_dram_buffer_offset(struct nova_sb_info *sbi, void *buf) {
+    return ((unsigned long long)buf-(unsigned long long)sbi->mini_buffer) >> PAGE_SHIFT;
+}
+
+void print_all_wb_locks(struct nova_sb_info *sbi) {
+    int i = 0;
+    char* buf = kzalloc(MINI_BUFFER_PAGES+2, GFP_KERNEL);
+    for (i = 0; i < MINI_BUFFER_PAGES; i++) {
+        if(spin_can_lock(&sbi->mb_locks[i])) strcat(&buf[0],"0");
+        else strcat(&buf[0],"1");
+    }
+    nova_info("lock\n");
+    nova_info("%s\n",buf);
+}
+/* 
+ * Find the first continuous buffer which can fit `length`
+ * This function should always succeed, it is DRAM buffer's job to allocate such buffer.
+ * If space is not enough, swap some pages out to block device.
+ */ 
 int buffer_data_block_from_bdev_range(struct nova_sb_info *sbi, int tier, int blockoff, int length) {
     int i = 0;
     int index = blockoff%MINI_BUFFER_PAGES; // index of the first block
@@ -96,7 +148,7 @@ int buffer_data_block_from_bdev_range(struct nova_sb_info *sbi, int tier, int bl
             match = 0;
             unlock++;
             if (unlock==length) {
-                nova_info("[Buffering] suitable buffer found\n");
+                nova_info("[Buffering] suitable buffer found, index:%d\n",index);
                 goto copy;
             }
         }
@@ -162,19 +214,6 @@ copy:
 
 out:
     return i-length+1;
-}
-
-int put_dram_buffer_range(struct nova_sb_info *sbi, unsigned long number, int length) {
-    int i;
-    for (i=number;i<number+length;++i) {
-        spin_unlock(&sbi->mb_locks[i]);
-
-        sbi->tier[i] = TIER_PMEM;
-        sbi->blockoff[i] = 0;
-    }    
-
-    // Clear the buffer?
-    return 0;
 }
 
 /*
@@ -253,7 +292,7 @@ int migrate_a_file_to_bdev(struct file *filp)
                 index += entry->num_pages;
             }
         }
-        else index++;
+        if (!entry || entry->tier != TIER_PMEM) index++;
     } while (index < end_index);
 
     nova_info("[Migration] End migrating inode:%lu\n", inode->i_ino);

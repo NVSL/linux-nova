@@ -56,6 +56,7 @@
 
 /* tiering */
 #define	MINI_BUFFER_PAGES 256
+#define	MINI_BUFFER_PAGES_BIT 8
 #define IO_BLOCK_SIZE_BIT 12
 #define IO_BLOCK_SIZE 4096
 #define BIO_ASYNC 0
@@ -576,14 +577,13 @@ void nova_update_entry_csum(void *entry);
  * entry.
  */
 // TODOzsa: check boundary
-static inline unsigned long get_nvmm(struct super_block *sb,
+static unsigned long get_nvmm(struct super_block *sb,
 	struct nova_inode_info_header *sih,
 	struct nova_file_write_entry *entry, unsigned long pgoff)
 {
 	int mb_index = 0;
 	struct nova_sb_info *sbi = NOVA_SB(sb);
-	unsigned long long ret = 0;
-	unsigned long rett = 0;
+	unsigned long ret = 0;
 	/* entry is already verified before this call and resides in dram
 	 * or we can do memcpy_mcsafe here but have to avoid double copy and
 	 * verification of the entry.
@@ -616,11 +616,10 @@ static inline unsigned long get_nvmm(struct super_block *sb,
 		}
 		nova_update_entry_csum(entry);
 		// nova_info("ret %p, %llu,%d\n",sbi->mini_buffer,((unsigned long long)(sbi->mini_buffer) >> PAGE_SHIFT),mb_index);
-		ret = ((unsigned long long)(sbi->mini_buffer) >> PAGE_SHIFT) + (unsigned long long)mb_index;
 		// nova_info("ret %p",ret);
-		rett = (unsigned long)ret;
+		ret = (unsigned long)((unsigned long long)(sbi->mini_buffer) >> PAGE_SHIFT) + (unsigned long long)mb_index;
 		// nova_info("ret %p",rett);
-		return convert_to_logical_offset(rett);
+		return convert_to_logical_offset(ret);
 	}
 	return 0;
 }
@@ -1120,8 +1119,14 @@ extern long nova_compat_ioctl(struct file *file, unsigned int cmd,
 /* migration.c */
 int init_dram_buffer(struct nova_sb_info *sbi);
 int buffer_data_block_from_bdev(struct nova_sb_info *sbi, int tier, int blockoff);
-int put_dram_buffer(struct nova_sb_info *sbi, int number);
+inline int clear_dram_buffer(struct nova_sb_info *sbi, unsigned long number);
+inline int put_dram_buffer(struct nova_sb_info *sbi, unsigned long number);
+int clear_dram_buffer_range(struct nova_sb_info *sbi, unsigned long number, int length);
+int put_dram_buffer_range(struct nova_sb_info *sbi, unsigned long number, int length);
+inline unsigned long get_dram_buffer_offset(struct nova_sb_info *sbi, void *buf);
+inline bool is_dram_buffer_addr(struct nova_sb_info *sbi, void *addr);
 int migrate_a_file_to_bdev(struct file *filp);
+void print_all_wb_locks(struct nova_sb_info *sbi);
 
 /* mprotect.c */
 extern int nova_dax_mem_protect(struct super_block *sb,

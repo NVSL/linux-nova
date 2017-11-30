@@ -459,6 +459,7 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 {
 	struct inode *inode = filp->f_mapping->host;
 	struct super_block *sb = inode->i_sb;
+	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_inode_info *si = NOVA_I(inode);
 	struct nova_inode_info_header *sih = &si->header;
 	struct nova_file_write_entry *entry;
@@ -468,6 +469,8 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 	loff_t isize, pos;
 	size_t copied = 0, error = 0;
 	timing_t memcpy_time;
+	unsigned long mb_offset = 0;
+	unsigned long i = 0;
 
 	pos = *ppos;
 	index = pos >> PAGE_SHIFT;
@@ -499,7 +502,7 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 		unsigned long nvmm;
 		void *dax_mem = NULL;
 		int zero = 0;
-
+		print_all_wb_locks(sbi);
 		/* nr is the maximum number of bytes to copy from this page */
 		if (index >= end_index) {
 			if (index > end_index)
@@ -563,7 +566,7 @@ skip_verify:
 		NOVA_START_TIMING(memcpy_r_nvmm_t, memcpy_time);
 
 		if (!zero) {
-			nova_info("[Read] Read from:%p\n",dax_mem);
+			nova_info("[Read] Read from:%p %p\n",dax_mem,dax_mem + offset);
 			left = __copy_to_user(buf + copied,
 						dax_mem + offset, nr);
 		}
@@ -572,12 +575,24 @@ skip_verify:
 
 		NOVA_END_TIMING(memcpy_r_nvmm_t, memcpy_time);
 
+		for (i=mb_offset; i<mb_offset+(unsigned long)entry->num_pages; ++i) {
+			nova_info("i=%lu\n",i);
+			print_a_page(sbi->mini_buffer+(i<<PAGE_SHIFT));
+		}
+
+		if (is_dram_buffer_addr(sbi, dax_mem)) {
+			mb_offset = get_dram_buffer_offset(sbi, dax_mem);
+			nova_info("put off %lu, nr %lu", mb_offset, (unsigned long)entry->num_pages);
+			put_dram_buffer_range(sbi, mb_offset, entry->num_pages);
+		}
+
 		if (left) {
 			nova_dbg("%s ERROR!: bytes %lu, left %lu\n",
 				__func__, nr, left);
 			error = -EFAULT;
 			goto out;
 		}
+		// print_all_wb_locks(sbi);
 
 		copied += (nr - left);
 		offset += (nr - left);
