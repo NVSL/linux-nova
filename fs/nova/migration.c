@@ -112,8 +112,14 @@ inline bool is_dram_buffer_addr(struct nova_sb_info *sbi, void *addr) {
     (unsigned long long)addr >> (PAGE_SHIFT+MINI_BUFFER_PAGES_BIT));
 }
 
+// Convert from nova_get_block()
 inline unsigned long get_dram_buffer_offset(struct nova_sb_info *sbi, void *buf) {
     return ((unsigned long long)buf-(unsigned long long)sbi->mini_buffer) >> PAGE_SHIFT;
+}
+
+// Convert from get_nvmm()
+inline unsigned long get_dram_buffer_offset_off(struct nova_sb_info *sbi, unsigned long nvmm) {    
+    return get_dram_buffer_offset(sbi, (void *)convert_from_logical_offset(nvmm << PAGE_SHIFT));
 }
 
 void print_all_wb_locks(struct nova_sb_info *sbi) {

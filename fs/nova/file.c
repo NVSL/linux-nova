@@ -501,7 +501,7 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 		unsigned long nvmm;
 		void *dax_mem = NULL;
 		int zero = 0;
-		print_all_wb_locks(sbi);
+		
 		/* nr is the maximum number of bytes to copy from this page */
 		if (index >= end_index) {
 			if (index > end_index)
@@ -578,7 +578,6 @@ skip_verify:
 		// 	nova_info("i=%lu\n",i);
 		// 	print_a_page(sbi->mini_buffer+(i<<PAGE_SHIFT));
 		// }
-		print_all_wb_locks(sbi);
 
 		if (is_dram_buffer_addr(sbi, dax_mem)) {
 			mb_offset = get_dram_buffer_offset(sbi, dax_mem);
@@ -592,7 +591,6 @@ skip_verify:
 			error = -EFAULT;
 			goto out;
 		}
-		print_all_wb_locks(sbi);
 
 		copied += (nr - left);
 		offset += (nr - left);
@@ -872,7 +870,6 @@ ssize_t nova_cow_file_write(struct file *filp,
 
 	return ret;
 }
-
 
 static ssize_t nova_dax_file_write(struct file *filp, const char __user *buf,
 				   size_t len, loff_t *ppos)

@@ -358,6 +358,7 @@ int nova_free_blocks(struct super_block *sb, unsigned long blocknr,
 	unsigned long block_low;
 	unsigned long block_high;
 	unsigned long num_blocks = 0;
+	unsigned long mb_index = 0;
 	struct nova_range_node *prev = NULL;
 	struct nova_range_node *next = NULL;
 	struct nova_range_node *curr_node;
@@ -373,6 +374,19 @@ int nova_free_blocks(struct super_block *sb, unsigned long blocknr,
 	}
 
 	NOVA_START_TIMING(free_blocks_t, free_time);
+
+	// For bdev, the data blocks on bdev and mb are both "data to be freed"
+	if (is_logical_offset(blocknr)) {
+		mb_index = get_dram_buffer_offset_off(sbi, blocknr);
+		num_blocks = nova_get_numblocks(btype) * num;
+		ret = nova_free_blocks_from_bdev(sb, sbi->blockoff[mb_index], num_blocks);
+
+		clear_dram_buffer_range(sbi, mb_offset - index + entry->pgoff, entry->num_pages);
+		put_dram_buffer_range(sbi, mb_offset - index + entry->pgoff, entry->num_pages);
+
+		NOVA_END_TIMING(free_blocks_t, free_time);
+		return ret;
+	}
 	cpuid = blocknr / sbi->per_list_blocks;
 
 	/* Pre-allocate blocknode */

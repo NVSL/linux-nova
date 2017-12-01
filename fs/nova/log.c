@@ -155,6 +155,7 @@ unsigned int nova_free_old_entry(struct super_block *sb,
 		ret = nova_append_data_to_snapshot(sb, entryc, old_nvmm,
 				num_free, epoch_id);
 		if (ret == 0) {
+			// Perhaps to GC to free the entry itself
 			nova_invalidate_write_entry(sb, entry, 1, 0);
 			goto out;
 		}
