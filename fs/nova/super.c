@@ -42,6 +42,7 @@
 #include "super.h"
 #include "inode.h"
 #include "bdev.h"
+#include "debug.h"
 
 int measure_timing;
 int metadata_csum;

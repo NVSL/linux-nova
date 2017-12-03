@@ -376,13 +376,15 @@ int nova_free_blocks(struct super_block *sb, unsigned long blocknr,
 	NOVA_START_TIMING(free_blocks_t, free_time);
 
 	// For bdev, the data blocks on bdev and mb are both "data to be freed"
-	if (is_logical_offset(blocknr)) {
+	if (is_logical_offset(blocknr<<PAGE_SHIFT)) {
 		mb_index = get_dram_buffer_offset_off(sbi, blocknr);
 		num_blocks = nova_get_numblocks(btype) * num;
-		ret = nova_free_blocks_from_bdev(sb, sbi->blockoff[mb_index], num_blocks);
+		nova_info("about to free ind:%lu num:%lu", mb_index, num_blocks);
+		ret = nova_bdev_free_blocks(sb, sbi->blockoff[mb_index], num_blocks);
 
-		clear_dram_buffer_range(sbi, mb_offset - index + entry->pgoff, entry->num_pages);
-		put_dram_buffer_range(sbi, mb_offset - index + entry->pgoff, entry->num_pages);
+
+		clear_dram_buffer_range(sbi, mb_index, num_blocks);
+		put_dram_buffer_range(sbi, mb_index, num_blocks);
 
 		NOVA_END_TIMING(free_blocks_t, free_time);
 		return ret;

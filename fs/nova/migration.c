@@ -248,8 +248,8 @@ int migrate_entry_blocks_to_bdev(struct nova_sb_info *sbi, int tier,
 	struct nova_inode_info_header *sih = &si->header;
     unsigned long blocknr = 0;
     int ret = 0;
-    nova_info(" entry->block %p\n", sbi->virt_addr + entry->block);
-    print_a_page((void *) sbi->virt_addr + entry->block);
+    if(DEBUG_MIGRATION_RW) nova_info(" entry->block %p\n", sbi->virt_addr + entry->block);
+    // print_a_page((void *) sbi->virt_addr + entry->block);
     ret = migrate_blocks_to_bdev(sbi, (void *) sbi->virt_addr + entry->block, entry->num_pages, tier, &blocknr);
     if (ret<0) return ret;
     // Not enough page in DRAM is an exception 
@@ -282,7 +282,7 @@ int migrate_a_file_to_bdev(struct file *filp)
     pgoff_t end_index = 0;
     int ret = 0;
     loff_t isize = 0;
-    nova_info("[Migration] Start migrating inode:%lu\n", inode->i_ino);
+    if(DEBUG_MIGRATION_RW) nova_info("[Migration] Start migrating inode:%lu\n", inode->i_ino);
 
 	isize = i_size_read(inode);
 	end_index = (isize) >> PAGE_SHIFT;
@@ -293,7 +293,7 @@ int migrate_a_file_to_bdev(struct file *filp)
         // nova_info("index:%lu ret:%d\n", index, ret);
         if (entry) {
             if (entry->tier == TIER_PMEM) {
-                nova_info("[Migration] Migrating write entry with index:%lu\n", index);
+                if(DEBUG_MIGRATION_RW) nova_info("[Migration] Migrating write entry with index:%lu\n", index);
                 ret = migrate_entry_blocks_to_bdev(sbi, TIER_BDEV, si, entry);
                 index += entry->num_pages;
             }
@@ -301,7 +301,7 @@ int migrate_a_file_to_bdev(struct file *filp)
         if (!entry || entry->tier != TIER_PMEM) index++;
     } while (index < end_index);
 
-    nova_info("[Migration] End migrating inode:%lu\n", inode->i_ino);
+    if(DEBUG_MIGRATION_RW) nova_info("[Migration] End migrating inode:%lu\n", inode->i_ino);
     
     return ret;
 }

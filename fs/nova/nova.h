@@ -50,6 +50,7 @@
 #include "nova_def.h"
 #include "stats.h"
 #include "snapshot.h"
+#include "debug.h"
 
 #define PAGE_SHIFT_2M 21
 #define PAGE_SHIFT_1G 30
@@ -1006,7 +1007,11 @@ int nova_bdev_write_block(struct block_device *device, unsigned long offset,
 int nova_bdev_read_block(struct block_device *device, unsigned long offset,
 	unsigned long size, struct page *page, bool sync);
 void print_a_page(void* addr);
-
+int nova_free_blocks_from_bdev(struct super_block *sb, unsigned long blocknr,
+	unsigned int num_blocks);
+int nova_bdev_free_blocks(struct super_block *sb, unsigned long blocknr,
+	unsigned int num_blocks);
+	
 /* checksum.c */
 void nova_update_entry_csum(void *entry);
 int nova_update_block_csum(struct super_block *sb,
@@ -1125,6 +1130,7 @@ inline int put_dram_buffer(struct nova_sb_info *sbi, unsigned long number);
 int clear_dram_buffer_range(struct nova_sb_info *sbi, unsigned long number, int length);
 int put_dram_buffer_range(struct nova_sb_info *sbi, unsigned long number, int length);
 inline unsigned long get_dram_buffer_offset(struct nova_sb_info *sbi, void *buf);
+inline unsigned long get_dram_buffer_offset_off(struct nova_sb_info *sbi, unsigned long nvmm);
 inline bool is_dram_buffer_addr(struct nova_sb_info *sbi, void *addr);
 int migrate_a_file_to_bdev(struct file *filp);
 void print_all_wb_locks(struct nova_sb_info *sbi);

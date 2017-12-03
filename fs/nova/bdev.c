@@ -155,7 +155,7 @@ int nova_bdev_write_byte(struct block_device *device, unsigned long offset,
    	int ret = 0;
 	struct bio *bio = bio_alloc(GFP_NOIO, 1);
 	struct bio_vec *bv = kzalloc(sizeof(struct bio_vec), GFP_KERNEL);
-	nova_info("[Bdev Write] Offset %7lu <- Page %p (size: %lu)\n",offset>>12,
+	if(DEBUG_BDEV_RW) nova_info("[Bdev Write] Offset %7lu <- Page %p (size: %lu)\n",offset>>12,
 	page_address(page)+page_offset,size);
 	bio->bi_bdev = device;
 	bio->bi_iter.bi_sector = offset >> 9;
@@ -185,7 +185,7 @@ int nova_bdev_read_byte(struct block_device *device, unsigned long offset,
 	struct bio *bio = bio_alloc(GFP_NOIO, 1);
 	struct bio_vec *bv = kzalloc(sizeof(struct bio_vec), GFP_KERNEL);
 	// bio is about block and bv is about page
-	nova_info("[Bdev Read ] Offset %7lu -> Page %p (size: %lu)\n",offset>>12,
+	if(DEBUG_BDEV_RW) nova_info("[Bdev Read ] Offset %7lu -> Page %p (size: %lu)\n",offset>>12,
 	page_address(page)+page_offset,size);
 	bio->bi_bdev = device;
 	bio->bi_iter.bi_sector = offset >> 9;
@@ -430,7 +430,7 @@ static int nova_new_blocks_from_bdev(struct super_block *sb, unsigned long *bloc
 }
 
 
-static int nova_free_blocks_from_bdev(struct super_block *sb, unsigned long blocknr,
+int nova_free_blocks_from_bdev(struct super_block *sb, unsigned long blocknr,
 	unsigned int num_blocks)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
@@ -554,7 +554,8 @@ int nova_bdev_alloc_blocks(struct nova_sb_info *sbi, unsigned long *blocknr,
 	return ret;
 }
 
-static int nova_bdev_free_blocks(struct super_block *sb, unsigned long blocknr,
+// TODOzsa: multi-tier
+int nova_bdev_free_blocks(struct super_block *sb, unsigned long blocknr,
 	unsigned int num_blocks) {
 	
 	struct nova_sb_info *sbi = NOVA_SB(sb);
