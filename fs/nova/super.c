@@ -171,50 +171,53 @@ static int nova_get_nvmm_info(struct super_block *sb,
 }
 
 // TODO: Link with mount option
-static char *find_block_devices(void) {
-	return find_a_raw_bdev();
+static char *find_block_device(int tier) {
+	if (tier == TIER_BDEV_LOW) return find_a_raw_nvme();
+	if (tier == TIER_BDEV_HIGH) return find_a_raw_sata();
+	return NULL;
 }
 
 // TODO: more than one block device
 static int nova_get_bdev_info(struct nova_sb_info *sbi){
 	struct block_device *bdev_raw;
 	char *bdev_path = NULL;
-
 	struct gendisk*	bd_disk = NULL;
 	unsigned long nsector;
-
+	int i=0;
 	const fmode_t mode = FMODE_READ | FMODE_WRITE;
 	
-	sbi->bdev_list = kzalloc(sizeof(struct bdev_info), GFP_KERNEL);	
+	sbi->bdev_list = kcalloc(TIER_BDEV_HIGH, sizeof(struct bdev_info), GFP_KERNEL);	
 	if (!sbi->bdev_list) return -ENOMEM;
-	bdev_path = find_block_devices();
-	if (!bdev_path) return -ENOENT;
+	for (i=TIER_BDEV_LOW-1;i<=TIER_BDEV_HIGH-1;++i) {	
+		bdev_path = find_block_device(i+1);
+		if (!bdev_path) return -ENOENT;
 
-	bdev_raw = lookup_bdev(bdev_path);
-	if (IS_ERR(bdev_raw))
-	{
-		nova_info("bdev: error opening raw device <%lu>\n", PTR_ERR(bdev_raw));
+		bdev_raw = lookup_bdev(bdev_path);
+		if (IS_ERR(bdev_raw))
+		{
+			nova_info("bdev: error opening raw device <%lu>\n", PTR_ERR(bdev_raw));
+		}
+		if (!bdget(bdev_raw->bd_dev))
+		{
+			nova_info("bdev: error bdget()\n");
+		}
+		if (blkdev_get(bdev_raw, mode, NULL))
+		{
+			nova_info("bdev: error blkdev_get()\n");
+			bdput(bdev_raw);
+		}	
+
+		sbi->bdev_list[i].bdev_raw = bdev_raw;
+		strcat(sbi->bdev_list[i].bdev_path, bdev_path);
+
+		bd_disk = bdev_raw->bd_disk;
+		nsector = get_capacity(bd_disk);
+		sbi->bdev_list[i].major = bd_disk->major;
+		sbi->bdev_list[i].minors = bd_disk->minors;
+		sbi->bdev_list[i].capacity_sector = nsector;
+		sbi->bdev_list[i].capacity_page = nsector>>3;
+		strcat(sbi->bdev_list[i].bdev_name,bd_disk->disk_name);
 	}
-	if (!bdget(bdev_raw->bd_dev))
-	{
-		nova_info("bdev: error bdget()\n");
-	}
-	if (blkdev_get(bdev_raw, mode, NULL))
-	{
-		nova_info("bdev: error blkdev_get()\n");
-		bdput(bdev_raw);
-	}	
-
-	sbi->bdev_list->bdev_raw = bdev_raw;
-	strcat(sbi->bdev_list->bdev_path, bdev_path);
-
-	bd_disk = bdev_raw->bd_disk;
-	nsector = get_capacity(bd_disk);
-	sbi->bdev_list->major = bd_disk->major;
-	sbi->bdev_list->minors = bd_disk->minors;
-	sbi->bdev_list->capacity_sector = nsector;
-	sbi->bdev_list->capacity_page = nsector>>3;
-	strcat(sbi->bdev_list->bdev_name,bd_disk->disk_name);
 	nova_info("nova_get_bdev_info out\n");
 
 	return 0;
@@ -689,7 +692,7 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 		goto out;
 	}
 
-	print_a_bdev(sbi);
+	print_all_bdev(sbi);
 	
 	if (DEBUG_STARTUP_TEST) bdev_test(sbi);
 

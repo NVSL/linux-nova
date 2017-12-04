@@ -6,8 +6,8 @@
 #define VFS_IO_TEST 0
 
 
-// This function is used for a raw block device lookup in /dev
-char* find_a_raw_bdev(void) {
+// This function is used for a raw sata block device lookup in /dev
+char* find_a_raw_sata(void) {
 	struct file *fp;
 	char* bdev = kzalloc(20*sizeof(char),GFP_KERNEL);
 		
@@ -26,16 +26,28 @@ char* find_a_raw_bdev(void) {
 	return NULL;
 }
 
-void print_a_bdev(struct nova_sb_info *sbi) {
-	struct bdev_info* bdi = sbi->bdev_list;
-	
-	nova_info("----------------\n");
-	nova_info("[New block device]\n");
-	nova_info("Disk path: %s\n", bdi->bdev_path);
-	nova_info("Disk name: %s\n", bdi->bdev_name);
-	nova_info("Major: %d Minor: %d\n", bdi->major ,bdi->minors);
-	nova_info("Size: %lu sectors (%luMB)\n",bdi->capacity_sector,bdi->capacity_page);
-	nova_info("----------------\n");
+// This function is used for a raw nvme block device lookup in /dev
+char* find_a_raw_nvme(void) {
+	char* bdev = kzalloc(20*sizeof(char),GFP_KERNEL);		
+	strcat(bdev, "/dev/nvme0n1\0");
+	return bdev;
+}
+
+void print_all_bdev(struct nova_sb_info *sbi) {
+	struct bdev_info* bdi = NULL;
+	int i = 0;
+
+	for (i=TIER_BDEV_LOW-1;i<=TIER_BDEV_HIGH-1;++i) {
+		bdi = &sbi->bdev_list[i];
+		
+		if (i==TIER_BDEV_LOW-1) nova_info("----------------\n");
+		nova_info("[Block device of Tier %d]\n",i+1);
+		nova_info("Disk path: %s\n", bdi->bdev_path);
+		nova_info("Disk name: %s\n", bdi->bdev_name);
+		nova_info("Major: %d Minor: %d\n", bdi->major ,bdi->minors);
+		nova_info("Size: %lu sectors (%luMB)\n",bdi->capacity_sector,bdi->capacity_page >> 8);
+		nova_info("----------------\n");
+	}
 }
 
 // VFS write to disk

@@ -65,8 +65,9 @@ static inline void *page_to_address(struct page *pg) {
 	return page_address(pg);
 }
 
-char* find_a_raw_bdev(void);
-void print_a_bdev(struct nova_sb_info *sbi);
+char* find_a_raw_sata(void);
+char* find_a_raw_nvme(void);
+void print_all_bdev(struct nova_sb_info *sbi);
 void bdev_test(struct nova_sb_info *sbi);
 void bfl_test(struct nova_sb_info *sbi);
 void nova_delete_bdev_free_list(struct super_block *sb);
