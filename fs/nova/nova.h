@@ -58,15 +58,20 @@
 /* tiering */
 #define	MINI_BUFFER_PAGES 256
 #define	MINI_BUFFER_PAGES_BIT 8
-#define IO_BLOCK_SIZE_BIT 12
 #define IO_BLOCK_SIZE 4096
+#define IO_BLOCK_SIZE_BIT 12
 #define BIO_ASYNC 0
 #define BIO_SYNC 1
 
-/* Start number of tiering */
-#define TIER_PMEM 0
-#define TIER_BDEV 1
-#define TIER_DRAM 255
+/* 
+ * Tiering level number
+ * If we have 3 block device, then TIER_BDEV_HIGH = 3
+ * Assume I/O speed 1>2>3
+ */
+#define TIER_PMEM 		0
+#define TIER_BDEV_LOW 	1
+#define TIER_BDEV_HIGH 	2
+#define TIER_DRAM 		255
 
 /*
  * Debug code
@@ -590,7 +595,7 @@ static unsigned long get_nvmm(struct super_block *sb,
 	 * verification of the entry.
 	 */
 	if (entry->tier == TIER_PMEM) {
-		if(DEBUG_GET_NVMM) nova_info("[Get] Get from TIER_PMEM\n");
+		if (DEBUG_GET_NVMM) nova_info("[Get] Get from TIER_PMEM\n");
 		if (entry->pgoff > pgoff || (unsigned long) entry->pgoff +
 				(unsigned long) entry->num_pages <= pgoff) {
 			struct nova_sb_info *sbi = NOVA_SB(sb);
@@ -608,10 +613,10 @@ static unsigned long get_nvmm(struct super_block *sb,
 		return (unsigned long) (entry->block >> PAGE_SHIFT) + pgoff
 			- entry->pgoff;
 	}
-	if (entry->tier == TIER_BDEV) {
-		if(DEBUG_GET_NVMM) nova_info("[Get] Get from TIER_BDEV\n");
+	if (entry->tier == TIER_BDEV_LOW) {
+		if (DEBUG_GET_NVMM) nova_info("[Get] Get from TIER_BDEV_LOW\n");
 		mb_index = buffer_data_block_from_bdev_range(sbi, entry->tier, entry->block, entry->num_pages);
-		if(mb_index<0) {
+		if (mb_index<0) {
 			nova_info("get_nvmm failed\n");
 			return 0;
 		}

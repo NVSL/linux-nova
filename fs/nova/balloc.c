@@ -381,9 +381,9 @@ int nova_free_blocks(struct super_block *sb, unsigned long blocknr,
 		num_blocks = nova_get_numblocks(btype) * num;
 		nova_info("about to free ind:%lu num:%lu", mb_index, num_blocks);
 
-		if(DEBUG_MB_LOCK) print_all_wb_locks(sbi);
+		if (DEBUG_MB_LOCK) print_all_wb_locks(sbi);
 		ret = nova_bdev_free_blocks(sb, sbi->blockoff[mb_index], num_blocks);
-		if(DEBUG_MB_LOCK) print_all_wb_locks(sbi);
+		if (DEBUG_MB_LOCK) print_all_wb_locks(sbi);
 
 		clear_dram_buffer_range(sbi, mb_index, num_blocks);
 		put_dram_buffer_range(sbi, mb_index, num_blocks);

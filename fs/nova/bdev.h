@@ -52,9 +52,9 @@ struct bdev_free_list *nova_get_bdev_free_list(struct super_block *sb)
 	return sbi->bdev_free_list;
 }
 
-// tier of bdevs starts from TIER_BDEV
+// tier of bdevs starts from TIER_BDEV_LOW
 static inline struct block_device *get_bdev_raw(struct nova_sb_info *sbi, int tier) {
-	return sbi->bdev_list[tier-TIER_BDEV].bdev_raw;
+	return sbi->bdev_list[tier-TIER_BDEV_LOW].bdev_raw;
 }
 
 static inline struct page *address_to_page(void *dax_mem) {

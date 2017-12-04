@@ -165,9 +165,9 @@ static int nova_flush(struct file *file, fl_owner_t id)
 	nova_info("nova_flush is called\n");
 
 	// Tiering migration
-	if(DEBUG_BFL_INFO) print_bfl(sb);
+	if (DEBUG_BFL_INFO) print_bfl(sb);
 	migrate_a_file_to_bdev(file);
-	if(DEBUG_BFL_INFO) print_bfl(sb);
+	if (DEBUG_BFL_INFO) print_bfl(sb);
 
 	PERSISTENT_BARRIER();
 	return 0;
@@ -587,7 +587,7 @@ skip_verify:
 
 		if (is_dram_buffer_addr(sbi, dax_mem)) {
 			mb_offset = get_dram_buffer_offset(sbi, dax_mem);
-			if(DEBUG_BUFFERING) nova_info("put off %lu, nr %lu", mb_offset - index + (unsigned long)entry->pgoff, (unsigned long)entry->num_pages);
+			if (DEBUG_BUFFERING) nova_info("put off %lu, nr %lu", mb_offset - index + (unsigned long)entry->pgoff, (unsigned long)entry->num_pages);
 			put_dram_buffer_range(sbi, mb_offset - index + entry->pgoff, entry->num_pages);
 		}
 

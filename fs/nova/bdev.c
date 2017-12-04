@@ -12,13 +12,13 @@ char* find_a_raw_bdev(void) {
 	char* bdev = kzalloc(20*sizeof(char),GFP_KERNEL);
 		
 	fp = filp_open("/dev/sda1", O_RDONLY, 0644);
-	if(fp == (struct file *)-ENOENT) {
+	if (fp == (struct file *)-ENOENT) {
 		strcat(bdev, "/dev/sda\0");
 		nova_info("sda\n");
 		return bdev;
 	}
 	fp = filp_open("/dev/sdb1", O_RDONLY, 0644);
-	if(fp == (struct file *)-ENOENT) {
+	if (fp == (struct file *)-ENOENT) {
 		strcat(bdev, "/dev/sdb\0");
 		nova_info("sdb\n");
 		return bdev;
@@ -155,7 +155,7 @@ int nova_bdev_write_byte(struct block_device *device, unsigned long offset,
    	int ret = 0;
 	struct bio *bio = bio_alloc(GFP_NOIO, 1);
 	struct bio_vec *bv = kzalloc(sizeof(struct bio_vec), GFP_KERNEL);
-	if(DEBUG_BDEV_RW) nova_info("[Bdev Write] Offset %7lu <- Page %p (size: %lu)\n",offset>>12,
+	if (DEBUG_BDEV_RW) nova_info("[Bdev Write] Offset %7lu <- Page %p (size: %lu)\n",offset>>12,
 	page_address(page)+page_offset,size);
 	bio->bi_bdev = device;
 	bio->bi_iter.bi_sector = offset >> 9;
@@ -185,7 +185,7 @@ int nova_bdev_read_byte(struct block_device *device, unsigned long offset,
 	struct bio *bio = bio_alloc(GFP_NOIO, 1);
 	struct bio_vec *bv = kzalloc(sizeof(struct bio_vec), GFP_KERNEL);
 	// bio is about block and bv is about page
-	if(DEBUG_BDEV_RW) nova_info("[Bdev Read ] Offset %7lu -> Page %p (size: %lu)\n",offset>>12,
+	if (DEBUG_BDEV_RW) nova_info("[Bdev Read ] Offset %7lu -> Page %p (size: %lu)\n",offset>>12,
 	page_address(page)+page_offset,size);
 	bio->bi_bdev = device;
 	bio->bi_iter.bi_sector = offset >> 9;
@@ -568,9 +568,6 @@ int nova_bdev_free_blocks(struct super_block *sb, unsigned long blocknr,
 	return nova_free_blocks_from_bdev(sb, blocknr + sbi->num_blocks, num_blocks);
 }
 
-
-// bool check
-
 void bdev_test(struct nova_sb_info *sbi) {
 	struct block_device *bdev_raw = sbi->bdev_list->bdev_raw;
 	
@@ -616,7 +613,7 @@ void bdev_test(struct nova_sb_info *sbi) {
 		modify_a_page(pg_vir_addr,'C'+i%20);
 		ret = nova_bdev_write_block(bdev_raw, i, 1, pg, BIO_SYNC);
 		ret = nova_bdev_read_block(bdev_raw, i, 1, pg2, BIO_SYNC);
-		if(i%100==50) {
+		if (i%100==50) {
 			nova_info("[%s] [Block %d]\n",bdev_name,i);
 		 	print_a_page(pg_vir_addr2);
 		}

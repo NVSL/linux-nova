@@ -163,7 +163,7 @@ struct nova_sb_info {
 	/* NOVA-tiering */
 	struct bdev_info *bdev_list;
 	
-	/* Mini DRAM buffer */	
+	/* Mini DRAM buffer */
 	spinlock_t *mb_locks;
 	int *tier;
 	unsigned long *blockoff;
@@ -182,7 +182,7 @@ struct nova_sb_info {
 	/* Per-CPU free block list */
 	struct free_list *free_lists;
 
-	/* Free block list for block */
+	/* Free block list for block devices */
 	// TODO: Multi-bdev
 	struct bdev_free_list *bdev_free_list;
 
