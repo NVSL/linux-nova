@@ -399,6 +399,7 @@ static int nova_new_blocks_from_bdev(struct super_block *sb, unsigned long *bloc
 	struct bdev_free_list *bfl;
 	unsigned long new_blocknr = 0;
 	long ret_blocks = 0;
+	struct nova_sb_info *sbi = NOVA_SB(sb);
 
 	if (num_blocks == 0) {
 		nova_dbg_verbose("%s: num_blocks == 0", __func__);
@@ -426,7 +427,7 @@ static int nova_new_blocks_from_bdev(struct super_block *sb, unsigned long *bloc
 	*blocknr = new_blocknr;
 
 	// blocknr starts with the range of the block device (after PMEM) instead of 0.
-	nova_info("[Bdev] Alloc %lu BDEV blocks 0x%lx\n", ret_blocks, *blocknr);
+	nova_info("[Bdev] Alloc %lu BDEV blocks %lu (%lu)\n", ret_blocks, *blocknr, *blocknr - sbi->num_blocks);
 	return ret_blocks;
 }
 

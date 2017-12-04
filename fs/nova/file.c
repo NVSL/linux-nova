@@ -587,7 +587,7 @@ skip_verify:
 
 		if (is_dram_buffer_addr(sbi, dax_mem)) {
 			mb_offset = get_dram_buffer_offset(sbi, dax_mem);
-			nova_info("put off %lu, nr %lu", mb_offset - index + (unsigned long)entry->pgoff, (unsigned long)entry->num_pages);
+			if(DEBUG_BUFFERING) nova_info("put off %lu, nr %lu", mb_offset - index + (unsigned long)entry->pgoff, (unsigned long)entry->num_pages);
 			put_dram_buffer_range(sbi, mb_offset - index + entry->pgoff, entry->num_pages);
 		}
 
@@ -608,7 +608,7 @@ out:
 	*ppos = pos + copied;
 	if (filp)
 		file_accessed(filp);
-	nova_info("End read\n");
+		
 	NOVA_STATS_ADD(read_bytes, copied);
 
 	nova_dbgv("%s returned %zu\n", __func__, copied);

@@ -248,6 +248,8 @@ int migrate_entry_blocks_to_bdev(struct nova_sb_info *sbi, int tier,
 	struct nova_inode_info_header *sih = &si->header;
     unsigned long blocknr = 0;
     int ret = 0;
+    if (!entry) return ret;
+    if (entry->tier!=TIER_PMEM) return ret;
     if(DEBUG_MIGRATION_RW) nova_info(" entry->block %p\n", sbi->virt_addr + entry->block);
     // print_a_page((void *) sbi->virt_addr + entry->block);
     ret = migrate_blocks_to_bdev(sbi, (void *) sbi->virt_addr + entry->block, entry->num_pages, tier, &blocknr);

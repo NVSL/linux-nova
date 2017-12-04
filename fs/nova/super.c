@@ -997,6 +997,10 @@ static void nova_put_super(struct super_block *sb)
 	struct inode_map *inode_map;
 	int i;
 
+	nova_info("*****************\n");
+	nova_info("*  NOVA umount  *\n");
+	nova_info("*****************\n");
+
 	if(DEBUG_BFL_INFO) print_bfl(sb);
 	nova_print_curr_epoch_id(sb);
 
@@ -1038,11 +1042,6 @@ static void nova_put_super(struct super_block *sb)
 	kfree(sbi->nova_sb);
 	kfree(sbi);
 	sb->s_fs_info = NULL;
-
-	nova_info("*****************\n");
-	nova_info("*  NOVA umount  *\n");
-	nova_info("*****************\n");
-
 }
 
 inline void nova_free_range_node(struct nova_range_node *node)
