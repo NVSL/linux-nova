@@ -590,7 +590,7 @@ static unsigned long get_nvmm(struct super_block *sb,
 	 * verification of the entry.
 	 */
 	if (entry->tier == TIER_PMEM) {
-		nova_info("[Get] Get from TIER_PMEM\n");
+		if(DEBUG_GET_NVMM) nova_info("[Get] Get from TIER_PMEM\n");
 		if (entry->pgoff > pgoff || (unsigned long) entry->pgoff +
 				(unsigned long) entry->num_pages <= pgoff) {
 			struct nova_sb_info *sbi = NOVA_SB(sb);
@@ -609,7 +609,7 @@ static unsigned long get_nvmm(struct super_block *sb,
 			- entry->pgoff;
 	}
 	if (entry->tier == TIER_BDEV) {
-		nova_info("[Get] Get from TIER_BDEV\n");
+		if(DEBUG_GET_NVMM) nova_info("[Get] Get from TIER_BDEV\n");
 		mb_index = buffer_data_block_from_bdev_range(sbi, entry->tier, entry->block, entry->num_pages);
 		if(mb_index<0) {
 			nova_info("get_nvmm failed\n");
@@ -1011,7 +1011,8 @@ int nova_free_blocks_from_bdev(struct super_block *sb, unsigned long blocknr,
 	unsigned int num_blocks);
 int nova_bdev_free_blocks(struct super_block *sb, unsigned long blocknr,
 	unsigned int num_blocks);
-	
+void print_bfl(struct super_block *sb);
+
 /* checksum.c */
 void nova_update_entry_csum(void *entry);
 int nova_update_block_csum(struct super_block *sb,

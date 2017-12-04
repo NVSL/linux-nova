@@ -5,3 +5,7 @@
  */
 #define DEBUG_MIGRATION_RW 0
 #define DEBUG_BDEV_RW 0
+#define DEBUG_STARTUP_TEST 0
+#define DEBUG_BFL_INFO 0
+#define DEBUG_BUFFERING 1
+#define DEBUG_GET_NVMM 1

@@ -691,7 +691,7 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 
 	print_a_bdev(sbi);
 	
-	bdev_test(sbi);
+	if (DEBUG_STARTUP_TEST) bdev_test(sbi);
 
 	nova_dbg("measure timing %d, metadata checksum %d, inplace update %d, wprotect %d, data checksum %d, data parity %d, DRAM checksum %d\n",
 		measure_timing, metadata_csum,
@@ -868,7 +868,7 @@ setup_sb:
 
 	retval = 0;
 
-	bfl_test(sbi);
+	if (DEBUG_STARTUP_TEST) bfl_test(sbi);
 
 	NOVA_END_TIMING(mount_t, mount_time);
 	return retval;
@@ -997,6 +997,7 @@ static void nova_put_super(struct super_block *sb)
 	struct inode_map *inode_map;
 	int i;
 
+	if(DEBUG_BFL_INFO) print_bfl(sb);
 	nova_print_curr_epoch_id(sb);
 
 	/* It's unmount time, so unmap the nova memory */
@@ -1037,6 +1038,11 @@ static void nova_put_super(struct super_block *sb)
 	kfree(sbi->nova_sb);
 	kfree(sbi);
 	sb->s_fs_info = NULL;
+
+	nova_info("*****************\n");
+	nova_info("*  NOVA umount  *\n");
+	nova_info("*****************\n");
+
 }
 
 inline void nova_free_range_node(struct nova_range_node *node)
@@ -1202,6 +1208,9 @@ static struct super_operations nova_sops = {
 static struct dentry *nova_mount(struct file_system_type *fs_type,
 				  int flags, const char *dev_name, void *data)
 {
+	nova_info("*****************\n");
+	nova_info("*  NOVA  mount  *\n");
+	nova_info("*****************\n");
 	return mount_bdev(fs_type, flags, dev_name, data, nova_fill_super);
 }
 

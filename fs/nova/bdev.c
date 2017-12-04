@@ -43,7 +43,7 @@ static void vfs_write_test(void) {
 	struct file *file;
 	loff_t pos = 4;
 	int i;
-	char* name = kmalloc(sizeof(char)*4,GFP_KERNEL);
+	char* name = kzalloc(sizeof(char)*4,GFP_KERNEL);
     mm_segment_t oldfs;
 	name[0] = 't';
 	name[1] = 'o';
@@ -110,7 +110,7 @@ int modify_a_page(void* addr, int keychar) {
 	char* c = addr;
 	int i = 0;
 	int key = keychar - 'A';
-	char* word = kmalloc(26*sizeof(char)*5+1,GFP_KERNEL);
+	char* word = kzalloc(26*sizeof(char)*5+1,GFP_KERNEL);
 	while (i<26*5) {
 		word[i]='A'+i%26;
 		i++;
@@ -129,7 +129,7 @@ void print_a_page(void* addr) {
 	char* c = addr;
 	// wordline: how many characters are shown in one line
 	int wordline = 128;
-	char* p = kmalloc(wordline*sizeof(char)+1,GFP_KERNEL);
+	char* p = kzalloc(wordline*sizeof(char)+1,GFP_KERNEL);
 	int i = 0;
 	int j = 0;
 	char space = ' ';
@@ -223,7 +223,7 @@ int nova_alloc_bdev_block_free_lists(struct super_block *sb) {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct bdev_free_list *bdev_free_list;
 
-	sbi->bdev_free_list = kmalloc(sizeof(struct bdev_free_list), GFP_KERNEL);
+	sbi->bdev_free_list = kzalloc(sizeof(struct bdev_free_list), GFP_KERNEL);
 
 	if (!sbi->bdev_free_list)
 		return -ENOMEM;
@@ -412,7 +412,7 @@ static int nova_new_blocks_from_bdev(struct super_block *sb, unsigned long *bloc
 
 	if (ret_blocks > 0) {
 		bfl->num_blocknode +=1;
-		bfl->num_free_blocks -= ret_blocks;
+		// bfl->num_free_blocks -= ret_blocks;
 	}
 
 	spin_unlock(&bfl->s_lock);
@@ -425,10 +425,15 @@ static int nova_new_blocks_from_bdev(struct super_block *sb, unsigned long *bloc
 
 	*blocknr = new_blocknr;
 
+	// blocknr starts with the range of the block device (after PMEM) instead of 0.
 	nova_info("[Bdev] Alloc %lu BDEV blocks 0x%lx\n", ret_blocks, *blocknr);
 	return ret_blocks;
 }
 
+void print_bfl(struct super_block *sb){	
+	struct bdev_free_list *bfl = nova_get_bdev_free_list(sb);
+	nova_info("bfl: num_blocknode:%lu,num_free_blocks:%lu\n",bfl->num_blocknode,bfl->num_free_blocks);
+}
 
 int nova_free_blocks_from_bdev(struct super_block *sb, unsigned long blocknr,
 	unsigned int num_blocks)

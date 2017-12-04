@@ -50,7 +50,7 @@ int buffer_data_block_from_bdev(struct nova_sb_info *sbi, int tier, int blockoff
     int i = 0;
     int ret = 0;
 	struct page *pg;
-	nova_info("[Buffering] block:%d\n" ,blockoff);
+	if(DEBUG_BUFFERING) nova_info("[Buffering] block:%d\n" ,blockoff);
 	for (i = blockoff%MINI_BUFFER_PAGES; i < blockoff%MINI_BUFFER_PAGES+MINI_BUFFER_PAGES; i++)
 		if(spin_trylock(&sbi->mb_locks[i%MINI_BUFFER_PAGES])) goto copy;
     // All mini-buffers are full
@@ -106,8 +106,8 @@ int put_dram_buffer_range(struct nova_sb_info *sbi, unsigned long number, int le
 }
 
 inline bool is_dram_buffer_addr(struct nova_sb_info *sbi, void *addr) {
-    nova_info("A%llu\n",(unsigned long long)(sbi->mini_buffer) >> (PAGE_SHIFT+MINI_BUFFER_PAGES_BIT));
-    nova_info("B%llu\n",(unsigned long long)addr >> (PAGE_SHIFT+MINI_BUFFER_PAGES_BIT));
+    // nova_info("A%llu\n",(unsigned long long)(sbi->mini_buffer) >> (PAGE_SHIFT+MINI_BUFFER_PAGES_BIT));
+    // nova_info("B%llu\n",(unsigned long long)addr >> (PAGE_SHIFT+MINI_BUFFER_PAGES_BIT));
     return ((unsigned long long)(sbi->mini_buffer) >> (PAGE_SHIFT+MINI_BUFFER_PAGES_BIT) == 
     (unsigned long long)addr >> (PAGE_SHIFT+MINI_BUFFER_PAGES_BIT));
 }
@@ -148,13 +148,13 @@ int buffer_data_block_from_bdev_range(struct nova_sb_info *sbi, int tier, int bl
         nova_info("buffer_data_block_from_bdev_range length=%d\n",length);
         return -1;
     }
-	nova_info("[Buffering] block:%d, length:%d\n", blockoff, length);
+	if(DEBUG_BUFFERING) nova_info("[Buffering] block:%d, length:%d\n", blockoff, length);
 	for (i = blockoff%MINI_BUFFER_PAGES; i < MINI_BUFFER_PAGES; i++) {
         if(spin_can_lock(&sbi->mb_locks[i])) {
             match = 0;
             unlock++;
             if (unlock==length) {
-                nova_info("[Buffering] suitable buffer found, index:%d\n",index);
+                if(DEBUG_BUFFERING) nova_info("[Buffering] suitable buffer found, index:%d\n",index);
                 goto copy;
             }
         }
@@ -162,7 +162,7 @@ int buffer_data_block_from_bdev_range(struct nova_sb_info *sbi, int tier, int bl
             if (sbi->tier[i] == tier && sbi->blockoff[i] == blockoff+match) {
                 match++;
                 if (match==length) {
-                    nova_info("[Buffering] matching buffer found\n");
+                    if(DEBUG_BUFFERING) nova_info("[Buffering] matching buffer found\n");
                     goto out;
                 }
             }
@@ -178,7 +178,7 @@ int buffer_data_block_from_bdev_range(struct nova_sb_info *sbi, int tier, int bl
             match = 0;
             unlock++;
             if (unlock==length) {
-                nova_info("[Buffering] suitable buffer found\n");
+                if(DEBUG_BUFFERING) nova_info("[Buffering] suitable buffer found\n");
                 goto copy;
             }
         }
@@ -186,7 +186,7 @@ int buffer_data_block_from_bdev_range(struct nova_sb_info *sbi, int tier, int bl
             if (sbi->tier[i] == tier && sbi->blockoff[i] == blockoff+match) {
                 match++;
                 if (match==length) {
-                    nova_info("[Buffering] matching buffer found\n");
+                    if(DEBUG_BUFFERING) nova_info("[Buffering] matching buffer found\n");
                     goto out;
                 }
             }
@@ -197,7 +197,7 @@ int buffer_data_block_from_bdev_range(struct nova_sb_info *sbi, int tier, int bl
 
 copy:
     if (unlock != length) {
-        nova_info("[Buffering] failed\n");
+        if(DEBUG_BUFFERING) nova_info("[Buffering] failed\n");
         return -1;
     }
     for (i=index;i<index+length;++i) {

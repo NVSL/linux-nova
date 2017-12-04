@@ -159,9 +159,15 @@ persist:
 /* This callback is called when a file is closed */
 static int nova_flush(struct file *file, fl_owner_t id)
 {
+	struct inode *inode = file->f_path.dentry->d_inode;
+	struct super_block *sb = inode->i_sb;
+
 	nova_info("nova_flush is called\n");
+
 	// Tiering migration
+	if(DEBUG_BFL_INFO) print_bfl(sb);
 	migrate_a_file_to_bdev(file);
+	if(DEBUG_BFL_INFO) print_bfl(sb);
 
 	PERSISTENT_BARRIER();
 	return 0;
@@ -565,7 +571,7 @@ skip_verify:
 		NOVA_START_TIMING(memcpy_r_nvmm_t, memcpy_time);
 
 		if (!zero) {
-			nova_info("[Read] Read from:%p %p\n",dax_mem,dax_mem + offset);
+			// nova_info("[Read] Read from:%p %p\n",dax_mem,dax_mem + offset);
 			left = __copy_to_user(buf + copied,
 						dax_mem + offset, nr);
 		}
