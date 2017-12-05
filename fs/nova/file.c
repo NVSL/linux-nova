@@ -165,9 +165,9 @@ static int nova_flush(struct file *file, fl_owner_t id)
 	nova_info("nova_flush is called\n");
 
 	// Tiering migration
-	if (DEBUG_BFL_INFO) print_bfl(sb);
+	if (DEBUG_BFL_INFO) print_all_bfl(sb);
 	migrate_a_file_to_bdev(file);
-	if (DEBUG_BFL_INFO) print_bfl(sb);
+	if (DEBUG_BFL_INFO) print_all_bfl(sb);
 
 	PERSISTENT_BARRIER();
 	return 0;

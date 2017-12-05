@@ -20,6 +20,10 @@ struct bdev_info {
  */ 
 struct bdev_free_list {
 	spinlock_t s_lock;
+
+	int tier; 
+	int cpu;
+
 	struct rb_root block_free_tree;
 	struct nova_range_node *first_node; // lowest address free range
 	struct nova_range_node *last_node; // highest address free range
@@ -45,11 +49,23 @@ struct nova_bdev_range_node {
 };
 
 static inline
-struct bdev_free_list *nova_get_bdev_free_list(struct super_block *sb)
+struct bdev_free_list *nova_get_bdev_free_list(struct nova_sb_info *sbi, int tier, int cpu)
 {
-	struct nova_sb_info *sbi = NOVA_SB(sb);
+	return &sbi->bdev_free_list[(tier-1)*sbi->cpus + cpu];
+}
 
-	return sbi->bdev_free_list;
+static inline
+struct bdev_free_list *nova_get_bdev_free_list_flat(struct nova_sb_info *sbi, int num)
+{
+	return &sbi->bdev_free_list[num];
+}
+
+static inline int bfl_index_cal(struct nova_sb_info *sbi, int tier, int cpu) {
+	return (tier-TIER_BDEV_LOW)*sbi->cpus + cpu;
+}
+
+static inline int bfl_index(struct nova_sb_info *sbi, struct bdev_free_list *bfl) {
+	return (bfl->tier-TIER_BDEV_LOW)*sbi->cpus + bfl->cpu;
 }
 
 // tier of bdevs starts from TIER_BDEV_LOW
@@ -71,7 +87,7 @@ void print_all_bdev(struct nova_sb_info *sbi);
 void bdev_test(struct nova_sb_info *sbi);
 void bfl_test(struct nova_sb_info *sbi);
 void nova_delete_bdev_free_list(struct super_block *sb);
-int nova_bdev_alloc_blocks(struct nova_sb_info *sbi, unsigned long *blocknr,
+int nova_bdev_alloc_blocks(struct nova_sb_info *sbi, int tier, unsigned long *blocknr,
 	unsigned int num_blocks);
 
 #endif

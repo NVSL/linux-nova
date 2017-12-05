@@ -236,7 +236,7 @@ int migrate_blocks_to_bdev_with_blockoff(struct nova_sb_info *sbi,
 int migrate_blocks_to_bdev(struct nova_sb_info *sbi, void *dax_mem,
     unsigned long nr, int tier, unsigned long *blocknr) {
     int ret2 = 0;
-    int ret = nova_bdev_alloc_blocks(sbi, blocknr, nr);
+    int ret = nova_bdev_alloc_blocks(sbi, TIER_BDEV_LOW, blocknr, nr);
     if (ret<0) return ret;
     ret2 = migrate_blocks_to_bdev_with_blockoff(sbi, dax_mem, nr, tier, *blocknr);
     return ret2;

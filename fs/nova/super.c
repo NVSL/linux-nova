@@ -871,6 +871,7 @@ setup_sb:
 
 	retval = 0;
 
+	if (DEBUG_BFL_INFO) print_all_bfl(sb);
 	if (DEBUG_STARTUP_TEST) bfl_test(sbi);
 
 	NOVA_END_TIMING(mount_t, mount_time);
@@ -1004,7 +1005,7 @@ static void nova_put_super(struct super_block *sb)
 	nova_info("*  NOVA umount  *\n");
 	nova_info("*****************\n");
 
-	if (DEBUG_BFL_INFO) print_bfl(sb);
+	if (DEBUG_BFL_INFO) print_all_bfl(sb);
 	nova_print_curr_epoch_id(sb);
 
 	/* It's unmount time, so unmap the nova memory */

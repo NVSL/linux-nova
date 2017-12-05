@@ -1016,7 +1016,7 @@ int nova_free_blocks_from_bdev(struct super_block *sb, unsigned long blocknr,
 	unsigned int num_blocks);
 int nova_bdev_free_blocks(struct super_block *sb, unsigned long blocknr,
 	unsigned int num_blocks);
-void print_bfl(struct super_block *sb);
+void print_all_bfl(struct super_block *sb);
 
 /* checksum.c */
 void nova_update_entry_csum(void *entry);

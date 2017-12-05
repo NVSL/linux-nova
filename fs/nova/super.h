@@ -159,9 +159,6 @@ struct nova_sb_info {
 	/* Checksum and parity for zero block */
 	u32 zero_csum[8];
 	void *zero_parity;
-
-	/* NOVA-tiering */
-	struct bdev_info *bdev_list;
 	
 	/* Mini DRAM buffer */
 	spinlock_t *mb_locks;
@@ -182,8 +179,10 @@ struct nova_sb_info {
 	/* Per-CPU free block list */
 	struct free_list *free_lists;
 
+	/* NOVA-tiering */
+	struct bdev_info *bdev_list;
+
 	/* Free block list for block devices */
-	// TODO: Multi-bdev
 	struct bdev_free_list *bdev_free_list;
 
 	unsigned long per_list_blocks;
