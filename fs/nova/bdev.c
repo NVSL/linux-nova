@@ -516,7 +516,7 @@ alloc:
 	*blocknr = new_blocknr;
 
 	// blocknr starts with the range of the block device (after PMEM) instead of 0.
-	nova_info("[Bdev] Alloc %lu BDEV blocks at %lu (%lu) from tier %d cpu %d\n"
+	nova_info("[Bdev] Alloc %lu BDEV blocks at %lu (%lu) from T%d C%d\n"
 	, ret_blocks, *blocknr, *blocknr - sbi->num_blocks, bfl->tier, bfl->cpu);
 	return ret_blocks;
 }
@@ -527,26 +527,26 @@ void print_all_bfl(struct super_block *sb){
 	struct free_list *fl = NULL;
 	int i;
 
-	nova_info("----------------------------------------------------------\n");
-	nova_info("                   [PMEM free lists]\n");
-	nova_info("|Tier|CPU| Start |  End  | Used  | Free  | Total | Node  |\n");
+	nova_info("---------------------------------------------------------\n");
+	nova_info("                    [PMEM free lists]\n");
+	nova_info("|Tier|CPU| Start |  End  | Used  | Free  | Total | Node |\n");
 	for (i=0;i<sbi->cpus;++i) {
 		fl = nova_get_free_list(sb, i);
-		nova_info("|%4d|%3d|%7lu|%7lu|%7lu|%7lu|%7lu|%7lu|\n",
-		0, fl->index, fl->block_start, fl->block_end, fl->alloc_data_pages + fl->alloc_log_pages,
+		nova_info("|%4d|%3d|%7lu|%7lu|%7lu|%7lu|%7lu|%6lu|\n",
+		0, fl->index, fl->block_start, fl->block_end, fl->block_end - fl->block_start + 1 - fl->num_free_blocks,
 		fl->num_free_blocks, fl->block_end - fl->block_start + 1, fl->num_blocknode);
 	}
 
-	nova_info("----------------------------------------------------------\n");
-	nova_info("                   [Block free lists]\n");
-	nova_info("|Tier|CPU| Start |  End  | Used  | Free  | Total | Node  |\n");
+	nova_info("---------------------------------------------------------\n");
+	nova_info("                    [BDEV free lists]\n");
+	nova_info("|Tier|CPU| Start |  End  | Used  | Free  | Total | Node |\n");
 	for (i=0;i<TIER_BDEV_HIGH*sbi->cpus;++i) {
 		bfl = nova_get_bdev_free_list_flat(sbi,i);
-		nova_info("|%4d|%3d|%7lu|%7lu|%7lu|%7lu|%7lu|%7lu|\n",
+		nova_info("|%4d|%3d|%7lu|%7lu|%7lu|%7lu|%7lu|%6lu|\n",
 		bfl->tier, bfl->cpu, bfl->block_start, bfl->block_end, bfl->num_total_blocks - bfl->num_free_blocks,
 		bfl->num_free_blocks, bfl->num_total_blocks, bfl->num_blocknode);
 	}
-	nova_info("----------------------------------------------------------\n");
+	nova_info("---------------------------------------------------------\n");
 }
 
 // blocknr: global block number

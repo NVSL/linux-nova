@@ -276,12 +276,6 @@ int migrate_entry_blocks(struct nova_sb_info *sbi, int from, int to,
         return ret;
     }
 
-    // Not enough page in DRAM is an exception 
-    // since DRAM should be enough to handle at least one request
-    if (ret != entry->num_pages) {
-        nova_info("migrate_entry_blocks() no enough page: %d, %lu, %d\n", ret, blocknr, entry->num_pages);
-        return ret;
-    }
     // Free blocks
 	// ret = nova_free_blocks(sb, entry->block >> PAGE_SHIFT, entry->num_pages, sih->i_blk_type, 0);
     ret = nova_free_blocks_tier(sbi, entry->block >> PAGE_SHIFT, entry->num_pages);
@@ -320,6 +314,7 @@ int migrate_a_file(struct inode *inode, int from, int to)
         entry = nova_get_write_entry(sb, sih, index);
         // nova_info("entry %p\n", entry);
         // nova_info("index:%lu ret:%d\n", index, ret);
+
         if (entry) {
             if (entry->tier == from) {
                 if (DEBUG_MIGRATION_RW) nova_info("[Migration] Migrating write entry with index:%lu\n", index);
@@ -327,9 +322,12 @@ int migrate_a_file(struct inode *inode, int from, int to)
                 ret = migrate_entry_blocks(sbi, from, to, si, entry);
                 index += entry->num_pages;
             }
+            else {
+                index++;
+            }
         }
-        if (!entry || entry->tier != from) index++;
-    } while (index < end_index);
+        else index++;
+    } while (index <= end_index);
 
     if (DEBUG_MIGRATION_RW) nova_info("[Migration] End migrating inode:%lu from:T%d to:T%d\n",
         inode->i_ino, from, to);
