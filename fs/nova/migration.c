@@ -40,17 +40,16 @@ int init_dram_buffer(struct nova_sb_info *sbi) {
 /*
  * Buffer a data block from bdev to DRAM
  *
- * tier: pmem-0; DRAM-1; bdev-2,3,... 
  * Strategy: 
  *      Find the first unlock page
  *      If none, wait on one according to page offset
  * Return buffer number (locked buffer)
  */ 
-int buffer_data_block_from_bdev(struct nova_sb_info *sbi, int tier, int blockoff) {
+int buffer_data_block_from_bdev(struct nova_sb_info *sbi, int tier, unsigned long blockoff) {
     int i = 0;
     int ret = 0;
 	struct page *pg;
-	if (DEBUG_BUFFERING) nova_info("[Buffering] block:%d\n" ,blockoff);
+	if (DEBUG_BUFFERING) nova_info("[Buffering] block:%lu\n" ,blockoff);
 	for (i = blockoff%MINI_BUFFER_PAGES; i < blockoff%MINI_BUFFER_PAGES+MINI_BUFFER_PAGES; i++)
 		if (spin_trylock(&sbi->mb_locks[i%MINI_BUFFER_PAGES])) goto copy;
     // All mini-buffers are full
@@ -225,56 +224,81 @@ out:
 /*
  * Migrate continuous blocks from pmem to block device, with block number
  */
-int migrate_blocks_to_bdev_with_blockoff(struct nova_sb_info *sbi, 
+int migrate_blocks_to_bdev(struct nova_sb_info *sbi, 
     void *dax_mem, unsigned long nr, int tier, unsigned long blockoff) {
     struct block_device *bdev_raw = get_bdev_raw(sbi, tier);
-    nova_bdev_write_block(bdev_raw, blockoff, nr, address_to_page(dax_mem), BIO_SYNC);
-    return nr;
+    return nova_bdev_write_block(bdev_raw, blockoff, nr, address_to_page(dax_mem), BIO_SYNC);
+    // return nr;
 }
 
 // Migrate continuous blocks from pmem to block device
-int migrate_blocks_to_bdev(struct nova_sb_info *sbi, void *dax_mem,
+
+/*
+long migrate_blocks_to_bdev(struct nova_sb_info *sbi, void *dax_mem,
     unsigned long nr, int tier, unsigned long *blocknr) {
-    int ret2 = 0;
-    int ret = nova_bdev_alloc_blocks(sbi, TIER_BDEV_LOW, blocknr, nr);
-    if (ret<0) return ret;
-    ret2 = migrate_blocks_to_bdev_with_blockoff(sbi, dax_mem, nr, tier, *blocknr);
-    return ret2;
+    // long ret = nova_bdev_alloc_blocks(sbi, TIER_BDEV_LOW, ANY_CPU, blocknr, nr);
+    // if (ret<0) return ret;
+    long ret = migrate_blocks_to_bdev_with_blockoff(sbi, dax_mem, nr, tier, *blocknr);
+    return ret;
 }
-	
-int migrate_entry_blocks_to_bdev(struct nova_sb_info *sbi, int tier,
+*/
+int migrate_blocks(struct nova_sb_info *sbi, unsigned long blockfrom, unsigned long nr,
+    int from, int to, unsigned long blocknr) {
+    if (is_tier_pmem(from) && is_tier_bdev_low(to)) 
+        return migrate_blocks_to_bdev(sbi, (void *) sbi->virt_addr + blockfrom, nr, to, blocknr);
+    return -2;
+}
+
+int migrate_entry_blocks(struct nova_sb_info *sbi, int from, int to,
     struct nova_inode_info *si, struct nova_file_write_entry *entry) {
-	struct super_block *sb = sbi->sb;
-	struct nova_inode_info_header *sih = &si->header;
+	// struct nova_inode_info_header *sih = &si->header;
     unsigned long blocknr = 0;
     int ret = 0;
     if (!entry) return ret;
-    if (entry->tier!=TIER_PMEM) return ret;
+    if (entry->tier != from) return ret;
+
+    // TODOzsa: Could be wrong
     if (DEBUG_MIGRATION_RW) nova_info("[Migration] entry->block %p\n", sbi->virt_addr + entry->block);
     // print_a_page((void *) sbi->virt_addr + entry->block);
-    ret = migrate_blocks_to_bdev(sbi, (void *) sbi->virt_addr + entry->block, entry->num_pages, tier, &blocknr);
-    if (ret<0) return ret;
+
+    ret = nova_alloc_block_tier(sbi, to, ANY_CPU, &blocknr, entry->num_pages);
+    if (ret<0) {
+        nova_info("[Migration] Block allocation error.\n");
+        return ret;
+    }
+    if (DEBUG_MIGRATION_RW) nova_info("[Migration] Allocate blocknr:%lu number:%d.\n",
+        blocknr, entry->num_pages);
+
+    ret = migrate_blocks(sbi, entry->block, entry->num_pages, from, to, blocknr);
+    if (ret<0) {
+        nova_info("[Migration] Block allocation error.\n");
+        if (ret == -2) nova_info("[Migration] Unsupported migration attempt.\n");
+        return ret;
+    }
+
     // Not enough page in DRAM is an exception 
     // since DRAM should be enough to handle at least one request
     if (ret != entry->num_pages) {
-        nova_info("migrate_entry_blocks_to_bdev() no enough page: %d, %lu, %d\n", ret, blocknr, entry->num_pages);
+        nova_info("migrate_entry_blocks() no enough page: %d, %lu, %d\n", ret, blocknr, entry->num_pages);
         return ret;
     }
-    // Free nvm block
-	ret = nova_free_blocks(sb, entry->block >> PAGE_SHIFT, entry->num_pages, sih->i_blk_type, 0);
+    // Free blocks
+	// ret = nova_free_blocks(sb, entry->block >> PAGE_SHIFT, entry->num_pages, sih->i_blk_type, 0);
+    ret = nova_free_blocks_tier(sbi, entry->block >> PAGE_SHIFT, entry->num_pages);
     // Change tiering info
-    entry->tier = tier;
-    entry->block = blocknr;
+    entry->tier = to;
+    entry->block = blocknr << PAGE_SHIFT;
 
 	nova_update_entry_csum(entry);
     return ret;
 }
 
-// TODOzsa: migrate back to NVM
-
-int migrate_a_file_to_bdev(struct file *filp)
+/*
+ * Migrate a file from one tier to another
+ * How migration works: Allocate -> Copy -> Free
+ */ 
+int migrate_a_file(struct inode *inode, int from, int to)
 {
-	struct inode *inode = filp->f_mapping->host;
 	struct super_block *sb = inode->i_sb;
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_inode_info *si = NOVA_I(inode);
@@ -284,7 +308,10 @@ int migrate_a_file_to_bdev(struct file *filp)
     pgoff_t end_index = 0;
     int ret = 0;
     loff_t isize = 0;
-    if (DEBUG_MIGRATION_RW) nova_info("[Migration] Start migrating inode:%lu\n", inode->i_ino);
+
+    // TODOzsa: Concurrent lock & check
+    if (DEBUG_MIGRATION_RW) nova_info("[Migration] Start migrating inode:%lu from:T%d to:T%d\n",
+        inode->i_ino, from, to);
 
 	isize = i_size_read(inode);
 	end_index = (isize) >> PAGE_SHIFT;
@@ -294,16 +321,23 @@ int migrate_a_file_to_bdev(struct file *filp)
         // nova_info("entry %p\n", entry);
         // nova_info("index:%lu ret:%d\n", index, ret);
         if (entry) {
-            if (entry->tier == TIER_PMEM) {
+            if (entry->tier == from) {
                 if (DEBUG_MIGRATION_RW) nova_info("[Migration] Migrating write entry with index:%lu\n", index);
-                ret = migrate_entry_blocks_to_bdev(sbi, TIER_BDEV_LOW, si, entry);
+                // TODOzsa
+                ret = migrate_entry_blocks(sbi, from, to, si, entry);
                 index += entry->num_pages;
             }
         }
-        if (!entry || entry->tier != TIER_PMEM) index++;
+        if (!entry || entry->tier != from) index++;
     } while (index < end_index);
 
-    if (DEBUG_MIGRATION_RW) nova_info("[Migration] End migrating inode:%lu\n", inode->i_ino);
+    if (DEBUG_MIGRATION_RW) nova_info("[Migration] End migrating inode:%lu from:T%d to:T%d\n",
+        inode->i_ino, from, to);
     
     return ret;
+}
+
+int migrate_a_file_to_bdev(struct file *filp) {
+	struct inode *inode = filp->f_mapping->host;
+    return migrate_a_file(inode, TIER_PMEM, TIER_BDEV_LOW);
 }

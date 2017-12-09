@@ -693,6 +693,8 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 	}
 
 	print_all_bdev(sbi);
+	nova_info("size of unsigned long:%lu\n",sizeof(unsigned long));
+	nova_info("num of unsigned long:%lx\n",(unsigned long)1<<34);
 	
 	if (DEBUG_STARTUP_TEST) bdev_test(sbi);
 

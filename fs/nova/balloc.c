@@ -382,7 +382,7 @@ int nova_free_blocks(struct super_block *sb, unsigned long blocknr,
 		nova_info("about to free ind:%lu num:%lu", mb_index, num_blocks);
 
 		if (DEBUG_MB_LOCK) print_all_wb_locks(sbi);
-		ret = nova_bdev_free_blocks(sb, sbi->blockoff[mb_index], num_blocks);
+		ret = nova_bdev_free_blocks(sbi, TIER_BDEV_LOW, sbi->blockoff[mb_index], num_blocks);
 		if (DEBUG_MB_LOCK) print_all_wb_locks(sbi);
 
 		clear_dram_buffer_range(sbi, mb_index, num_blocks);
@@ -566,7 +566,7 @@ static int not_enough_blocks(struct free_list *free_list,
 }
 
 /* Return how many blocks allocated */
-static long nova_alloc_blocks_in_free_list(struct super_block *sb,
+long nova_alloc_blocks_in_free_list(struct super_block *sb,
 	struct free_list *free_list, unsigned short btype,
 	enum alloc_type atype, unsigned long num_blocks,
 	unsigned long *new_blocknr, enum nova_alloc_direction from_tail)

@@ -87,7 +87,7 @@ void print_all_bdev(struct nova_sb_info *sbi);
 void bdev_test(struct nova_sb_info *sbi);
 void bfl_test(struct nova_sb_info *sbi);
 void nova_delete_bdev_free_list(struct super_block *sb);
-int nova_bdev_alloc_blocks(struct nova_sb_info *sbi, int tier, unsigned long *blocknr,
+long nova_bdev_alloc_blocks(struct nova_sb_info *sbi, int tier, int cpuid, unsigned long *blocknr,
 	unsigned int num_blocks);
 
 #endif
