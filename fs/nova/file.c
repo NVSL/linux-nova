@@ -126,7 +126,7 @@ static int nova_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 	timing_t fsync_time;
 
 	NOVA_START_TIMING(fsync_t, fsync_time);
-
+	nova_info("nova_fsync is called\n");
 	if (datasync)
 		NOVA_STATS_ADD(fdatasync, 1);
 
@@ -156,21 +156,72 @@ persist:
 	return ret;
 }
 
+static int nova_migration(struct inode *inode, struct file *file) {
+	struct super_block *sb = inode->i_sb;
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+
+	mutex_lock(&sbi->mb_mutex);
+	if (DEBUG_DO_MIGRATION) {
+		if(rwsem_is_locked(&inode->i_rwsem)) nova_info("nova_flush is locked\n");
+		else nova_info("nova_flush is not locked\n");
+	}
+
+	if (DEBUG_DO_MIGRATION)
+	nova_info("Release i_count:%d,i_dio_count:%d,i_writecount:%d,i_readcount:%d\n",
+		inode->i_count.counter,inode->i_dio_count.counter,inode->i_writecount.counter,inode->i_readcount.counter);
+
+	switch (file->f_flags & O_ACCMODE) {
+		case O_RDONLY:
+			if (inode->i_writecount.counter!=0 || inode->i_readcount.counter!=1) {
+				nova_info("Flag: O_RDONLY.\n");
+				goto out;
+			}
+			break;
+		case O_WRONLY:
+			if (inode->i_writecount.counter!=1 || inode->i_readcount.counter!=0) {
+				nova_info("Flag: O_WRONLY.\n");
+				goto out;
+			}
+			break;
+		case O_RDWR:
+			if (inode->i_writecount.counter!=1 || inode->i_readcount.counter!=0) {
+				nova_info("Flag: O_RDWR.\n");
+				goto out;
+			}
+			break;
+		default:
+			nova_info("Unidentified file access mode.\n");
+			break;
+	}
+	
+	if (DEBUG_DO_MIGRATION) nova_info("Do migration.\n");
+	// Tiering migration
+	if (DEBUG_BFL_INFO) print_all_bfl(sb);
+	migrate_a_file_to_bdev(inode);
+	if (DEBUG_BFL_INFO) print_all_bfl(sb);
+
+	goto end;
+	
+out:
+	if (DEBUG_DO_MIGRATION) nova_info("No migration.\n");
+
+end:
+	mutex_unlock(&sbi->mb_mutex);	
+	return 0;
+}
+
 /* This callback is called when a file is closed */
 static int nova_flush(struct file *file, fl_owner_t id)
 {
-	struct inode *inode = file->f_path.dentry->d_inode;
-	struct super_block *sb = inode->i_sb;
-
 	nova_info("nova_flush is called\n");
-
-	// Tiering migration
-	if (DEBUG_BFL_INFO) print_all_bfl(sb);
-	migrate_a_file_to_bdev(file);
-	if (DEBUG_BFL_INFO) print_all_bfl(sb);
-
 	PERSISTENT_BARRIER();
 	return 0;
+}
+
+static int nova_release(struct inode *inode, struct file *file)
+{
+	nova_info("nova_release is called\n");
+	return nova_migration(inode, file);
 }
 
 static int nova_open(struct inode *inode, struct file *filp)
@@ -545,6 +596,7 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 		} else {
 			nr = PAGE_SIZE;
 		}
+	mutex_lock(&sbi->mb_mutex);
 
 		nvmm = get_nvmm(sb, sih, entryc, index);
 		dax_mem = nova_get_block(sb, (nvmm << PAGE_SHIFT));
@@ -591,6 +643,7 @@ skip_verify:
 			put_dram_buffer_range(sbi, mb_offset - index + entry->pgoff, entry->num_pages);
 		}
 
+	mutex_unlock(&sbi->mb_mutex);
 		if (left) {
 			nova_dbg("%s ERROR!: bytes %lu, left %lu\n",
 				__func__, nr, left);
@@ -1003,6 +1056,7 @@ const struct file_operations nova_wrap_file_operations = {
 	.write_iter		= nova_wrap_rw_iter,
 	.mmap			= nova_dax_file_mmap,
 	.open			= nova_open,
+	.release		= nova_release,
 	.fsync			= nova_fsync,
 	.flush			= nova_flush,
 	.unlocked_ioctl		= nova_ioctl,

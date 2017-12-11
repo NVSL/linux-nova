@@ -693,8 +693,7 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 	}
 
 	print_all_bdev(sbi);
-	nova_info("size of unsigned long:%lu\n",sizeof(unsigned long));
-	nova_info("num of unsigned long:%lx\n",(unsigned long)1<<34);
+	// nova_info("size of unsigned long:%lu\n",sizeof(unsigned long));
 	
 	if (DEBUG_STARTUP_TEST) bdev_test(sbi);
 
@@ -900,6 +899,9 @@ out:
 	kfree(sbi->mb_locks);
 	sbi->mb_locks = NULL;
 
+	// kfree(sbi->mb_mutex);
+	// sbi->mb_mutex = NULL;
+
 	kfree(sbi->mb_pages);
 	sbi->mb_pages = NULL;
 
@@ -1031,6 +1033,7 @@ static void nova_put_super(struct super_block *sb)
 	kfree(sbi->bdev_free_list);
 	kfree(sbi->bdev_list);
 	kfree(sbi->journal_locks);
+	// kfree(sbi->mb_mutex);
 	kfree(sbi->mb_locks);
 	kfree(sbi->mb_pages);
 	kfree(sbi->mini_buffer);

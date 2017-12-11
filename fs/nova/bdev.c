@@ -284,7 +284,7 @@ static void nova_init_bdev_free_list(struct super_block *sb,
 	}
 	bfl->block_end = bfl->block_start + bfl->num_total_blocks -1;
 
-	nova_info("bfl->block_end = %lu\n",bfl->block_end);
+	if (DEBUG_INIT) nova_info("bfl->block_end = %lu\n",bfl->block_end);
 }
 
 // After nova_alloc_bdev_block_free_lists()

@@ -57,8 +57,11 @@
 #define PAGE_SHIFT_1G 30
 
 /* tiering */
-#define	MINI_BUFFER_PAGES 256
-#define	MINI_BUFFER_PAGES_BIT 8
+/* The maximum size of mini-buffer is the maximum size of kmalloc,
+ * which is defined in /include/linux/slab.h (1024 pages).
+ */ 
+#define	MINI_BUFFER_PAGES 1024
+#define	MINI_BUFFER_PAGES_BIT 10
 #define IO_BLOCK_SIZE 4096
 #define IO_BLOCK_SIZE_BIT 12
 #define BIO_ASYNC 0
@@ -1185,13 +1188,14 @@ int buffer_data_block_from_bdev(struct nova_sb_info *sbi, int tier, unsigned lon
 inline int clear_dram_buffer(struct nova_sb_info *sbi, unsigned long number);
 inline int put_dram_buffer(struct nova_sb_info *sbi, unsigned long number);
 int clear_dram_buffer_range(struct nova_sb_info *sbi, unsigned long number, int length);
-int put_dram_buffer_range(struct nova_sb_info *sbi, unsigned long number, int length);
+int put_dram_buffer_range(struct nova_sb_info *sbi, unsigned long number, unsigned long length);
 inline unsigned long get_dram_buffer_offset(struct nova_sb_info *sbi, void *buf);
 inline unsigned long get_dram_buffer_offset_off(struct nova_sb_info *sbi, unsigned long nvmm);
 inline bool is_dram_buffer_addr(struct nova_sb_info *sbi, void *addr);
 int migrate_a_file(struct inode *inode, int from, int to);
-int migrate_a_file_to_bdev(struct file *filp);
+int migrate_a_file_to_bdev(struct inode *inode);
 void print_all_wb_locks(struct nova_sb_info *sbi);
+void print_wb_locks(struct nova_sb_info *sbi);
 
 /* mprotect.c */
 extern int nova_dax_mem_protect(struct super_block *sb,
