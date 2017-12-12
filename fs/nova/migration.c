@@ -21,11 +21,14 @@ int init_dram_buffer(struct nova_sb_info *sbi) {
 	sbi->mb_locks = kcalloc(MINI_BUFFER_PAGES, sizeof(spinlock_t), GFP_KERNEL);
 	if (!sbi->mb_locks) return -ENOMEM;
 
-	sbi->tier = kcalloc(MINI_BUFFER_PAGES, sizeof(int), GFP_KERNEL);
-	if (!sbi->tier) return -ENOMEM;
+	sbi->mb_count = kcalloc(MINI_BUFFER_PAGES, sizeof(int), GFP_KERNEL);
+	if (!sbi->mb_count) return -ENOMEM;
 
-	sbi->blockoff = kcalloc(MINI_BUFFER_PAGES, sizeof(int), GFP_KERNEL);
-	if (!sbi->blockoff) return -ENOMEM;
+	sbi->mb_tier = kcalloc(MINI_BUFFER_PAGES, sizeof(int), GFP_KERNEL);
+	if (!sbi->mb_tier) return -ENOMEM;
+
+	sbi->mb_blockoff = kcalloc(MINI_BUFFER_PAGES, sizeof(int), GFP_KERNEL);
+	if (!sbi->mb_blockoff) return -ENOMEM;
 
 	sbi->mini_buffer = kcalloc(MINI_BUFFER_PAGES, IO_BLOCK_SIZE, GFP_KERNEL);
 	if (!sbi->mini_buffer) return -ENOMEM;
@@ -58,9 +61,13 @@ int buffer_data_block_from_bdev(struct nova_sb_info *sbi, int tier, unsigned lon
 
 	mutex_lock(&sbi->mb_mutex);
 	for (i = blockoff%MINI_BUFFER_PAGES; i < blockoff%MINI_BUFFER_PAGES+MINI_BUFFER_PAGES; i++)
-		if (spin_trylock(&sbi->mb_locks[i%MINI_BUFFER_PAGES])) goto copy;
+		if (spin_trylock(&sbi->mb_locks[i%MINI_BUFFER_PAGES])) {
+            sbi->mb_count[i%MINI_BUFFER_PAGES]++;
+            goto copy;
+        }
     // All mini-buffers are full
     spin_lock(&sbi->mb_locks[i%MINI_BUFFER_PAGES]);
+    sbi->mb_count[i%MINI_BUFFER_PAGES]++;
 
 copy:
 	mutex_unlock(&sbi->mb_mutex);
@@ -71,8 +78,9 @@ copy:
     // print_a_page(&sbi->mini_buffer[i]);
     if (ret) return -ret;
 
-    sbi->tier[i] = tier;
-    sbi->blockoff[i] = blockoff;
+    sbi->mb_count[i]++;
+    sbi->mb_tier[i] = tier;
+    sbi->mb_blockoff[i] = blockoff;
     
     return i;
 }
@@ -86,13 +94,15 @@ copy:
  * There is NO DIRTY BUFFER in NOVA, since COW is applied to every write
  */ 
 inline int clear_dram_buffer(struct nova_sb_info *sbi, unsigned long number) {
-    sbi->tier[number] = TIER_PMEM;
-    sbi->blockoff[number] = 0;
+    sbi->mb_tier[number] = TIER_PMEM;
+    sbi->mb_blockoff[number] = 0;
     return 0;
 }
 
 inline int put_dram_buffer(struct nova_sb_info *sbi, unsigned long number) {
-    spin_unlock(&sbi->mb_locks[number]);
+    sbi->mb_count[number]--;
+    if (sbi->mb_count[number] == 0)
+        spin_unlock(&sbi->mb_locks[number]);
     return 0;
 }
 
@@ -109,11 +119,11 @@ int put_dram_buffer_range(struct nova_sb_info *sbi, unsigned long number, unsign
     if (DEBUG_BUFFERING) print_wb_locks(sbi);
     if (DEBUG_BUFFERING) print_all_wb_locks(sbi);
 
-	// mutex_lock(&sbi->mb_mutex);
+	mutex_lock(&sbi->mb_mutex);
     for (i=number; i<number+length; ++i) {
         put_dram_buffer(sbi,i);
     }       
-	// mutex_unlock(&sbi->mb_mutex); 
+	mutex_unlock(&sbi->mb_mutex); 
 
     nova_info("put off2 %lu, nr %lu\n",number,length);
     if (DEBUG_BUFFERING) print_wb_locks(sbi);
@@ -142,11 +152,13 @@ inline unsigned long get_dram_buffer_offset_off(struct nova_sb_info *sbi, unsign
 void print_all_wb_locks(struct nova_sb_info *sbi) {
     int i = 0;
     char* buf = kzalloc(MINI_BUFFER_PAGES+2, GFP_KERNEL);
+    char* this = kzalloc(4, GFP_KERNEL);
+    this[1]='\0';
     for (i = 0; i < MINI_BUFFER_PAGES; i++) {
-        if (spin_can_lock(&sbi->mb_locks[i])) strcat(&buf[0],"0");
-        else strcat(&buf[0],"1");
+        this[0]='0'+sbi->mb_count[i];
+        strcat(&buf[0],this);
     }
-    nova_info("lock\n");
+    nova_info("Locks\n");
     nova_info("%s\n",buf);
 }
 
@@ -154,7 +166,7 @@ void print_wb_locks(struct nova_sb_info *sbi) {
     int i = 0;
     int sum = 0;
     for (i = 0; i < MINI_BUFFER_PAGES; i++) {
-        if (!spin_can_lock(&sbi->mb_locks[i])) sum++;
+        if (sbi->mb_count[i]>0) sum++;
     }
     nova_info("#lock %d\n",sum);
 }
@@ -166,6 +178,7 @@ void print_wb_locks(struct nova_sb_info *sbi) {
  */ 
 int buffer_data_block_from_bdev_range(struct nova_sb_info *sbi, int tier, int blockoff, int length) {
     int i = 0;
+    int j = 0;
     int index = 0; // index of the first block
     int unlock = 0; // number of spinlocks can be unlocked
     int match = 0; // number of matching blocks
@@ -184,7 +197,7 @@ retry:
 	if (DEBUG_BUFFERING) nova_info("[Buffering] block:%d, length:%d\n", blockoff, length);
     if (DEBUG_BUFFERING) print_wb_locks(sbi);
 	for (i = blockoff%MINI_BUFFER_PAGES; i < MINI_BUFFER_PAGES; i++) {
-        if (spin_can_lock(&sbi->mb_locks[i])) {
+        if (sbi->mb_count[i]==0) {
             match = 0;
             unlock++;
             if (unlock==length) {
@@ -193,11 +206,11 @@ retry:
             }
         }
         else {
-            if (sbi->tier[i] == tier && sbi->blockoff[i] == blockoff+match) {
+            if (sbi->mb_tier[i] == tier && sbi->mb_blockoff[i] == blockoff+match) {
                 match++;
                 if (match==length) {
                     if (DEBUG_BUFFERING) nova_info("[Buffering] matching buffer found\n");
-                    // goto out;
+                    goto out;
                 }
             }
             unlock = 0;
@@ -208,7 +221,7 @@ retry:
     unlock = 0;
     index = 0;
     for (i = 0; i < blockoff%MINI_BUFFER_PAGES; i++) {
-        if (spin_can_lock(&sbi->mb_locks[i])) {
+        if (sbi->mb_count[i]==0) {
             match = 0;
             unlock++;
             if (unlock==length) {
@@ -217,11 +230,11 @@ retry:
             }
         }
         else {
-            if (sbi->tier[i] == tier && sbi->blockoff[i] == blockoff+match) {
+            if (sbi->mb_tier[i] == tier && sbi->mb_blockoff[i] == blockoff+match) {
                 match++;
                 if (match==length) {
                     if (DEBUG_BUFFERING) nova_info("[Buffering] matching buffer found\n");
-                    // goto out;
+                    goto out;
                 }
             }
             unlock = 0;
@@ -240,7 +253,7 @@ copy:
     }
 
     for (i=index;i<index+length;++i) {
-        if (!spin_trylock(&sbi->mb_locks[i])) {
+        if (sbi->mb_count[i]!=0) {
             if (DEBUG_BUFFERING) print_all_wb_locks(sbi);
             if (i==index) {
                 nova_info("Spinlock error in mb[%d]: Try to save by retry.\n",i);
@@ -253,8 +266,9 @@ copy:
     for (i=index;i<index+length;++i) {
         pg = sbi->mb_pages[i];
         ret = nova_bdev_read_block(sbi->bdev_list[tier-TIER_BDEV_LOW].bdev_raw, blockoff+i-index, 1, pg, BIO_SYNC);
-        sbi->tier[i] = tier;
-        sbi->blockoff[i] = blockoff+i-index;
+        sbi->mb_count[i]++;
+        sbi->mb_tier[i] = tier;
+        sbi->mb_blockoff[i] = blockoff+i-index;
     }
 
     // print_a_page(&sbi->mini_buffer[i]);
@@ -265,7 +279,11 @@ copy:
     
     return index;
 
-// out:
+out:
+
+    for (j=i-length+1;j<i+1;++j) {
+        sbi->mb_count[j]++;
+    }
 
     return i-length+1;
 }

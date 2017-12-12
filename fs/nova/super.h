@@ -163,8 +163,9 @@ struct nova_sb_info {
 	/* Mini DRAM buffer */
 	struct mutex mb_mutex;
 	spinlock_t *mb_locks;
-	int *tier;
-	unsigned long *blockoff;
+	int *mb_count;
+	int *mb_tier;
+	unsigned long *mb_blockoff;
 	struct page **mb_pages;
 	char *mini_buffer;
 

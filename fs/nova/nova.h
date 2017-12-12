@@ -75,7 +75,7 @@
 #define TIER_PMEM 		0
 #define TIER_BDEV_LOW 	1
 #define TIER_BDEV_HIGH 	2
-#define TIER_DRAM 		255
+#define TIER_DRAM 	 	255
 
 /*
  * Debug code
@@ -566,6 +566,10 @@ static inline unsigned long BKDRHash(const char *str, int length)
 
 inline unsigned long nova_get_bdev_block_start(struct nova_sb_info *sbi, int tier);
 inline unsigned long nova_get_bdev_block_end(struct nova_sb_info *sbi, int tier);
+
+static inline bool is_tier_dram(int tier) {
+	return (tier == TIER_PMEM);
+}
 
 static inline bool is_tier_pmem(int tier) {
 	return (tier == TIER_PMEM);

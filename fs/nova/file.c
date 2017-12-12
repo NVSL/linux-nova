@@ -597,7 +597,7 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 			nr = PAGE_SIZE;
 		}
 	mutex_lock(&sbi->mb_mutex);
-
+		nova_info("read\n");
 		nvmm = get_nvmm(sb, sih, entryc, index);
 		dax_mem = nova_get_block(sb, (nvmm << PAGE_SHIFT));
 		// nova_info("nvmm: %p, dax_mem: %p\n",nvmm, dax_mem);
