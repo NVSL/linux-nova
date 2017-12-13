@@ -60,8 +60,8 @@
 /* The maximum size of mini-buffer is the maximum size of kmalloc,
  * which is defined in /include/linux/slab.h (1024 pages).
  */ 
-#define	MINI_BUFFER_PAGES 1024
-#define	MINI_BUFFER_PAGES_BIT 10
+#define	MINI_BUFFER_PAGES 512
+#define	MINI_BUFFER_PAGES_BIT 9
 #define IO_BLOCK_SIZE 4096
 #define IO_BLOCK_SIZE_BIT 12
 #define BIO_ASYNC 0
@@ -1072,6 +1072,8 @@ int nova_bdev_free_blocks(struct nova_sb_info *sbi, int tier, unsigned long bloc
 	unsigned long num_blocks);
 int nova_free_blocks_tier(struct nova_sb_info *sbi, unsigned long blocknr,
 	unsigned long num_blocks);
+int reclaim_get_nvmm(struct super_block *sb, unsigned long nvmm,
+	struct nova_file_write_entry *entry, unsigned long pgoff);
 void print_all_bfl(struct super_block *sb);
 long nova_alloc_block_tier(struct nova_sb_info *sbi, int tier, int cpuid, unsigned long *blocknr,
 	unsigned int num_blocks);
@@ -1193,6 +1195,7 @@ inline int clear_dram_buffer(struct nova_sb_info *sbi, unsigned long number);
 inline int put_dram_buffer(struct nova_sb_info *sbi, unsigned long number);
 int clear_dram_buffer_range(struct nova_sb_info *sbi, unsigned long number, int length);
 int put_dram_buffer_range(struct nova_sb_info *sbi, unsigned long number, unsigned long length);
+int free_dram_buffer_range(struct nova_sb_info *sbi, unsigned long number, unsigned long length);
 inline unsigned long get_dram_buffer_offset(struct nova_sb_info *sbi, void *buf);
 inline unsigned long get_dram_buffer_offset_off(struct nova_sb_info *sbi, unsigned long nvmm);
 inline bool is_dram_buffer_addr(struct nova_sb_info *sbi, void *addr);

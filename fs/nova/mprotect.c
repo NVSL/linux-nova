@@ -424,6 +424,8 @@ int nova_mmap_to_new_blocks(struct vm_area_struct *vma,
 		nova_memlock_range(sb, to_kmem, bytes);
 		NOVA_END_TIMING(memcpy_w_wb_t, memcpy_time);
 
+		reclaim_get_nvmm(sb, from_blocknr, entryc, start_blk);
+
 		if (copied == bytes) {
 			start_blk += copy_blocks;
 		} else {

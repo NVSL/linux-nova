@@ -42,6 +42,7 @@ static inline int nova_copy_partial_block(struct super_block *sb,
 						length);
 	}
 
+	reclaim_get_nvmm(sb, nvmm, entry, index);
 	/* TODO: If rc < 0, go to MCE data recovery. */
 	return rc;
 }
@@ -333,6 +334,8 @@ int nova_protect_file_data(struct super_block *sb, struct inode *inode,
 				}
 			}
 
+			reclaim_get_nvmm(sb, nvmm, entryc, start_blk);
+
 			ret = memcpy_mcsafe(blockbuf, blockptr, offset);
 			if (ret < 0)
 				goto out;
@@ -401,6 +404,8 @@ eblk:
 					goto out;
 				}
 			}
+
+			reclaim_get_nvmm(sb, nvmm, entryc, end_blk);
 
 			ret = memcpy_mcsafe(blockbuf + eblk_offset,
 						blockptr + eblk_offset,
@@ -754,6 +759,9 @@ ssize_t do_nova_inplace_file_write(struct file *filp,
 			if (status >= 0)
 				status = -EFAULT;
 		}
+
+		reclaim_get_nvmm(sb, blocknr, entryc, start_blk);
+		
 		if (status < 0)
 			break;
 
@@ -992,6 +1000,8 @@ out:
 	}
 
 	*bno = nvmm;
+
+	reclaim_get_nvmm(sb, nvmm, entryc, iblock);
 //	if (num_blocks > 1)
 //		bh->b_size = sb->s_blocksize * num_blocks;
 

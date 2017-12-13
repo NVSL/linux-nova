@@ -516,7 +516,7 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 {
 	struct inode *inode = filp->f_mapping->host;
 	struct super_block *sb = inode->i_sb;
-	struct nova_sb_info *sbi = NOVA_SB(sb);
+	// struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_inode_info *si = NOVA_I(inode);
 	struct nova_inode_info_header *sih = &si->header;
 	struct nova_file_write_entry *entry;
@@ -526,7 +526,7 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 	loff_t isize, pos;
 	size_t copied = 0, error = 0;
 	timing_t memcpy_time;
-	unsigned long mb_offset = 0;
+	// unsigned long mb_offset = 0;
 
 	pos = *ppos;
 	index = pos >> PAGE_SHIFT;
@@ -555,7 +555,7 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 	end_index = (isize - 1) >> PAGE_SHIFT;
 	do {
 		unsigned long nr, left;
-		unsigned long nvmm;
+		unsigned long nvmm = 0;
 		void *dax_mem = NULL;
 		int zero = 0;
 		
@@ -596,7 +596,6 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 		} else {
 			nr = PAGE_SIZE;
 		}
-	mutex_lock(&sbi->mb_mutex);
 		nova_info("read\n");
 		nvmm = get_nvmm(sb, sih, entryc, index);
 		dax_mem = nova_get_block(sb, (nvmm << PAGE_SHIFT));
@@ -636,14 +635,14 @@ skip_verify:
 		// 	nova_info("i=%lu\n",i);
 		// 	print_a_page(sbi->mini_buffer+(i<<PAGE_SHIFT));
 		// }
+		reclaim_get_nvmm(sb, nvmm, entry, index);
+		
+		// if (is_dram_buffer_addr(sbi, dax_mem)) {
+		// 	mb_offset = get_dram_buffer_offset(sbi, dax_mem);
+		// 	if (DEBUG_BUFFERING) nova_info("put off %lu, nr %lu", mb_offset - index + (unsigned long)entry->pgoff, (unsigned long)entry->num_pages);
+		// 	put_dram_buffer_range(sbi, mb_offset - index + entry->pgoff, entry->num_pages);
+		// }
 
-		if (is_dram_buffer_addr(sbi, dax_mem)) {
-			mb_offset = get_dram_buffer_offset(sbi, dax_mem);
-			if (DEBUG_BUFFERING) nova_info("put off %lu, nr %lu", mb_offset - index + (unsigned long)entry->pgoff, (unsigned long)entry->num_pages);
-			put_dram_buffer_range(sbi, mb_offset - index + entry->pgoff, entry->num_pages);
-		}
-
-	mutex_unlock(&sbi->mb_mutex);
 		if (left) {
 			nova_dbg("%s ERROR!: bytes %lu, left %lu\n",
 				__func__, nr, left);

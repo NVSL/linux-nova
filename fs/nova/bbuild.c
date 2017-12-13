@@ -851,6 +851,8 @@ static unsigned int nova_check_old_entry(struct super_block *sb,
 	ret = nova_append_data_to_snapshot(sb, entryc, old_nvmm,
 				num_free, epoch_id);
 
+	reclaim_get_nvmm(sb, old_nvmm, entryc, pgoff);
+
 	if (ret != 0)
 		return ret;
 

@@ -100,9 +100,36 @@ inline int clear_dram_buffer(struct nova_sb_info *sbi, unsigned long number) {
 }
 
 inline int put_dram_buffer(struct nova_sb_info *sbi, unsigned long number) {
-    sbi->mb_count[number]--;
+    if (sbi->mb_count[number] > 0)
+        sbi->mb_count[number]--;
     if (sbi->mb_count[number] == 0)
         spin_unlock(&sbi->mb_locks[number]);
+    return 0;
+}
+
+inline int free_dram_buffer(struct nova_sb_info *sbi, unsigned long number) {
+    if (sbi->mb_count[number] > 1) {
+        nova_info("mb_count[%lu] = %d.\n",number,sbi->mb_count[number]);
+    }
+    sbi->mb_count[number] = 0;
+    spin_unlock(&sbi->mb_locks[number]);
+    return 0;
+}
+
+int free_dram_buffer_range(struct nova_sb_info *sbi, unsigned long number, unsigned long length) {
+    unsigned long i;
+    if (DEBUG_BUFFERING) print_wb_locks(sbi);
+    if (DEBUG_BUFFERING) print_all_wb_locks(sbi);
+
+	mutex_lock(&sbi->mb_mutex);
+    for (i=number; i<number+length; ++i) {
+        free_dram_buffer(sbi,i);
+    }       
+	mutex_unlock(&sbi->mb_mutex); 
+
+    nova_info("put off2 %lu, nr %lu\n",number,length);
+    if (DEBUG_BUFFERING) print_wb_locks(sbi);
+    if (DEBUG_BUFFERING) print_all_wb_locks(sbi);
     return 0;
 }
 
@@ -150,16 +177,31 @@ inline unsigned long get_dram_buffer_offset_off(struct nova_sb_info *sbi, unsign
 }
 
 void print_all_wb_locks(struct nova_sb_info *sbi) {
-    int i = 0;
-    char* buf = kzalloc(MINI_BUFFER_PAGES+2, GFP_KERNEL);
     char* this = kzalloc(4, GFP_KERNEL);
-    this[1]='\0';
-    for (i = 0; i < MINI_BUFFER_PAGES; i++) {
-        this[0]='0'+sbi->mb_count[i];
-        strcat(&buf[0],this);
-    }
+	int wordline = 128;
+	char* p = kzalloc(wordline*sizeof(char)+1,GFP_KERNEL);
+	int i = 0;
+	int j = 0;
+    int k = 0;
+	char space = ' ';
+	p[wordline]='\0';
+
     nova_info("Locks\n");
-    nova_info("%s\n",buf);
+	nova_info("----------------\n");
+	while (i<MINI_BUFFER_PAGES) {
+		p[0]='\0';
+		for (j=0;j<wordline;j+=32) {
+            for (k=0;k<32;++k) {
+                this[0]='0'+sbi->mb_count[i];
+                i++;
+                strcat(&p[k],this);
+            }
+			strcat(p,&space);
+		}
+		nova_info("%s\n",p);
+		// i+=wordline;
+	}
+	nova_info("----------------\n");
 }
 
 void print_wb_locks(struct nova_sb_info *sbi) {
@@ -209,7 +251,7 @@ retry:
             if (sbi->mb_tier[i] == tier && sbi->mb_blockoff[i] == blockoff+match) {
                 match++;
                 if (match==length) {
-                    if (DEBUG_BUFFERING) nova_info("[Buffering] matching buffer found\n");
+                    if (DEBUG_BUFFERING) nova_info("[Buffering] matching buffer found, off %d, nr %d\n",i-length+1,length);
                     goto out;
                 }
             }
@@ -233,7 +275,7 @@ retry:
             if (sbi->mb_tier[i] == tier && sbi->mb_blockoff[i] == blockoff+match) {
                 match++;
                 if (match==length) {
-                    if (DEBUG_BUFFERING) nova_info("[Buffering] matching buffer found\n");
+                    if (DEBUG_BUFFERING) nova_info("[Buffering] matching buffer found, off %d, nr %d\n",i-length+1,length);
                     goto out;
                 }
             }
