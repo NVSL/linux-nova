@@ -896,14 +896,8 @@ out:
 	kfree(sbi->journal_locks);
 	sbi->journal_locks = NULL;
 
-	kfree(sbi->mb_locks);
-	sbi->mb_locks = NULL;
-
-	// kfree(sbi->mb_mutex);
-	// sbi->mb_mutex = NULL;
-
-	kfree(sbi->mb_count);
-	sbi->mb_count = NULL;
+	kfree(sbi->mb_sem);
+	sbi->mb_sem = NULL;
 
 	kfree(sbi->mb_tier);
 	sbi->mb_tier = NULL;
@@ -1042,11 +1036,9 @@ static void nova_put_super(struct super_block *sb)
 	kfree(sbi->bdev_free_list);
 	kfree(sbi->bdev_list);
 	kfree(sbi->journal_locks);
-	// kfree(sbi->mb_mutex);
-	kfree(sbi->mb_count);
+	kfree(sbi->mb_sem);
 	kfree(sbi->mb_tier);
 	kfree(sbi->mb_blockoff);
-	kfree(sbi->mb_locks);
 	kfree(sbi->mb_pages);
 	kfree(sbi->mini_buffer);
 

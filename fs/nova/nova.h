@@ -47,6 +47,8 @@
 #include <linux/pfn_t.h>
 #include <linux/pagevec.h>
 
+#include <linux/rwsem.h>
+
 #include "nova_def.h"
 #include "stats.h"
 #include "snapshot.h"
