@@ -58,7 +58,7 @@
 #define PAGE_SHIFT_2M 21
 #define PAGE_SHIFT_1G 30
 
-/* tiering */
+/* Tiering */
 /* The maximum size of mini-buffer is the maximum size of kmalloc,
  * which is defined in /include/linux/slab.h (1024 pages).
  */ 
@@ -77,7 +77,8 @@
 #define TIER_PMEM 		0
 #define TIER_BDEV_LOW 	1
 #define TIER_BDEV_HIGH 	2
-#define TIER_DRAM 	 	255
+#define TIER_DRAM 	 	254
+#define TIER_MIGRATING 	255
 
 /*
  * Debug code
@@ -573,6 +574,10 @@ static inline bool is_tier_dram(int tier) {
 	return (tier == TIER_PMEM);
 }
 
+static inline bool is_tier_migrating(int tier) {
+	return (tier == TIER_MIGRATING);
+}
+
 static inline bool is_tier_pmem(int tier) {
 	return (tier == TIER_PMEM);
 }
@@ -643,10 +648,18 @@ static unsigned long get_nvmm(struct super_block *sb,
 	int mb_index = 0;
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	unsigned long ret = 0;
+
 	/* entry is already verified before this call and resides in dram
 	 * or we can do memcpy_mcsafe here but have to avoid double copy and
 	 * verification of the entry.
 	 */
+	
+retry:
+	if (is_tier_migrating(entry->tier)) {
+		msleep(500);
+		goto retry;
+	}
+	
 	if (is_tier_pmem(entry->tier)) {
 		if (DEBUG_GET_NVMM) nova_info("[Get] Get from TIER_PMEM\n");
 		if (entry->pgoff > pgoff || (unsigned long) entry->pgoff +
@@ -1202,7 +1215,7 @@ inline unsigned long get_dram_buffer_offset(struct nova_sb_info *sbi, void *buf)
 inline unsigned long get_dram_buffer_offset_off(struct nova_sb_info *sbi, unsigned long nvmm);
 inline bool is_dram_buffer_addr(struct nova_sb_info *sbi, void *addr);
 int migrate_a_file(struct inode *inode, int from, int to);
-int migrate_a_file_to_bdev(struct inode *inode);
+int do_migrate_a_file(struct inode *inode);
 void print_all_wb_locks(struct nova_sb_info *sbi);
 void print_wb_locks(struct nova_sb_info *sbi);
 

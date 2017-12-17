@@ -6,6 +6,8 @@
  * It is a temporary buffer solution for tiering file system.
  * Includes: (for each buffer page)
  *      mb_sem: the rw_semaphore
+ *          down_read: mini-buffer in use
+ *          down_write: under-migration
  *      tier: tier number
  *      blocknr: blocknr in this tier
  *      mb_pages: actual mini-buffer page
@@ -153,8 +155,8 @@ int put_dram_buffer_range(struct nova_sb_info *sbi, unsigned long number, unsign
 bool is_dram_buffer_addr(struct nova_sb_info *sbi, void *addr) {
     unsigned long long a = (unsigned long long)(sbi->mini_buffer) >> (PAGE_SHIFT+MINI_BUFFER_PAGES_BIT);
     unsigned long long b = (unsigned long long)addr >> (PAGE_SHIFT+MINI_BUFFER_PAGES_BIT);
-    nova_info("A%llu\n",(unsigned long long)(sbi->mini_buffer) >> (PAGE_SHIFT+MINI_BUFFER_PAGES_BIT));
-    nova_info("B%llu\n",(unsigned long long)addr >> (PAGE_SHIFT+MINI_BUFFER_PAGES_BIT));
+    // nova_info("A%llu\n",(unsigned long long)(sbi->mini_buffer) >> (PAGE_SHIFT+MINI_BUFFER_PAGES_BIT));
+    // nova_info("B%llu\n",(unsigned long long)addr >> (PAGE_SHIFT+MINI_BUFFER_PAGES_BIT));
     return (a == b)||(a+1 == b);
 }
 
@@ -203,6 +205,44 @@ void print_wb_locks(struct nova_sb_info *sbi) {
         if (rwsem_is_locked(&sbi->mb_sem[i])) sum++;
     }
     nova_info("#lock=%d\n",sum);
+}
+
+// Return the tier of the first write entry
+int current_tier(struct inode *inode) {
+	struct super_block *sb = inode->i_sb;
+	struct nova_inode_info *si = NOVA_I(inode);
+	struct nova_inode_info_header *sih = &si->header;    
+	struct nova_file_write_entry *entry = nova_get_write_entry(sb, sih, 0);
+    if (entry) return entry->tier;
+    else return -1;
+}
+
+// Return 0 if all write entries are in the same tier
+// Else the block number of the first write entry with a different tier
+unsigned long is_same_tier(struct inode *inode) {
+	struct super_block *sb = inode->i_sb;
+	struct nova_inode_info *si = NOVA_I(inode);
+	struct nova_inode_info_header *sih = &si->header;
+	struct nova_file_write_entry *entry;
+    int ct = current_tier(inode);	
+    loff_t isize = i_size_read(inode);
+    pgoff_t index = 0;
+    pgoff_t end_index = (isize) >> PAGE_SHIFT;
+    do {
+        entry = nova_get_write_entry(sb, sih, index);
+        if (entry) {
+            if (entry->tier == ct) {
+                index += entry->num_pages;
+                continue;
+            }
+            else {
+                return index;
+            }
+        }
+        else index++;
+    } while (index <= end_index);
+
+    return 0;
 }
 
 /* 
@@ -330,12 +370,23 @@ out:
 /*
  * Migrate continuous blocks from pmem to block device, with block number
  */
-int migrate_blocks_to_bdev(struct nova_sb_info *sbi, 
+int migrate_blocks_pmem_to_bdev(struct nova_sb_info *sbi, 
     void *dax_mem, unsigned long nr, int tier, unsigned long blockoff) {
     struct block_device *bdev_raw = get_bdev_raw(sbi, tier);
     return nova_bdev_write_block(bdev_raw, blockoff, nr, address_to_page(dax_mem), BIO_SYNC);
     // return nr;
 }
+
+/*
+ * Migrate continuous blocks from block device to pmem, with block number
+ */
+int migrate_blocks_bdev_to_pmem(struct nova_sb_info *sbi, 
+    void *dax_mem, unsigned long nr, int tier, unsigned long blockoff) {
+    struct block_device *bdev_raw = get_bdev_raw(sbi, tier);
+    return nova_bdev_read_block(bdev_raw, blockoff, nr, address_to_page(dax_mem), BIO_SYNC);
+    // return nr;
+}
+
 
 // Migrate continuous blocks from pmem to block device
 
@@ -350,9 +401,31 @@ long migrate_blocks_to_bdev(struct nova_sb_info *sbi, void *dax_mem,
 */
 int migrate_blocks(struct nova_sb_info *sbi, unsigned long blockfrom, unsigned long nr,
     int from, int to, unsigned long blocknr) {
-    if (is_tier_pmem(from) && is_tier_bdev_low(to)) 
-        return migrate_blocks_to_bdev(sbi, (void *) sbi->virt_addr + blockfrom, nr, to, blocknr);
+    if (is_tier_pmem(from) && is_tier_bdev(to)) 
+        return migrate_blocks_pmem_to_bdev(sbi, (void *) sbi->virt_addr + blockfrom, nr, to, blocknr);
+    if (is_tier_bdev(from) && is_tier_pmem(to)) 
+        return migrate_blocks_bdev_to_pmem(sbi, (void *) sbi->virt_addr + blocknr, nr, from, blockfrom);
+    if (is_tier_bdev(from) && is_tier_bdev(to)) 
+        return -2;
     return -2;
+}
+
+/*
+ * Only check the corresponding mb-page, not the other pages.
+ * Because in the ultimate design, each block will only have one buffer page.
+ */ 
+bool is_entry_busy(struct nova_sb_info *sbi, struct nova_file_write_entry *entry) {
+    int i;
+    int blockoff = entry->block >> PAGE_SHIFT;
+    if (is_tier_migrating(entry->tier)) return 1;
+    if (!is_tier_bdev(entry->tier)) return 0;
+    for (i=blockoff%MINI_BUFFER_PAGES; i< blockoff%MINI_BUFFER_PAGES + entry->num_pages; ++i) {
+        if (i>=MINI_BUFFER_PAGES) return 0;
+        if (sbi->mb_tier[i] == entry->tier 
+            && sbi->mb_blockoff[i] == blockoff-blockoff%MINI_BUFFER_PAGES+i
+            && rwsem_is_locked(&sbi->mb_sem[i])) return 1;
+    }
+    return 0;
 }
 
 int migrate_entry_blocks(struct nova_sb_info *sbi, int from, int to,
@@ -363,6 +436,13 @@ int migrate_entry_blocks(struct nova_sb_info *sbi, int from, int to,
     if (!entry) return ret;
     if (entry->tier != from) return ret;
 
+    if (is_entry_busy(sbi, entry)) {
+        if (DEBUG_MIGRATION_RW) nova_info("entry->block %llu is busy\n", entry->block);
+        return -1;
+    }
+
+    entry->tier = TIER_MIGRATING;
+    
     // TODOzsa: Could be wrong
     if (DEBUG_MIGRATION_RW) nova_info("[Migration] entry->block %p\n", sbi->virt_addr + entry->block);
     // print_a_page((void *) sbi->virt_addr + entry->block);
@@ -395,7 +475,7 @@ int migrate_entry_blocks(struct nova_sb_info *sbi, int from, int to,
 
 /*
  * Migrate a file from one tier to another
- * How migration works: Allocate -> Copy -> Free
+ * How migration works: Check -> Allocate -> Copy -> Free
  */ 
 int migrate_a_file(struct inode *inode, int from, int to)
 {
@@ -441,6 +521,18 @@ int migrate_a_file(struct inode *inode, int from, int to)
     return ret;
 }
 
-int migrate_a_file_to_bdev(struct inode *inode) {
-    return migrate_a_file(inode, TIER_PMEM, TIER_BDEV_LOW);
+int do_migrate_a_file(struct inode *inode) {
+    if (!is_same_tier(inode)) {
+        nova_info("Write entries of inode %lu is not in the same tier", inode->i_ino);
+        return -1;
+    }
+    switch (current_tier(inode)) {
+    case TIER_PMEM:
+        return migrate_a_file(inode, TIER_PMEM, TIER_BDEV_LOW);
+    case TIER_BDEV_LOW:
+        return migrate_a_file(inode, TIER_BDEV_LOW, TIER_PMEM);
+    default:
+        nova_info("Unsupported migration of inode %lu at tier %d", inode->i_ino, current_tier(inode));
+    }
+    return -1;
 }
