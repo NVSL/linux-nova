@@ -553,11 +553,48 @@ void print_all_bfl(struct super_block *sb){
 static int get_bfl_index(struct nova_sb_info *sbi, unsigned long blocknr) {
 	int i;
 	struct bdev_free_list *bfl = NULL;
-	for (i=0;i<TIER_BDEV_HIGH*sbi->cpus;++i) {
+	for (i=0;i<(TIER_BDEV_HIGH-TIER_BDEV_LOW+1)*sbi->cpus;++i) {
 		bfl = nova_get_bdev_free_list_flat(sbi, i);
 		if (bfl->block_start <= blocknr && bfl->block_end >= blocknr) return i;
 	}
 	return -1;
+}
+
+// Return global block number offset
+unsigned long get_offset_of_tier(struct nova_sb_info *sbi, int tier) {
+	struct super_block *sb = sbi->sb;
+	struct bdev_free_list *bfl = NULL;
+	if (tier==0) return 0;
+	bfl = nova_get_bdev_free_list_flat(sbi, (tier-TIER_BDEV_LOW)*sbi->cpus);
+	if (!bfl) {
+		nova_err(sb, "bfl not found.\n", __func__);
+		return 0;
+	}
+	return bfl->block_start;
+}
+
+// Return the start offset of this tier
+unsigned long get_offset_of_blocknr(struct nova_sb_info *sbi, unsigned long blocknr) {
+	int i;
+	struct bdev_free_list *bfl = NULL;
+	unsigned long last = 0;
+	for (i=0;i<(TIER_BDEV_HIGH-TIER_BDEV_LOW+1);++i) {
+		bfl = nova_get_bdev_free_list_flat(sbi, i*(sbi->cpus));
+		if (bfl->block_start > blocknr) goto out;
+		last = bfl->block_start;
+	}
+out:
+	return last;
+}
+
+// Return the raw offset of this blocknr
+inline unsigned long get_raw_from_blocknr(struct nova_sb_info *sbi, unsigned long blocknr) {
+	return blocknr - get_offset_of_blocknr(sbi, blocknr);
+}
+
+// Return the global block number of the raw offset
+inline unsigned long get_blocknr_from_raw(struct nova_sb_info *sbi, int tier, unsigned long blocknr) {
+	return blocknr + get_offset_of_tier(sbi, tier);
 }
 
 // blocknr: global block number
@@ -686,7 +723,7 @@ int nova_free_blocks_from_bdev(struct nova_sb_info *sbi, unsigned long blocknr,
 	if (!next)
 		bfl->last_node = curr_node;
 
-	bfl->num_blocknode++;
+	// bfl->num_blocknode++;
 
 block_found:
 	bfl->num_free_blocks += num_blocks;
