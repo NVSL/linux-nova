@@ -393,6 +393,7 @@ int nova_free_blocks(struct super_block *sb, unsigned long blocknr,
 		NOVA_END_TIMING(free_blocks_t, free_time);
 		return ret;
 	}
+	
 	cpuid = blocknr / sbi->per_list_blocks;
 
 	/* Pre-allocate blocknode */

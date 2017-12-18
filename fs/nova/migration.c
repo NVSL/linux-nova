@@ -436,18 +436,21 @@ int migrate_entry_blocks(struct nova_sb_info *sbi, int from, int to,
 	// struct nova_inode_info_header *sih = &si->header;
     unsigned long blocknr = 0;
     int ret = 0;
+
+    /* Step 1. Check */
     if (!entry) return ret;
     if (entry->tier != from) return ret;
 
     if (is_entry_busy(sbi, entry)) {
-        if (DEBUG_MIGRATION_RW) nova_info("entry->block %lu is busy\n", (unsigned long)entry->block);
+        if (DEBUG_MIGRATION_CHECK) nova_info("entry->block %lu is busy\n", (unsigned long)entry->block);
         return -1;
     }
 
+    /* Step 2. Allocate */
     entry->tier = TIER_MIGRATING;
     
     // TODOzsa: Could be wrong
-    if (DEBUG_MIGRATION_RW) nova_info("[Migration] entry->block %lu\n", (unsigned long)entry->block);
+    if (DEBUG_MIGRATION_ALLOC) nova_info("[Migration] entry->block %lu\n", (unsigned long)entry->block);
     // print_a_page((void *) sbi->virt_addr + entry->block);
 
     ret = nova_alloc_block_tier(sbi, to, ANY_CPU, &blocknr, entry->num_pages);
@@ -457,9 +460,10 @@ int migrate_entry_blocks(struct nova_sb_info *sbi, int from, int to,
         nova_info("[Migration] Block allocation error.\n");
         return ret;
     }
-    if (DEBUG_MIGRATION_RW) nova_info("[Migration] Allocate blocknr:%lu number:%d.\n",
+    if (DEBUG_MIGRATION_ALLOC) nova_info("[Migration] Allocate blocknr:%lu number:%d.\n",
         blocknr, entry->num_pages);
 
+    /* Step 3. Copy */
     ret = migrate_blocks(sbi, entry->block >> PAGE_SHIFT, entry->num_pages, from, to, blocknr);
     if (ret<0) {
         nova_info("[Migration] Block allocation error.\n");
@@ -467,10 +471,9 @@ int migrate_entry_blocks(struct nova_sb_info *sbi, int from, int to,
         return ret;
     }
 
-    // Free blocks
-	// ret = nova_free_blocks(sb, entry->block >> PAGE_SHIFT, entry->num_pages, sih->i_blk_type, 0);
+    /* Step 4. Free */
     ret = nova_free_blocks_tier(sbi, entry->block >> PAGE_SHIFT, entry->num_pages);
-    // Change tiering info
+    // Update tiering info
     entry->tier = to;
     entry->block = (get_blocknr_from_raw(sbi, to, blocknr)) << PAGE_SHIFT;
 
@@ -495,7 +498,7 @@ int migrate_a_file(struct inode *inode, int from, int to)
     loff_t isize = 0;
 
     // TODOzsa: Concurrent lock & check
-    if (DEBUG_MIGRATION_RW) nova_info("[Migration] Start migrating inode:%lu from:T%d to:T%d\n",
+    if (DEBUG_MIGRATION) nova_info("[Migration] Start migrating inode:%lu from:T%d to:T%d\n",
         inode->i_ino, from, to);
 
 	isize = i_size_read(inode);
@@ -508,7 +511,7 @@ int migrate_a_file(struct inode *inode, int from, int to)
 
         if (entry) {
             if (entry->tier == from) {
-                if (DEBUG_MIGRATION_RW) nova_info("[Migration] Migrating write entry with index:%lu\n", index);
+                if (DEBUG_MIGRATION) nova_info("[Migration] Migrating write entry with index:%lu\n", index);
                 // TODOzsa
                 ret = migrate_entry_blocks(sbi, from, to, si, entry);
                 index += entry->num_pages;
@@ -520,7 +523,7 @@ int migrate_a_file(struct inode *inode, int from, int to)
         else index++;
     } while (index <= end_index);
 
-    if (DEBUG_MIGRATION_RW) nova_info("[Migration] End migrating inode:%lu from:T%d to:T%d\n",
+    if (DEBUG_MIGRATION) nova_info("[Migration] End migrating inode:%lu from:T%d to:T%d\n",
         inode->i_ino, from, to);
     
     return ret;

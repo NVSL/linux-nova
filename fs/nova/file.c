@@ -196,9 +196,15 @@ static int nova_migration(struct inode *inode, struct file *file) {
 	
 	if (DEBUG_DO_MIGRATION) nova_info("Do migration.\n");
 	// Tiering migration
-	if (DEBUG_BFL_INFO) print_all_bfl(sb);
+	if (DEBUG_BFL_INFO) {
+		nova_info("Start migration.\n");
+		print_all_bfl(sb);
+	}
 	do_migrate_a_file(inode);
-	if (DEBUG_BFL_INFO) print_all_bfl(sb);
+	if (DEBUG_BFL_INFO) {
+		print_all_bfl(sb);
+		nova_info("End migration.\n");
+	}
 
 	goto end;
 	
@@ -596,7 +602,7 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 		} else {
 			nr = PAGE_SIZE;
 		}
-		nova_info("read\n");
+		
 		nvmm = get_nvmm(sb, sih, entryc, index);
 		dax_mem = nova_get_block(sb, (nvmm << PAGE_SHIFT));
 		// nova_info("nvmm: %p, dax_mem: %p\n",nvmm, dax_mem);

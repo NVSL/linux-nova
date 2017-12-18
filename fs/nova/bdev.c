@@ -230,7 +230,7 @@ inline unsigned long nova_get_bdev_block_start(struct nova_sb_info *sbi, int tie
 
 inline unsigned long nova_get_bdev_block_end(struct nova_sb_info *sbi, int tier)
 {
-	return sbi->bdev_free_list[tier*sbi->cpus-1].block_end;
+	return sbi->bdev_free_list[(tier-TIER_BDEV_LOW+1)*sbi->cpus-1].block_end;
 }
 
 void nova_delete_bdev_free_list(struct super_block *sb) {
@@ -366,11 +366,6 @@ static long nova_alloc_blocks_in_bdev_free_list(struct super_block *sb,
 		curr_blocks = curr->range_high - curr->range_low + 1;
 
 		if (num_blocks >= curr_blocks) {
-			/* Superpage allocation must succeed */
-			if (num_blocks > curr_blocks)
-				goto next;
-
-			/* Otherwise, allocate the whole blocknode */
 			if (curr == bfl->first_node) {
 				next_node = rb_next(temp);
 				if (next_node)
@@ -500,8 +495,8 @@ retry:
 alloc:
 	ret_blocks = nova_alloc_blocks_in_bdev_free_list(sb, bfl, num_blocks, &new_blocknr, from_tail);
 
-	if (ret_blocks > 0) {
-		bfl->num_blocknode +=1;
+	if (ret_blocks < 0) {
+		nova_err(sb, "%s failed.\n", __func__);
 		// bfl->num_free_blocks -= ret_blocks;
 	}
 
@@ -516,7 +511,7 @@ alloc:
 	*blocknr = new_blocknr;
 
 	// blocknr starts with the range of the block device (after PMEM) instead of 0.
-	nova_info("[Bdev] Alloc %lu BDEV blocks at %lu (%lu) from T%d C%d\n"
+	if (DEBUG_MIGRATION_ALLOC) nova_info("[Bdev] Alloc %lu BDEV blocks at %lu (%lu) from T%d C%d\n"
 	, ret_blocks, *blocknr, *blocknr - sbi->num_blocks, bfl->tier, bfl->cpu);
 	return ret_blocks;
 }
@@ -663,7 +658,7 @@ int nova_free_blocks_from_bdev(struct nova_sb_info *sbi, unsigned long blocknr,
 	block_low = blocknr;
 	block_high = blocknr + num_blocks - 1;
 
-	nova_dbgv("Free: %lu - %lu\n", block_low, block_high);
+	if (DEBUG_MIGRATION_FREE) nova_info("Free: %lu - %lu\n", block_low, block_high);
 
 	if (blocknr < bfl->block_start ||
 			blocknr + num_blocks > bfl->block_end + 1) {
@@ -683,6 +678,9 @@ int nova_free_blocks_from_bdev(struct nova_sb_info *sbi, unsigned long blocknr,
 		goto out;
 	}
 
+	// nova_info("block low/high %lu / %lu\n",block_low,block_high);
+	// if (prev) nova_info("prev->range_high %lu\n", prev->range_high);
+	// if (next) nova_info("next->range_low %lu\n",next->range_low);
 	if (prev && next && (block_low == prev->range_high + 1) &&
 			(block_high + 1 == next->range_low)) {
 		/* fits the hole */
@@ -723,7 +721,7 @@ int nova_free_blocks_from_bdev(struct nova_sb_info *sbi, unsigned long blocknr,
 	if (!next)
 		bfl->last_node = curr_node;
 
-	// bfl->num_blocknode++;
+	bfl->num_blocknode++;
 
 block_found:
 	bfl->num_free_blocks += num_blocks;
@@ -792,11 +790,18 @@ int nova_free_blocks_tier(struct nova_sb_info *sbi, unsigned long blocknr,
 	int tier = get_tier_range(sbi, blocknr, num_blocks);
 	if (tier == -1) {
 		nova_info("Can not find tier of blocknr.\n");
+		nova_info("blocknr: %lu, num_blocks:%lu.\n", blocknr, num_blocks);
 		return -EINVAL;
 	}
 
-	if (is_tier_pmem(tier)) return nova_free_blocks(sb, blocknr, num_blocks, NOVA_DEFAULT_BLOCK_TYPE, 0);
-	if (is_tier_bdev(tier)) return nova_free_blocks_from_bdev(sbi, blocknr, num_blocks);
+	if (is_tier_pmem(tier)) {
+		if (DEBUG_MIGRATION_FREE) nova_info("Free tier_pmem.\n");
+		return nova_free_blocks(sb, blocknr, num_blocks, NOVA_DEFAULT_BLOCK_TYPE, 0);
+	}
+	if (is_tier_bdev(tier)) {
+		if (DEBUG_MIGRATION_FREE) nova_info("Free tier_bdev.\n");
+		return nova_free_blocks_from_bdev(sbi, blocknr, num_blocks);
+	}
 	return -1;
 }
 
