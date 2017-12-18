@@ -360,6 +360,8 @@ int nova_free_blocks(struct super_block *sb, unsigned long blocknr,
 	unsigned long block_high;
 	unsigned long num_blocks = 0;
 	unsigned long mb_index = 0;
+	unsigned long mb_blocknr = 0;
+	int mb_tier = 0;
 	struct nova_range_node *prev = NULL;
 	struct nova_range_node *next = NULL;
 	struct nova_range_node *curr_node;
@@ -383,12 +385,16 @@ int nova_free_blocks(struct super_block *sb, unsigned long blocknr,
 		num_blocks = nova_get_numblocks(btype) * num;
 		nova_info("about to free ind:%lu num:%lu", mb_index, num_blocks);
 
+		mb_blocknr = sbi->mb_blockoff[mb_index];
+		mb_tier = sbi->mb_tier[mb_index];
+
 		free_dram_buffer_range(sbi, mb_index, num_blocks);
 		clear_dram_buffer_range(sbi, mb_index, num_blocks);
 
 		if (DEBUG_MB_LOCK) print_all_wb_locks(sbi);
-		ret = nova_bdev_free_blocks(sbi, TIER_BDEV_LOW, sbi->mb_blockoff[mb_index], num_blocks);
+		ret = nova_free_blocks_tier(sbi, mb_blocknr, num_blocks);
 		if (DEBUG_MB_LOCK) print_all_wb_locks(sbi);
+
 
 		NOVA_END_TIMING(free_blocks_t, free_time);
 		return ret;

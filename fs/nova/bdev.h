@@ -51,7 +51,7 @@ struct nova_bdev_range_node {
 static inline
 struct bdev_free_list *nova_get_bdev_free_list(struct nova_sb_info *sbi, int tier, int cpu)
 {
-	return &sbi->bdev_free_list[(tier-1)*sbi->cpus + cpu];
+	return &sbi->bdev_free_list[(tier-TIER_BDEV_LOW)*sbi->cpus + cpu];
 }
 
 static inline

@@ -4,6 +4,7 @@
  * 0: Block nova_info
  * Too many debug messages will lead to a crash!
  */
+
 #define DEBUG_INIT 0
 #define DEBUG_STARTUP_TEST 0
 

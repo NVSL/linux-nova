@@ -478,7 +478,7 @@ static int nova_new_blocks_from_bdev(struct super_block *sb, int tier, unsigned 
 		cpuid = smp_processor_id();
 
 retry:
-	bfl = nova_get_bdev_free_list(sbi, TIER_BDEV_LOW, cpuid);
+	bfl = nova_get_bdev_free_list(sbi, tier, cpuid);
 	spin_lock(&bfl->s_lock);
 
 	if (not_enough_blocks_bfl(bfl, num_blocks)) {
@@ -512,7 +512,7 @@ alloc:
 
 	// blocknr starts with the range of the block device (after PMEM) instead of 0.
 	if (DEBUG_MIGRATION_ALLOC) nova_info("[Bdev] Alloc %lu BDEV blocks at %lu (%lu) from T%d C%d\n"
-	, ret_blocks, *blocknr, *blocknr - sbi->num_blocks, bfl->tier, bfl->cpu);
+	, ret_blocks, *blocknr, get_raw_from_blocknr(sbi, *blocknr), bfl->tier, bfl->cpu);
 	return ret_blocks;
 }
 
@@ -739,7 +739,7 @@ out:
  * ret:	If unsuccess, return error number.
  * 		If success, return how many blocks it allocates 
  * 			(could be not enough, since it forces continuous)
- * blocknr: the block number
+ * blocknr: the block number (global)
  */ 
 long nova_bdev_alloc_blocks(struct nova_sb_info *sbi, int tier, int cpuid, unsigned long *blocknr,
 	unsigned int num_blocks) {
@@ -749,8 +749,7 @@ long nova_bdev_alloc_blocks(struct nova_sb_info *sbi, int tier, int cpuid, unsig
 	if (cpuid == ANY_CPU)
 		cpuid = smp_processor_id();
 
-	ret = nova_new_blocks_from_bdev(sb, TIER_BDEV_LOW, blocknr, num_blocks, cpuid, ALLOC_FROM_HEAD);
-	*blocknr -= sbi->num_blocks;
+	ret = nova_new_blocks_from_bdev(sb, tier, blocknr, num_blocks, cpuid, ALLOC_FROM_HEAD);
 	return ret;
 }
 
@@ -805,6 +804,7 @@ int nova_free_blocks_tier(struct nova_sb_info *sbi, unsigned long blocknr,
 	return -1;
 }
 
+// [ONLY FOR STARTUP TEST!]
 // blocknr: Local bdev block number
 int nova_bdev_free_blocks(struct nova_sb_info *sbi, int tier, unsigned long blocknr,
 	unsigned long num_blocks) {

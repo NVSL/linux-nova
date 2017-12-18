@@ -391,23 +391,14 @@ int migrate_blocks_bdev_to_pmem(struct nova_sb_info *sbi,
 
 
 // Migrate continuous blocks from pmem to block device
-
-/*
-long migrate_blocks_to_bdev(struct nova_sb_info *sbi, void *dax_mem,
-    unsigned long nr, int tier, unsigned long *blocknr) {
-    // long ret = nova_bdev_alloc_blocks(sbi, TIER_BDEV_LOW, ANY_CPU, blocknr, nr);
-    // if (ret<0) return ret;
-    long ret = migrate_blocks_to_bdev_with_blockoff(sbi, dax_mem, nr, tier, *blocknr);
-    return ret;
-}
-*/
 int migrate_blocks(struct nova_sb_info *sbi, unsigned long blockfrom, unsigned long nr,
     int from, int to, unsigned long blocknr) {
     unsigned long raw_blockfrom = get_raw_from_blocknr(sbi, blockfrom);
+    unsigned long raw_blockto = get_raw_from_blocknr(sbi, blocknr);
     if (is_tier_pmem(from) && is_tier_bdev(to)) 
-        return migrate_blocks_pmem_to_bdev(sbi, (void *) sbi->virt_addr + (raw_blockfrom << PAGE_SHIFT), nr, to, blocknr);
+        return migrate_blocks_pmem_to_bdev(sbi, (void *) sbi->virt_addr + (raw_blockfrom << PAGE_SHIFT), nr, to, raw_blockto);
     if (is_tier_bdev(from) && is_tier_pmem(to)) 
-        return migrate_blocks_bdev_to_pmem(sbi, (void *) sbi->virt_addr + (blocknr << PAGE_SHIFT), nr, from, raw_blockfrom);
+        return migrate_blocks_bdev_to_pmem(sbi, (void *) sbi->virt_addr + (raw_blockto << PAGE_SHIFT), nr, from, raw_blockfrom);
     if (is_tier_bdev(from) && is_tier_bdev(to)) 
         return -2;
     return -2;
@@ -454,7 +445,7 @@ int migrate_entry_blocks(struct nova_sb_info *sbi, int from, int to,
     // print_a_page((void *) sbi->virt_addr + entry->block);
 
     ret = nova_alloc_block_tier(sbi, to, ANY_CPU, &blocknr, entry->num_pages);
-    // The &blocknr is local block number
+    // The &blocknr is global block number
 
     if (ret<0) {
         nova_info("[Migration] Block allocation error.\n");
@@ -475,7 +466,7 @@ int migrate_entry_blocks(struct nova_sb_info *sbi, int from, int to,
     ret = nova_free_blocks_tier(sbi, entry->block >> PAGE_SHIFT, entry->num_pages);
     // Update tiering info
     entry->tier = to;
-    entry->block = (get_blocknr_from_raw(sbi, to, blocknr)) << PAGE_SHIFT;
+    entry->block = blocknr << PAGE_SHIFT;
 
 	nova_update_entry_csum(entry);
     return ret;
@@ -536,9 +527,9 @@ int do_migrate_a_file(struct inode *inode) {
     }
     switch (current_tier(inode)) {
     case TIER_PMEM:
-        return migrate_a_file(inode, TIER_PMEM, TIER_BDEV_LOW);
-    case TIER_BDEV_LOW:
-        return migrate_a_file(inode, TIER_BDEV_LOW, TIER_PMEM);
+        return migrate_a_file(inode, TIER_PMEM, TIER_BDEV_HIGH);
+    case TIER_BDEV_HIGH:
+        return migrate_a_file(inode, TIER_BDEV_HIGH, TIER_PMEM);
     default:
         nova_info("Unsupported migration of inode %lu at tier %d", inode->i_ino, current_tier(inode));
     }

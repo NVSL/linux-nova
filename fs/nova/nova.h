@@ -680,7 +680,7 @@ retry:
 			- entry->pgoff;
 	}
 	if (is_tier_bdev(entry->tier)) {
-		if (DEBUG_GET_NVMM) nova_info("[Get] Get from TIER_BDEV_LOW\n");
+		if (DEBUG_GET_NVMM) nova_info("[Get] Get from TIER_BDEV\n");
 		mb_index = buffer_data_block_from_bdev_range(sbi, entry->tier, entry->block >> PAGE_SHIFT, entry->num_pages);
 		if (mb_index<0) {
 			nova_info("get_nvmm failed\n");
