@@ -208,8 +208,8 @@ int nova_bdev_read_byte(struct block_device *device, unsigned long offset,
 	bv->bv_offset = page_offset;
 	bio->bi_io_vec = bv;
 	bio_set_op_attrs(bio, REQ_OP_READ, 0);
-	if (sync==BIO_SYNC)	submit_bio_wait(bio);
-	else submit_bio(bio);
+	if (sync==BIO_SYNC)	ret = submit_bio_wait(bio);
+	else ret = submit_bio(bio);
 	bio_put(bio);
 	return ret;
 }

@@ -62,6 +62,7 @@
 /* The maximum size of mini-buffer is the maximum size of kmalloc,
  * which is defined in /include/linux/slab.h (1024 pages).
  */ 
+#define	BDEV_BUFFER_PAGES 512
 #define	MINI_BUFFER_PAGES 512
 #define	MINI_BUFFER_PAGES_BIT 9
 #define IO_BLOCK_SIZE 4096

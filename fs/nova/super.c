@@ -911,6 +911,12 @@ out:
 	kfree(sbi->mini_buffer);
 	sbi->mini_buffer = NULL;
 
+	kfree(sbi->bb_pages);
+	sbi->bb_pages = NULL;
+
+	kfree(sbi->bdev_buffer);
+	sbi->bdev_buffer = NULL;
+
 	kfree(sbi->inode_maps);
 	sbi->inode_maps = NULL;
 
@@ -1041,6 +1047,8 @@ static void nova_put_super(struct super_block *sb)
 	kfree(sbi->mb_blockoff);
 	kfree(sbi->mb_pages);
 	kfree(sbi->mini_buffer);
+	kfree(sbi->bb_pages);
+	kfree(sbi->bdev_buffer);
 
 	for (i = 0; i < sbi->cpus; i++) {
 		inode_map = &sbi->inode_maps[i];

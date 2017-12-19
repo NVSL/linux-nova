@@ -34,6 +34,11 @@ int init_dram_buffer(struct nova_sb_info *sbi) {
 
     sbi->mb_pages = kcalloc(MINI_BUFFER_PAGES, sizeof(struct page *), GFP_KERNEL);
 
+	sbi->bdev_buffer = kcalloc(BDEV_BUFFER_PAGES, IO_BLOCK_SIZE, GFP_KERNEL);
+	if (!sbi->bdev_buffer) return -ENOMEM;
+
+    sbi->bb_pages = kcalloc(BDEV_BUFFER_PAGES, sizeof(struct page *), GFP_KERNEL);
+
 	mutex_init(&sbi->mb_mutex);
 
 	for (i = 0; i < MINI_BUFFER_PAGES; i++) {
@@ -42,6 +47,12 @@ int init_dram_buffer(struct nova_sb_info *sbi) {
         sbi->mb_pages[i] = virt_to_page(sbi->mini_buffer+i*IO_BLOCK_SIZE);
     }
     
+	mutex_init(&sbi->bb_mutex);
+
+	for (i = 0; i < BDEV_BUFFER_PAGES; i++) {
+        sbi->bb_pages[i] = virt_to_page(sbi->bdev_buffer+i*IO_BLOCK_SIZE);
+    }
+
     return 0;
 }
 
@@ -376,7 +387,6 @@ int migrate_blocks_pmem_to_bdev(struct nova_sb_info *sbi,
     void *dax_mem, unsigned long nr, int tier, unsigned long blockoff) {
     struct block_device *bdev_raw = get_bdev_raw(sbi, tier);
     return nova_bdev_write_block(bdev_raw, blockoff, nr, address_to_page(dax_mem), BIO_SYNC);
-    // return nr;
 }
 
 /*
@@ -386,9 +396,23 @@ int migrate_blocks_bdev_to_pmem(struct nova_sb_info *sbi,
     void *dax_mem, unsigned long nr, int tier, unsigned long blockoff) {
     struct block_device *bdev_raw = get_bdev_raw(sbi, tier);
     return nova_bdev_read_block(bdev_raw, blockoff, nr, address_to_page(dax_mem), BIO_SYNC);
-    // return nr;
 }
 
+/*
+ * Migrate continuous blocks from block device to block device, with block number
+ */
+int migrate_blocks_bdev_to_bdev(struct nova_sb_info *sbi, 
+    unsigned long blockfrom, int from, unsigned long nr,  unsigned long blockto, int to) {
+    int ret = 0;
+    struct page *pg = sbi->bb_pages[0];
+    struct block_device *bdev_raw_from = get_bdev_raw(sbi, from);
+    struct block_device *bdev_raw_to = get_bdev_raw(sbi, to);
+	mutex_lock(&sbi->bb_mutex);
+    ret = nova_bdev_read_block(bdev_raw_from, blockfrom, nr, pg, BIO_SYNC);
+    ret = nova_bdev_write_block(bdev_raw_to, blockto, nr, pg, BIO_SYNC);
+	mutex_unlock(&sbi->bb_mutex);
+    return ret;
+}
 
 // Migrate continuous blocks from pmem to block device
 int migrate_blocks(struct nova_sb_info *sbi, unsigned long blockfrom, unsigned long nr,
@@ -400,7 +424,7 @@ int migrate_blocks(struct nova_sb_info *sbi, unsigned long blockfrom, unsigned l
     if (is_tier_bdev(from) && is_tier_pmem(to)) 
         return migrate_blocks_bdev_to_pmem(sbi, (void *) sbi->virt_addr + (raw_blockto << PAGE_SHIFT), nr, from, raw_blockfrom);
     if (is_tier_bdev(from) && is_tier_bdev(to)) 
-        return -2;
+        return migrate_blocks_bdev_to_bdev(sbi, raw_blockfrom, from, nr, raw_blockto, to);
     return -2;
 }
 
@@ -503,7 +527,6 @@ int migrate_a_file(struct inode *inode, int from, int to)
         if (entry) {
             if (entry->tier == from) {
                 if (DEBUG_MIGRATION) nova_info("[Migration] Migrating write entry with index:%lu\n", index);
-                // TODOzsa
                 ret = migrate_entry_blocks(sbi, from, to, si, entry);
                 index += entry->num_pages;
             }
@@ -527,7 +550,9 @@ int do_migrate_a_file(struct inode *inode) {
     }
     switch (current_tier(inode)) {
     case TIER_PMEM:
-        return migrate_a_file(inode, TIER_PMEM, TIER_BDEV_HIGH);
+        return migrate_a_file(inode, TIER_PMEM, TIER_BDEV_LOW);
+    case TIER_BDEV_LOW:
+        return migrate_a_file(inode, TIER_BDEV_LOW, TIER_BDEV_HIGH);
     case TIER_BDEV_HIGH:
         return migrate_a_file(inode, TIER_BDEV_HIGH, TIER_PMEM);
     default:

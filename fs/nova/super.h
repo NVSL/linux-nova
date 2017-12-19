@@ -161,14 +161,17 @@ struct nova_sb_info {
 	void *zero_parity;
 	
 	/* Mini DRAM buffer */
+	char *mini_buffer;
 	struct mutex mb_mutex;
-	// spinlock_t *mb_locks;
-	// int *mb_count;
 	struct rw_semaphore *mb_sem;
 	int *mb_tier;
 	unsigned long *mb_blockoff;
 	struct page **mb_pages;
-	char *mini_buffer;
+
+	/* Block device buffer */
+	char *bdev_buffer;
+	struct mutex bb_mutex;
+	struct page **bb_pages;
 
 	/* Per-CPU journal lock */
 	spinlock_t *journal_locks;
