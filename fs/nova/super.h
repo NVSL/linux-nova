@@ -173,6 +173,9 @@ struct nova_sb_info {
 	struct mutex bb_mutex;
 	struct page **bb_pages;
 
+	/* Bio list */ 
+	struct bio_async_list *bal_head;
+
 	/* Per-CPU journal lock */
 	spinlock_t *journal_locks;
 

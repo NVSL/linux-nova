@@ -197,13 +197,13 @@ static int nova_migration(struct inode *inode, struct file *file) {
 	if (DEBUG_DO_MIGRATION) nova_info("Do migration.\n");
 	// Tiering migration
 	if (DEBUG_BFL_INFO) {
-		nova_info("Start migration.\n");
+		nova_info("[Start migration]\n");
 		print_all_bfl(sb);
 	}
 	do_migrate_a_file(inode);
 	if (DEBUG_BFL_INFO) {
 		print_all_bfl(sb);
-		nova_info("End migration.\n");
+		nova_info("[End migration]\n");
 	}
 
 	goto end;

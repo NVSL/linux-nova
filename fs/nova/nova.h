@@ -1074,14 +1074,15 @@ void nova_init_header(struct super_block *sb,
 int nova_recovery(struct super_block *sb);
 
 /* bdev.c */
+int flush_bal_entry(struct nova_sb_info *sbi);
 int nova_alloc_bdev_block_free_lists(struct super_block *sb);
 void nova_init_bdev_blockmap(struct super_block *sb, int recovery);
 unsigned long get_offset_of_tier(struct nova_sb_info *sbi, int tier);
 inline unsigned long get_raw_from_blocknr(struct nova_sb_info *sbi, unsigned long blocknr);
 inline unsigned long get_blocknr_from_raw(struct nova_sb_info *sbi, int tier, unsigned long blocknr);
-int nova_bdev_write_block(struct block_device *device, unsigned long offset,
+int nova_bdev_write_block(struct nova_sb_info *sbi, struct block_device *device, unsigned long offset,
 	unsigned long size, struct page *page, bool sync);
-int nova_bdev_read_block(struct block_device *device, unsigned long offset,
+int nova_bdev_read_block(struct nova_sb_info *sbi, struct block_device *device, unsigned long offset,
 	unsigned long size, struct page *page, bool sync);
 void print_a_page(void* addr);
 int nova_free_blocks_from_bdev(struct nova_sb_info *sbi, unsigned long blocknr,

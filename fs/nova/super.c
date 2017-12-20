@@ -209,6 +209,7 @@ static int nova_get_bdev_info(struct nova_sb_info *sbi){
 
 		sbi->bdev_list[i].bdev_raw = bdev_raw;
 		strcat(sbi->bdev_list[i].bdev_path, bdev_path);
+		kfree(bdev_path);
 
 		bd_disk = bdev_raw->bd_disk;
 		nsector = get_capacity(bd_disk);
@@ -917,6 +918,9 @@ out:
 	kfree(sbi->bdev_buffer);
 	sbi->bdev_buffer = NULL;
 
+	kfree(sbi->bal_head);
+	sbi->bal_head = NULL;
+
 	kfree(sbi->inode_maps);
 	sbi->inode_maps = NULL;
 
@@ -1048,6 +1052,7 @@ static void nova_put_super(struct super_block *sb)
 	kfree(sbi->mb_pages);
 	kfree(sbi->mini_buffer);
 	kfree(sbi->bb_pages);
+	kfree(sbi->bal_head);
 	kfree(sbi->bdev_buffer);
 
 	for (i = 0; i < sbi->cpus; i++) {

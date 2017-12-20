@@ -1,6 +1,7 @@
 #include "nova.h"
 #include "bdev.h"
 #include <asm/tlbflush.h>
+#include <linux/completion.h>
 
 #define SECTOR_SIZE_BIT 9
 #define VFS_IO_TEST 0
@@ -159,14 +160,49 @@ void print_a_page(void* addr) {
 		i+=wordline;
 	}
 	nova_info("----------------\n");
+	kfree(p);
+}
+
+static void nova_submit_bio_wait_endio(struct bio *bio)
+{
+	struct submit_bio_ret *ret = bio->bi_private;
+
+	ret->error = blk_status_to_errno(bio->bi_status);
+	complete(&ret->event);
+}
+
+
+// TODOzsa: concurrency
+int add_bal_entry(struct nova_sb_info *sbi, struct bio *bio, struct submit_bio_ret *bio_ret) {	
+	struct bio_async_list *bal = kzalloc(sizeof(struct bio_async_list), GFP_KERNEL);
+	bal->bio = bio;
+	bal->bio_ret = bio_ret;
+	list_add_tail(&bal->list, &sbi->bal_head->list);
+	return 0;
+}
+
+int flush_bal_entry(struct nova_sb_info *sbi) {	
+	struct bio_async_list *bal, *tempbal;
+	int ret = 0;
+	list_for_each_entry_safe(bal, tempbal, &sbi->bal_head->list, list) {
+		wait_for_completion_io(&bal->bio_ret->event);
+		ret = bal->bio_ret->error;
+		if (unlikely(ret)) return ret;
+		kfree(bal->bio_ret);
+		bio_put(bal->bio);
+		list_del(&bal->list);
+		kfree(bal);
+	}
+	return ret;
 }
 
 // Return 0 on success
-int nova_bdev_write_byte(struct block_device *device, unsigned long offset,
+int nova_bdev_write_byte(struct nova_sb_info *sbi, struct block_device *device, unsigned long offset,
 	unsigned long size, struct page *page, unsigned long page_offset, bool sync) {
    	int ret = 0;
 	struct bio *bio = bio_alloc(GFP_NOIO, 1);
 	struct bio_vec *bv = kzalloc(sizeof(struct bio_vec), GFP_KERNEL);
+	struct submit_bio_ret *bio_ret;
 	if (DEBUG_BDEV_RW) nova_info("[Bdev Write] Offset %7lu <- Page %p (size: %lu)\n",offset>>12,
 	page_address(page)+page_offset,size);
 	bio->bi_bdev = device;
@@ -178,24 +214,36 @@ int nova_bdev_write_byte(struct block_device *device, unsigned long offset,
 	bv->bv_offset = page_offset;
 	bio->bi_io_vec = bv;
 	bio_set_op_attrs(bio, REQ_OP_WRITE, 0);
-	if (sync) ret = submit_bio_wait(bio);
-	else ret = submit_bio(bio);
-	bio_put(bio);
+	if (sync) {
+		ret = submit_bio_wait(bio);
+		bio_put(bio);
+	}
+	else {		
+		// TODOzsa: slab
+		bio_ret = kzalloc(sizeof(struct submit_bio_ret), GFP_KERNEL);
+		init_completion(&bio_ret->event);
+		bio->bi_private = bio_ret;
+		bio->bi_end_io = nova_submit_bio_wait_endio;
+		bio->bi_opf |= REQ_SYNC;
+		ret = submit_bio(bio);
+		add_bal_entry(sbi, bio, bio_ret);
+	}
 	return ret;
 }
 
 // Return 0 on success
-int nova_bdev_write_block(struct block_device *device, unsigned long offset,
+int nova_bdev_write_block(struct nova_sb_info *sbi, struct block_device *device, unsigned long offset,
 	unsigned long size, struct page *page, bool sync) {
-	return nova_bdev_write_byte(device,offset<<IO_BLOCK_SIZE_BIT,
+	return nova_bdev_write_byte(sbi, device,offset<<IO_BLOCK_SIZE_BIT,
 		size<<IO_BLOCK_SIZE_BIT, page, 0, sync);
 }
 
-int nova_bdev_read_byte(struct block_device *device, unsigned long offset,
+int nova_bdev_read_byte(struct nova_sb_info *sbi, struct block_device *device, unsigned long offset,
 	unsigned long size, struct page *page, unsigned long page_offset, bool sync) {
 	int ret = 0;
 	struct bio *bio = bio_alloc(GFP_NOIO, 1);
 	struct bio_vec *bv = kzalloc(sizeof(struct bio_vec), GFP_KERNEL);
+	struct submit_bio_ret *bio_ret;
 	// bio is about block and bv is about page
 	if (DEBUG_BDEV_RW) nova_info("[Bdev Read ] Offset %7lu -> Page %p (size: %lu)\n",offset>>12,
 	page_address(page)+page_offset,size);
@@ -208,15 +256,27 @@ int nova_bdev_read_byte(struct block_device *device, unsigned long offset,
 	bv->bv_offset = page_offset;
 	bio->bi_io_vec = bv;
 	bio_set_op_attrs(bio, REQ_OP_READ, 0);
-	if (sync==BIO_SYNC)	ret = submit_bio_wait(bio);
-	else ret = submit_bio(bio);
-	bio_put(bio);
+	if (sync) {
+		ret = submit_bio_wait(bio);
+		bio_put(bio);
+	}
+	else {		
+		// TODOzsa: slab
+		bio_ret = kzalloc(sizeof(struct submit_bio_ret), GFP_KERNEL);
+		init_completion(&bio_ret->event);
+		bio->bi_private = bio_ret;
+		bio->bi_end_io = nova_submit_bio_wait_endio;
+		bio->bi_opf |= REQ_SYNC;
+		ret = submit_bio(bio);
+		add_bal_entry(sbi, bio, bio_ret);
+	}
 	return ret;
 }
 
-int nova_bdev_read_block(struct block_device *device, unsigned long offset,
+// Return 0 on success
+int nova_bdev_read_block(struct nova_sb_info *sbi, struct block_device *device, unsigned long offset,
 	unsigned long size, struct page *page, bool sync) {
-	return nova_bdev_read_byte(device,offset<<IO_BLOCK_SIZE_BIT,
+	return nova_bdev_read_byte(sbi, device,offset<<IO_BLOCK_SIZE_BIT,
 		size<<IO_BLOCK_SIZE_BIT, page, 0, sync);
 }
 
@@ -867,14 +927,14 @@ void bdev_test(struct nova_sb_info *sbi) {
 	// ret = readPage(bdev_raw, 0, bdev_logical_block_size(bdev_raw), pg2);
 
 	// Page write
-	ret = nova_bdev_write_block(bdev_raw, 1, 1, pg, BIO_SYNC);
-	ret = nova_bdev_write_block(bdev_raw, capacity_page-1, 1, pg, BIO_SYNC);
+	ret = nova_bdev_write_block(sbi, bdev_raw, 1, 1, pg, BIO_SYNC);
+	ret = nova_bdev_write_block(sbi, bdev_raw, capacity_page-1, 1, pg, BIO_SYNC);
 	// Page read
 	for (i=0;i<20;++i) {
 		if (i>capacity_page-2) continue;
 		modify_a_page(pg_vir_addr,'C'+i%20);
-		ret = nova_bdev_write_block(bdev_raw, i, 1, pg, BIO_SYNC);
-		ret = nova_bdev_read_block(bdev_raw, i, 1, pg2, BIO_SYNC);
+		ret = nova_bdev_write_block(sbi, bdev_raw, i, 1, pg, BIO_SYNC);
+		ret = nova_bdev_read_block(sbi, bdev_raw, i, 1, pg2, BIO_SYNC);
 		if (i%100==50) {
 			nova_info("[%s] [Block %d]\n",bdev_name,i);
 		 	print_a_page(pg_vir_addr2);

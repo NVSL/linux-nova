@@ -16,7 +16,6 @@ struct bdev_info {
 
 /*
  * Block device free list
- * TODO: per-CPU or not?
  */ 
 struct bdev_free_list {
 	spinlock_t s_lock;
@@ -39,6 +38,17 @@ struct bdev_free_list {
 
 	/* How many nodes in the rb tree? */
 	unsigned long	num_blocknode;
+};
+
+struct submit_bio_ret {
+	struct completion event;
+	int error;
+};
+
+struct bio_async_list {
+	struct list_head list;
+	struct bio *bio;
+	struct submit_bio_ret *bio_ret;
 };
 
 /* A node in the RB tree representing a range of pages */
