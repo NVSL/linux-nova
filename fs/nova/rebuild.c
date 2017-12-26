@@ -611,7 +611,7 @@ int nova_rebuild_dir_inode_tree(struct super_block *sb,
 	curr_p = sih->log_head;
 	if (curr_p == 0) {
 		nova_err(sb, "Dir %llu log is NULL!\n", ino);
-		BUG();
+		ret = -ENOSPC;
 		goto out;
 	}
 
