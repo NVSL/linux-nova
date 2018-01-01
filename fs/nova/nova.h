@@ -1074,6 +1074,8 @@ void nova_init_header(struct super_block *sb,
 int nova_recovery(struct super_block *sb);
 
 /* bdev.c */
+int nova_init_bio(void);
+int nova_destroy_bio(void);
 int flush_bal_entry(struct nova_sb_info *sbi);
 int nova_alloc_bdev_block_free_lists(struct super_block *sb);
 void nova_init_bdev_blockmap(struct super_block *sb, int recovery);

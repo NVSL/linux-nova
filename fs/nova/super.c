@@ -1327,14 +1327,20 @@ static int __init init_nova_fs(void)
 	if (rc)
 		goto out2;
 
-	rc = register_filesystem(&nova_fs_type);
+	rc = nova_init_bio();
 	if (rc)
 		goto out3;
+
+	rc = register_filesystem(&nova_fs_type);
+	if (rc)
+		goto out4;
 
 	nova_info("init out");
 	NOVA_END_TIMING(init_t, init_time);
 	return 0;
 
+out4:
+	nova_destroy_bio();
 out3:
 	destroy_snapshot_info_cache();
 out2:
@@ -1351,6 +1357,7 @@ static void __exit exit_nova_fs(void)
 	destroy_snapshot_info_cache();
 	destroy_inodecache();
 	destroy_rangenode_cache();
+	nova_destroy_bio();
 }
 
 MODULE_AUTHOR("Andiry Xu <jix024@cs.ucsd.edu>");

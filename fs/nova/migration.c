@@ -391,9 +391,9 @@ out:
 int migrate_blocks_pmem_to_bdev(struct nova_sb_info *sbi, 
     void *dax_mem, unsigned long nr, int tier, unsigned long blockoff) {
     struct block_device *bdev_raw = get_bdev_raw(sbi, tier);
-    int ret = nova_bdev_write_block(sbi, bdev_raw, blockoff, nr, address_to_page(dax_mem), BIO_ASYNC);
-    if (unlikely(ret)) return ret;
-    return flush_bal_entry(sbi);
+    int ret = nova_bdev_write_block(sbi, bdev_raw, blockoff, nr, 
+        address_to_page(dax_mem), BIO_ASYNC);
+    return ret;
 }
 
 /*
@@ -402,13 +402,14 @@ int migrate_blocks_pmem_to_bdev(struct nova_sb_info *sbi,
 int migrate_blocks_bdev_to_pmem(struct nova_sb_info *sbi, 
     void *dax_mem, unsigned long nr, int tier, unsigned long blockoff) {
     struct block_device *bdev_raw = get_bdev_raw(sbi, tier);
-    int ret = nova_bdev_read_block(sbi, bdev_raw, blockoff, nr, address_to_page(dax_mem), BIO_ASYNC);
-    if (unlikely(ret)) return ret;
-    return flush_bal_entry(sbi);
+    int ret = nova_bdev_read_block(sbi, bdev_raw, blockoff, nr, 
+        address_to_page(dax_mem), BIO_ASYNC);
+    return ret;
 }
 
 /*
  * Migrate continuous blocks from block device to block device, with block number
+ * Since DRAM buffer is currently limited, this migration is always in SYNC.
  */
 int migrate_blocks_bdev_to_bdev(struct nova_sb_info *sbi, 
     unsigned long blockfrom, int from, unsigned long nr,  unsigned long blockto, int to) {
@@ -424,16 +425,19 @@ int migrate_blocks_bdev_to_bdev(struct nova_sb_info *sbi,
 }
 
 // Migrate continuous blocks from pmem to block device
-int migrate_blocks(struct nova_sb_info *sbi, unsigned long blockfrom, unsigned long nr,
-    int from, int to, unsigned long blocknr) {
+int migrate_blocks(struct nova_sb_info *sbi, unsigned long blockfrom, 
+    unsigned long nr, int from, int to, unsigned long blocknr) {
     unsigned long raw_blockfrom = get_raw_from_blocknr(sbi, blockfrom);
     unsigned long raw_blockto = get_raw_from_blocknr(sbi, blocknr);
     if (is_tier_pmem(from) && is_tier_bdev(to)) 
-        return migrate_blocks_pmem_to_bdev(sbi, (void *) sbi->virt_addr + (raw_blockfrom << PAGE_SHIFT), nr, to, raw_blockto);
+        return migrate_blocks_pmem_to_bdev(sbi, (void *) sbi->virt_addr + 
+            (raw_blockfrom << PAGE_SHIFT), nr, to, raw_blockto);
     if (is_tier_bdev(from) && is_tier_pmem(to)) 
-        return migrate_blocks_bdev_to_pmem(sbi, (void *) sbi->virt_addr + (raw_blockto << PAGE_SHIFT), nr, from, raw_blockfrom);
+        return migrate_blocks_bdev_to_pmem(sbi, (void *) sbi->virt_addr + 
+            (raw_blockto << PAGE_SHIFT), nr, from, raw_blockfrom);
     if (is_tier_bdev(from) && is_tier_bdev(to)) 
-        return migrate_blocks_bdev_to_bdev(sbi, raw_blockfrom, from, nr, raw_blockto, to);
+        return migrate_blocks_bdev_to_bdev(sbi, raw_blockfrom, from, nr, 
+            raw_blockto, to);
     return -2;
 }
 
@@ -468,7 +472,8 @@ int migrate_entry_blocks(struct nova_sb_info *sbi, int from, int to,
     if (entry->tier != from) return ret;
 
     if (is_entry_busy(sbi, entry)) {
-        if (DEBUG_MIGRATION_CHECK) nova_info("entry->block %lu is busy\n", (unsigned long)entry->block);
+        if (DEBUG_MIGRATION_CHECK) nova_info("entry->block %lu is busy\n", 
+            (unsigned long)entry->block);
         return -1;
     }
 
@@ -476,7 +481,8 @@ int migrate_entry_blocks(struct nova_sb_info *sbi, int from, int to,
     entry->tier = TIER_MIGRATING;
 
     // TODOzsa: Could be wrong
-    if (DEBUG_MIGRATION_ALLOC) nova_info("[Migration] entry->block %lu\n", (unsigned long)entry->block);
+    if (DEBUG_MIGRATION_ALLOC) nova_info("[Migration] entry->block %lu\n", 
+        (unsigned long)entry->block);
     // print_a_page((void *) sbi->virt_addr + entry->block);
 
     ret = nova_alloc_block_tier(sbi, to, ANY_CPU, &blocknr, entry->num_pages);
@@ -492,8 +498,14 @@ int migrate_entry_blocks(struct nova_sb_info *sbi, int from, int to,
     /* Step 3. Copy */
     ret = migrate_blocks(sbi, entry->block >> PAGE_SHIFT, entry->num_pages, from, to, blocknr);
     if (ret<0) {
-        nova_info("[Migration] Block allocation error.\n");
+        nova_info("[Migration] Block copy error.\n");
         if (ret == -2) nova_info("[Migration] Unsupported migration attempt.\n");
+        return ret;
+    }
+
+    ret = flush_bal_entry(sbi);
+    if (ret<0) {
+        nova_info("[Migration] Flush bal error.\n");
         return ret;
     }
 

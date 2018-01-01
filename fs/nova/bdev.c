@@ -6,6 +6,30 @@
 #define SECTOR_SIZE_BIT 9
 #define VFS_IO_TEST 0
 
+static struct kmem_cache *nova_submit_bio_ret_cache;
+static struct kmem_cache *nova_bal_cache;
+
+int nova_init_bio(void) {
+	nova_submit_bio_ret_cache = kmem_cache_create("nova_submit_bio_ret",
+					       sizeof(struct submit_bio_ret),
+					       0, SLAB_RECLAIM_ACCOUNT, NULL);
+	if (nova_submit_bio_ret_cache == NULL)
+		return -ENOMEM;
+
+	nova_bal_cache = kmem_cache_create("nova_bal",
+					       sizeof(struct bio_async_list),
+					       0, SLAB_RECLAIM_ACCOUNT, NULL);
+	if (nova_bal_cache == NULL)
+		return -ENOMEM;
+
+	return 0;
+}
+
+int nova_destroy_bio(void) {
+	kmem_cache_destroy(nova_submit_bio_ret_cache);
+	kmem_cache_destroy(nova_bal_cache);
+	return 0;
+}
 
 // This function is used for a raw sata block device lookup in /dev
 char* find_a_raw_sata(void) {
@@ -46,7 +70,8 @@ void print_all_bdev(struct nova_sb_info *sbi) {
 		nova_info("Disk path: %s\n", bdi->bdev_path);
 		nova_info("Disk name: %s\n", bdi->bdev_name);
 		nova_info("Major: %d Minor: %d\n", bdi->major ,bdi->minors);
-		nova_info("Size: %lu sectors (%luMB)\n",bdi->capacity_sector,bdi->capacity_page >> 8);
+		nova_info("Size: %lu sectors (%luMB)\n",bdi->capacity_sector,
+			bdi->capacity_page >> 8);
 		nova_info("----------------\n");
 	}
 }
@@ -95,9 +120,11 @@ static void vfs_read_test(void) {
 	blk_inode = file->f_inode;
 	nova_info("vfs read test mid1.\n");
 
-	nova_info("vfs read test i_rdev:%u, i_size:%lld.\n",blk_inode->i_rdev,blk_inode->i_size);
+	nova_info("vfs read test i_rdev:%u, i_size:%lld.\n",blk_inode->i_rdev,
+		blk_inode->i_size);
 
-	nova_info("vfs read test i_blkbits:%u, i_bytes:%u, i_blocks:%lu.\n",blk_inode->i_blkbits,blk_inode->i_bytes,blk_inode->i_blocks);
+	nova_info("vfs read test i_blkbits:%u, i_bytes:%u, i_blocks:%lu.\n",
+		blk_inode->i_blkbits,blk_inode->i_bytes,blk_inode->i_blocks);
 	
 	nova_info("vfs read test i_ino:%lu.\n",blk_inode->i_ino);
 	blk_mapping = blk_inode->i_mapping;
@@ -173,8 +200,11 @@ static void nova_submit_bio_wait_endio(struct bio *bio)
 
 
 // TODOzsa: concurrency
-int add_bal_entry(struct nova_sb_info *sbi, struct bio *bio, struct submit_bio_ret *bio_ret) {	
-	struct bio_async_list *bal = kzalloc(sizeof(struct bio_async_list), GFP_KERNEL);
+int add_bal_entry(struct nova_sb_info *sbi, struct bio *bio, 
+	struct submit_bio_ret *bio_ret) {	
+	struct bio_async_list *bal = kmem_cache_alloc(nova_bal_cache, GFP_KERNEL);
+	if (!bal)
+		return -1;
 	bal->bio = bio;
 	bal->bio_ret = bio_ret;
 	list_add_tail(&bal->list, &sbi->bal_head->list);
@@ -188,10 +218,10 @@ int flush_bal_entry(struct nova_sb_info *sbi) {
 		wait_for_completion_io(&bal->bio_ret->event);
 		ret = bal->bio_ret->error;
 		if (unlikely(ret)) return ret;
-		kfree(bal->bio_ret);
+		kmem_cache_free(nova_submit_bio_ret_cache, bal->bio_ret);
 		bio_put(bal->bio);
 		list_del(&bal->list);
-		kfree(bal);
+		kmem_cache_free(nova_bal_cache, bal);
 	}
 	return ret;
 }
@@ -203,8 +233,16 @@ int nova_bdev_write_byte(struct nova_sb_info *sbi, struct block_device *device, 
 	struct bio *bio = bio_alloc(GFP_NOIO, 1);
 	struct bio_vec *bv = kzalloc(sizeof(struct bio_vec), GFP_KERNEL);
 	struct submit_bio_ret *bio_ret;
+	if (unlikely(!bio)) {
+		nova_info("[Bdev Write] Cannot allocate bio.\n");
+		return -3;
+	}
+	if (unlikely(!bv)) {
+		nova_info("[Bdev Write] Cannot allocate bio_vec.\n");
+		return -4;
+	}
 	if (DEBUG_BDEV_RW) nova_info("[Bdev Write] Offset %7lu <- Page %p (size: %lu)\n",offset>>12,
-	page_address(page)+page_offset,size);
+		page_address(page)+page_offset,size);
 	bio->bi_bdev = device;
 	bio->bi_iter.bi_sector = offset >> 9;
 	bio->bi_iter.bi_size = size;
@@ -219,14 +257,13 @@ int nova_bdev_write_byte(struct nova_sb_info *sbi, struct block_device *device, 
 		bio_put(bio);
 	}
 	else {		
-		// TODOzsa: slab
-		bio_ret = kzalloc(sizeof(struct submit_bio_ret), GFP_KERNEL);
+		bio_ret = kmem_cache_alloc(nova_submit_bio_ret_cache, GFP_KERNEL);
 		init_completion(&bio_ret->event);
 		bio->bi_private = bio_ret;
 		bio->bi_end_io = nova_submit_bio_wait_endio;
 		bio->bi_opf |= REQ_SYNC;
-		ret = submit_bio(bio);
-		add_bal_entry(sbi, bio, bio_ret);
+		submit_bio(bio);
+		ret = add_bal_entry(sbi, bio, bio_ret);
 	}
 	return ret;
 }
@@ -244,9 +281,17 @@ int nova_bdev_read_byte(struct nova_sb_info *sbi, struct block_device *device, u
 	struct bio *bio = bio_alloc(GFP_NOIO, 1);
 	struct bio_vec *bv = kzalloc(sizeof(struct bio_vec), GFP_KERNEL);
 	struct submit_bio_ret *bio_ret;
+	if (unlikely(!bio)) {
+		nova_info("[Bdev Write] Cannot allocate bio.\n");
+		return -3;
+	}
+	if (unlikely(!bv)) {
+		nova_info("[Bdev Write] Cannot allocate bio_vec.\n");
+		return -4;
+	}
 	// bio is about block and bv is about page
 	if (DEBUG_BDEV_RW) nova_info("[Bdev Read ] Offset %7lu -> Page %p (size: %lu)\n",offset>>12,
-	page_address(page)+page_offset,size);
+		page_address(page)+page_offset,size);
 	bio->bi_bdev = device;
 	bio->bi_iter.bi_sector = offset >> 9;
 	bio->bi_iter.bi_size = size;
@@ -260,15 +305,14 @@ int nova_bdev_read_byte(struct nova_sb_info *sbi, struct block_device *device, u
 		ret = submit_bio_wait(bio);
 		bio_put(bio);
 	}
-	else {		
-		// TODOzsa: slab
-		bio_ret = kzalloc(sizeof(struct submit_bio_ret), GFP_KERNEL);
+	else {
+		bio_ret = kmem_cache_alloc(nova_submit_bio_ret_cache, GFP_KERNEL);
 		init_completion(&bio_ret->event);
 		bio->bi_private = bio_ret;
 		bio->bi_end_io = nova_submit_bio_wait_endio;
 		bio->bi_opf |= REQ_SYNC;
-		ret = submit_bio(bio);
-		add_bal_entry(sbi, bio, bio_ret);
+		submit_bio(bio);
+		ret = add_bal_entry(sbi, bio, bio_ret);
 	}
 	return ret;
 }
@@ -948,6 +992,9 @@ void bfl_test(struct nova_sb_info *sbi) {
 	unsigned long tmp;
 	long ret;
 	int i = 0;
+
+	nova_info("size of struct bio_vec:%lu\n",sizeof(struct bio_vec));
+	nova_info("size of struct submit_bio_ret:%lu\n",sizeof(struct submit_bio_ret));
 
 	ret = nova_bdev_alloc_blocks(sbi, TIER_BDEV_LOW, ANY_CPU, &tmp, 1);
 	nova_info("[bfl1] ret:%lu, offset:%lu" ,ret, tmp);
