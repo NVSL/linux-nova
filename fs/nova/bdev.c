@@ -351,7 +351,8 @@ int nova_alloc_bdev_block_free_lists(struct super_block *sb) {
 
 	int i,j;
 
-	sbi->bdev_free_list = kcalloc(TIER_BDEV_HIGH*sbi->cpus, sizeof(struct bdev_free_list), GFP_KERNEL);
+	sbi->bdev_free_list = kcalloc(TIER_BDEV_HIGH*sbi->cpus, 
+		sizeof(struct bdev_free_list), GFP_KERNEL);
 
 	if (!sbi->bdev_free_list)
 		return -ENOMEM;
@@ -564,8 +565,9 @@ static int nova_get_candidate_bdev_free_list(struct super_block *sb, int tier)
  * num_block: Number of blocks of the request
  * from_tail: Direction
  */ 
-static int nova_new_blocks_from_bdev(struct super_block *sb, int tier, unsigned long *blocknr,
-	unsigned int num_blocks, int cpuid, enum nova_alloc_direction from_tail) {
+static int nova_new_blocks_from_bdev(struct super_block *sb, int tier, 
+	unsigned long *blocknr,	unsigned int num_blocks, int cpuid, 
+	enum nova_alloc_direction from_tail) {
 
 	struct bdev_free_list *bfl;
 	unsigned long new_blocknr = 0;
@@ -597,7 +599,8 @@ retry:
 	}
 
 alloc:
-	ret_blocks = nova_alloc_blocks_in_bdev_free_list(sb, bfl, num_blocks, &new_blocknr, from_tail);
+	ret_blocks = nova_alloc_blocks_in_bdev_free_list(sb, bfl, num_blocks, 
+		&new_blocknr, from_tail);
 
 	if (ret_blocks < 0) {
 		nova_err(sb, "%s failed.\n", __func__);
@@ -687,12 +690,14 @@ out:
 }
 
 // Return the raw offset of this blocknr
-inline unsigned long get_raw_from_blocknr(struct nova_sb_info *sbi, unsigned long blocknr) {
+inline unsigned long get_raw_from_blocknr(struct nova_sb_info *sbi, 
+	unsigned long blocknr) {
 	return blocknr - get_offset_of_blocknr(sbi, blocknr);
 }
 
 // Return the global block number of the raw offset
-inline unsigned long get_blocknr_from_raw(struct nova_sb_info *sbi, int tier, unsigned long blocknr) {
+inline unsigned long get_blocknr_from_raw(struct nova_sb_info *sbi, int tier, 
+	unsigned long blocknr) {
 	return blocknr + get_offset_of_tier(sbi, tier);
 }
 
@@ -709,13 +714,15 @@ static int get_tier(struct nova_sb_info *sbi, unsigned long blocknr) {
 }
 
 // blocknr: global block number
-static int get_tier_range(struct nova_sb_info *sbi, unsigned long blocknr, unsigned long num_blocks) {
+static int get_tier_range(struct nova_sb_info *sbi, unsigned long blocknr, 
+	unsigned long num_blocks) {
 	int i;
 	// unsigned long tmp = 0;
 	// struct bdev_free_list *bfl = NULL;
 	if (false) get_tier(sbi, blocknr);
 	for (i=0;i<=TIER_BDEV_HIGH;++i) {
-		if (nova_tier_start_block(sbi,i) <= blocknr && blocknr + num_blocks - 1 <= nova_tier_end_block(sbi,i))
+		if (nova_tier_start_block(sbi,i) <= blocknr && blocknr + num_blocks - 1 
+			<= nova_tier_end_block(sbi,i))
 		return i;
 	}
 	return -1;
@@ -845,8 +852,8 @@ out:
  * 			(could be not enough, since it forces continuous)
  * blocknr: the block number (global)
  */ 
-long nova_bdev_alloc_blocks(struct nova_sb_info *sbi, int tier, int cpuid, unsigned long *blocknr,
-	unsigned int num_blocks) {
+long nova_bdev_alloc_blocks(struct nova_sb_info *sbi, int tier, int cpuid, 
+	unsigned long *blocknr, unsigned int num_blocks) {
 	struct super_block *sb = sbi->sb;
 	int ret = 0;
 
@@ -861,8 +868,8 @@ long nova_bdev_alloc_blocks(struct nova_sb_info *sbi, int tier, int cpuid, unsig
  * Allocate blocks from any tier in tiering-NOVA
  * blocknr: Global block number
  */
-long nova_alloc_block_tier(struct nova_sb_info *sbi, int tier, int cpuid, unsigned long *blocknr,
-	unsigned int num_blocks) {
+long nova_alloc_block_tier(struct nova_sb_info *sbi, int tier, int cpuid, 
+	unsigned long *blocknr, unsigned int num_blocks) {
 	struct super_block *sb = sbi->sb;
 
 	if (cpuid == ANY_CPU)
@@ -873,8 +880,8 @@ long nova_alloc_block_tier(struct nova_sb_info *sbi, int tier, int cpuid, unsign
 	// Tier pmem
 	if (is_tier_pmem(tier)) {
 		struct free_list *free_list = nova_get_free_list(sb, cpuid);
-		return nova_alloc_blocks_in_free_list(sb, free_list, NOVA_DEFAULT_BLOCK_TYPE, DATA,
-		num_blocks, blocknr, ALLOC_FROM_HEAD);
+		return nova_alloc_blocks_in_free_list(sb, free_list, 
+			NOVA_DEFAULT_BLOCK_TYPE, DATA, num_blocks, blocknr, ALLOC_FROM_HEAD);
 	}
 	// Tier bdev
 	if (is_tier_bdev(tier)) {
@@ -925,9 +932,13 @@ int reclaim_get_nvmm(struct super_block *sb, unsigned long nvmm,
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	void *dax_mem = nova_get_block(sb, (nvmm << PAGE_SHIFT));
 	unsigned long mb_offset = 0;
+	
 	if (is_dram_buffer_addr(sbi, dax_mem)) {
 		mb_offset = get_dram_buffer_offset(sbi, dax_mem);
-		if (DEBUG_BUFFERING) nova_info("put off %lu, nr %lu", mb_offset - pgoff + (unsigned long)entry->pgoff, (unsigned long)entry->num_pages);
+		if (DEBUG_BUFFERING) 
+			nova_info("put off %lu, nr %lu", mb_offset - pgoff + 
+			(unsigned long)entry->pgoff, (unsigned long)entry->num_pages);
+
 		put_dram_buffer_range(sbi, mb_offset - pgoff + entry->pgoff, entry->num_pages);
 		return 0;
 	}

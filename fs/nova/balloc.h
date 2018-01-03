@@ -99,6 +99,7 @@ extern int nova_new_log_blocks(struct super_block *sb,
 	enum nova_alloc_init zero, int cpu,
 	enum nova_alloc_direction from_tail);
 extern unsigned long nova_count_free_blocks(struct super_block *sb);
+extern unsigned long nova_count_total_blocks(struct super_block *sb);
 inline int nova_search_inodetree(struct nova_sb_info *sbi,
 	unsigned long ino, struct nova_range_node **ret_node);
 inline int nova_insert_blocktree(struct nova_sb_info *sbi,

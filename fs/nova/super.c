@@ -939,7 +939,7 @@ int nova_statfs(struct dentry *d, struct kstatfs *buf)
 	buf->f_type = NOVA_SUPER_MAGIC;
 	buf->f_bsize = sb->s_blocksize;
 
-	buf->f_blocks = sbi->num_blocks;
+	buf->f_blocks = nova_count_total_blocks(sb);
 	buf->f_bfree = buf->f_bavail = nova_count_free_blocks(sb);
 	buf->f_files = LONG_MAX;
 	buf->f_ffree = LONG_MAX - sbi->s_inodes_used_count;

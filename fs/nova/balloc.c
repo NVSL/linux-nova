@@ -27,6 +27,7 @@
 #include <linux/bitops.h>
 #include "nova.h"
 #include "inode.h"
+#include "bdev.h"
 
 int nova_alloc_block_free_lists(struct super_block *sb)
 {
@@ -836,18 +837,42 @@ inline int nova_new_log_blocks(struct super_block *sb,
 	return allocated;
 }
 
+unsigned long nova_count_total_blocks(struct super_block *sb)
+{
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	unsigned long num_total_blocks = sbi->num_blocks;
+	struct bdev_info* bdi = NULL;
+	int i = 0;
+
+	for (i = TIER_BDEV_LOW-1; i <= TIER_BDEV_HIGH-1; i++) {
+		bdi = &sbi->bdev_list[i];
+		num_total_blocks += bdi->capacity_page;
+	}
+
+	return num_total_blocks;
+}
+
+
 unsigned long nova_count_free_blocks(struct super_block *sb)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct free_list *free_list;
+	struct bdev_free_list *bfl;
 	unsigned long num_free_blocks = 0;
-	int i;
+	int i, j;
 
 	for (i = 0; i < sbi->cpus; i++) {
 		free_list = nova_get_free_list(sb, i);
 		num_free_blocks += free_list->num_free_blocks;
 	}
 
+	for (i=TIER_BDEV_LOW;i<=TIER_BDEV_HIGH;++i) {
+		for (j=0;j<sbi->cpus;++j) {
+			bfl = nova_get_bdev_free_list(sbi,i,j);
+			num_free_blocks += bfl->num_free_blocks;
+		}
+	}
+	
 	return num_free_blocks;
 }
 
