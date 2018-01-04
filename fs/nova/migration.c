@@ -566,6 +566,11 @@ int migrate_a_file(struct inode *inode, int from, int to)
     return ret;
 }
 
+int migrate_a_file_to_pmem(struct inode *inode) {
+    if (current_tier(inode) == TIER_PMEM) return 0;
+    else return migrate_a_file(inode, current_tier(inode), TIER_PMEM);
+}
+
 int do_migrate_a_file(struct inode *inode) {
     if (is_not_same_tier(inode)) {
         nova_info("Write entries of inode %lu is not in the same tier", inode->i_ino);

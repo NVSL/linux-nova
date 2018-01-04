@@ -191,9 +191,14 @@ static int nova_migration(struct inode *inode, struct file *file) {
 			break;
 		default:
 			nova_info("Unidentified file access mode.\n");
-			break;
+			goto out;
 	}
-	
+
+	if (file->f_flags & O_SYNC) {
+		migrate_a_file_to_pmem(inode);
+		goto end;
+	}
+
 	if (DEBUG_DO_MIGRATION) nova_info("Do migration.\n");
 	// Tiering migration
 	if (DEBUG_BFL_INFO) {

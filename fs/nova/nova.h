@@ -1221,6 +1221,7 @@ inline unsigned long get_dram_buffer_offset(struct nova_sb_info *sbi, void *buf)
 inline unsigned long get_dram_buffer_offset_off(struct nova_sb_info *sbi, unsigned long nvmm);
 inline bool is_dram_buffer_addr(struct nova_sb_info *sbi, void *addr);
 int migrate_a_file(struct inode *inode, int from, int to);
+int migrate_a_file_to_pmem(struct inode *inode);
 int do_migrate_a_file(struct inode *inode);
 void print_all_wb_locks(struct nova_sb_info *sbi);
 void print_wb_locks(struct nova_sb_info *sbi);
