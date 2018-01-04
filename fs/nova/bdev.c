@@ -652,7 +652,7 @@ void print_all_bfl(struct super_block *sb){
 }
 
 // blocknr: global block number
-static int get_bfl_index(struct nova_sb_info *sbi, unsigned long blocknr) {
+int get_bfl_index(struct nova_sb_info *sbi, unsigned long blocknr) {
 	int i;
 	struct bdev_free_list *bfl = NULL;
 	for (i=0;i<(TIER_BDEV_HIGH-TIER_BDEV_LOW+1)*sbi->cpus;++i) {
@@ -726,6 +726,12 @@ static int get_tier_range(struct nova_sb_info *sbi, unsigned long blocknr,
 		return i;
 	}
 	return -1;
+}
+
+// blocknr: global block number
+inline int get_tier_range_node(struct nova_sb_info *sbi, 
+	struct nova_range_node* nrn) {
+	return get_tier_range(sbi, nrn->range_low, nrn->range_high - nrn->range_low + 1);
 }
 
 // blocknr: global block number

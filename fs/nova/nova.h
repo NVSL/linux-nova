@@ -514,8 +514,6 @@ struct scan_bitmap {
 	struct single_scan_bm scan_bm_1G;
 };
 
-
-
 struct inode_map {
 	struct mutex		inode_table_mutex;
 	struct rb_root		inode_inuse_tree;
@@ -524,12 +522,6 @@ struct inode_map {
 	int			allocated;
 	int			freed;
 };
-
-
-
-
-
-
 
 /* Old entry is freeable if it is appended after the latest snapshot */
 static inline int old_entry_freeable(struct super_block *sb, u64 epoch_id)
@@ -1080,12 +1072,17 @@ int flush_bal_entry(struct nova_sb_info *sbi);
 int nova_alloc_bdev_block_free_lists(struct super_block *sb);
 void nova_init_bdev_blockmap(struct super_block *sb, int recovery);
 unsigned long get_offset_of_tier(struct nova_sb_info *sbi, int tier);
-inline unsigned long get_raw_from_blocknr(struct nova_sb_info *sbi, unsigned long blocknr);
-inline unsigned long get_blocknr_from_raw(struct nova_sb_info *sbi, int tier, unsigned long blocknr);
-int nova_bdev_write_block(struct nova_sb_info *sbi, struct block_device *device, unsigned long offset,
-	unsigned long size, struct page *page, bool sync);
-int nova_bdev_read_block(struct nova_sb_info *sbi, struct block_device *device, unsigned long offset,
-	unsigned long size, struct page *page, bool sync);
+int get_bfl_index(struct nova_sb_info *sbi, unsigned long blocknr);
+inline int get_tier_range_node(struct nova_sb_info *sbi, 
+	struct nova_range_node* nrn);
+inline unsigned long get_raw_from_blocknr(struct nova_sb_info *sbi, 
+	unsigned long blocknr);
+inline unsigned long get_blocknr_from_raw(struct nova_sb_info *sbi, int tier, 
+	unsigned long blocknr);
+int nova_bdev_write_block(struct nova_sb_info *sbi, struct block_device *device, 
+	unsigned long offset, unsigned long size, struct page *page, bool sync);
+int nova_bdev_read_block(struct nova_sb_info *sbi, struct block_device *device,
+	unsigned long offset, unsigned long size, struct page *page, bool sync);
 void print_a_page(void* addr);
 int nova_free_blocks_from_bdev(struct nova_sb_info *sbi, unsigned long blocknr,
 	unsigned long num_blocks);
