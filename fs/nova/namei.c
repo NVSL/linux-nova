@@ -510,8 +510,10 @@ static int nova_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 	}
 
 	pi = nova_get_inode(sb, inode);
-	nova_append_dir_init_entries(sb, pi, inode->i_ino, dir->i_ino,
+	err = nova_append_dir_init_entries(sb, pi, inode->i_ino, dir->i_ino,
 					epoch_id);
+	if (IS_ERR_VALUE(err))
+		goto out_err;
 
 	/* Build the dir tree */
 	si = NOVA_I(inode);

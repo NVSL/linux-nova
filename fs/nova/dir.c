@@ -626,8 +626,7 @@ static int nova_readdir_fast(struct file *file, struct dir_context *ctx)
 
 	if (sih->log_head == 0) {
 		nova_err(sb, "Dir %lu log is NULL!\n", inode->i_ino);
-		BUG();
-		return -EINVAL;
+		return -ENOSPC;
 	}
 
 	pos = ctx->pos;
