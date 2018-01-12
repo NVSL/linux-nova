@@ -344,7 +344,7 @@ copy:
         if (DEBUG_BUFFERING) nova_info("[Buffering] failed\n");
         if (DEBUG_BUFFERING) print_all_wb_locks(sbi);
         if (DEBUG_BUFFERING) nova_info("[Buffering] Retry\n");
-		msleep(500);
+		msleep(100);
         goto retry;
     }
 
@@ -763,7 +763,6 @@ int migrate_a_file(struct inode *inode, int from, int to)
 	isize = i_size_read(inode);
 	end_index = (isize) >> PAGE_SHIFT;
     
-
     for (i=0;i<=end_index>>osb;++i) {
         n1 = 0;
         n2 = 0;
@@ -787,9 +786,16 @@ int migrate_a_file(struct inode *inode, int from, int to)
         } while (index < (i+1)<<osb);
 
         if (index == (i+1)<<osb) {
-            migrate_group_entry_blocks(sbi, inode, from, to, i<<osb, ((i+1)<<osb) -1);
-            nentry += n1;
-            continue;
+            if (n1!=1) {
+                migrate_group_entry_blocks(sbi, inode, from, to, i<<osb, ((i+1)<<osb) -1);
+                nentry += n1;
+                continue;
+            }
+            else {
+                ret = migrate_entry_blocks(sbi, from, to, si, entry, 0);
+                nentry += 1;
+                continue;
+            }
         }
 mig: 
         index = i<<osb;

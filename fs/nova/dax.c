@@ -867,7 +867,6 @@ int nova_check_overlap_vmas(struct super_block *sb,
 	return 0;
 }
 
-
 /*
  * return > 0, # of blocks mapped or allocated.
  * return = 0, if plain lookup failed.
