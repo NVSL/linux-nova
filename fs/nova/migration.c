@@ -519,7 +519,7 @@ int migrate_entry_blocks(struct nova_sb_info *sbi, int from, int to,
     /* Step 4. Free */
     ret = nova_free_blocks_tier(sbi, entry->block >> PAGE_SHIFT, entry->num_pages);
     // Update tiering info
-    entry->tier = to;
+    entry->tier = to;    
     entry->block = blocknr << PAGE_SHIFT;
 
 	nova_update_entry_csum(entry);
@@ -537,6 +537,7 @@ int migrate_group_entry_blocks(struct nova_sb_info *sbi, struct inode *inode, in
 	u64 epoch_id;
 	u32 time;
 	u64 file_size = cpu_to_le64(inode->i_size);
+	u64 begin_tail = 0;
     unsigned long blocknr = 0;
     unsigned int opt_size = 1 << sbi->bdev_list[to - TIER_BDEV_LOW].opt_size_bit;
 	struct nova_file_write_entry *entry;
@@ -581,25 +582,34 @@ int migrate_group_entry_blocks(struct nova_sb_info *sbi, struct inode *inode, in
     }
     entry = entry_base;
     nova_info("Merge entry: [Before] [entry] %llu,%llu,%u\n", entry_first->block >> PAGE_SHIFT, entry_first->pgoff, entry_first->num_pages);
-    memcpy_to_pmem_nocache(&entry_data, entry, sizeof(struct nova_file_write_entry));
 
 	epoch_id = nova_get_epoch_id(sb);
 	time = current_time(inode).tv_sec;
     nova_init_file_write_entry(sb, sih, &entry_data, epoch_id,
 		entry_first->pgoff, opt_size, 
         entry_first->block >> PAGE_SHIFT, time, file_size);
+    entry_data.tier = to;    
 
+	nova_update_entry_csum(&entry_data);
     ret = nova_append_file_write_entry(sb, pi, inode, &entry_data, &update);
     if (ret) {
         nova_dbg("%s: append inode entry failed\n", __func__);
         ret = -ENOSPC;
     }
-
+    
 	data_bits = blk_type_to_shift[sih->i_blk_type];
 	sih->i_blocks += (opt_size << (data_bits - sb->s_blocksize_bits));
+
+    begin_tail = update.curr_entry;
     nova_memunlock_inode(sb, pi);
 	nova_update_inode(sb, inode, pi, &update, 1);
 	nova_memlock_inode(sb, pi);
+    
+    ret = nova_reassign_file_tree(sb, sih, begin_tail, false);
+	if (ret) return ret;
+
+	inode->i_blocks = sih->i_blocks;
+    
 	sih->trans_id++;
 
     nova_info("Merge entry: [After ] [entry] %llu,%llu,%u\n", entry_data.block >> PAGE_SHIFT, entry_data.pgoff, entry_data.num_pages);
@@ -629,6 +639,7 @@ int nova_split_entry(struct super_block *sb, struct inode *inode,
 	u64 epoch_id;
 	u32 time;
 	u64 file_size = cpu_to_le64(inode->i_size);
+	u64 begin_tail = 0;
     unsigned int osb = sbi->bdev_list[tier - TIER_BDEV_LOW].opt_size_bit;
     unsigned long num_prev = ((entry->pgoff + entry->num_pages -1) >> osb << osb )- entry->pgoff;
 
@@ -636,14 +647,15 @@ int nova_split_entry(struct super_block *sb, struct inode *inode,
 	update.alter_tail = sih->alter_log_tail;
 
     nova_info("Split entry: [Before] [entry] %llu,%llu,%u\n", entry->block >> PAGE_SHIFT, entry->pgoff, entry->num_pages);
-    memcpy_to_pmem_nocache(&entry_data, entry, sizeof(struct nova_file_write_entry));
 
 	epoch_id = nova_get_epoch_id(sb);
 	time = current_time(inode).tv_sec;
     nova_init_file_write_entry(sb, sih, &entry_data, epoch_id,
 		entry->pgoff + num_prev, entry->num_pages - num_prev, 
         (entry->block >> PAGE_SHIFT) + num_prev, time, file_size);
-
+    entry_data.tier = tier;    
+    
+	nova_update_entry_csum(&entry_data);
     entry->num_pages = num_prev;
 
     ret = nova_append_file_write_entry(sb, pi, inode, &entry_data, &update);
@@ -654,9 +666,16 @@ int nova_split_entry(struct super_block *sb, struct inode *inode,
     
 	data_bits = blk_type_to_shift[sih->i_blk_type];
 	sih->i_blocks += ((entry->num_pages - num_prev) << (data_bits - sb->s_blocksize_bits));
+    begin_tail = update.curr_entry;
     nova_memunlock_inode(sb, pi);
 	nova_update_inode(sb, inode, pi, &update, 1);
 	nova_memlock_inode(sb, pi);
+
+    ret = nova_reassign_file_tree(sb, sih, begin_tail, false);
+	if (ret) return ret;
+
+	inode->i_blocks = sih->i_blocks;
+
 	sih->trans_id++;
 
     nova_info("[After] [entry] %llu,%llu,%u [new_entry] %llu,%llu,%u\n", 
@@ -814,8 +833,9 @@ int migrate_a_file_to_pmem(struct inode *inode) {
 }
 
 int do_migrate_a_file(struct inode *inode) {
-    if (is_not_same_tier(inode)) {
-        nova_info("Write entries of inode %lu is not in the same tier", inode->i_ino);
+    int ret = is_not_same_tier(inode);
+    if (ret) {
+        nova_info("Write entries of inode %lu is not in the same tier (index: %d)", inode->i_ino, ret);
         return -1;
     }
     switch (current_tier(inode)) {

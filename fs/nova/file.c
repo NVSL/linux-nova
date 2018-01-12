@@ -389,7 +389,7 @@ next:
 		nova_memlock_inode(sb, pi);
 
 		/* Update file tree */
-		ret = nova_reassign_file_tree(sb, sih, begin_tail);
+		ret = nova_reassign_file_tree(sb, sih, begin_tail, true);
 		if (ret)
 			goto out;
 
@@ -885,7 +885,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	nova_memlock_inode(sb, pi);
 
 	/* Free the overlap blocks after the write is committed */
-	ret = nova_reassign_file_tree(sb, sih, begin_tail);
+	ret = nova_reassign_file_tree(sb, sih, begin_tail, true);
 	if (ret)
 		goto out;
 

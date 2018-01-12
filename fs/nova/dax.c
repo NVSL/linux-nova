@@ -142,7 +142,7 @@ int nova_handle_head_tail_blocks(struct super_block *sb,
 }
 
 int nova_reassign_file_tree(struct super_block *sb,
-	struct nova_inode_info_header *sih, u64 begin_tail)
+	struct nova_inode_info_header *sih, u64 begin_tail, bool free)
 {
 	void *addr;
 	struct nova_file_write_entry *entry;
@@ -177,7 +177,7 @@ int nova_reassign_file_tree(struct super_block *sb,
 			continue;
 		}
 
-		nova_assign_write_entry(sb, sih, entry, entryc, true);
+		nova_assign_write_entry(sb, sih, entry, entryc, free);
 		curr_p += entry_size;
 	}
 
@@ -784,7 +784,7 @@ ssize_t do_nova_inplace_file_write(struct file *filp,
 		NOVA_STATS_ADD(inplace_new_blocks, 1);
 
 		/* Update file tree */
-		ret = nova_reassign_file_tree(sb, sih, begin_tail);
+		ret = nova_reassign_file_tree(sb, sih, begin_tail, true);
 		if (ret)
 			goto out;
 	}
@@ -980,7 +980,7 @@ again:
 	nova_update_inode(sb, inode, pi, &update, 1);
 	nova_memlock_inode(sb, pi);
 
-	ret = nova_reassign_file_tree(sb, sih, update.curr_entry);
+	ret = nova_reassign_file_tree(sb, sih, update.curr_entry, true);
 	if (ret) {
 		nova_dbgv("%s: nova_reassign_file_tree failed: %d\n",
 			  __func__,  ret);

@@ -1126,7 +1126,7 @@ void nova_init_file_write_entry(struct super_block *sb,
 	u64 epoch_id, u64 pgoff, int num_pages, u64 blocknr, u32 time,
 	u64 size);
 int nova_reassign_file_tree(struct super_block *sb,
-	struct nova_inode_info_header *sih, u64 begin_tail);
+	struct nova_inode_info_header *sih, u64 begin_tail, bool free);
 unsigned long nova_check_existing_entry(struct super_block *sb,
 	struct inode *inode, unsigned long num_blocks, unsigned long start_blk,
 	struct nova_file_write_entry **ret_entry,

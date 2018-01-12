@@ -462,7 +462,7 @@ int nova_mmap_to_new_blocks(struct vm_area_struct *vma,
 	nova_memlock_inode(sb, pi);
 
 	/* Update file tree */
-	ret = nova_reassign_file_tree(sb, sih, begin_tail);
+	ret = nova_reassign_file_tree(sb, sih, begin_tail, true);
 	if (ret)
 		goto out;
 
