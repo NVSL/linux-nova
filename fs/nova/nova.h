@@ -1094,7 +1094,7 @@ int reclaim_get_nvmm(struct super_block *sb, unsigned long nvmm,
 	struct nova_file_write_entry *entry, unsigned long pgoff);
 void print_all_bfl(struct super_block *sb);
 long nova_alloc_block_tier(struct nova_sb_info *sbi, int tier, int cpuid, unsigned long *blocknr,
-	unsigned int num_blocks);
+	unsigned int num_blocks, enum nova_alloc_direction from_tail);
 
 /* checksum.c */
 void nova_update_entry_csum(void *entry);
