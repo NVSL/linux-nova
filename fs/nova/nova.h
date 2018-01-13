@@ -81,6 +81,12 @@
 #define TIER_DRAM 	 	254
 #define TIER_MIGRATING 	255
 
+#define MIGRATION_POLICY 2
+#define MIGRATION_ROTATE 1
+#define MIGRATION_DOWNWARD 2
+
+#define MIGRATION_DOWNWARD_PERC 10
+
 /*
  * Debug code
  */
@@ -1219,7 +1225,8 @@ inline unsigned long get_dram_buffer_offset_off(struct nova_sb_info *sbi, unsign
 inline bool is_dram_buffer_addr(struct nova_sb_info *sbi, void *addr);
 int migrate_a_file(struct inode *inode, int from, int to);
 int migrate_a_file_to_pmem(struct inode *inode);
-int do_migrate_a_file(struct inode *inode);
+int do_migrate_a_file_rotate(struct inode *inode);
+int do_migrate_a_file_downward(struct inode *inode);
 void print_all_wb_locks(struct nova_sb_info *sbi);
 void print_wb_locks(struct nova_sb_info *sbi);
 

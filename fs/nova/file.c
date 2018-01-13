@@ -205,7 +205,8 @@ static int nova_migration(struct inode *inode, struct file *file) {
 		nova_info("[Start migration]\n");
 		print_all_bfl(sb);
 	}
-	do_migrate_a_file(inode);
+	if ( MIGRATION_POLICY == MIGRATION_ROTATE ) do_migrate_a_file_rotate(inode);
+	if ( MIGRATION_POLICY == MIGRATION_DOWNWARD ) do_migrate_a_file_downward(inode);
 	if (DEBUG_BFL_INFO) {
 		print_all_bfl(sb);
 		nova_info("[End migration]\n");
