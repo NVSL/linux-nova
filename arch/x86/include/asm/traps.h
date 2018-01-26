@@ -9,6 +9,10 @@
 
 #define dotraplinkage __visible
 
+extern bool install_vpmem_fault (
+    bool (*fn)(struct pt_regs *, unsigned long, unsigned long)
+);
+
 asmlinkage void divide_error(void);
 asmlinkage void debug(void);
 asmlinkage void nmi(void);
@@ -55,6 +59,8 @@ asmlinkage void trace_page_fault(void);
 #define trace_simd_coprocessor_error simd_coprocessor_error
 #define trace_async_page_fault async_page_fault
 #endif
+
+bool install_vpmem_fault(bool (*fn)(struct pt_regs *, unsigned long, unsigned long));
 
 dotraplinkage void do_divide_error(struct pt_regs *, long);
 dotraplinkage void do_debug(struct pt_regs *, long);

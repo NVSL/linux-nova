@@ -101,4 +101,9 @@ void nova_delete_bdev_free_list(struct super_block *sb);
 long nova_bdev_alloc_blocks(struct nova_sb_info *sbi, int tier, int cpuid, unsigned long *blocknr,
 	unsigned int num_blocks, enum nova_alloc_direction from_tail);
 
+
+extern char *bdev_paths[BDEV_COUNT]; // block devices for tiering
+extern int bdev_count;
+extern unsigned long nova_total_size;
+
 #endif

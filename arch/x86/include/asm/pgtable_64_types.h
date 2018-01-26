@@ -81,7 +81,8 @@ typedef struct { pteval_t pte; } pte_t;
 #define __VMALLOC_BASE	_AC(0xff92000000000000, UL)
 #define __VMEMMAP_BASE	_AC(0xffd4000000000000, UL)
 #else
-#define VMALLOC_SIZE_TB	_AC(32, UL)
+
+#define VMALLOC_SIZE_TB	_AC(16, UL)  // Reserve the high 16 TB for tiering
 #define __VMALLOC_BASE	_AC(0xffffc90000000000, UL)
 #define __VMEMMAP_BASE	_AC(0xffffea0000000000, UL)
 #endif

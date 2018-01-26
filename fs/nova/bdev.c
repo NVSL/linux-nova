@@ -9,6 +9,10 @@
 static struct kmem_cache *nova_submit_bio_ret_cache;
 static struct kmem_cache *nova_bal_cache;
 
+char *bdev_paths[BDEV_COUNT]={0}; // block devices for tiering
+int bdev_count=0;
+unsigned long nova_total_size=0;
+
 int nova_init_bio(void) {
 	nova_submit_bio_ret_cache = kmem_cache_create("nova_submit_bio_ret",
 					       sizeof(struct submit_bio_ret),

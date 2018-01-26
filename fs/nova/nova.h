@@ -80,6 +80,7 @@
 #define TIER_BDEV_HIGH 	2
 #define TIER_DRAM 	 	254
 #define TIER_MIGRATING 	255
+#define BDEV_COUNT (TIER_BDEV_HIGH - TIER_BDEV_LOW + 1)
 
 #define MIGRATION_POLICY 2
 #define MIGRATION_ROTATE 1
@@ -1319,6 +1320,9 @@ void nova_print_inode_log(struct super_block *sb, struct inode *inode);
 void nova_print_inode_log_pages(struct super_block *sb, struct inode *inode);
 int nova_check_inode_logs(struct super_block *sb, struct nova_inode *pi);
 void nova_print_free_lists(struct super_block *sb);
+
+/* super.c */
+int nova_get_bdev_info(struct nova_sb_info *sbi);
 
 /* perf.c */
 int nova_test_perf(struct super_block *sb, unsigned int func_id,
