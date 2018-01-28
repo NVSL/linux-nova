@@ -34,7 +34,6 @@
 #define SPM_PGCACHE_SIZE    _AC(SPM_PGCACHE_SIZE_MB << 20, UL)
 #define USE_PMEM_CACHE      0
 
-struct bdev_info *bdev_list;
 struct nova_sb_info *vsbi;
 
 unsigned long vpmem_start=0;
@@ -177,13 +176,14 @@ static void do_flush_page(void *vaddr)
 
 void flush_page(vpte_t *p) {
     int ret = 0;
-    if(p == 0) {
+    if(p == NULL) {
         return;
     }
     if(p->next) p->next->prev = NULL;
     if(p == pagetable->tail)
         pagetable->tail = NULL;
     pagetable->head = p->next;
+    // TODO: What if kernel flushes the page?
     pagetable->size--;
 
     unlock_page(p->page);
@@ -201,19 +201,20 @@ void flush_page(vpte_t *p) {
 
 }
 
-void vpmem_pagecache_init(void) {
-    pagetable->head = 0;
-    pagetable->tail = 0;
+void vpmem_pagecache_init(void) {        
+    pagetable->head = NULL;
+    pagetable->tail = NULL;
+    pagetable->byte = sizeof(struct pagetable_t);
     pagetable->size = 0;
 }
 
 void vpmem_pagecache_cleanup(void) {
-    int m=0;
+    unsigned long m=0;
     vpte_t *curr, *p;
     if(!pagetable) return;
     curr = pagetable->head;
     m = pagetable->size;
-    printk("vpmem: pagetable->size = %d\n", m);
+    printk("vpmem: pagetable->size = %lu\n", m);
     while(curr) {
         p = curr;
         curr = curr->next;
@@ -264,7 +265,7 @@ vpte_t *newpage(unsigned long vaddr) {
 
     lock_page(p->page);
     
-    if(pagetable->head==0) pagetable->head=p;
+    if(pagetable->head==NULL) pagetable->head=p;
     if(pagetable->tail) {
         pagetable->tail->next=p;
         p->prev=pagetable->tail;
@@ -403,6 +404,8 @@ int vpmem_setup(struct nova_sb_info *sbi, unsigned long offset)
     int i;
     unsigned long size=0;
 
+    vsbi = sbi;
+    
     flush_tlb_all();
     vpmem_start = (VPMEM_START + (offset << 30));
 
@@ -410,9 +413,8 @@ int vpmem_setup(struct nova_sb_info *sbi, unsigned long offset)
     
     install_vpmem_fault(vpmem_do_page_fault);
 
-    nova_get_bdev_info(sbi);
     for(i=0; i<bdev_count; i++) {
-        size += bdev_list[i].capacity_page;
+        size += sbi->bdev_list[i].capacity_page;
         map_page[i] = size;
         map_valid[i] = true;
     }
@@ -424,17 +426,12 @@ int vpmem_setup(struct nova_sb_info *sbi, unsigned long offset)
         // TODOzsa pmem size
     vpmem_end = vpmem_start + size;
 
-    bdev_list = sbi->bdev_list;
-    vsbi = sbi;
     pmem.phys_addr = sbi->phys_addr;
     pmem.virt_addr = sbi->virt_addr;
     pmem.size = sbi->initsize;
-    pagetable = (struct pagetable_t*)pmem.virt_addr;
-    pagetable->head = pagetable->tail = NULL;
-    pagetable->byte = sizeof(struct pagetable_t);
-    pagetable->size = 0;
 
     if (size > 0) {
+        pagetable = kmalloc(sizeof(struct pagetable_t), GFP_KERNEL);
         // sbi->virt_addr = vpmem_start;
         // sbi->initsize = size;
         // sbi->replica_reserved_inodes_addr = vpmem_start + size -
@@ -443,7 +440,7 @@ int vpmem_setup(struct nova_sb_info *sbi, unsigned long offset)
         vpmem_pagecache_init();
     }
 
-    printk(KERN_INFO "vpmem: vpmem_setup finished (size = %lu KB)\n", size >> 10);
+    printk(KERN_INFO "vpmem: vpmem_setup finished (size = %lu MB)\n", size >> 8);
 
     return 0;
 }

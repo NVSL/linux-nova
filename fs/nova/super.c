@@ -721,12 +721,6 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 		goto out;
 	}
 
-	nova_dbg("%s: dev pmem, phys_addr 0x%llx, virt_addr %p, size %ld\n",
-                __func__, sbi->phys_addr, sbi->virt_addr, sbi->initsize);
-	vpmem_setup(sbi, 0);
-	nova_dbg("%s: dev vpmem, phys_addr 0x%llx, virt_addr %p, size %ld\n",
-		__func__, sbi->phys_addr, sbi->virt_addr, sbi->initsize);
-
 	// TODO: tiering option
 	retval = nova_get_bdev_info(sbi);
 	if (retval) {
@@ -739,6 +733,12 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 	// nova_info("size of unsigned long:%lu\n",sizeof(unsigned long));
 	
 	if (DEBUG_STARTUP_TEST) bdev_test(sbi);
+	
+	nova_dbg("%s: dev pmem, phys_addr 0x%llx, virt_addr %p, size %ld\n",
+                __func__, sbi->phys_addr, sbi->virt_addr, sbi->initsize);
+	vpmem_setup(sbi, 0);
+	nova_dbg("%s: dev vpmem, phys_addr 0x%llx, virt_addr %p, size %ld\n",
+		__func__, sbi->phys_addr, sbi->virt_addr, sbi->initsize);
 
 	nova_dbg("measure timing %d, metadata checksum %d, inplace update %d, wprotect %d, data checksum %d, data parity %d, DRAM checksum %d\n",
 		measure_timing, metadata_csum,
@@ -1069,6 +1069,8 @@ static void nova_put_super(struct super_block *sb)
 	if (DEBUG_BFL_INFO) print_all_bfl(sb);
 	nova_print_curr_epoch_id(sb);
 
+	vpmem_cleanup();
+	
 	/* It's unmount time, so unmap the nova memory */
 //	nova_print_free_lists(sb);
 	if (sbi->virt_addr) {
@@ -1099,6 +1101,7 @@ static void nova_put_super(struct super_block *sb)
 	kfree(sbi->bal_head);
 	kfree(sbi->bdev_buffer);
 
+	
 	for (i = 0; i < sbi->cpus; i++) {
 		inode_map = &sbi->inode_maps[i];
 		nova_dbgv("CPU %d: inode allocated %d, freed %d\n",
@@ -1404,7 +1407,6 @@ static void __exit exit_nova_fs(void)
 {
 	unregister_filesystem(&nova_fs_type);
 	remove_proc_entry(proc_dirname, NULL);
-	vpmem_cleanup();
 	destroy_snapshot_info_cache();
 	destroy_inodecache();
 	destroy_rangenode_cache();
