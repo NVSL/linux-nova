@@ -168,6 +168,9 @@ struct nova_sb_info {
 	unsigned long *mb_blockoff;
 	struct page **mb_pages;
 
+	/* VPMEM */
+	char *vpmem;
+
 	/* Block device buffer */
 	char *bdev_buffer;
 	struct mutex bb_mutex;
@@ -180,7 +183,7 @@ struct nova_sb_info {
 	spinlock_t *journal_locks;
 
 	/* Per-CPU inode map */
-	struct inode_map	*inode_maps;
+	struct inode_map *inode_maps;
 
 	/* Decide new inode map id */
 	unsigned long map_id;

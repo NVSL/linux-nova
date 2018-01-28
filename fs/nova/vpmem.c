@@ -123,6 +123,7 @@ static pte_t *fill_pte(pmd_t *pmd, unsigned long vaddr)
     return pte_offset_kernel(pmd, vaddr);
 }
 
+/*
 inline int get_bdev(unsigned long pgidx) {
     int i;
     for(i=0; i<bdev_count; i++) {
@@ -131,9 +132,10 @@ inline int get_bdev(unsigned long pgidx) {
     }
     return -EINVAL;
 }
+*/
 
-inline unsigned long virt_to_phys_block(unsigned long vaddr) {
-    return (vaddr-vpmem_start) >> PAGE_SHIFT;
+inline unsigned long virt_to_blockoff(unsigned long vaddr) {
+    return ((vaddr-vpmem_start) >> PAGE_SHIFT) + vsbi->num_blocks;
 }
 
 typedef struct vpte_t vpte_t;
@@ -142,10 +144,15 @@ struct vpte_t {
     struct vpte_t *prev;
     struct page *page;
     pte_t pte;
-    int bdev_index;
-    unsigned long block_offset;
+
     unsigned long vaddr;
-    unsigned long block;
+
+    unsigned long blockoff;
+    struct rw_semaphore rwsem;
+
+    // int bdev_index;
+    // unsigned long block_offset;
+    // unsigned long block;
 };
 
 pte_t *pte_lookup(unsigned long address);
@@ -169,6 +176,7 @@ static void do_flush_page(void *vaddr)
 }
 
 void flush_page(vpte_t *p) {
+    int ret = 0;
     if(p == 0) {
         return;
     }
@@ -180,8 +188,7 @@ void flush_page(vpte_t *p) {
 
     unlock_page(p->page);
     if(pte_dirty(p->pte)) { 
-        struct block_device *bdev_raw = bdev_list[p->bdev_index].bdev_raw;
-        int ret = nova_bdev_write_block(vsbi, bdev_raw, p->block_offset, 1, p->page, BIO_SYNC);
+        ret = nova_bdev_write_blockoff(vsbi, p->blockoff, 1, p->page, BIO_SYNC);
         if(ret) {
             printk("vpmem: error: could not write to bdev (%d)\n", ret);
         } else {
@@ -237,7 +244,6 @@ static struct page *palloc_page(void) {
 #endif
 
 vpte_t *newpage(unsigned long vaddr) {
-    int i;
     vpte_t *p = 0;
     
     if(pagetable->size >= MAX_PAGES)
@@ -266,12 +272,9 @@ vpte_t *newpage(unsigned long vaddr) {
     pagetable->tail=p;
     pagetable->size++;
 
-    p->block_offset = virt_to_phys_block(vaddr);
-    p->bdev_index = get_bdev(p->block_offset);
+    p->blockoff = virt_to_blockoff(vaddr);
     p->vaddr = vaddr;
-    for(i=p->bdev_index-1; i>-1; i--) {
-        p->block_offset -= bdev_list[i].capacity_page;
-    }
+    init_rwsem(&p->rwsem);
     return p;
 }
 
@@ -289,11 +292,11 @@ pte_t *pte_lookup(unsigned long address)
 struct vpte_t *create_page(unsigned long vaddr) {
     int ret = 0;
     vpte_t *p=0;
-    struct block_device *bdev_raw = 0;
 
     p = newpage(vaddr);
-    bdev_raw = bdev_list[p->bdev_index].bdev_raw;
-    ret = nova_bdev_read_block(vsbi, bdev_raw, p->block_offset, 1, p->page, BIO_SYNC);
+    
+    ret = nova_bdev_read_blockoff(vsbi, p->blockoff, 1, p->page, BIO_SYNC);
+
     p->pte = pte_mkclean(mk_pte(p->page, PAGE_KERNEL));
     if(ret) {
         printk("vpmem: error: could not read from bdev (%d)\n", ret);
@@ -402,8 +405,10 @@ int vpmem_setup(struct nova_sb_info *sbi, unsigned long offset)
 
     flush_tlb_all();
     vpmem_start = (VPMEM_START + (offset << 30));
-    // !!!
-    // install_vpmem_fault(vpmem_do_page_fault);
+
+    sbi->vpmem = (char *)vpmem_start;
+    
+    install_vpmem_fault(vpmem_do_page_fault);
 
     nova_get_bdev_info(sbi);
     for(i=0; i<bdev_count; i++) {
@@ -417,7 +422,6 @@ int vpmem_setup(struct nova_sb_info *sbi, unsigned long offset)
     printk(KERN_INFO "vpmem: vpmem starts at %016lx (%lu GB)\n", 
         vpmem_start, size >> 18);
         // TODOzsa pmem size
-    nova_total_size = (size <<= 12);
     vpmem_end = vpmem_start + size;
 
     bdev_list = sbi->bdev_list;
@@ -447,8 +451,8 @@ int vpmem_setup(struct nova_sb_info *sbi, unsigned long offset)
 void vpmem_cleanup(void)
 {
     vpmem_pagecache_cleanup();
-    // !!!
-    // install_vpmem_fault(0);
+
+    install_vpmem_fault(0);
     flush_tlb_all();
     printk(KERN_INFO "vpmem: faults = %ld reads = %ld writes = %ld\n", faults, bdev_read, bdev_write);
 }
@@ -457,7 +461,6 @@ void vpmem_reset(void)
 {
     int i;
     bdev_count = 0;
-    nova_total_size = 0;
     vpmem_end = 0;
     for(i=0; i<BDEV_COUNT; i++) {
         map_valid[i] = false;

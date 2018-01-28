@@ -1090,6 +1090,10 @@ int nova_bdev_write_block(struct nova_sb_info *sbi, struct block_device *device,
 	unsigned long offset, unsigned long size, struct page *page, bool sync);
 int nova_bdev_read_block(struct nova_sb_info *sbi, struct block_device *device,
 	unsigned long offset, unsigned long size, struct page *page, bool sync);
+int nova_bdev_write_blockoff(struct nova_sb_info *sbi, unsigned long blockoff, 
+	unsigned long size, struct page *page, bool sync);
+int nova_bdev_read_blockoff(struct nova_sb_info *sbi, unsigned long blockoff, 
+	unsigned long size, struct page *page, bool sync);
 void print_a_page(void* addr);
 int nova_free_blocks_from_bdev(struct nova_sb_info *sbi, unsigned long blocknr,
 	unsigned long num_blocks);
@@ -1097,6 +1101,7 @@ int nova_bdev_free_blocks(struct nova_sb_info *sbi, int tier, unsigned long bloc
 	unsigned long num_blocks);
 int nova_free_blocks_tier(struct nova_sb_info *sbi, unsigned long blocknr,
 	unsigned long num_blocks);
+int get_tier(struct nova_sb_info *sbi, unsigned long blocknr);
 int reclaim_get_nvmm(struct super_block *sb, unsigned long nvmm,
 	struct nova_file_write_entry *entry, unsigned long pgoff);
 void print_all_bfl(struct super_block *sb);

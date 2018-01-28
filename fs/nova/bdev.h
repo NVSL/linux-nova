@@ -104,6 +104,5 @@ long nova_bdev_alloc_blocks(struct nova_sb_info *sbi, int tier, int cpuid, unsig
 
 extern char *bdev_paths[BDEV_COUNT]; // block devices for tiering
 extern int bdev_count;
-extern unsigned long nova_total_size;
 
 #endif

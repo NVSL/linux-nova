@@ -10,6 +10,7 @@ int  vpmem_init(void);
 int  vpmem_setup(struct nova_sb_info *sbi, unsigned long);
 void vpmem_cleanup(void);
 void vpmem_reset(void);
+
 // int vpmem_pin(unsigned long vaddr, int count);            
 // int vpmem_unpin(unsigned long vaddr, int count);
 int vpmem_cache_pages(unsigned long vaddr, int count);   // To cache a particular page

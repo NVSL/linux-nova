@@ -11,7 +11,6 @@ static struct kmem_cache *nova_bal_cache;
 
 char *bdev_paths[BDEV_COUNT]={0}; // block devices for tiering
 int bdev_count=0;
-unsigned long nova_total_size=0;
 
 int nova_init_bio(void) {
 	nova_submit_bio_ret_cache = kmem_cache_create("nova_submit_bio_ret",
@@ -273,10 +272,18 @@ int nova_bdev_write_byte(struct nova_sb_info *sbi, struct block_device *device, 
 }
 
 // Return 0 on success
-int nova_bdev_write_block(struct nova_sb_info *sbi, struct block_device *device, unsigned long offset,
+inline int nova_bdev_write_block(struct nova_sb_info *sbi, struct block_device *device, unsigned long offset,
 	unsigned long size, struct page *page, bool sync) {
 	return nova_bdev_write_byte(sbi, device, offset<<IO_BLOCK_SIZE_BIT,
 		size<<IO_BLOCK_SIZE_BIT, page, 0, sync);
+}
+
+int nova_bdev_write_blockoff(struct nova_sb_info *sbi, unsigned long blockoff,
+	unsigned long size, struct page *page, bool sync) {
+	int tier = get_tier(sbi, blockoff);
+	struct block_device *device = get_bdev_raw(sbi, tier);
+	unsigned long blk_off = get_raw_from_blocknr(sbi, blockoff);
+	return nova_bdev_write_block(sbi, device, blk_off, size, page, sync);
 }
 
 int nova_bdev_read_byte(struct nova_sb_info *sbi, struct block_device *device, unsigned long offset,
@@ -322,10 +329,18 @@ int nova_bdev_read_byte(struct nova_sb_info *sbi, struct block_device *device, u
 }
 
 // Return 0 on success
-int nova_bdev_read_block(struct nova_sb_info *sbi, struct block_device *device, unsigned long offset,
+inline int nova_bdev_read_block(struct nova_sb_info *sbi, struct block_device *device, unsigned long offset,
 	unsigned long size, struct page *page, bool sync) {
 	return nova_bdev_read_byte(sbi, device,offset<<IO_BLOCK_SIZE_BIT,
 		size<<IO_BLOCK_SIZE_BIT, page, 0, sync);
+}
+
+int nova_bdev_read_blockoff(struct nova_sb_info *sbi, unsigned long blockoff,
+	unsigned long size, struct page *page, bool sync) {
+	int tier = get_tier(sbi, blockoff);
+	struct block_device *device = get_bdev_raw(sbi, tier);
+	unsigned long blk_off = get_raw_from_blocknr(sbi, blockoff);
+	return nova_bdev_read_block(sbi, device, blk_off, size, page, sync);
 }
 
 inline unsigned long nova_get_bdev_block_start(struct nova_sb_info *sbi, int tier)
@@ -706,7 +721,7 @@ inline unsigned long get_blocknr_from_raw(struct nova_sb_info *sbi, int tier,
 }
 
 // blocknr: global block number
-static int get_tier(struct nova_sb_info *sbi, unsigned long blocknr) {
+int get_tier(struct nova_sb_info *sbi, unsigned long blocknr) {
 	int i;
 	// unsigned long tmp = 0;
 	// struct bdev_free_list *bfl = NULL;
