@@ -722,6 +722,8 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 	}
 
 	// TODO: tiering option
+	sbi->num_blocks = sbi->initsize >> PAGE_SHIFT;
+	
 	retval = nova_get_bdev_info(sbi);
 	if (retval) {
 		nova_err(sb, "%s: Failed to get block device info.",
@@ -731,14 +733,14 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 
 	print_all_bdev(sbi);
 	// nova_info("size of unsigned long:%lu\n",sizeof(unsigned long));
-	
-	if (DEBUG_STARTUP_TEST) bdev_test(sbi);
-	
+		
 	nova_dbg("%s: dev pmem, phys_addr 0x%llx, virt_addr %p, size %ld\n",
                 __func__, sbi->phys_addr, sbi->virt_addr, sbi->initsize);
 	vpmem_setup(sbi, 0);
 	nova_dbg("%s: dev vpmem, phys_addr 0x%llx, virt_addr %p, size %ld\n",
 		__func__, sbi->phys_addr, sbi->virt_addr, sbi->initsize);
+
+	if (DEBUG_STARTUP_TEST) bdev_test(sbi);
 
 	nova_dbg("measure timing %d, metadata checksum %d, inplace update %d, wprotect %d, data checksum %d, data parity %d, DRAM checksum %d\n",
 		measure_timing, metadata_csum,
@@ -841,7 +843,7 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 		}
 		goto setup_sb;
 	}
-
+	
 	nova_dbg_verbose("checking physical address 0x%016llx for nova image\n",
 		  (u64)sbi->phys_addr);
 
@@ -916,7 +918,7 @@ setup_sb:
 	retval = 0;
 
 	if (DEBUG_BFL_INFO) print_all_bfl(sb);
-	if (DEBUG_STARTUP_TEST) bfl_test(sbi);
+	// if (DEBUG_STARTUP_TEST) bfl_test(sbi);
 
 	NOVA_END_TIMING(mount_t, mount_time);
 	return retval;

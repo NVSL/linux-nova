@@ -177,8 +177,9 @@ void print_a_page(void* addr) {
 	int j = 0;
 	char space = ' ';
 	p[wordline]='\0';
-	if (c[i]) nova_info("[Page data] (Start with: %c)\n",c[i]);
-	else nova_info("[Page data]\n");
+	nova_info("[Page data] %p\n",addr);
+	// if (c[i]) nova_info("[Page data] (Start with: %c)\n",c[i]);
+	// else nova_info("[Page data] \n");
 	nova_info("----------------\n");
 	while (i<IO_BLOCK_SIZE) {
 		p[0]='\0';
@@ -697,12 +698,12 @@ unsigned long get_offset_of_tier(struct nova_sb_info *sbi, int tier) {
 // Return the start offset of this tier
 unsigned long get_offset_of_blocknr(struct nova_sb_info *sbi, unsigned long blocknr) {
 	int i;
-	struct bdev_free_list *bfl = NULL;
 	unsigned long last = 0;
-	for (i=0;i<(TIER_BDEV_HIGH-TIER_BDEV_LOW+1);++i) {
-		bfl = nova_get_bdev_free_list_flat(sbi, i*(sbi->cpus));
-		if (bfl->block_start > blocknr) goto out;
-		last = bfl->block_start;
+	unsigned long this = sbi->num_blocks;
+	for (i=TIER_PMEM;i<=TIER_BDEV_HIGH;++i) {
+		if (blocknr < this) goto out;
+		last = this;
+		this += sbi->bdev_list[i].capacity_page;
 	}
 out:
 	return last;
@@ -723,13 +724,15 @@ inline unsigned long get_blocknr_from_raw(struct nova_sb_info *sbi, int tier,
 // blocknr: global block number
 int get_tier(struct nova_sb_info *sbi, unsigned long blocknr) {
 	int i;
-	// unsigned long tmp = 0;
-	// struct bdev_free_list *bfl = NULL;
-	for (i=0;i<=TIER_BDEV_HIGH;++i) {
-		if (nova_tier_start_block(sbi,i) <= blocknr && blocknr <= nova_tier_end_block(sbi,i))
-		return i;
+	unsigned long last = 0;
+	unsigned long this = sbi->num_blocks;
+	for (i=TIER_PMEM;i<=TIER_BDEV_HIGH;++i) {
+		if (blocknr < this) goto out;
+		last = this;
+		this += sbi->bdev_list[i].capacity_page;
 	}
-	return -1;
+out:
+	return i;
 }
 
 // blocknr: global block number
@@ -1015,9 +1018,10 @@ void bdev_test(struct nova_sb_info *sbi) {
 		modify_a_page(pg_vir_addr,'C'+i%20);
 		ret = nova_bdev_write_block(sbi, bdev_raw, i, 1, pg, BIO_SYNC);
 		ret = nova_bdev_read_block(sbi, bdev_raw, i, 1, pg2, BIO_SYNC);
-		if (i%100==50) {
+		if (i%2==0) {
 			nova_info("[%s] [Block %d]\n",bdev_name,i);
 		 	print_a_page(pg_vir_addr2);
+			print_a_page(sbi->vpmem+i*IO_BLOCK_SIZE);
 		}
 	}
 	

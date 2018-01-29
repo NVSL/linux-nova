@@ -134,7 +134,7 @@ inline int get_bdev(unsigned long pgidx) {
 */
 
 inline unsigned long virt_to_blockoff(unsigned long vaddr) {
-    return ((vaddr-vpmem_start) >> PAGE_SHIFT) + vsbi->num_blocks;
+    return (vaddr-vpmem_start + vsbi->initsize) >> PAGE_SHIFT;
 }
 
 typedef struct vpte_t vpte_t;
@@ -245,7 +245,7 @@ static struct page *palloc_page(void) {
 #endif
 
 vpte_t *newpage(unsigned long vaddr) {
-    vpte_t *p = 0;
+    vpte_t *p = NULL;
     
     if(pagetable->size >= MAX_PAGES)
         flush_page(pagetable->head);
@@ -257,6 +257,7 @@ vpte_t *newpage(unsigned long vaddr) {
 #endif
 
     p->next = p->prev=0;
+
 #if USE_PMEM_CACHE == 1
     p->page = palloc_page();
 #else
@@ -293,9 +294,11 @@ pte_t *pte_lookup(unsigned long address)
 struct vpte_t *create_page(unsigned long vaddr) {
     int ret = 0;
     vpte_t *p=0;
-
+    
     p = newpage(vaddr);
     
+    // nova_info("vaddr:%p,blockoff:%lu page:%p\n", (void *)vaddr, p->blockoff, p->page);
+
     ret = nova_bdev_read_blockoff(vsbi, p->blockoff, 1, p->page, BIO_SYNC);
 
     p->pte = pte_mkclean(mk_pte(p->page, PAGE_KERNEL));
