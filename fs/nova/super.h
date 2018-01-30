@@ -193,7 +193,8 @@ struct nova_sb_info {
 
 	/* NOVA-tiering */
 	struct bdev_info *bdev_list;
-
+	int bdev_count;
+	
 	/* Free block list for block devices */
 	struct bdev_free_list *bdev_free_list;
 

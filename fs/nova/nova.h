@@ -77,10 +77,10 @@
  */
 #define TIER_PMEM 		0
 #define TIER_BDEV_LOW 	1
-#define TIER_BDEV_HIGH 	2
+// #define TIER_BDEV_HIGH 	2
 #define TIER_DRAM 	 	254
 #define TIER_MIGRATING 	255
-#define BDEV_COUNT (TIER_BDEV_HIGH - TIER_BDEV_LOW + 1)
+#define BDEV_COUNT_MAX 	10
 
 #define MIGRATION_POLICY 2
 #define MIGRATION_ROTATE 1
@@ -181,6 +181,8 @@ extern int wprotect;
 extern int data_csum;
 extern int data_parity;
 extern int dram_struct_csum;
+
+extern int TIER_BDEV_HIGH;
 
 extern unsigned int blk_type_to_shift[NOVA_BLOCK_TYPE_MAX];
 extern unsigned int blk_type_to_size[NOVA_BLOCK_TYPE_MAX];

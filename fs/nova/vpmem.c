@@ -38,8 +38,8 @@ struct nova_sb_info *vsbi;
 
 unsigned long vpmem_start=0;
 unsigned long vpmem_end=0;
-unsigned long map_page[BDEV_COUNT]={0};
-bool map_valid[BDEV_COUNT]={0};
+unsigned long map_page[BDEV_COUNT_MAX]={0};
+bool map_valid[BDEV_COUNT_MAX]={0};
 
 static unsigned long faults=0;
 static unsigned long bdev_read=0;
@@ -125,7 +125,7 @@ static pte_t *fill_pte(pmd_t *pmd, unsigned long vaddr)
 /*
 inline int get_bdev(unsigned long pgidx) {
     int i;
-    for(i=0; i<bdev_count; i++) {
+    for(i=0; i<TIER_BDEV_HIGH; i++) {
         if(map_valid[i] && pgidx < map_page[i])
             return i;
     }
@@ -416,17 +416,17 @@ int vpmem_setup(struct nova_sb_info *sbi, unsigned long offset)
     
     install_vpmem_fault(vpmem_do_page_fault);
 
-    for(i=0; i<bdev_count; i++) {
+    for(i=0; i<TIER_BDEV_HIGH; i++) {
         size += sbi->bdev_list[i].capacity_page;
         map_page[i] = size;
         map_valid[i] = true;
     }
-    
-    print_all_bdev(sbi);
+        
+    // print_all_bdev(sbi);
 
     printk(KERN_INFO "vpmem: vpmem starts at %016lx (%lu GB)\n", 
         vpmem_start, size >> 18);
-        // TODOzsa pmem size
+        
     vpmem_end = vpmem_start + size;
 
     pmem.phys_addr = sbi->phys_addr;
@@ -460,12 +460,10 @@ void vpmem_cleanup(void)
 void vpmem_reset(void)
 {
     int i;
-    bdev_count = 0;
     vpmem_end = 0;
-    for(i=0; i<BDEV_COUNT; i++) {
+    for(i=0; i<TIER_BDEV_HIGH; i++) {
         map_valid[i] = false;
         map_page[i] = 0;
-        bdev_paths[i] = NULL;
     }
 }
 

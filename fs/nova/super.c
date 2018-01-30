@@ -174,11 +174,10 @@ static int nova_get_nvmm_info(struct super_block *sb,
 // TODO: Link with mount option
 static char *find_block_device(int tier) {
 	if (tier == TIER_BDEV_LOW) return find_a_raw_nvme();
-	if (tier == TIER_BDEV_HIGH) return find_a_raw_sata();
+	if (tier == TIER_BDEV_LOW+1) return find_a_raw_sata();
 	return NULL;
 }
 
-// TODO: more than one block device
 int nova_get_bdev_info(struct nova_sb_info *sbi){
 	struct block_device *bdev_raw;
 	char *bdev_path = NULL;
@@ -187,9 +186,9 @@ int nova_get_bdev_info(struct nova_sb_info *sbi){
 	int i=0;
 	const fmode_t mode = FMODE_READ | FMODE_WRITE;
 	
-	sbi->bdev_list = kcalloc(TIER_BDEV_HIGH, sizeof(struct bdev_info), GFP_KERNEL);	
+	sbi->bdev_list = kcalloc(BDEV_COUNT_MAX, sizeof(struct bdev_info), GFP_KERNEL);	
 	if (!sbi->bdev_list) return -ENOMEM;
-	for (i=TIER_BDEV_LOW-1;i<=TIER_BDEV_HIGH-1;++i) {	
+	for (i=0;i<=1;++i) {	
 		bdev_path = find_block_device(i+1);
 		if (!bdev_path) return -ENOENT;
 
@@ -197,15 +196,18 @@ int nova_get_bdev_info(struct nova_sb_info *sbi){
 		if (IS_ERR(bdev_raw))
 		{
 			nova_info("bdev: error opening raw device <%lu>\n", PTR_ERR(bdev_raw));
+			return -ENOENT;
 		}
 		if (!bdget(bdev_raw->bd_dev))
 		{
 			nova_info("bdev: error bdget()\n");
+			return -ENOENT;
 		}
 		if (blkdev_get(bdev_raw, mode, NULL))
 		{
 			nova_info("bdev: error blkdev_get()\n");
 			bdput(bdev_raw);
+			return -ENOENT;
 		}	
 
 		sbi->bdev_list[i].bdev_raw = bdev_raw;
@@ -220,10 +222,55 @@ int nova_get_bdev_info(struct nova_sb_info *sbi){
 		sbi->bdev_list[i].capacity_page = nsector>>3;
 		sbi->bdev_list[i].opt_size_bit = 6; //temp value
 		strcat(sbi->bdev_list[i].bdev_name,bd_disk->disk_name);
-		bdev_count++;
+		TIER_BDEV_HIGH++;
 	}
-	nova_info("nova_get_bdev_info out\n");
 
+	return 0;
+}
+
+int nova_get_one_bdev_info(struct nova_sb_info *sbi, char *bdev_path){
+	struct block_device *bdev_raw;
+	struct gendisk*	bd_disk = NULL;
+	unsigned long nsector;
+	int i=TIER_BDEV_HIGH;
+	const fmode_t mode = FMODE_READ | FMODE_WRITE;
+	
+	sbi->bdev_list = kcalloc(BDEV_COUNT_MAX, sizeof(struct bdev_info), GFP_KERNEL);	
+	if (!sbi->bdev_list) return -ENOMEM;
+	
+	if (!bdev_path) return -ENOENT;
+
+	bdev_raw = lookup_bdev(bdev_path);
+	if (IS_ERR(bdev_raw))
+	{
+		nova_info("bdev: error opening raw device <%lu>\n", PTR_ERR(bdev_raw));
+		return -ENOENT;
+	}
+	if (!bdget(bdev_raw->bd_dev))
+	{
+		nova_info("bdev: error bdget()\n");
+		return -ENOENT;
+	}
+	if (blkdev_get(bdev_raw, mode, NULL))
+	{
+		nova_info("bdev: error blkdev_get()\n");
+		bdput(bdev_raw);
+		return -ENOENT;
+	}	
+
+	sbi->bdev_list[i].bdev_raw = bdev_raw;
+	strcat(sbi->bdev_list[i].bdev_path, bdev_path);
+
+	bd_disk = bdev_raw->bd_disk;
+	nsector = get_capacity(bd_disk);
+	sbi->bdev_list[i].major = bd_disk->major;
+	sbi->bdev_list[i].minors = bd_disk->minors;
+	sbi->bdev_list[i].capacity_sector = nsector;
+	sbi->bdev_list[i].capacity_page = nsector>>3;
+	sbi->bdev_list[i].opt_size_bit = 6; //temp value
+	strcat(sbi->bdev_list[i].bdev_name,bd_disk->disk_name);
+	TIER_BDEV_HIGH++;
+		
 	return 0;
 }
 
@@ -263,10 +310,11 @@ static const match_table_t tokens = {
 	{ Opt_err,	     NULL		  },
 };
 
-static int nova_parse_tiering_options(char *options)
+static int nova_parse_tiering_options(struct nova_sb_info *sbi, char *options)
 {
 	char *p;
 	substring_t args[MAX_OPT_ARGS];
+	char *bdev_path = kmalloc(20*sizeof(char),GFP_KERNEL); // block devices for tiering
 
 	vpmem_reset();
 
@@ -281,15 +329,22 @@ static int nova_parse_tiering_options(char *options)
 
 		token = match_token(p, tokens, args);
 		if(token == Opt_bdev) {
-			bdev_paths[bdev_count] = match_strdup(args);
-			if (!bdev_paths[bdev_count]) {
+			bdev_path = match_strdup(args);
+			if (!bdev_path) {
 				return -EINVAL;
 			}
-			nova_info("NOVA: Tier %d is set to %s\n", bdev_count+2, bdev_paths[bdev_count]);
-			bdev_count++;
+			if (strcmp(bdev_path,"auto")==0) {
+				return nova_get_bdev_info(sbi);
+			}
+			if (nova_get_one_bdev_info(sbi,bdev_path) != 0) {
+				nova_info("Get bdev [%s] failed!\n", bdev_path);
+				continue;
+			}
+			nova_info("Tier %d is set to %s\n", TIER_BDEV_HIGH+1, bdev_path);
 		}
 	}
 
+	kfree(bdev_path);
 	return 0;
 }
 
@@ -712,8 +767,6 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 		goto out;
 	}
 
-	nova_parse_tiering_options(data);
-
 	retval = nova_get_nvmm_info(sb, sbi);
 	if (retval) {
 		nova_err(sb, "%s: Failed to get nvmm info.",
@@ -724,18 +777,24 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 	// TODO: tiering option
 	sbi->num_blocks = sbi->initsize >> PAGE_SHIFT;
 	
-	retval = nova_get_bdev_info(sbi);
+	TIER_BDEV_HIGH = 0;
+	retval = nova_parse_tiering_options(sbi, data);
 	if (retval) {
 		nova_err(sb, "%s: Failed to get block device info.",
 			 __func__);
 		goto out;
 	}
+	if (TIER_BDEV_HIGH == 0) {
+		nova_info("No block device is found, invoking Auto Get.");
+		nova_get_bdev_info(sbi);
+	}
 
 	print_all_bdev(sbi);
 	// nova_info("size of unsigned long:%lu\n",sizeof(unsigned long));
 		
-	nova_dbg("%s: dev pmem, phys_addr 0x%llx, virt_addr %p, size %ld\n",
-                __func__, sbi->phys_addr, sbi->virt_addr, sbi->initsize);
+	// nova_dbg("%s: dev pmem, phys_addr 0x%llx, virt_addr %p, size %ld\n",
+    //             __func__, sbi->phys_addr, sbi->virt_addr, sbi->initsize);
+
 	vpmem_setup(sbi, 0);
 	nova_dbg("%s: dev vpmem, phys_addr 0x%llx, virt_addr %p, size %ld\n",
 		__func__, sbi->phys_addr, sbi->virt_addr, sbi->initsize);
@@ -1035,7 +1094,8 @@ int nova_remount(struct super_block *sb, int *mntflags, char *data)
 	old_sb_flags = sb->s_flags;
 	old_mount_opt = sbi->s_mount_opt;
 
-	nova_parse_tiering_options(data);
+	TIER_BDEV_HIGH = 0;
+	nova_parse_tiering_options(sbi, data);
 
 	if (nova_parse_options(data, sbi, 1))
 		goto restore_opt;

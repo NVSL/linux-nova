@@ -965,7 +965,7 @@ int do_migrate_a_file_rotate(struct inode *inode) {
         return migrate_a_file(inode, TIER_PMEM, TIER_BDEV_LOW);
     case TIER_BDEV_LOW:
         return migrate_a_file(inode, TIER_BDEV_LOW, TIER_BDEV_HIGH);
-    case TIER_BDEV_HIGH:
+    case TIER_BDEV_LOW+1:
         return migrate_a_file(inode, TIER_BDEV_HIGH, TIER_PMEM);
     default:
         nova_info("Unsupported migration of inode %lu at tier %d", inode->i_ino, current_tier(inode));

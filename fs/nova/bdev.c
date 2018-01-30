@@ -8,9 +8,7 @@
 
 static struct kmem_cache *nova_submit_bio_ret_cache;
 static struct kmem_cache *nova_bal_cache;
-
-char *bdev_paths[BDEV_COUNT]={0}; // block devices for tiering
-int bdev_count=0;
+int TIER_BDEV_HIGH = 0;
 
 int nova_init_bio(void) {
 	nova_submit_bio_ret_cache = kmem_cache_create("nova_submit_bio_ret",
@@ -42,13 +40,13 @@ char* find_a_raw_sata(void) {
 	fp = filp_open("/dev/sda1", O_RDONLY, 0644);
 	if (fp == (struct file *)-ENOENT) {
 		strcat(bdev, "/dev/sda\0");
-		nova_info("sda\n");
+		nova_info("sda is selected\n");
 		return bdev;
 	}
 	fp = filp_open("/dev/sdb1", O_RDONLY, 0644);
 	if (fp == (struct file *)-ENOENT) {
 		strcat(bdev, "/dev/sdb\0");
-		nova_info("sdb\n");
+		nova_info("sdb is selected\n");
 		return bdev;
 	}
 	return NULL;
@@ -68,14 +66,14 @@ void print_all_bdev(struct nova_sb_info *sbi) {
 	for (i=TIER_BDEV_LOW-1;i<=TIER_BDEV_HIGH-1;++i) {
 		bdi = &sbi->bdev_list[i];
 		
-		if (i==TIER_BDEV_LOW-1) nova_info("----------------\n");
+		if (i==TIER_BDEV_LOW-1) nova_info("------------------------------\n");
 		nova_info("[Block device of Tier %d]\n",i+1);
-		nova_info("Disk path: %s\n", bdi->bdev_path);
-		nova_info("Disk name: %s\n", bdi->bdev_name);
+		nova_info("Device path: %s\n", bdi->bdev_path);
+		nova_info("Device name: %s\n", bdi->bdev_name);
 		nova_info("Major: %d Minor: %d\n", bdi->major ,bdi->minors);
 		nova_info("Size: %lu sectors (%luMB)\n",bdi->capacity_sector,
 			bdi->capacity_page >> 8);
-		nova_info("----------------\n");
+		nova_info("------------------------------\n");
 	}
 }
 
