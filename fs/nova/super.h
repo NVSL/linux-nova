@@ -162,7 +162,6 @@ struct nova_sb_info {
 	
 	/* Mini DRAM buffer */
 	char *mini_buffer;
-	struct mutex mb_mutex;
 	struct rw_semaphore *mb_sem;
 	int *mb_tier;
 	unsigned long *mb_blockoff;

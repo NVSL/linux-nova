@@ -158,9 +158,7 @@ persist:
 
 static int nova_migration(struct inode *inode, struct file *file) {
 	struct super_block *sb = inode->i_sb;
-	struct nova_sb_info *sbi = NOVA_SB(sb);
 
-	mutex_lock(&sbi->mb_mutex);
 	if (DEBUG_DO_MIGRATION) {
 		if(rwsem_is_locked(&inode->i_rwsem)) nova_info("nova_flush is locked\n");
 		else nova_info("nova_flush is not locked\n");
@@ -218,7 +216,6 @@ out:
 	if (DEBUG_DO_MIGRATION) nova_info("No migration.\n");
 
 end:
-	mutex_unlock(&sbi->mb_mutex);	
 	return 0;
 }
 
@@ -650,7 +647,6 @@ skip_verify:
 		reclaim_get_nvmm(sb, nvmm, entry, index);
 		
 		// if (is_dram_buffer_addr(sbi, dax_mem)) {
-		// 	mb_offset = get_dram_buffer_offset(sbi, dax_mem);
 		// 	if (DEBUG_BUFFERING) nova_info("put off %lu, nr %lu", mb_offset - index + (unsigned long)entry->pgoff, (unsigned long)entry->num_pages);
 		// 	put_dram_buffer_range(sbi, mb_offset - index + entry->pgoff, entry->num_pages);
 		// }

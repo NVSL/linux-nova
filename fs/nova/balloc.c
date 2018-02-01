@@ -360,9 +360,7 @@ int nova_free_blocks(struct super_block *sb, unsigned long blocknr,
 	unsigned long block_low;
 	unsigned long block_high;
 	unsigned long num_blocks = 0;
-	unsigned long mb_index = 0;
-	unsigned long mb_blocknr = 0;
-	int mb_tier = 0;
+	unsigned long blockoff = 0;
 	struct nova_range_node *prev = NULL;
 	struct nova_range_node *next = NULL;
 	struct nova_range_node *curr_node;
@@ -379,21 +377,17 @@ int nova_free_blocks(struct super_block *sb, unsigned long blocknr,
 
 	NOVA_START_TIMING(free_blocks_t, free_time);
 
-	// For bdev, the data blocks on bdev and mb are both "data to be freed"
+	// For bdev, the data blocks on bdev and vpmem are both "data to be freed"
 	dax_mem = nova_get_block(sb, (blocknr << PAGE_SHIFT));
 	if (is_dram_buffer_addr(sbi, dax_mem)) {
-		mb_index = get_dram_buffer_offset(sbi, dax_mem);
+		blockoff = virt_to_blockoff((unsigned long)dax_mem);
 		num_blocks = nova_get_numblocks(btype) * num;
-		nova_info("about to free ind:%lu num:%lu", mb_index, num_blocks);
 
-		mb_blocknr = sbi->mb_blockoff[mb_index];
-		mb_tier = sbi->mb_tier[mb_index];
-
-		free_dram_buffer_range(sbi, mb_index, num_blocks);
-		clear_dram_buffer_range(sbi, mb_index, num_blocks);
+		put_dram_buffer_range(sbi, blockoff, num_blocks);
+		clear_dram_buffer_range(sbi, blockoff, num_blocks);
 
 		if (DEBUG_MB_LOCK) print_all_wb_locks(sbi);
-		ret = nova_free_blocks_tier(sbi, mb_blocknr, num_blocks);
+		ret = nova_free_blocks_tier(sbi, blockoff, num_blocks);
 		if (DEBUG_MB_LOCK) print_all_wb_locks(sbi);
 
 

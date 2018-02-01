@@ -133,8 +133,14 @@ inline int get_bdev(unsigned long pgidx) {
 }
 */
 
+// Virtual address to global block offset
 inline unsigned long virt_to_blockoff(unsigned long vaddr) {
     return (vaddr-vpmem_start + vsbi->initsize) >> PAGE_SHIFT;
+}
+
+// Global block offset to virtual address
+inline unsigned long blockoff_to_virt(unsigned long blockoff) {
+    return vpmem_start - vsbi->initsize + ( blockoff << PAGE_SHIFT);
 }
 
 typedef struct vpte_t vpte_t;
@@ -333,18 +339,18 @@ void insert_tlb(struct vpte_t *page) {
 	spin_unlock_irqrestore(&pgt_lock, flags);
 }
 
-int vpmem_cache_pages(unsigned long vaddr, int count)
+int vpmem_cache_pages(unsigned long vaddr, unsigned long count)
 {
-    int i;
+    unsigned long i;
     for(i=0; i<count; i++) {
         insert_tlb(create_page(vaddr & PAGE_MASK));
     }
     return 0;
 }
 
-int vpmem_flush_pages(unsigned long vaddr, int count)
+int vpmem_flush_pages(unsigned long vaddr, unsigned long count)
 {
-    int m=0;
+    unsigned long m=0;
     vpte_t *curr, *p;
     unsigned long end = 0; 
     if(!pagetable) return -EINVAL;
@@ -361,6 +367,49 @@ int vpmem_flush_pages(unsigned long vaddr, int count)
         }
     }
     return 0;
+}
+
+int vpmem_range_rwsem_set(unsigned long vaddr, unsigned long count, bool down)
+{
+    unsigned long m=0;
+    vpte_t *curr, *p;
+    unsigned long end = 0; 
+    if(!pagetable) return -EINVAL;
+    vaddr &= PAGE_MASK;
+    end = vaddr + (count << PAGE_SHIFT);
+    m = count;
+    curr = pagetable->head;
+    while(curr && m > 0) {
+        p = curr;
+        curr = curr->next;
+        if(p->vaddr >= vaddr && p->vaddr < end) {
+            if (down) down_read(&p->rwsem);
+            else if(rwsem_is_locked(&p->rwsem)) up_read(&p->rwsem);
+            m--;
+        }
+    }
+    return 0;
+}
+
+bool vpmem_is_range_rwsem_locked(unsigned long vaddr, unsigned long count)
+{
+    unsigned long m=0;
+    vpte_t *curr, *p;
+    unsigned long end = 0; 
+    if(!pagetable) return -EINVAL;
+    vaddr &= PAGE_MASK;
+    end = vaddr + (count << PAGE_SHIFT);
+    m = count;
+    curr = pagetable->head;
+    while(curr && m > 0) {
+        p = curr;
+        curr = curr->next;
+        if(p->vaddr >= vaddr && p->vaddr < end) {
+            if(rwsem_is_locked(&p->rwsem)) return true;
+            m--;
+        }
+    }
+    return false;
 }
 
 int vpmem_cached(unsigned long block, int count)

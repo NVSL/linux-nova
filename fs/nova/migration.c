@@ -41,7 +41,6 @@ int init_dram_buffer(struct nova_sb_info *sbi) {
     sbi->bb_pages = kcalloc(BDEV_BUFFER_PAGES, sizeof(struct page *), GFP_KERNEL);
 	if (!sbi->bb_pages) return -ENOMEM;
 
-	mutex_init(&sbi->mb_mutex);
 
 	for (i = 0; i < MINI_BUFFER_PAGES; i++) {
     	init_rwsem(&sbi->mb_sem[i]);
@@ -62,45 +61,6 @@ int init_dram_buffer(struct nova_sb_info *sbi) {
 }
 
 /*
- * [ONLY FOR STARTUP TEST!]
- * Buffer a data block from bdev to DRAM
- *
- * Strategy: 
- *      Find the first unlock page (local offset)
- *      If none, wait on one according to page offset
- * Return buffer number (locked buffer)
- */ 
-int buffer_data_block_from_bdev(struct nova_sb_info *sbi, int tier, unsigned long blockoff) {
-    int i = 0;
-    int ret = 0;
-	struct page *pg;
-	if (DEBUG_BUFFERING) nova_info("[Buffering] block:%lu\n" ,blockoff);
-
-	mutex_lock(&sbi->mb_mutex);
-	for (i = blockoff%MINI_BUFFER_PAGES; i < blockoff%MINI_BUFFER_PAGES+MINI_BUFFER_PAGES; i++)
-		if (down_read_trylock(&sbi->mb_sem[i%MINI_BUFFER_PAGES])) {
-            down_read(&sbi->mb_sem[i%MINI_BUFFER_PAGES]);
-            goto copy;
-        }
-    // All mini-buffers are full
-    down_read(&sbi->mb_sem[i%MINI_BUFFER_PAGES]);
-
-copy:
-	mutex_unlock(&sbi->mb_mutex);
-    i = i%MINI_BUFFER_PAGES;
-    pg = sbi->mb_pages[i];
-    ret = nova_bdev_read_block(sbi, sbi->bdev_list[tier-TIER_BDEV_LOW].bdev_raw, blockoff, 1, pg, BIO_SYNC);
-
-    // print_a_page(&sbi->mini_buffer[i]);
-    if (ret) return -ret;
-    
-    sbi->mb_tier[i] = tier;
-    sbi->mb_blockoff[i] = blockoff;
-    
-    return i;
-}
-
-/*
  * put_dram_buffer(): Release the spin lock of the buffer
  *      The buffer is still valid after put()
  * clear_dram_buffer(): Clear the metadata (and data) of the buffer
@@ -108,83 +68,16 @@ copy:
  * Must call put() before clear()
  * There is NO DIRTY BUFFER in NOVA, since COW is applied to every write
  */ 
-inline int clear_dram_buffer(struct nova_sb_info *sbi, unsigned long number) {
-    sbi->mb_tier[number] = TIER_PMEM;
-    sbi->mb_blockoff[number] = 0;
-    return 0;
+int clear_dram_buffer_range(struct nova_sb_info *sbi, unsigned long blockoff, unsigned long length) {
+    return vpmem_flush_pages(blockoff_to_virt(blockoff), length);
 }
 
-inline int put_dram_buffer(struct nova_sb_info *sbi, unsigned long number) {
-    if (rwsem_is_locked(&sbi->mb_sem[number])) up_read(&sbi->mb_sem[number]);
-    return 0;
-}
-
-inline int free_dram_buffer(struct nova_sb_info *sbi, unsigned long number) {
-    if (rwsem_is_locked(&sbi->mb_sem[number])) {
-        // nova_info("mb_sem[%lu]->count = %ld.\n",number,sbi->mb_sem[number].count.counter);
-        up_read(&sbi->mb_sem[number]);
-    }
-    return 0;
-}
-
-int free_dram_buffer_range(struct nova_sb_info *sbi, unsigned long number, unsigned long length) {
-    unsigned long i;
-    if (DEBUG_BUFFERING) print_wb_locks(sbi);
-    if (DEBUG_BUFFERING) print_all_wb_locks(sbi);
-
-	mutex_lock(&sbi->mb_mutex);
-    for (i=number; i<number+length; ++i) {
-        free_dram_buffer(sbi,i);
-    }       
-	mutex_unlock(&sbi->mb_mutex); 
-
-    if (DEBUG_MIGRATION_FREE) nova_info("put off2 %lu, nr %lu\n",number,length);
-    if (DEBUG_BUFFERING) print_wb_locks(sbi);
-    if (DEBUG_BUFFERING) print_all_wb_locks(sbi);
-    return 0;
-}
-
-int clear_dram_buffer_range(struct nova_sb_info *sbi, unsigned long number, int length) {
-    unsigned long i;
-    for (i=number; i<number+length; ++i) {
-        clear_dram_buffer(sbi,i);
-    }    
-    return 0;
-}
-
-int put_dram_buffer_range(struct nova_sb_info *sbi, unsigned long number, unsigned long length) {
-    unsigned long i;
-    if (DEBUG_BUFFERING) print_wb_locks(sbi);
-    if (DEBUG_BUFFERING) print_all_wb_locks(sbi);
-
-	mutex_lock(&sbi->mb_mutex);
-    for (i=number; i<number+length; ++i) {
-        put_dram_buffer(sbi,i);
-    }       
-	mutex_unlock(&sbi->mb_mutex); 
-
-    if (DEBUG_MIGRATION_FREE) nova_info("put off2 %lu, nr %lu\n",number,length);
-    if (DEBUG_BUFFERING) print_wb_locks(sbi);
-    if (DEBUG_BUFFERING) print_all_wb_locks(sbi);
-    return 0;
+int put_dram_buffer_range(struct nova_sb_info *sbi, unsigned long blockoff, unsigned long length) {
+    return vpmem_range_rwsem_set(blockoff_to_virt(blockoff), length, RWSEM_UP);
 }
 
 bool is_dram_buffer_addr(struct nova_sb_info *sbi, void *addr) {
-    unsigned long long a = (unsigned long long)(sbi->mini_buffer) >> (PAGE_SHIFT+MINI_BUFFER_PAGES_BIT);
-    unsigned long long b = (unsigned long long)addr >> (PAGE_SHIFT+MINI_BUFFER_PAGES_BIT);
-    // nova_info("A%llu\n",(unsigned long long)(sbi->mini_buffer) >> (PAGE_SHIFT+MINI_BUFFER_PAGES_BIT));
-    // nova_info("B%llu\n",(unsigned long long)addr >> (PAGE_SHIFT+MINI_BUFFER_PAGES_BIT));
-    return (a == b)||(a+1 == b);
-}
-
-// Convert from nova_get_block()
-inline unsigned long get_dram_buffer_offset(struct nova_sb_info *sbi, void *buf) {
-    return ((unsigned long long)buf-(unsigned long long)sbi->mini_buffer) >> PAGE_SHIFT;
-}
-
-// Convert from get_nvmm()
-inline unsigned long get_dram_buffer_offset_off(struct nova_sb_info *sbi, unsigned long nvmm) {    
-    return get_dram_buffer_offset(sbi, (void *)convert_from_logical_offset(nvmm << PAGE_SHIFT));
+    return (vpmem_start <= (unsigned long)addr) && ((unsigned long)addr <= vpmem_end);
 }
 
 void print_all_wb_locks(struct nova_sb_info *sbi) {
@@ -445,18 +338,10 @@ int migrate_blocks(struct nova_sb_info *sbi, unsigned long blockfrom,
  * Only check the corresponding mb-page, not the other pages.
  * Because in the ultimate design, each block will only have one buffer page.
  */ 
-bool is_entry_busy(struct nova_sb_info *sbi, struct nova_file_write_entry *entry) {
-    int i;
-    unsigned long blockoff = entry->block;
-    
+bool is_entry_busy(struct nova_sb_info *sbi, struct nova_file_write_entry *entry) {    
     if (is_tier_migrating(entry->tier)) return 1;
     if (!is_tier_bdev(entry->tier)) return 0;
-    for (i=blockoff%MINI_BUFFER_PAGES; i< blockoff%MINI_BUFFER_PAGES + entry->num_pages; ++i) {
-        if (i>=MINI_BUFFER_PAGES) return 0;
-        if (sbi->mb_tier[i] == entry->tier 
-            && sbi->mb_blockoff[i] == blockoff-blockoff%MINI_BUFFER_PAGES+i
-            && rwsem_is_locked(&sbi->mb_sem[i])) return 1;
-    }
+    if (vpmem_is_range_rwsem_locked(blockoff_to_virt(entry->block), entry->num_pages)) return 1;
     
     return 0;
 }

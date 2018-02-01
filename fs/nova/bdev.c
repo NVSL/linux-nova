@@ -957,16 +957,9 @@ int reclaim_get_nvmm(struct super_block *sb, unsigned long nvmm,
 	struct nova_file_write_entry *entry, unsigned long pgoff){		
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	void *dax_mem = nova_get_block(sb, (nvmm << PAGE_SHIFT));
-	unsigned long mb_offset = 0;
 	
 	if (is_dram_buffer_addr(sbi, dax_mem)) {
-		mb_offset = get_dram_buffer_offset(sbi, dax_mem);
-		if (DEBUG_BUFFERING) 
-			nova_info("put off %lu, nr %lu", mb_offset - pgoff + 
-			(unsigned long)entry->pgoff, (unsigned long)entry->num_pages);
-
-		put_dram_buffer_range(sbi, mb_offset - pgoff + entry->pgoff, entry->num_pages);
-		return 0;
+		return put_dram_buffer_range(sbi, virt_to_blockoff((unsigned long)dax_mem), entry->num_pages);
 	}
 	return 1;
 }
@@ -1029,7 +1022,6 @@ void bdev_test(struct nova_sb_info *sbi) {
 void bfl_test(struct nova_sb_info *sbi) {
 	unsigned long tmp;
 	long ret;
-	int i = 0;
 
 	nova_info("size of struct bio_vec:%lu\n",sizeof(struct bio_vec));
 	nova_info("size of struct submit_bio_ret:%lu\n",sizeof(struct submit_bio_ret));
@@ -1045,10 +1037,4 @@ void bfl_test(struct nova_sb_info *sbi) {
 	ret = nova_bdev_alloc_blocks(sbi, TIER_BDEV_LOW, ANY_CPU, &tmp, 2, ALLOC_FROM_HEAD);
 	nova_info("[bfl5] ret:%lu, offset:%lu" ,ret, tmp);
 
-	for (i=0;i<33;++i) {
-		nova_info("[bfl6] block %d\n", i); 
-		ret = buffer_data_block_from_bdev(sbi,1,i);
-		nova_info("[bfl6] buffer %lu\n", ret); 
-		put_dram_buffer(sbi, ret);
-	}
 }

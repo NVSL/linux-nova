@@ -52,8 +52,9 @@
 #include "nova_def.h"
 #include "stats.h"
 #include "snapshot.h"
-// #include "bdev.h"
 #include "debug.h"
+#include "vpmem.h"
+// #include "bdev.h"
 
 #define PAGE_SHIFT_2M 21
 #define PAGE_SHIFT_1G 30
@@ -69,6 +70,9 @@
 #define IO_BLOCK_SIZE_BIT 12
 #define BIO_ASYNC 0
 #define BIO_SYNC 1
+
+#define RWSEM_UP 0
+#define RWSEM_DOWN 1
 
 /* 
  * Tiering level number
@@ -638,6 +642,13 @@ nova_get_write_entry(struct super_block *sb,
 int buffer_data_block_from_bdev_range(struct nova_sb_info *sbi, int tier, int blockoff, int length);
 void nova_update_entry_csum(void *entry);
 
+int vpmem_cache_pages(unsigned long vaddr, unsigned long count);   // To cache a particular page
+int vpmem_flush_pages(unsigned long vaddr, unsigned long count);   // To free a cached page if it was presented
+int vpmem_cached(unsigned long vaddr, int count);        // To check if a particular page is present in the cache
+
+int vpmem_range_rwsem_set(unsigned long vaddr, unsigned long count, bool down);
+bool vpmem_is_range_rwsem_locked(unsigned long vaddr, unsigned long count);
+
 /*
  * Find data at a file offset (pgoff) in the data pointed to by a write log
  * entry.
@@ -647,7 +658,7 @@ static unsigned long get_nvmm(struct super_block *sb,
 	struct nova_inode_info_header *sih,
 	struct nova_file_write_entry *entry, unsigned long pgoff)
 {
-	int mb_index = 0;
+	// int mb_index = 0;
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	unsigned long ret = 0;
 
@@ -683,17 +694,13 @@ retry:
 	}
 	if (is_tier_bdev(entry->tier)) {
 		if (DEBUG_GET_NVMM) nova_info("[Get] Get from TIER_BDEV\n");
-		mb_index = buffer_data_block_from_bdev_range(sbi, entry->tier, entry->block >> PAGE_SHIFT, entry->num_pages);
-		if (mb_index<0) {
-			nova_info("get_nvmm failed\n");
-			return 0;
-		}
-		nova_update_entry_csum(entry);
-		// nova_info("ret %p, %llu,%d\n",sbi->mini_buffer,((unsigned long long)(sbi->mini_buffer) >> PAGE_SHIFT),mb_index);
-		// nova_info("ret %p",ret);
-		ret = (unsigned long)((unsigned long long)(sbi->mini_buffer) >> PAGE_SHIFT) + 
-		(unsigned long long)mb_index + pgoff - entry->pgoff;
-		// nova_info("ret %p",rett);
+		
+		ret = (unsigned long)((unsigned long long)(sbi->vpmem) >> PAGE_SHIFT) + 
+		(unsigned long long)entry->block - sbi->num_blocks + pgoff - entry->pgoff;
+
+		vpmem_cache_pages(ret, entry->num_pages);
+		vpmem_range_rwsem_set(ret, entry->num_pages, RWSEM_DOWN);
+
 		return convert_to_logical_offset(ret);
 	}
 	return 0;
@@ -1225,11 +1232,8 @@ int init_dram_buffer(struct nova_sb_info *sbi);
 int buffer_data_block_from_bdev(struct nova_sb_info *sbi, int tier, unsigned long blockoff);
 inline int clear_dram_buffer(struct nova_sb_info *sbi, unsigned long number);
 inline int put_dram_buffer(struct nova_sb_info *sbi, unsigned long number);
-int clear_dram_buffer_range(struct nova_sb_info *sbi, unsigned long number, int length);
-int put_dram_buffer_range(struct nova_sb_info *sbi, unsigned long number, unsigned long length);
-int free_dram_buffer_range(struct nova_sb_info *sbi, unsigned long number, unsigned long length);
-inline unsigned long get_dram_buffer_offset(struct nova_sb_info *sbi, void *buf);
-inline unsigned long get_dram_buffer_offset_off(struct nova_sb_info *sbi, unsigned long nvmm);
+int clear_dram_buffer_range(struct nova_sb_info *sbi, unsigned long blockoff, unsigned long length);
+int put_dram_buffer_range(struct nova_sb_info *sbi, unsigned long blockoff, unsigned long length);
 inline bool is_dram_buffer_addr(struct nova_sb_info *sbi, void *addr);
 int migrate_a_file(struct inode *inode, int from, int to);
 int migrate_a_file_to_pmem(struct inode *inode);
@@ -1330,6 +1334,9 @@ void nova_print_free_lists(struct super_block *sb);
 
 /* super.c */
 int nova_get_bdev_info(struct nova_sb_info *sbi);
+
+/* vpmem.c */
+int vpmem_setup(struct nova_sb_info *sbi, unsigned long);
 
 /* perf.c */
 int nova_test_perf(struct super_block *sb, unsigned int func_id,
