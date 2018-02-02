@@ -608,7 +608,7 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 		
 		nvmm = get_nvmm(sb, sih, entryc, index);
 		dax_mem = nova_get_block(sb, (nvmm << PAGE_SHIFT));
-		nova_info("nvmm: %p, dax_mem: %p\n",nvmm, dax_mem);
+		nova_info("nvmm: %lx, dax_mem: %p\n",nvmm, dax_mem);
 		print_a_page(dax_mem);
 
 memcpy:

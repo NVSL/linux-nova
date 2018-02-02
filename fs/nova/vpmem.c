@@ -485,7 +485,7 @@ int vpmem_setup(struct nova_sb_info *sbi, unsigned long offset)
     printk(KERN_INFO "vpmem: vpmem starts at %016lx (%lu GB)\n", 
         vpmem_start, size >> 18);
         
-    vpmem_end = vpmem_start + size;
+    vpmem_end = vpmem_start + (size << 12);
 
     pmem.phys_addr = sbi->phys_addr;
     pmem.virt_addr = sbi->virt_addr;
