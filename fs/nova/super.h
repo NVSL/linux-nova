@@ -160,13 +160,6 @@ struct nova_sb_info {
 	u32 zero_csum[8];
 	void *zero_parity;
 	
-	/* Mini DRAM buffer */
-	char *mini_buffer;
-	struct rw_semaphore *mb_sem;
-	int *mb_tier;
-	unsigned long *mb_blockoff;
-	struct page **mb_pages;
-
 	/* VPMEM */
 	char *vpmem;
 

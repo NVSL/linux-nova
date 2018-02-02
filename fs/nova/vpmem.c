@@ -412,9 +412,9 @@ bool vpmem_is_range_rwsem_locked(unsigned long vaddr, unsigned long count)
     return false;
 }
 
-int vpmem_cached(unsigned long block, int count)
+unsigned long vpmem_cached(unsigned long block, unsigned long count)
 {
-    int m=0;
+    unsigned long m=0;
     vpte_t *curr, *p;
     if(!pagetable) return -EINVAL;
     m = count;
@@ -427,6 +427,15 @@ int vpmem_cached(unsigned long block, int count)
         }
     }
     return count-m;
+}
+
+int vpmem_cache_pages_safe(unsigned long vaddr, unsigned long count) {
+    unsigned long num = vpmem_cached(virt_to_blockoff(vaddr), count);
+    if (num == 0) return vpmem_cache_pages(vaddr, count);
+    else {
+        vpmem_flush_pages(vaddr, count);
+        return vpmem_cache_pages(vaddr, count);
+    }
 }
 
 bool vpmem_do_page_fault(struct pt_regs *regs, unsigned long error_code, unsigned long vaddr)

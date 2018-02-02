@@ -86,7 +86,7 @@
 #define TIER_MIGRATING 	255
 #define BDEV_COUNT_MAX 	10
 
-#define MIGRATION_POLICY 2
+#define MIGRATION_POLICY 1
 #define MIGRATION_ROTATE 1
 #define MIGRATION_DOWNWARD 2
 
@@ -642,13 +642,6 @@ nova_get_write_entry(struct super_block *sb,
 int buffer_data_block_from_bdev_range(struct nova_sb_info *sbi, int tier, int blockoff, int length);
 void nova_update_entry_csum(void *entry);
 
-int vpmem_cache_pages(unsigned long vaddr, unsigned long count);   // To cache a particular page
-int vpmem_flush_pages(unsigned long vaddr, unsigned long count);   // To free a cached page if it was presented
-int vpmem_cached(unsigned long vaddr, int count);        // To check if a particular page is present in the cache
-
-int vpmem_range_rwsem_set(unsigned long vaddr, unsigned long count, bool down);
-bool vpmem_is_range_rwsem_locked(unsigned long vaddr, unsigned long count);
-
 /*
  * Find data at a file offset (pgoff) in the data pointed to by a write log
  * entry.
@@ -695,11 +688,16 @@ retry:
 	if (is_tier_bdev(entry->tier)) {
 		if (DEBUG_GET_NVMM) nova_info("[Get] Get from TIER_BDEV\n");
 		
-		ret = (unsigned long)((unsigned long long)(sbi->vpmem) >> PAGE_SHIFT) + 
-		(unsigned long long)entry->block - sbi->num_blocks + pgoff - entry->pgoff;
+		// ret = ((unsigned long)(sbi->vpmem + entry->block) >> PAGE_SHIFT) 
+		// 	- sbi->num_blocks + pgoff - entry->pgoff;
 
-		vpmem_cache_pages(ret, entry->num_pages);
-		vpmem_range_rwsem_set(ret, entry->num_pages, RWSEM_DOWN);
+		ret = ((blockoff_to_virt(entry->block >> PAGE_SHIFT)) >> PAGE_SHIFT)
+			+ pgoff - entry->pgoff;
+
+		nova_info("ret %lu %lu %lu block %llu num %d\n",ret,(unsigned long)sbi->vpmem,ret - (unsigned long)sbi->vpmem,entry->block >> PAGE_SHIFT,entry->num_pages);
+
+		// vpmem_cache_pages_safe(blockoff_to_virt(entry->block >> PAGE_SHIFT), entry->num_pages);
+		// vpmem_range_rwsem_set(blockoff_to_virt(entry->block >> PAGE_SHIFT), entry->num_pages, RWSEM_DOWN);
 
 		return convert_to_logical_offset(ret);
 	}
@@ -1239,8 +1237,6 @@ int migrate_a_file(struct inode *inode, int from, int to);
 int migrate_a_file_to_pmem(struct inode *inode);
 int do_migrate_a_file_rotate(struct inode *inode);
 int do_migrate_a_file_downward(struct inode *inode);
-void print_all_wb_locks(struct nova_sb_info *sbi);
-void print_wb_locks(struct nova_sb_info *sbi);
 
 /* mprotect.c */
 extern int nova_dax_mem_protect(struct super_block *sb,

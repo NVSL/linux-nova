@@ -1004,12 +1004,11 @@ void bdev_test(struct nova_sb_info *sbi) {
 	ret = nova_bdev_write_block(sbi, bdev_raw, 1, 1, pg, BIO_SYNC);
 	ret = nova_bdev_write_block(sbi, bdev_raw, capacity_page-1, 1, pg, BIO_SYNC);
 	// Page read
-	for (i=0;i<20;++i) {
-		if (i>capacity_page-2) continue;
+	for (i=0;i<capacity_page;++i) {
 		modify_a_page(pg_vir_addr,'C'+i%20);
 		ret = nova_bdev_write_block(sbi, bdev_raw, i, 1, pg, BIO_SYNC);
 		ret = nova_bdev_read_block(sbi, bdev_raw, i, 1, pg2, BIO_SYNC);
-		if (i%2==0) {
+		if (i%5==0) {
 			nova_info("[%s] [Block %d]\n",bdev_name,i);
 		 	print_a_page(pg_vir_addr2);
 			print_a_page(sbi->vpmem+i*IO_BLOCK_SIZE);

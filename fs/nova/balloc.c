@@ -386,9 +386,7 @@ int nova_free_blocks(struct super_block *sb, unsigned long blocknr,
 		put_dram_buffer_range(sbi, blockoff, num_blocks);
 		clear_dram_buffer_range(sbi, blockoff, num_blocks);
 
-		if (DEBUG_MB_LOCK) print_all_wb_locks(sbi);
 		ret = nova_free_blocks_tier(sbi, blockoff, num_blocks);
-		if (DEBUG_MB_LOCK) print_all_wb_locks(sbi);
 
 
 		NOVA_END_TIMING(free_blocks_t, free_time);

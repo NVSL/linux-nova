@@ -5,35 +5,15 @@
  * [About Mini Buffer]
  * It is a temporary buffer solution for tiering file system.
  * Includes: (for each buffer page)
- *      mb_sem: the rw_semaphore
  *          down_read: mini-buffer in use
  *          down_write: under-migration
  *      tier: tier number
  *      blocknr: blocknr in this tier
- *      mb_pages: actual mini-buffer page
  */
 
 // Allocate a DRAM buffer in sbi
 int init_dram_buffer(struct nova_sb_info *sbi) {
     unsigned int i = 0;
-
-	sbi->mb_sem = kcalloc(MINI_BUFFER_PAGES, sizeof(struct rw_semaphore), GFP_KERNEL);
-	if (!sbi->mb_sem) return -ENOMEM;
-
-	// sbi->mb_count = kcalloc(MINI_BUFFER_PAGES, sizeof(int), GFP_KERNEL);
-	// if (!sbi->mb_count) return -ENOMEM;
-
-	sbi->mb_tier = kcalloc(MINI_BUFFER_PAGES, sizeof(int), GFP_KERNEL);
-	if (!sbi->mb_tier) return -ENOMEM;
-
-	sbi->mb_blockoff = kcalloc(MINI_BUFFER_PAGES, sizeof(int), GFP_KERNEL);
-	if (!sbi->mb_blockoff) return -ENOMEM;
-
-	sbi->mini_buffer = kcalloc(MINI_BUFFER_PAGES, IO_BLOCK_SIZE, GFP_KERNEL);
-	if (!sbi->mini_buffer) return -ENOMEM;
-
-    sbi->mb_pages = kcalloc(MINI_BUFFER_PAGES, sizeof(struct page *), GFP_KERNEL);
-	if (!sbi->mb_pages) return -ENOMEM;
 
 	sbi->bdev_buffer = kcalloc(BDEV_BUFFER_PAGES, IO_BLOCK_SIZE, GFP_KERNEL);
 	if (!sbi->bdev_buffer) return -ENOMEM;
@@ -41,12 +21,7 @@ int init_dram_buffer(struct nova_sb_info *sbi) {
     sbi->bb_pages = kcalloc(BDEV_BUFFER_PAGES, sizeof(struct page *), GFP_KERNEL);
 	if (!sbi->bb_pages) return -ENOMEM;
 
-
-	for (i = 0; i < MINI_BUFFER_PAGES; i++) {
-    	init_rwsem(&sbi->mb_sem[i]);
-        sbi->mb_pages[i] = virt_to_page(sbi->mini_buffer+i*IO_BLOCK_SIZE);
-    }
-    
+   
 	mutex_init(&sbi->bb_mutex);
 
 	for (i = 0; i < BDEV_BUFFER_PAGES; i++) {
@@ -78,43 +53,6 @@ int put_dram_buffer_range(struct nova_sb_info *sbi, unsigned long blockoff, unsi
 
 bool is_dram_buffer_addr(struct nova_sb_info *sbi, void *addr) {
     return (vpmem_start <= (unsigned long)addr) && ((unsigned long)addr <= vpmem_end);
-}
-
-void print_all_wb_locks(struct nova_sb_info *sbi) {
-    char* this = kzalloc(4, GFP_KERNEL);
-	int wordline = 128;
-	char* p = kzalloc(wordline*sizeof(char)+1,GFP_KERNEL);
-	int i = 0;
-	int j = 0;
-    int k = 0;
-	char space = ' ';
-	p[wordline]='\0';
-
-    nova_info("Locks\n");
-	nova_info("----------------\n");
-	while (i<MINI_BUFFER_PAGES) {
-		p[0]='\0';
-		for (j=0;j<wordline;j+=32) {
-            do {
-                this[0]='0'+sbi->mb_sem[i].count.counter;
-                i++;
-                strcat(&p[k],this);
-            } while (i%32!=0);
-			strcat(p,&space);
-		}
-		nova_info("%s\n",p);
-		// i+=wordline;
-	}
-	nova_info("----------------\n");
-}
-
-void print_wb_locks(struct nova_sb_info *sbi) {
-    int i = 0;
-    int sum = 0;
-    for (i = 0; i < MINI_BUFFER_PAGES; i++) {
-        if (rwsem_is_locked(&sbi->mb_sem[i])) sum++;
-    }
-    nova_info("#lock=%d\n",sum);
 }
 
 // Return the tier of the first write entry
@@ -153,129 +91,6 @@ unsigned long is_not_same_tier(struct inode *inode) {
     } while (index <= end_index);
 
     return 0;
-}
-
-/* 
- * Find the first continuous buffer which can fit `length`
- * This function should always succeed, it is DRAM buffer's job to allocate such buffer.
- * If space is not enough, swap some pages out to block device.
- */ 
-int buffer_data_block_from_bdev_range(struct nova_sb_info *sbi, int tier, int blockoff, int length) {
-    int i = 0;
-    int j = 0;
-    int index = 0; // index of the first block
-    int unlock = 0; // number of spinlocks can be unlocked
-    int match = 0; // number of matching blocks
-    int ret = 0;
-	struct page *pg;
-    if (length<1) {
-        nova_info("buffer_data_block_from_bdev_range length=%d\n",length);
-        return -1;
-    }
-
-retry:
-    index = blockoff%MINI_BUFFER_PAGES;
-    match = 0;
-    unlock = 0;
-
-	if (DEBUG_BUFFERING) nova_info("[Buffering] block:%d, length:%d\n", blockoff, length);
-    if (DEBUG_BUFFERING) print_wb_locks(sbi);
-	for (i = blockoff%MINI_BUFFER_PAGES; i < MINI_BUFFER_PAGES; i++) {
-        if (!rwsem_is_locked(&sbi->mb_sem[i])) {
-            match = 0;
-            unlock++;
-            if (unlock==length) {
-                if (DEBUG_BUFFERING) nova_info("[Buffering] suitable buffer found, off %d, nr %d\n",index,length);
-                goto copy;
-            }
-        }
-        else {
-            if (sbi->mb_tier[i] == tier && sbi->mb_blockoff[i] == blockoff+match) {
-                match++;
-                if (match==length) {
-                    if (DEBUG_BUFFERING) nova_info("[Buffering] matching buffer found, off %d, nr %d\n",i-length+1,length);
-                    goto out;
-                }
-            }
-            unlock = 0;
-            index = i+1;
-        }
-    }
-    match = 0;
-    unlock = 0;
-    index = 0;
-    for (i = 0; i < blockoff%MINI_BUFFER_PAGES; i++) {
-        if (!rwsem_is_locked(&sbi->mb_sem[i])) {
-            match = 0;
-            unlock++;
-            if (unlock==length) {
-                if (DEBUG_BUFFERING) nova_info("[Buffering] suitable buffer found, off %d, nr %d\n",index,length);
-                goto copy;
-            }
-        }
-        else {
-            if (sbi->mb_tier[i] == tier && sbi->mb_blockoff[i] == blockoff+match) {
-                match++;
-                if (match==length) {
-                    if (DEBUG_BUFFERING) nova_info("[Buffering] matching buffer found, off %d, nr %d\n",i-length+1,length);
-                    goto out;
-                }
-            }
-            unlock = 0;
-            index = i+1;
-        }
-    }
-
-/*
- * copy: new clean buffer slot is found
- * out: matching buffer is found
- * No other scenarios
- */
-copy:
-    // retry is no longer needed in large virtual address space
-    if (unlock != length) {
-        if (DEBUG_BUFFERING) nova_info("[Buffering] failed\n");
-        if (DEBUG_BUFFERING) print_all_wb_locks(sbi);
-        if (DEBUG_BUFFERING) nova_info("[Buffering] Retry\n");
-		msleep(100);
-        goto retry;
-    }
-
-    for (i=index;i<index+length;++i) {
-        if (rwsem_is_locked(&sbi->mb_sem[i])) {
-            if (DEBUG_BUFFERING) print_all_wb_locks(sbi);
-            if (i==index) {
-                nova_info("Spinlock error in mb[%d]: Try to save by retry.\n",i);
-                goto retry;
-            }
-            nova_info("Spinlock error in mb[%d].\n",i);
-            return 0;
-        }
-    }
-    for (i=index;i<index+length;++i) {
-        pg = sbi->mb_pages[i];
-        ret = nova_bdev_read_block(sbi, sbi->bdev_list[tier-TIER_BDEV_LOW].bdev_raw, 
-        get_raw_from_blocknr(sbi, blockoff) + i - index, 1, pg, BIO_SYNC);
-        down_read(&sbi->mb_sem[i]);
-        sbi->mb_tier[i] = tier;
-        sbi->mb_blockoff[i] = blockoff+i-index;
-    }
-
-    // print_a_page(&sbi->mini_buffer[i]);
-    if (ret) {
-        if (DEBUG_BUFFERING) nova_info("[Buffering] nova_bdev_read_block failed.\n");
-        return -ret;
-    }
-    
-    return index;
-
-out:
-
-    for (j=i-length+1;j<i+1;++j) {
-        down_read(&sbi->mb_sem[j]);
-    }
-
-    return i-length+1;
 }
 
 /*
