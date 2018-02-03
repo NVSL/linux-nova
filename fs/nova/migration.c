@@ -87,7 +87,7 @@ unsigned long is_not_same_tier(struct inode *inode) {
                 return index;
             }
         }
-        else index++;
+        else -1;
     } while (index <= end_index);
 
     return 0;
@@ -664,7 +664,10 @@ int do_migrate_a_file_rotate(struct inode *inode) {
     case TIER_PMEM:
         return migrate_a_file(inode, TIER_PMEM, TIER_BDEV_LOW);
     case TIER_BDEV_LOW:
-        return migrate_a_file(inode, TIER_BDEV_LOW, TIER_BDEV_HIGH);
+        if (DEBUG_XFSTESTS) 
+            return migrate_a_file(inode, TIER_BDEV_LOW, TIER_PMEM);
+        else 
+            return migrate_a_file(inode, TIER_BDEV_LOW, TIER_BDEV_HIGH);
     case TIER_BDEV_LOW+1:
         return migrate_a_file(inode, TIER_BDEV_HIGH, TIER_PMEM);
     default:
@@ -691,6 +694,7 @@ again:
         this = pop_an_inode_to_migrate(sbi, TIER_PMEM);
         if (!this) {
             nova_info("PMEM usage is high yet no inode is found.\n");
+            return 0;
         }
         migrate_a_file(this, TIER_PMEM, TIER_BDEV_LOW);
         goto again;
