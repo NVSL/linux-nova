@@ -458,7 +458,7 @@ int migrate_a_file(struct inode *inode, int from, int to)
     unsigned int osb = sbi->bdev_list[to - TIER_BDEV_LOW].opt_size_bit;
 
     if (is_tier_pmem(to)) return migrate_a_file_by_entries(inode, from, to);
-
+    // return migrate_a_file_by_entries(inode, from, to);
     if (DEBUG_MIGRATION) nova_info("[Migration] Start migrating inode:%lu from:T%d to:T%d\n",
         inode->i_ino, from, to);
 

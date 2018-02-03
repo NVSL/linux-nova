@@ -775,6 +775,8 @@ int nova_free_blocks_from_bdev(struct nova_sb_info *sbi, unsigned long blocknr,
 		return -EINVAL;
 	}
 
+    ret = vpmem_flush_pages(blockoff_to_virt(blocknr), num_blocks);
+
 	/* Pre-allocate blocknode */
 	curr_node = nova_alloc_blocknode(sb);
 	if (curr_node == NULL) {

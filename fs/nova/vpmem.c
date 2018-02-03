@@ -135,12 +135,13 @@ inline int get_bdev(unsigned long pgidx) {
 
 // Virtual address to global block offset
 inline unsigned long virt_to_blockoff(unsigned long vaddr) {
-    return (vaddr-vpmem_start + vsbi->initsize) >> PAGE_SHIFT;
+    // return (vaddr-vpmem_start + vsbi->initsize) >> PAGE_SHIFT;
+    return (vaddr-vpmem_start + (vsbi->num_blocks << PAGE_SHIFT)) >> PAGE_SHIFT;
 }
 
 // Global block offset to virtual address
 inline unsigned long blockoff_to_virt(unsigned long blockoff) {
-    return vpmem_start - vsbi->initsize + ( blockoff << PAGE_SHIFT);
+    return vpmem_start - (vsbi->num_blocks << PAGE_SHIFT) + ( blockoff << PAGE_SHIFT);
 }
 
 typedef struct vpte_t vpte_t;
@@ -267,7 +268,7 @@ vpte_t *newpage(unsigned long vaddr) {
 #if USE_PMEM_CACHE == 1
     p->page = palloc_page();
 #else
-    p->page = alloc_page(GFP_KERNEL);
+    p->page = alloc_page(GFP_KERNEL|__GFP_ZERO);
 #endif
 
     lock_page(p->page);

@@ -355,32 +355,17 @@ static inline void memset_nt(void *dest, uint32_t dword, size_t length)
  * nova_memunlock_block() before calling!
  */
 
-// Convert from DRAM buffer to logical address for nova_get_block()
-static inline unsigned long convert_to_logical_offset(unsigned long block) {
-	// unsigned long header = 0x8ffffffffffff;
-	unsigned long header = 0x9000000000000;
-	// nova_info("to %p %p %p\n",block,header,block | header);
-	return block | header;
-}
-
-static inline unsigned long long convert_from_logical_offset(unsigned long long block) {
-	unsigned long long header = 0x9000000000000000;
-	// nova_info("from %p %p %p\n",block,header,block | header);
-	return block | header;
-}
-
-static inline bool is_logical_offset(unsigned long block) {
-	if (block >> 63) return true;
+static inline bool is_logical_offset(struct nova_sb_info *sbi, unsigned long block) {
+	if (block >= (sbi->num_blocks << PAGE_SHIFT)) return true;
 	else return false;
 }
 
 static inline void *nova_get_block(struct super_block *sb, u64 block)
 {
+	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_super_block *ps = nova_get_super(sb);
-	// nova_info("get %p\n",block);
-	if (is_logical_offset(block)){
-		// nova_info("nova_get_block: %llu\n",convert_from_logical_offset(block));
-		return block ? ((void *)convert_from_logical_offset(block)) : NULL;
+	if (is_logical_offset(sbi, block)){
+		return block ? ((void *)blockoff_to_virt(block>>PAGE_SHIFT)) : NULL;
 	}
 	else
 		return block ? ((void *)ps + block) : NULL;
@@ -691,15 +676,19 @@ retry:
 		// ret = ((unsigned long)(sbi->vpmem + entry->block) >> PAGE_SHIFT) 
 		// 	- sbi->num_blocks + pgoff - entry->pgoff;
 
-		ret = ((blockoff_to_virt(entry->block >> PAGE_SHIFT)) >> PAGE_SHIFT)
-			+ pgoff - entry->pgoff;
+		// ret = ((blockoff_to_virt(entry->block >> PAGE_SHIFT)) >> PAGE_SHIFT)
+		// 	+ pgoff - entry->pgoff;
 
-		nova_info("ret %lu %lu %lu block %llu num %d\n",ret,(unsigned long)sbi->vpmem,ret - (unsigned long)sbi->vpmem,entry->block >> PAGE_SHIFT,entry->num_pages);
+		ret = (unsigned long) (entry->block >> PAGE_SHIFT) + pgoff
+			- entry->pgoff;
+
+		nova_info("ret %lu %lx %lu block %llu num %d\n",ret,(unsigned long)sbi->vpmem,ret - (unsigned long)sbi->vpmem,entry->block >> PAGE_SHIFT,entry->num_pages);
 
 		// vpmem_cache_pages_safe(blockoff_to_virt(entry->block >> PAGE_SHIFT), entry->num_pages);
 		// vpmem_range_rwsem_set(blockoff_to_virt(entry->block >> PAGE_SHIFT), entry->num_pages, RWSEM_DOWN);
 
-		return convert_to_logical_offset(ret);
+		// return convert_to_logical_offset(ret);
+		return ret;
 	}
 	return 0;
 }

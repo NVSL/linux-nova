@@ -608,8 +608,8 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 		
 		nvmm = get_nvmm(sb, sih, entryc, index);
 		dax_mem = nova_get_block(sb, (nvmm << PAGE_SHIFT));
-		nova_info("nvmm: %lx, dax_mem: %p\n",nvmm, dax_mem);
-		print_a_page(dax_mem);
+		// nova_info("nvmm: %lu, dax_mem: %p\n", nvmm, dax_mem);
+		// print_a_page(dax_mem);
 
 memcpy:
 		nr = nr - offset;
@@ -632,7 +632,7 @@ skip_verify:
 		NOVA_START_TIMING(memcpy_r_nvmm_t, memcpy_time);
 
 		if (!zero) {
-			nova_info("[Read] Read from:%p %p\n",dax_mem,dax_mem + offset);
+			// nova_info("[Read] Read from:%p %p nr %lu\n",dax_mem,dax_mem + offset, nr);
 			left = __copy_to_user(buf + copied,
 						dax_mem + offset, nr);
 		}
