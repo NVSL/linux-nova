@@ -234,9 +234,10 @@ int nova_get_one_bdev_info(struct nova_sb_info *sbi, char *bdev_path){
 	unsigned long nsector;
 	int i=TIER_BDEV_HIGH;
 	const fmode_t mode = FMODE_READ | FMODE_WRITE;
-	
-	sbi->bdev_list = kcalloc(BDEV_COUNT_MAX, sizeof(struct bdev_info), GFP_KERNEL);	
-	if (!sbi->bdev_list) return -ENOMEM;
+
+	if (sbi->bdev_list==NULL) {
+		sbi->bdev_list = kcalloc(BDEV_COUNT_MAX, sizeof(struct bdev_info), GFP_KERNEL);	
+	}
 	
 	if (!bdev_path) return -ENOENT;
 
@@ -270,6 +271,7 @@ int nova_get_one_bdev_info(struct nova_sb_info *sbi, char *bdev_path){
 	sbi->bdev_list[i].opt_size_bit = 6; //temp value
 	strcat(sbi->bdev_list[i].bdev_name,bd_disk->disk_name);
 	TIER_BDEV_HIGH++;
+	nova_info("Tier %d is set to %s\n", TIER_BDEV_HIGH, bdev_path);
 		
 	return 0;
 }
@@ -316,7 +318,6 @@ static int nova_parse_tiering_options(struct nova_sb_info *sbi, char *options)
 	substring_t args[MAX_OPT_ARGS];
 	char *bdev_path = kmalloc(20*sizeof(char),GFP_KERNEL); // block devices for tiering
 
-	vpmem_reset();
 
 	if (!options)
 		return 0;
@@ -340,9 +341,10 @@ static int nova_parse_tiering_options(struct nova_sb_info *sbi, char *options)
 				nova_info("Get bdev [%s] failed!\n", bdev_path);
 				continue;
 			}
-			nova_info("Tier %d is set to %s\n", TIER_BDEV_HIGH+1, bdev_path);
 		}
 	}
+
+	vpmem_reset();
 
 	kfree(bdev_path);
 	return 0;
@@ -774,7 +776,6 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 		goto out;
 	}
 
-	// TODO: tiering option
 	sbi->num_blocks = sbi->initsize >> PAGE_SHIFT;
 	
 	TIER_BDEV_HIGH = 0;
