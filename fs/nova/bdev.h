@@ -93,6 +93,7 @@ static inline void *page_to_address(struct page *pg) {
 }
 
 char* find_a_raw_sata(void);
+char* find_a_raw_sata_auto(struct nova_sb_info *sbi);
 char* find_a_raw_nvme(void);
 void print_all_bdev(struct nova_sb_info *sbi);
 void bdev_test(struct nova_sb_info *sbi);

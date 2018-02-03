@@ -32,6 +32,23 @@ int nova_destroy_bio(void) {
 	return 0;
 }
 
+char* find_a_raw_sata_auto(struct nova_sb_info *sbi) {
+	char* bdev = kzalloc(20*sizeof(char),GFP_KERNEL);
+		
+	if (strcmp(sbi->s_bdev->bd_disk->disk_name,"pmem0")==0) {
+		strcat(bdev, "/dev/sdb\0");
+		nova_info("sdc is selected\n");
+		return bdev;
+	}
+
+	if (strcmp(sbi->s_bdev->bd_disk->disk_name,"pmem1")==0) {
+		strcat(bdev, "/dev/sdd\0");
+		nova_info("sdd is selected\n");
+		return bdev;
+	}
+	return NULL;
+}
+
 // This function is used for a raw sata block device lookup in /dev
 char* find_a_raw_sata(void) {
 	struct file *fp;

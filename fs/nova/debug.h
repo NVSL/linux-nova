@@ -5,8 +5,10 @@
  * Too many debug messages will lead to a crash!
  */
 
+#define DEBUG_XFSTESTS 1
+
 #define DEBUG_INIT 0
-#define DEBUG_STARTUP_TEST 1
+#define DEBUG_STARTUP_TEST 0
 
 #define DEBUG_BDEV_RW 0
 #define DEBUG_BFL_INFO 1
