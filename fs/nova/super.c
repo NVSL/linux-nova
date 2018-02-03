@@ -173,8 +173,8 @@ static int nova_get_nvmm_info(struct super_block *sb,
 
 // TODO: Link with mount option
 static char *find_block_device(int tier) {
-	if (tier == TIER_BDEV_LOW) return find_a_raw_nvme();
-	if (tier == TIER_BDEV_LOW+1) return find_a_raw_sata();
+	if (tier == TIER_BDEV_LOW) return find_a_raw_sata();
+	if (tier == TIER_BDEV_LOW+1) return find_a_raw_nvme();
 	return NULL;
 }
 
@@ -188,7 +188,7 @@ int nova_get_bdev_info(struct nova_sb_info *sbi){
 	
 	sbi->bdev_list = kcalloc(BDEV_COUNT_MAX, sizeof(struct bdev_info), GFP_KERNEL);	
 	if (!sbi->bdev_list) return -ENOMEM;
-	for (i=0;i<=1;++i) {	
+	for (i=0;i<=0;++i) {	
 		bdev_path = find_block_device(i+1);
 		if (!bdev_path) return -ENOENT;
 
