@@ -86,7 +86,7 @@
 #define TIER_MIGRATING 	255
 #define BDEV_COUNT_MAX 	10
 
-#define MIGRATION_POLICY 2
+#define MIGRATION_POLICY 1
 #define MIGRATION_ROTATE 1
 #define MIGRATION_DOWNWARD 2
 
@@ -390,7 +390,7 @@ nova_get_addr_off(struct nova_sb_info *sbi, void *addr)
 	return (u64)(addr - sbi->virt_addr);
 }
 
-// Change block number to an address
+// Change block number to a logical offset
 static inline u64
 nova_get_block_off(struct super_block *sb, unsigned long blocknr,
 		    unsigned short btype)
@@ -682,7 +682,7 @@ retry:
 		ret = (unsigned long) (entry->block >> PAGE_SHIFT) + pgoff
 			- entry->pgoff;
 
-		nova_info("ret %lu %lx %lu block %llu num %d\n",ret,(unsigned long)sbi->vpmem,ret - (unsigned long)sbi->vpmem,entry->block >> PAGE_SHIFT,entry->num_pages);
+		if (DEBUG_GET_NVMM) nova_info("ret %lu %lx block %llu num %d\n",ret,(unsigned long)sbi->vpmem,entry->block >> PAGE_SHIFT,entry->num_pages);
 
 		// vpmem_cache_pages_safe(blockoff_to_virt(entry->block >> PAGE_SHIFT), entry->num_pages);
 		// vpmem_range_rwsem_set(blockoff_to_virt(entry->block >> PAGE_SHIFT), entry->num_pages, RWSEM_DOWN);

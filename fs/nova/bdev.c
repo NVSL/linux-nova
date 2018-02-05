@@ -916,6 +916,7 @@ long nova_bdev_alloc_blocks(struct nova_sb_info *sbi, int tier, int cpuid,
 long nova_alloc_block_tier(struct nova_sb_info *sbi, int tier, int cpuid, 
 	unsigned long *blocknr, unsigned int num_blocks, enum nova_alloc_direction from_tail) {
 	struct super_block *sb = sbi->sb;
+	long allocated = 0;
 
 	if (cpuid == ANY_CPU)
 		cpuid = smp_processor_id();
@@ -925,8 +926,11 @@ long nova_alloc_block_tier(struct nova_sb_info *sbi, int tier, int cpuid,
 	// Tier pmem
 	if (is_tier_pmem(tier)) {
 		struct free_list *free_list = nova_get_free_list(sb, cpuid);
-		return nova_alloc_blocks_in_free_list(sb, free_list, 
+		spin_lock(&free_list->s_lock);
+		allocated = nova_alloc_blocks_in_free_list(sb, free_list, 
 			NOVA_DEFAULT_BLOCK_TYPE, DATA, num_blocks, blocknr, from_tail);
+		spin_unlock(&free_list->s_lock);
+		return allocated;
 	}
 	// Tier bdev
 	if (is_tier_bdev(tier)) {

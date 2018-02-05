@@ -202,9 +202,17 @@ static int nova_migration(struct inode *inode, struct file *file) {
 	if (DEBUG_BFL_INFO) {
 		nova_info("[Start migration]\n");
 		print_all_bfl(sb);
-	}
+	}	
+
+	sb_start_write(inode->i_sb);
+	inode_lock(inode);
+	
 	if ( MIGRATION_POLICY == MIGRATION_ROTATE ) do_migrate_a_file_rotate(inode);
 	if ( MIGRATION_POLICY == MIGRATION_DOWNWARD ) do_migrate_a_file_downward(inode);
+	
+	inode_unlock(inode);
+	sb_end_write(inode->i_sb);
+
 	if (DEBUG_BFL_INFO) {
 		print_all_bfl(sb);
 		nova_info("[End migration]\n");
@@ -608,7 +616,7 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 		
 		nvmm = get_nvmm(sb, sih, entryc, index);
 		dax_mem = nova_get_block(sb, (nvmm << PAGE_SHIFT));
-		// nova_info("nvmm: %lu, dax_mem: %p\n", nvmm, dax_mem);
+		if (DEBUG_GET_NVMM) nova_info("nvmm: %lu, dax_mem: %p\n", nvmm, dax_mem);
 		// print_a_page(dax_mem);
 
 memcpy:
