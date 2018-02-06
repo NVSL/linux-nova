@@ -522,6 +522,9 @@ int migrate_a_file(struct inode *inode, int from, int to)
 
             if (entry) {
                 if (is_entry_cross_boundary(sbi, entry, to)) {
+                    if (n1 == 0) {
+                        goto mig;
+                    }
                     nova_split_entry(sb, inode, entry, to);
                 }
                 if (entry->tier == from) {

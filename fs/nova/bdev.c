@@ -666,20 +666,20 @@ void print_all_bfl(struct super_block *sb){
 
 	nova_info("---------------------------------------------------------\n");
 	nova_info("                    [PMEM free lists]\n");
-	nova_info("|Tier|CPU| Start |  End  | Used  | Free  | Total | Node |\n");
+	nova_info("|Tier|CPU|  Start  |   End   | Used  | Free  | Total | Node |\n");
 	for (i=0;i<sbi->cpus;++i) {
 		fl = nova_get_free_list(sb, i);
-		nova_info("|%4d|%3d|%7lu|%7lu|%7lu|%7lu|%7lu|%6lu|\n",
+		nova_info("|%4d|%3d|%9lu|%9lu|%7lu|%7lu|%7lu|%6lu|\n",
 		0, fl->index, fl->block_start, fl->block_end, fl->block_end - fl->block_start + 1 - fl->num_free_blocks,
 		fl->num_free_blocks, fl->block_end - fl->block_start + 1, fl->num_blocknode);
 	}
 
 	nova_info("---------------------------------------------------------\n");
 	nova_info("                    [BDEV free lists]\n");
-	nova_info("|Tier|CPU| Start |  End  | Used  | Free  | Total | Node |\n");
+	nova_info("|Tier|CPU|  Start  |   End    | Used  | Free  | Total | Node |\n");
 	for (i=0;i<TIER_BDEV_HIGH*sbi->cpus;++i) {
 		bfl = nova_get_bdev_free_list_flat(sbi,i);
-		nova_info("|%4d|%3d|%7lu|%7lu|%7lu|%7lu|%7lu|%6lu|\n",
+		nova_info("|%4d|%3d|%9lu|%9lu|%7lu|%7lu|%7lu|%6lu|\n",
 		bfl->tier, bfl->cpu, bfl->block_start, bfl->block_end, bfl->num_total_blocks - bfl->num_free_blocks,
 		bfl->num_free_blocks, bfl->num_total_blocks, bfl->num_blocknode);
 	}
