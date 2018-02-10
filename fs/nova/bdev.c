@@ -226,13 +226,17 @@ int add_bal_entry(struct nova_sb_info *sbi, struct bio *bio,
 		return -1;
 	bal->bio = bio;
 	bal->bio_ret = bio_ret;
+
+    spin_lock(&sbi->bal_lock);
 	list_add_tail(&bal->list, &sbi->bal_head->list);
+    spin_unlock(&sbi->bal_lock);
 	return 0;
 }
 
 int flush_bal_entry(struct nova_sb_info *sbi) {	
 	struct bio_async_list *bal, *tempbal;
 	int ret = 0;
+    spin_lock(&sbi->bal_lock);
 	list_for_each_entry_safe(bal, tempbal, &sbi->bal_head->list, list) {
 		wait_for_completion_io(&bal->bio_ret->event);
 		ret = bal->bio_ret->error;
@@ -242,6 +246,7 @@ int flush_bal_entry(struct nova_sb_info *sbi) {
 		list_del(&bal->list);
 		kmem_cache_free(nova_bal_cache, bal);
 	}
+    spin_unlock(&sbi->bal_lock);
 	return ret;
 }
 

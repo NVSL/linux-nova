@@ -24,6 +24,8 @@ int init_dram_buffer(struct nova_sb_info *sbi) {
    
 	mutex_init(&sbi->bb_mutex);
 
+    spin_lock_init(&sbi->bal_lock);
+
 	for (i = 0; i < BDEV_BUFFER_PAGES; i++) {
         sbi->bb_pages[i] = virt_to_page(sbi->bdev_buffer+i*IO_BLOCK_SIZE);
     }
@@ -752,7 +754,7 @@ int do_migrate_a_file_downward(struct inode *inode) {
         if(DEBUG_MIGRATION) nova_info("Write entries of inode %lu is not in the same tier (index: %d)", inode->i_ino, ret);
         return -1;
     }
-again:
+// again:
     if (is_pmem_usage_high(sbi)) {
         if(DEBUG_MIGRATION) nova_info("PMEM usage high.\n");
         this = pop_an_inode_to_migrate(sbi, TIER_PMEM);
@@ -761,7 +763,7 @@ again:
             return 0;
         }
         migrate_a_file(this, TIER_PMEM, TIER_BDEV_LOW);
-        goto again;
+        // goto again;
     }
     else if(DEBUG_MIGRATION) nova_info("PMEM usage low.\n");
 
@@ -773,7 +775,7 @@ again:
                 if(DEBUG_MIGRATION) nova_info("BDEV T%d usage is high yet no inode is found.\n", i);
             }
             migrate_a_file(this, i, i+1);
-            goto again;
+            // goto again;
         }
         else if(DEBUG_MIGRATION) nova_info("BDEV T%d usage low.\n",i);
     }

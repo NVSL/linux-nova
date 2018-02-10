@@ -169,6 +169,7 @@ struct nova_sb_info {
 	struct page **bb_pages;
 
 	/* Bio list */ 
+	spinlock_t bal_lock;
 	struct bio_async_list *bal_head;
 
 	/* Per-CPU journal lock */
