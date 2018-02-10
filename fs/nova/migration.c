@@ -66,37 +66,46 @@ int current_tier(struct inode *inode) {
     loff_t isize = i_size_read(inode);
     pgoff_t index = 0;
     pgoff_t end_index = (isize) >> PAGE_SHIFT;
+    if ( si == NULL || sih == NULL || end_index == 0 ) return -1;
     do {
-        entry = nova_get_write_entry(sb, sih, index);
+        entry = nova_find_next_entry(sb, sih, index);
         if (entry) {
             return entry->tier;
         }
         else index++;
     } while (index <= end_index);
 
-    return 0;
+    return -1;
 }
 
 // Return 0 if all write entries are in the same tier
 // Else the block number of the first write entry with a different tier
-unsigned long is_not_same_tier(struct inode *inode) {
+int is_not_same_tier(struct inode *inode) {
 	struct super_block *sb = inode->i_sb;
 	struct nova_inode_info *si = NOVA_I(inode);
 	struct nova_inode_info_header *sih = &si->header;
 	struct nova_file_write_entry *entry;
-    int ct = current_tier(inode);	
+    int t;
     loff_t isize = i_size_read(inode);
     pgoff_t index = 0;
     pgoff_t end_index = (isize) >> PAGE_SHIFT;
+    bool exist = false;
+    if ( si == NULL || sih == NULL || end_index == 0 ) return 1;
     do {
-        entry = nova_get_write_entry(sb, sih, index);
+        nova_info("%lu index %lu end_index %lu\n",inode->i_ino,index,end_index);
+        entry = nova_find_next_entry(sb, sih, index);
         if (entry) {
-            if (entry->tier == ct) {
+            if (!exist) {
+                exist = true;
+                t = entry->tier;
+                continue;
+            }
+            if (entry->tier == t) {
                 index += entry->num_pages;
                 continue;
             }
             else {
-                return index;
+                return 1;
             }
         }
         else index++;
@@ -323,7 +332,7 @@ int migrate_group_entry_blocks(struct nova_sb_info *sbi, struct inode *inode, in
 	update.alter_tail = sih->alter_log_tail;
 
     do {
-        entry = nova_get_write_entry(sb, sih, index);
+        entry = nova_find_next_entry(sb, sih, index);
         if (entry) {
             if (entry->tier == from) {
                 if (DEBUG_MIGRATION) nova_info("[Migration] Migrating (group) write entry with index:%lu\n", index);
@@ -474,7 +483,8 @@ int migrate_a_file_by_entries(struct inode *inode, int from, int to)
 	end_index = (isize) >> PAGE_SHIFT;
     // nova_info("1 index:%lu end_index:%lu ret:%d\n", index, end_index, ret);
     do {
-        entry = nova_get_write_entry(sb, sih, index);
+        entry = nova_find_next_entry(sb, sih, index);
+        
         // nova_info("entry %p\n", entry);
         // nova_info("index:%lu ret:%d\n", index, ret);
 
@@ -512,6 +522,7 @@ int migrate_a_file(struct inode *inode, int from, int to)
 	struct nova_inode_info *si = NOVA_I(inode);
 	struct nova_inode_info_header *sih = &si->header;
 	struct nova_file_write_entry *entry;
+	struct nova_file_write_entry *entryc;
     pgoff_t index = 0;
     pgoff_t end_index = 0;
     int ret = 0;
@@ -532,12 +543,21 @@ int migrate_a_file(struct inode *inode, int from, int to)
 	end_index = (isize) >> PAGE_SHIFT;
     
     for (i=0;i<=end_index>>osb;++i) {
+next:
         n1 = 0;
         n2 = 0;
         index = i<<osb;
         do {
-            entry = nova_get_write_entry(sb, sih, index);
-
+            entryc = nova_find_next_entry(sb, sih, index);
+            if ( !entryc ) break;
+            if ( (entryc->pgoff)>>osb > i ) {
+                if (n1==0) {
+                    i = (entryc->pgoff)>>osb;
+                    goto next;
+                }
+                else break;
+            }
+            entry = entryc;
             if (entry) {
                 if (is_entry_cross_boundary(sbi, entry, to)) {
                     if (n1 == 0) {
@@ -571,7 +591,7 @@ int migrate_a_file(struct inode *inode, int from, int to)
 mig: 
         index = i<<osb;
         do {
-            entry = nova_get_write_entry(sb, sih, index);
+            entry = nova_find_next_entry(sb, sih, index);
             // nova_info("entry %p\n", entry);
             // nova_info("index:%lu ret:%d\n", index, ret);
 

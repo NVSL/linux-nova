@@ -11,7 +11,7 @@
 #define DEBUG_STARTUP_TEST 0
 
 #define DEBUG_BDEV_RW 0
-#define DEBUG_BFL_INFO 0
+#define DEBUG_BFL_INFO 1
 
 #define DEBUG_DO_MIGRATION 0
 #define DEBUG_MIGRATION 1
