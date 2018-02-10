@@ -72,7 +72,7 @@ int current_tier(struct inode *inode) {
         if (entry) {
             return entry->tier;
         }
-        else index++;
+        else return -1;
     } while (index <= end_index);
 
     return -1;
@@ -108,7 +108,7 @@ int is_not_same_tier(struct inode *inode) {
                 return 1;
             }
         }
-        else index++;
+        else return 0;
     } while (index <= end_index);
 
     return 0;
@@ -341,10 +341,10 @@ int migrate_group_entry_blocks(struct nova_sb_info *sbi, struct inode *inode, in
                 index += entry->num_pages;
             }
             else {
-                index++;
+                index += entry->num_pages;
             }
         }
-        else index++;
+        else break;
     } while (index <= end_index);
 
     entry_first = nova_get_write_entry(sb, sih, start_index);
@@ -495,11 +495,11 @@ int migrate_a_file_by_entries(struct inode *inode, int from, int to)
                 index += entry->num_pages;
             }
             else {
-                index++;
+                index += entry->num_pages;
             }
             nentry++;
         }
-        else index++;
+        else break;
     } while (index <= end_index);
 
     // nova_info("sih->log_pages: %lu\n",sih->log_pages);
@@ -522,7 +522,6 @@ int migrate_a_file(struct inode *inode, int from, int to)
 	struct nova_inode_info *si = NOVA_I(inode);
 	struct nova_inode_info_header *sih = &si->header;
 	struct nova_file_write_entry *entry;
-	struct nova_file_write_entry *entryc;
     pgoff_t index = 0;
     pgoff_t end_index = 0;
     int ret = 0;
@@ -548,17 +547,15 @@ next:
         n2 = 0;
         index = i<<osb;
         do {
-            entryc = nova_find_next_entry(sb, sih, index);
-            if ( !entryc ) break;
-            if ( (entryc->pgoff)>>osb > i ) {
-                if (n1==0) {
-                    i = (entryc->pgoff)>>osb;
-                    goto next;
-                }
-                else break;
-            }
-            entry = entryc;
+            entry = nova_find_next_entry(sb, sih, index);
             if (entry) {
+                if ( (entry->pgoff)>>osb > i ) {
+                    if (n1==0) {
+                        i = (entry->pgoff)>>osb;
+                        goto next;
+                    }
+                    else goto mig;
+                }
                 if (is_entry_cross_boundary(sbi, entry, to)) {
                     if (n1 == 0) {
                         goto mig;
@@ -596,6 +593,7 @@ mig:
             // nova_info("index:%lu ret:%d\n", index, ret);
 
             if (entry) {
+                if ( (entry->pgoff)>>osb > i ) break;
                 if (is_entry_cross_boundary(sbi, entry, to)) {
                     nova_split_entry(sb, inode, entry, to);
                 }
@@ -605,11 +603,11 @@ mig:
                     index += entry->num_pages;
                 }
                 else {
-                    index++;
+                    index += entry->num_pages;
                 }
                 n2++;
             }
-            else index++;
+            else break;
         } while (index < (i+1)<<osb);
         nentry += n2;
     }
