@@ -705,18 +705,18 @@ struct inode *pop_an_inode_to_migrate(struct nova_sb_info *sbi, int tier) {
 
                 ino = k*sbi->cpus+j;
                 ret = nova_iget(sb, ino);
+                if (!ret) goto next;
                 si = NOVA_I(ret);
+                if (!si) goto next;
                 entry = nova_get_write_entry(sb, &si->header, 0);
-                if (!entry) {
-                    next = rb_next(next);
-                    goto more;
-                }
+                if (!entry) goto next;
                 if (entry->tier == tier) {
                     if(DEBUG_MIGRATION) nova_info("Inode %lu is poped.\n",ino);
                     return ret;
                 }
             }
         }
+        next:
         next = rb_next(next);
         goto more;
     }
