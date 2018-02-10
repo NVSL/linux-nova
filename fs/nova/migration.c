@@ -61,10 +61,20 @@ bool is_dram_buffer_addr(struct nova_sb_info *sbi, void *addr) {
 int current_tier(struct inode *inode) {
 	struct super_block *sb = inode->i_sb;
 	struct nova_inode_info *si = NOVA_I(inode);
-	struct nova_inode_info_header *sih = &si->header;    
-	struct nova_file_write_entry *entry = nova_get_write_entry(sb, sih, 0);
-    if (entry) return entry->tier;
-    else return -1;
+	struct nova_inode_info_header *sih = &si->header;
+	struct nova_file_write_entry *entry;
+    loff_t isize = i_size_read(inode);
+    pgoff_t index = 0;
+    pgoff_t end_index = (isize) >> PAGE_SHIFT;
+    do {
+        entry = nova_get_write_entry(sb, sih, index);
+        if (entry) {
+            return entry->tier;
+        }
+        else index++;
+    } while (index <= end_index);
+
+    return 0;
 }
 
 // Return 0 if all write entries are in the same tier
