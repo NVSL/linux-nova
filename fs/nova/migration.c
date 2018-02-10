@@ -101,7 +101,7 @@ int is_not_same_tier(struct inode *inode) {
                 continue;
             }
             if (entry->tier == t) {
-                index += entry->num_pages;
+                index = entry->pgoff + entry->num_pages;
                 continue;
             }
             else {
@@ -338,11 +338,8 @@ int migrate_group_entry_blocks(struct nova_sb_info *sbi, struct inode *inode, in
                 if (DEBUG_MIGRATION) nova_info("[Migration] Migrating (group) write entry with index:%lu\n", index);
                 ret = migrate_entry_blocks(sbi, from, to, si, entry, 
                     blocknr + (entry->pgoff & (opt_size - 1)), bt);
-                index += entry->num_pages;
             }
-            else {
-                index += entry->num_pages;
-            }
+            index = entry->pgoff + entry->num_pages;
         }
         else break;
     } while (index <= end_index);
@@ -492,11 +489,8 @@ int migrate_a_file_by_entries(struct inode *inode, int from, int to)
             if (entry->tier == from) {
                 if (DEBUG_MIGRATION) nova_info("[Migration] Migrating ( one ) write entry with index:%lu\n", index);
                 ret = migrate_entry_blocks(sbi, from, to, si, entry, 0, &bt);
-                index += entry->num_pages;
             }
-            else {
-                index += entry->num_pages;
-            }
+            index = entry->pgoff + entry->num_pages;
             nentry++;
         }
         else break;
@@ -563,7 +557,7 @@ next:
                     nova_split_entry(sb, inode, entry, to);
                 }
                 if (entry->tier == from) {
-                    index += entry->num_pages;
+                    index = entry->pgoff + entry->num_pages;
                 }
                 else {
                     goto mig;
@@ -600,11 +594,8 @@ mig:
                 if (entry->tier == from) {
                     if (DEBUG_MIGRATION) nova_info("[Migration] Migrating ( one ) write entry with index:%lu\n", index);
                     ret = migrate_entry_blocks(sbi, from, to, si, entry, 0, &bt);
-                    index += entry->num_pages;
                 }
-                else {
-                    index += entry->num_pages;
-                }
+                index = entry->pgoff + entry->num_pages;
                 n2++;
             }
             else break;
@@ -774,14 +765,16 @@ int do_migrate_a_file_downward(struct inode *inode) {
 	struct super_block *sb = inode->i_sb;
 	struct nova_sb_info *sbi = NOVA_SB(sb);
     struct inode *this;
-    int ret;
+    // int ret;
     int i;
 	if(DEBUG_MIGRATION) nova_info("[Migration-Downward]\n");
-    ret = is_not_same_tier(inode);
-    if (ret) {
-        if(DEBUG_MIGRATION) nova_info("Write entries of inode %lu is not in the same tier (index: %d)", inode->i_ino, ret);
-        return -1;
-    }
+
+    // ret = is_not_same_tier(inode);
+    // if (ret) {
+    //     if(DEBUG_MIGRATION) nova_info("Write entries of inode %lu is not in the same tier (index: %d)", inode->i_ino, ret);
+    //     return -1;
+    // }
+    
 // again:
     if (is_pmem_usage_high(sbi)) {
         if(DEBUG_MIGRATION) nova_info("PMEM usage high.\n");
