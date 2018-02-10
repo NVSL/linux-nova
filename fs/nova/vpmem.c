@@ -343,8 +343,10 @@ void insert_tlb(struct vpte_t *page) {
 int vpmem_cache_pages(unsigned long vaddr, unsigned long count)
 {
     unsigned long i;
+    struct vpte_t *page = NULL;
     for(i=0; i<count; i++) {
-        insert_tlb(create_page(vaddr & PAGE_MASK));
+        page = create_page(vaddr & PAGE_MASK);
+        insert_tlb(page);
     }
     return 0;
 }
@@ -441,11 +443,13 @@ int vpmem_cache_pages_safe(unsigned long vaddr, unsigned long count) {
 
 bool vpmem_do_page_fault(struct pt_regs *regs, unsigned long error_code, unsigned long vaddr)
 {
+    struct vpte_t *page = NULL;
     if (vaddr >= TASK_SIZE_MAX) {
         /* Make sure we are in reserved area: */
         if (vaddr >= vpmem_start && vaddr < vpmem_end) {
             faults++;
-            insert_tlb(create_page(vaddr & PAGE_MASK));
+            page = create_page(vaddr & PAGE_MASK);
+            insert_tlb(page);
             return true;
         } else {
             return false;

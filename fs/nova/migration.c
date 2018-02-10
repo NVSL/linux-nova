@@ -172,17 +172,22 @@ int nova_clone_write_entry(struct nova_sb_info *sbi, struct nova_inode_info *si,
 	unsigned int data_bits;
     int ret = 0;
 	u64 begin_tail = 0;
-	u64 file_size = cpu_to_le64(inode->i_size);
-	u64 epoch_id = nova_get_epoch_id(sb);
-	u32 time = current_time(inode).tv_sec;
+	// u64 file_size = cpu_to_le64(inode->i_size);
+	// u64 epoch_id = nova_get_epoch_id(sb);
+	// u32 time = current_time(inode).tv_sec;
 
 	update.tail = sih->log_tail;
 	update.alter_tail = sih->alter_log_tail;
 
-    nova_init_file_write_entry(sb, sih, &entry_data, epoch_id,
-		entry->pgoff, entry->num_pages, 
-        block, time, file_size);
-    entry_data.tier = tier;    
+    // nova_init_file_write_entry(sb, sih, &entry_data, epoch_id,
+	// 	entry->pgoff, entry->num_pages, 
+    //     block, time, file_size);
+
+    memcpy_mcsafe(&entry_data, entry, sizeof(struct nova_file_write_entry));
+	entry_data.entry_type = FILE_WRITE;
+    entry_data.tier = (u8)tier;   
+    entry_data.block = cpu_to_le64(nova_get_block_off(sb, block,
+							sih->i_blk_type));     
 
 	nova_update_entry_csum(&entry_data);
     ret = nova_append_file_write_entry(sb, pi, inode, &entry_data, &update);
@@ -269,7 +274,7 @@ int migrate_entry_blocks(struct nova_sb_info *sbi, int from, int to,
     /* Step 4. Free */
     // ret = nova_free_blocks_tier(sbi, entry->block >> PAGE_SHIFT, entry->num_pages);
     // Update tiering info
-    entry->tier = from;    
+    entry->tier = cpu_to_le64(from);    
 	nova_update_entry_csum(entry);
 
     if (!blocknr_hint) ret = nova_clone_write_entry(sbi, si, entry, to, blocknr, bt);
@@ -475,6 +480,7 @@ int migrate_a_file_by_entries(struct inode *inode, int from, int to)
         else index++;
     } while (index <= end_index);
 
+    // nova_info("sih->log_pages: %lu\n",sih->log_pages);
     ret = nova_reassign_file_tree(sb, sih, bt, true);
 	if (ret) return ret;
 

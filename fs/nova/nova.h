@@ -86,7 +86,7 @@
 #define TIER_MIGRATING 	255
 #define BDEV_COUNT_MAX 	10
 
-#define MIGRATION_POLICY 1
+#define MIGRATION_POLICY 2
 #define MIGRATION_ROTATE 1
 #define MIGRATION_DOWNWARD 2
 
@@ -626,6 +626,7 @@ nova_get_write_entry(struct super_block *sb,
 
 int buffer_data_block_from_bdev_range(struct nova_sb_info *sbi, int tier, int blockoff, int length);
 void nova_update_entry_csum(void *entry);
+int get_tier(struct nova_sb_info *sbi, unsigned long blocknr);
 
 /*
  * Find data at a file offset (pgoff) in the data pointed to by a write log
@@ -646,12 +647,21 @@ static unsigned long get_nvmm(struct super_block *sb,
 	 */
 	
 retry:
-	if (is_tier_migrating(entry->tier)) {
+	if (unlikely(nova_get_entry_type(entry) == FILE_WRITE && is_tier_migrating(entry->tier))) {
 		msleep(500);
 		goto retry;
 	}
-	
-	if (is_tier_pmem(entry->tier)) {
+
+	// if (nova_get_entry_type(entry) == FILE_WRITE && is_tier_bdev(entry->tier)) {
+	if (get_tier(sbi, entry->block >> PAGE_SHIFT) != TIER_PMEM) {
+		if (DEBUG_GET_NVMM) nova_info("[Get] Get from TIER_BDEV\n");
+		ret = (unsigned long) (entry->block >> PAGE_SHIFT) + pgoff
+			- entry->pgoff;
+		if (DEBUG_GET_NVMM) nova_info("ret %lu %lx block %llu num %d\n", ret,
+			(unsigned long)sbi->vpmem,entry->block >> PAGE_SHIFT,entry->num_pages);
+		return ret;
+	}
+	else {
 		if (DEBUG_GET_NVMM) nova_info("[Get] Get from TIER_PMEM\n");
 		if (entry->pgoff > pgoff || (unsigned long) entry->pgoff +
 				(unsigned long) entry->num_pages <= pgoff) {
@@ -669,26 +679,6 @@ retry:
 
 		return (unsigned long) (entry->block >> PAGE_SHIFT) + pgoff
 			- entry->pgoff;
-	}
-	if (is_tier_bdev(entry->tier)) {
-		if (DEBUG_GET_NVMM) nova_info("[Get] Get from TIER_BDEV\n");
-		
-		// ret = ((unsigned long)(sbi->vpmem + entry->block) >> PAGE_SHIFT) 
-		// 	- sbi->num_blocks + pgoff - entry->pgoff;
-
-		// ret = ((blockoff_to_virt(entry->block >> PAGE_SHIFT)) >> PAGE_SHIFT)
-		// 	+ pgoff - entry->pgoff;
-
-		ret = (unsigned long) (entry->block >> PAGE_SHIFT) + pgoff
-			- entry->pgoff;
-
-		if (DEBUG_GET_NVMM) nova_info("ret %lu %lx block %llu num %d\n",ret,(unsigned long)sbi->vpmem,entry->block >> PAGE_SHIFT,entry->num_pages);
-
-		// vpmem_cache_pages_safe(blockoff_to_virt(entry->block >> PAGE_SHIFT), entry->num_pages);
-		// vpmem_range_rwsem_set(blockoff_to_virt(entry->block >> PAGE_SHIFT), entry->num_pages, RWSEM_DOWN);
-
-		// return convert_to_logical_offset(ret);
-		return ret;
 	}
 	return 0;
 }
@@ -1097,7 +1087,6 @@ int nova_bdev_free_blocks(struct nova_sb_info *sbi, int tier, unsigned long bloc
 	unsigned long num_blocks);
 int nova_free_blocks_tier(struct nova_sb_info *sbi, unsigned long blocknr,
 	unsigned long num_blocks);
-int get_tier(struct nova_sb_info *sbi, unsigned long blocknr);
 int reclaim_get_nvmm(struct super_block *sb, unsigned long nvmm,
 	struct nova_file_write_entry *entry, unsigned long pgoff);
 void print_all_bfl(struct super_block *sb);

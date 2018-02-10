@@ -602,9 +602,9 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 		/* Find contiguous blocks */
 		if (index < entryc->pgoff ||
 			index - entryc->pgoff >= entryc->num_pages) {
-			nova_err(sb, "%s ERROR: %lu, entry pgoff %llu, num %u, blocknr %llu\n",
+			nova_err(sb, "%s ERROR: %lu, entry pgoff %llu, num %u, blocknr %llu tier %d\n",
 				__func__, index, entry->pgoff,
-				entry->num_pages, entry->block >> PAGE_SHIFT);
+				entry->num_pages, entry->block >> PAGE_SHIFT, entry->tier);
 			return -EINVAL;
 		}
 		if (entryc->reassigned == 0) {
@@ -649,7 +649,7 @@ skip_verify:
 
 		NOVA_END_TIMING(memcpy_r_nvmm_t, memcpy_time);
 
-		reclaim_get_nvmm(sb, nvmm, entry, index);
+		// reclaim_get_nvmm(sb, nvmm, entry, index);
 		
 		// if (is_dram_buffer_addr(sbi, dax_mem)) {
 		// 	if (DEBUG_BUFFERING) nova_info("put off %lu, nr %lu", mb_offset - index + (unsigned long)entry->pgoff, (unsigned long)entry->num_pages);

@@ -37,7 +37,7 @@ char* find_a_raw_sata_auto(struct nova_sb_info *sbi) {
 		
 	if (strcmp(sbi->s_bdev->bd_disk->disk_name,"pmem0")==0) {
 		strcat(bdev, "/dev/sdb\0");
-		nova_info("sdc is selected\n");
+		nova_info("sdb is selected\n");
 		return bdev;
 	}
 
@@ -664,26 +664,26 @@ void print_all_bfl(struct super_block *sb){
 	struct free_list *fl = NULL;
 	int i;
 
-	nova_info("---------------------------------------------------------\n");
+	nova_info("-----------------------------------------------------------\n");
 	nova_info("                    [PMEM free lists]\n");
-	nova_info("|Tier|CPU|  Start  |   End   | Used  | Free  | Total | Node |\n");
+	nova_info("|Tier|CPU|  Start  |   End   | Used  | Free  | Total |Node|\n");
 	for (i=0;i<sbi->cpus;++i) {
 		fl = nova_get_free_list(sb, i);
-		nova_info("|%4d|%3d|%9lu|%9lu|%7lu|%7lu|%7lu|%6lu|\n",
+		nova_info("|%4d|%3d|%9lu|%9lu|%7lu|%7lu|%7lu|%4lu|\n",
 		0, fl->index, fl->block_start, fl->block_end, fl->block_end - fl->block_start + 1 - fl->num_free_blocks,
 		fl->num_free_blocks, fl->block_end - fl->block_start + 1, fl->num_blocknode);
 	}
 
-	nova_info("---------------------------------------------------------\n");
+	nova_info("-----------------------------------------------------------\n");
 	nova_info("                    [BDEV free lists]\n");
-	nova_info("|Tier|CPU|  Start  |   End    | Used  | Free  | Total | Node |\n");
+	nova_info("|Tier|CPU|  Start  |   End   | Used  | Free  | Total |Node|\n");
 	for (i=0;i<TIER_BDEV_HIGH*sbi->cpus;++i) {
 		bfl = nova_get_bdev_free_list_flat(sbi,i);
-		nova_info("|%4d|%3d|%9lu|%9lu|%7lu|%7lu|%7lu|%6lu|\n",
+		nova_info("|%4d|%3d|%9lu|%9lu|%7lu|%7lu|%7lu|%4lu|\n",
 		bfl->tier, bfl->cpu, bfl->block_start, bfl->block_end, bfl->num_total_blocks - bfl->num_free_blocks,
 		bfl->num_free_blocks, bfl->num_total_blocks, bfl->num_blocknode);
 	}
-	nova_info("---------------------------------------------------------\n");
+	nova_info("-----------------------------------------------------------\n");
 }
 
 // blocknr: global block number
@@ -978,11 +978,16 @@ int nova_bdev_free_blocks(struct nova_sb_info *sbi, int tier, unsigned long bloc
  */
 int reclaim_get_nvmm(struct super_block *sb, unsigned long nvmm,
 	struct nova_file_write_entry *entry, unsigned long pgoff){		
+	int ret = 0;
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	void *dax_mem = nova_get_block(sb, (nvmm << PAGE_SHIFT));
 	
 	if (is_dram_buffer_addr(sbi, dax_mem)) {
-		return put_dram_buffer_range(sbi, virt_to_blockoff((unsigned long)dax_mem), entry->num_pages);
+		ret = put_dram_buffer_range(sbi, virt_to_blockoff((unsigned long)dax_mem), entry->num_pages);
+		if (ret) nova_info("put_dram_buffer_range ERROR.\n");
+		ret = clear_dram_buffer_range(sbi, virt_to_blockoff((unsigned long)dax_mem), entry->num_pages);
+		if (ret) nova_info("clear_dram_buffer_range ERROR.\n");
+		return 0;
 	}
 	return 1;
 }
