@@ -1079,6 +1079,9 @@ static int nova_dax_huge_fault(struct vm_fault *vmf,
 	nova_dbgv("%s: inode %lu, pgoff %lu\n",
 		  __func__, inode->i_ino, vmf->pgoff);
 
+	if (vmf->flags & FAULT_FLAG_WRITE)
+		file_update_time(vmf->vma->vm_file);
+
 	ret = dax_iomap_fault(vmf, pe_size, NULL, NULL, &nova_iomap_ops_lock);
 
 	NOVA_END_TIMING(pmd_fault_t, fault_time);
@@ -1090,8 +1093,8 @@ static int nova_dax_fault(struct vm_fault *vmf)
 	struct address_space *mapping = vmf->vma->vm_file->f_mapping;
 	struct inode *inode = mapping->host;
 
-	nova_dbgv("%s: inode %lu, pgoff %lu\n",
-		  __func__, inode->i_ino, vmf->pgoff);
+	nova_dbgv("%s: inode %lu, pgoff %lu, flags 0x%lx\n",
+		  __func__, inode->i_ino, vmf->pgoff, vmf->flags);
 
 	return nova_dax_huge_fault(vmf, PE_SIZE_PTE);
 }
