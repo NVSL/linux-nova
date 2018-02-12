@@ -719,6 +719,7 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 		  (u64)sbi->phys_addr);
 
 	if (nova_check_integrity(sb) < 0) {
+		retval = -EINVAL;
 		nova_dbg("Memory contains invalid nova %x:%x\n",
 			le32_to_cpu(sbi->nova_sb->s_magic), NOVA_SUPER_MAGIC);
 		goto out;
@@ -809,6 +810,7 @@ out:
 
 	kfree(sbi->nova_sb);
 	kfree(sbi);
+	nova_dbg("%s failed: return %d\n", __func__, retval);
 	return retval;
 }
 

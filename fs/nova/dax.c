@@ -1092,7 +1092,7 @@ static int nova_dax_fault(struct vm_fault *vmf)
 	struct address_space *mapping = vmf->vma->vm_file->f_mapping;
 	struct inode *inode = mapping->host;
 
-	nova_dbgv("%s: inode %lu, pgoff %lu, flags 0x%lx\n",
+	nova_dbgv("%s: inode %lu, pgoff %lu, flags 0x%x\n",
 		  __func__, inode->i_ino, vmf->pgoff, vmf->flags);
 
 	return nova_dax_huge_fault(vmf, PE_SIZE_PTE);
