@@ -711,19 +711,20 @@ int nova_rebuild_inode(struct super_block *sb, struct nova_inode_info *si,
 		return ret;
 
 	pi = (struct nova_inode *)nova_get_block(sb, pi_addr);
-	// We need this te valid in case we need to evect the inode.
+	// We need this valid in case we need to evict the inode.
+
+	nova_init_header(sb, sih, __le16_to_cpu(pi->i_mode));
 	sih->pi_addr = pi_addr;
 
 	if (pi->deleted == 1) {
 		nova_dbg("%s: inode %llu has been deleted.\n", __func__, ino);
-		return -EINVAL;
+		return -ESTALE;
 	}
 
 	nova_dbgv("%s: inode %llu, addr 0x%llx, valid %d, head 0x%llx, tail 0x%llx\n",
 			__func__, ino, pi_addr, pi->valid,
 			pi->log_head, pi->log_tail);
 
-	nova_init_header(sb, sih, __le16_to_cpu(pi->i_mode));
 	sih->ino = ino;
 	sih->alter_pi_addr = alter_pi_addr;
 
