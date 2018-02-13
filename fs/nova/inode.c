@@ -350,6 +350,9 @@ static int nova_free_dram_resource(struct super_block *sb,
 	unsigned long last_blocknr;
 	int freed = 0;
 
+	if (sih->ino == 0)
+		return 0;
+
 	if (!(S_ISREG(sih->i_mode)) && !(S_ISDIR(sih->i_mode)))
 		return 0;
 
@@ -862,7 +865,7 @@ static int nova_free_inode_resource(struct super_block *sb,
 	nova_memlock_inode(sb, pi);
 
 	/* We need the log to free the blocks from the b-tree */
-	switch (sih->i_mode & S_IFMT) {
+	switch (__le16_to_cpu(pi->i_mode) & S_IFMT) {
 	case S_IFREG:
 		last_blocknr = nova_get_last_blocknr(sb, sih);
 		nova_dbgv("%s: file ino %lu\n", __func__, sih->ino);

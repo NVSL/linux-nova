@@ -124,6 +124,7 @@ void nova_delete_dir_tree(struct super_block *sb,
 
 	NOVA_START_TIMING(delete_dir_tree_t, delete_time);
 
+	nova_dbgv("%s: delete dir %lu\n", __func__, sih->ino);
 	direntryc = (metadata_csum == 0) ? direntry : &entry_copy;
 	do {
 		nr_entries = radix_tree_gang_lookup(&sih->tree,

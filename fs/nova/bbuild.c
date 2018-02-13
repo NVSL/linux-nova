@@ -39,6 +39,7 @@ void nova_init_header(struct super_block *sb,
 {
 	sih->log_pages = 0;
 	sih->i_size = 0;
+	sih->ino = 0;
 	sih->i_blocks = 0;
 	sih->pi_addr = 0;
 	sih->alter_pi_addr = 0;
