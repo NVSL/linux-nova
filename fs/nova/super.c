@@ -183,7 +183,7 @@ static loff_t nova_max_size(int bits)
 
 enum {
 	Opt_bpi, Opt_init, Opt_snapshot, Opt_mode, Opt_uid,
-	Opt_gid, Opt_blocksize, Opt_wprotect,
+	Opt_gid, Opt_dax, Opt_wprotect,
 	Opt_err_cont, Opt_err_panic, Opt_err_ro,
 	Opt_dbgmask, Opt_err
 };
@@ -195,6 +195,7 @@ static const match_table_t tokens = {
 	{ Opt_mode,	     "mode=%o"		  },
 	{ Opt_uid,	     "uid=%u"		  },
 	{ Opt_gid,	     "gid=%u"		  },
+	{ Opt_dax,	     "dax"		  },
 	{ Opt_wprotect,	     "wprotect"		  },
 	{ Opt_err_cont,	     "errors=continue"	  },
 	{ Opt_err_panic,     "errors=panic"	  },
@@ -272,6 +273,9 @@ static int nova_parse_options(char *options, struct nova_sb_info *sbi,
 			clear_opt(sbi->s_mount_opt, ERRORS_RO);
 			clear_opt(sbi->s_mount_opt, ERRORS_PANIC);
 			set_opt(sbi->s_mount_opt, ERRORS_CONT);
+			break;
+		case Opt_dax:
+			set_opt(sbi->s_mount_opt, DAX);
 			break;
 		case Opt_wprotect:
 			if (remount)
@@ -641,7 +645,6 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 	sbi->mode = (0755);
 	sbi->uid = current_fsuid();
 	sbi->gid = current_fsgid();
-	set_opt(sbi->s_mount_opt, DAX);
 	set_opt(sbi->s_mount_opt, HUGEIOREMAP);
 
 	mutex_init(&sbi->vma_mutex);
@@ -863,8 +866,8 @@ static int nova_show_options(struct seq_file *seq, struct dentry *root)
 	/* memory protection disabled by default */
 	if (test_opt(root->d_sb, PROTECT))
 		seq_puts(seq, ",wprotect");
-	//if (test_opt(root->d_sb, DAX))
-	//	seq_puts(seq, ",dax");
+	if (test_opt(root->d_sb, DAX))
+		seq_puts(seq, ",dax");
 
 	return 0;
 }
