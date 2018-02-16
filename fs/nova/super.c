@@ -489,6 +489,7 @@ static inline void set_default_opts(struct nova_sb_info *sbi)
 	sbi->tail_reserved_blocks = TAIL_RESERVED_BLOCKS;
 	sbi->cpus = num_online_cpus();
 	sbi->map_id = 0;
+	sbi->snapshot_si = NULL;
 }
 
 static void nova_root_check(struct super_block *sb, struct nova_inode *root_pi)
@@ -790,7 +791,13 @@ setup_sb:
 	retval = 0;
 	NOVA_END_TIMING(mount_t, mount_time);
 	return retval;
+
 out:
+	if (sbi->snapshot_si) {
+		kmem_cache_free(nova_inode_cachep, sbi->snapshot_si);
+		sbi->snapshot_si = NULL;
+	}
+
 	kfree(sbi->zeroed_page);
 	sbi->zeroed_page = NULL;
 
