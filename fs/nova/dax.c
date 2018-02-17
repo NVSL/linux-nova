@@ -568,6 +568,7 @@ ssize_t do_nova_inplace_file_write(struct file *filp,
 	size_t count, offset, copied;
 	unsigned long start_blk, num_blocks, ent_blks = 0;
 	unsigned long total_blocks;
+	unsigned long new_blocks = 0;
 	unsigned long blocknr = 0;
 	unsigned int data_bits;
 	int allocated = 0;
@@ -671,6 +672,7 @@ ssize_t do_nova_inplace_file_write(struct file *filp,
 			}
 
 			hole_fill = true;
+			new_blocks += allocated;
 			blk_off = nova_get_block_off(sb, blocknr,
 							sih->i_blk_type);
 		}
@@ -767,7 +769,7 @@ ssize_t do_nova_inplace_file_write(struct file *filp,
 	}
 
 	data_bits = blk_type_to_shift[sih->i_blk_type];
-	sih->i_blocks += (total_blocks << (data_bits - sb->s_blocksize_bits));
+	sih->i_blocks += (new_blocks << (data_bits - sb->s_blocksize_bits));
 
 	inode->i_blocks = sih->i_blocks;
 
