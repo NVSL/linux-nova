@@ -18,6 +18,9 @@
  * 51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+#ifndef __STATS_H
+#define __STATS_H
+
 
 /* ======================= Timing ========================= */
 enum timing_category {
@@ -216,3 +219,5 @@ typedef struct timespec timing_t;
 	{__this_cpu_add(IOstats_percpu[name], value); }
 
 
+
+#endif
