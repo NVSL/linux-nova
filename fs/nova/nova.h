@@ -966,9 +966,6 @@ unsigned long nova_check_existing_entry(struct super_block *sb,
 	struct nova_file_write_entry **ret_entry,
 	struct nova_file_write_entry *ret_entryc, int check_next, u64 epoch_id,
 	int *inplace, int locked);
-int nova_dax_get_blocks(struct inode *inode, sector_t iblock,
-	unsigned long max_blocks, u32 *bno, bool *new, bool *boundary,
-	int create, bool taking_lock);
 int nova_iomap_begin(struct inode *inode, loff_t offset, loff_t length,
 	unsigned int flags, struct iomap *iomap, bool taking_lock);
 int nova_iomap_end(struct inode *inode, loff_t offset, loff_t length,
