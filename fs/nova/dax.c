@@ -867,7 +867,7 @@ int nova_check_overlap_vmas(struct super_block *sb,
  * return = 0, if plain lookup failed.
  * return < 0, error case.
  */
-int nova_dax_get_blocks(struct inode *inode, sector_t iblock,
+static int nova_dax_get_blocks(struct inode *inode, sector_t iblock,
 	unsigned long max_blocks, u32 *bno, bool *new, bool *boundary,
 	int create, bool taking_lock)
 {

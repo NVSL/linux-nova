@@ -1348,41 +1348,10 @@ void nova_set_inode_flags(struct inode *inode, struct nova_inode *pi,
 	inode->i_flags |= S_DAX;
 }
 
-static int nova_legacy_get_blocks(struct inode *inode, sector_t iblock,
-	struct buffer_head *bh, int create)
-{
-	unsigned long max_blocks = bh->b_size >> inode->i_blkbits;
-	bool new = false, boundary = false;
-	u32 bno;
-	int ret;
-
-	ret = nova_dax_get_blocks(inode, iblock, max_blocks, &bno, &new,
-				&boundary, create, false);
-	if (ret <= 0)
-		return ret;
-
-	map_bh(bh, inode->i_sb, bno);
-	bh->b_size = ret << inode->i_blkbits;
-	return 0;
-}
-
 static ssize_t nova_direct_IO(struct kiocb *iocb, struct iov_iter *iter)
 {
-	struct file *filp = iocb->ki_filp;
-	struct address_space *mapping = filp->f_mapping;
-	struct inode *inode = mapping->host;
-	ssize_t ret;
-	timing_t dio_time;
-
-	if (WARN_ON_ONCE(IS_DAX(inode)))
-		return -EIO;
-
-	NOVA_START_TIMING(direct_IO_t, dio_time);
-
-	ret = blockdev_direct_IO(iocb, inode, iter, nova_legacy_get_blocks);
-
-	NOVA_END_TIMING(direct_IO_t, dio_time);
-	return ret;
+	/* DAX does not support direct IO */
+	return -EIO;
 }
 
 /*
