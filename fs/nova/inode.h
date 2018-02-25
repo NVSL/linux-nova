@@ -93,6 +93,7 @@ struct nova_inode_info_header {
 	unsigned long alter_pi_addr;
 	unsigned long valid_entries;	/* For thorough GC */
 	unsigned long num_entries;	/* For thorough GC */
+	unsigned long wcount;
 	u64 last_setattr;		/* Last setattr entry */
 	u64 last_link_change;		/* Last link change entry */
 	u64 last_dentry;		/* Last updated dentry */

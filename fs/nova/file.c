@@ -127,6 +127,7 @@ static int nova_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 
 	NOVA_START_TIMING(fsync_t, fsync_time);
 	nova_info("nova_fsync is called\n");
+	nova_file_judge_sync(file);
 	if (datasync)
 		NOVA_STATS_ADD(fdatasync, 1);
 
@@ -734,7 +735,6 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	u64 epoch_id;
 	u32 time;
 
-
 	if (len == 0)
 		return 0;
 
@@ -789,6 +789,9 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 			__func__, inode->i_ino,	pos, count);
 
 	epoch_id = nova_get_epoch_id(sb);
+
+	nova_sih_increase_wcount(sih, len);
+
 	update.tail = sih->log_tail;
 	update.alter_tail = sih->alter_log_tail;
 	while (num_blocks > 0) {
