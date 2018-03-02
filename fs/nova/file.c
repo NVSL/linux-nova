@@ -605,7 +605,7 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 			index - entryc->pgoff >= entryc->num_pages) {
 			nova_err(sb, "%s ERROR: %lu, entry pgoff %llu, num %u, blocknr %llu tier %d\n",
 				__func__, index, entry->pgoff,
-				entry->num_pages, entry->block >> PAGE_SHIFT, entry->tier);
+				entry->num_pages, entry->block >> PAGE_SHIFT, get_entry_tier(entry));
 			return -EINVAL;
 		}
 		if (entryc->reassigned == 0) {

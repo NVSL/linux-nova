@@ -40,7 +40,7 @@ int init_dram_buffer(struct nova_sb_info *sbi) {
 void print_a_write_entry(struct nova_file_write_entry *entry) {
     nova_info("Entry [P]%p [B]%lu\n", entry, virt_to_block((unsigned long)entry));
     nova_info("||Type|Tier| num_pg | block  | pgoff  ||");
-    nova_info("||%4u|%4u|%8u|%8llu|%8llu||", entry->entry_type, entry->tier,
+    nova_info("||%4u|%4u|%8u|%8llu|%8llu||", entry->entry_type, get_entry_tier(entry),
     entry->num_pages, entry->block  >> PAGE_SHIFT, entry->pgoff);
 }
 
@@ -77,7 +77,7 @@ int current_tier(struct inode *inode) {
     do {
         entry = nova_find_next_entry(sb, sih, index);
         if (entry) {
-            return entry->tier;
+            return get_entry_tier(entry);
         }
         else return -1;
     } while (index <= end_index);
@@ -106,10 +106,10 @@ int is_not_same_tier(struct inode *inode) {
         if (entry) {
             if (!exist) {
                 exist = true;
-                t = entry->tier;
+                t = get_entry_tier(entry);
                 continue;
             }
-            if (entry->tier == t) {
+            if (get_entry_tier(entry) == t) {
                 num_pages = le32_to_cpu(entry->num_pages);
                 pgoff = le64_to_cpu(entry->pgoff);
                 index = pgoff + (unsigned long)num_pages;
@@ -186,8 +186,7 @@ int migrate_blocks(struct nova_sb_info *sbi, unsigned long blockfrom,
  * Because in the ultimate design, each block will only have one buffer page.
  */ 
 bool is_entry_busy(struct nova_sb_info *sbi, struct nova_file_write_entry *entry) {    
-    if (is_tier_migrating(entry->tier)) return 1;
-    if (!is_tier_bdev(entry->tier)) return 0;
+    if (!is_tier_bdev(get_entry_tier(entry))) return 0;
     if (vpmem_is_range_rwsem_locked(blockoff_to_virt(entry->block >> PAGE_SHIFT), le32_to_cpu(entry->num_pages))) return 1;
     
     return 0;
@@ -217,7 +216,6 @@ int nova_clone_write_entry(struct nova_sb_info *sbi, struct nova_inode_info *si,
     // print_a_write_entry(entry);
 
 	entry_data.entry_type = FILE_WRITE;
-    entry_data.tier = (u8)tier;   
     entry_data.block = cpu_to_le64(nova_get_block_off(sb, block,
 							sih->i_blk_type));     
 
@@ -251,7 +249,7 @@ int migrate_entry_blocks(struct nova_sb_info *sbi, int from, int to,
 
     /* Step 1. Check */
     if (!entry) return ret;
-    if (entry->tier != from) return ret;
+    if (get_entry_tier(entry) != from) return ret;
 
     // print_a_write_entry(entry);
 
@@ -262,7 +260,7 @@ int migrate_entry_blocks(struct nova_sb_info *sbi, int from, int to,
     }
 
     /* Step 2. Allocate */
-    entry->tier = TIER_MIGRATING;
+    entry->updating = 1;
 
     // TODOzsa: Could be wrong
     if (DEBUG_MIGRATION_ALLOC) nova_info("[Migration] entry->block %lu\n", 
@@ -303,7 +301,7 @@ int migrate_entry_blocks(struct nova_sb_info *sbi, int from, int to,
     /* Step 4. Free */
     // ret = nova_free_blocks_tier(sbi, entry->block >> PAGE_SHIFT, entry->num_pages);
     // Update tiering info
-    entry->tier = (u8)from;    
+    entry->updating = 0;
     // print_a_write_entry(entry);
     
 	nova_update_entry_csum(entry);
@@ -342,7 +340,7 @@ int migrate_group_entry_blocks(struct nova_sb_info *sbi, struct inode *inode, in
     do {
         entry = nova_find_next_entry(sb, sih, index);
         if (entry) {
-            if (entry->tier == from) {
+            if (get_entry_tier(entry) == from) {
                 if (DEBUG_MIGRATION) nova_info("[Migration] Migrating (group) write entry with index:%lu\n", index);
                 ret = migrate_entry_blocks(sbi, from, to, si, entry, 
                     blocknr + (entry->pgoff & (opt_size - 1)), update);
@@ -364,7 +362,6 @@ int migrate_group_entry_blocks(struct nova_sb_info *sbi, struct inode *inode, in
     nova_init_file_write_entry(sb, sih, &entry_data, epoch_id,
 		entry_first->pgoff, opt_size, 
         blocknr, time, file_size);
-    entry_data.tier = to;    
 
 	nova_update_entry_csum(&entry_data);
     ret = nova_append_file_write_entry(sb, pi, inode, &entry_data, update);
@@ -434,7 +431,6 @@ int nova_split_entry(struct super_block *sb, struct inode *inode,
     nova_init_file_write_entry(sb, sih, &entry_data, epoch_id,
 		pgoff + num_prev, num_pages - num_prev, 
         (entry->block >> PAGE_SHIFT) + num_prev, time, file_size);
-    entry_data.tier = tier;    
     
 	nova_update_entry_csum(&entry_data);
     entry->num_pages = cpu_to_le32(num_prev);
@@ -509,7 +505,7 @@ int migrate_a_file_by_entries(struct inode *inode, int from, int to)
         // nova_info("index:%lu ret:%d\n", index, ret);
 
         if (entry) {
-            if (entry->tier == from) {
+            if (get_entry_tier(entry) == from) {
                 if (DEBUG_MIGRATION) nova_info("[Migration] Migrating ( one ) write entry with index:%lu\n", index);
                 ret = migrate_entry_blocks(sbi, from, to, si, entry, 0, &update);
             }            
@@ -607,7 +603,7 @@ next:
                     }
                     nova_split_entry(sb, inode, entry, to);
                 }
-                if (entry->tier == from) {
+                if (get_entry_tier(entry) == from) {
                     pgoff = le64_to_cpu(entry->pgoff);
                     num_pages = le32_to_cpu(entry->num_pages);
                     index = pgoff + num_pages;
@@ -644,7 +640,7 @@ mig:
                 if (is_entry_cross_boundary(sbi, entry, to)) {
                     nova_split_entry(sb, inode, entry, to);
                 }
-                if (entry->tier == from) {
+                if (get_entry_tier(entry) == from) {
                     if (DEBUG_MIGRATION) nova_info("[Migration] Migrating ( one ) write entry with index:%lu\n", index);
                     ret = migrate_entry_blocks(sbi, from, to, si, entry, 0, &update);
                 }
@@ -781,7 +777,7 @@ struct inode *pop_an_inode_to_migrate(struct nova_sb_info *sbi, int tier) {
                 if (!si) goto next;
                 entry = nova_get_write_entry(sb, &si->header, 0);
                 if (!entry) goto next;
-                if (entry->tier == tier) {
+                if (get_entry_tier(entry) == tier) {
                     if(DEBUG_MIGRATION) nova_info("Inode %lu is poped.\n",ino);
                     return ret;
                 }

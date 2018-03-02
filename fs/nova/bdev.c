@@ -748,14 +748,11 @@ inline unsigned long get_blocknr_from_raw(struct nova_sb_info *sbi, int tier,
 // blocknr: global block number
 int get_tier(struct nova_sb_info *sbi, unsigned long blocknr) {
 	int i;
-	unsigned long last = 0;
 	unsigned long this = sbi->num_blocks;
 	for (i=TIER_PMEM;i<=TIER_BDEV_HIGH;++i) {
-		if (blocknr < this) goto out;
-		last = this;
+		if (blocknr < this) break;
 		this += sbi->bdev_list[i].capacity_page;
 	}
-out:
 	return i;
 }
 

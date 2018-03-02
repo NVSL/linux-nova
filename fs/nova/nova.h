@@ -565,10 +565,6 @@ static inline bool is_tier_dram(int tier) {
 	return (tier == TIER_PMEM);
 }
 
-static inline bool is_tier_migrating(int tier) {
-	return (tier == TIER_MIGRATING);
-}
-
 static inline bool is_tier_pmem(int tier) {
 	return (tier == TIER_PMEM);
 }
@@ -627,6 +623,7 @@ nova_get_write_entry(struct super_block *sb,
 int buffer_data_block_from_bdev_range(struct nova_sb_info *sbi, int tier, int blockoff, int length);
 void nova_update_entry_csum(void *entry);
 int get_tier(struct nova_sb_info *sbi, unsigned long blocknr);
+inline int get_entry_tier(struct nova_file_write_entry *entry);
 
 /*
  * Find data at a file offset (pgoff) in the data pointed to by a write log
@@ -647,13 +644,13 @@ static unsigned long get_nvmm(struct super_block *sb,
 	 */
 	
 retry:
-	if (unlikely(nova_get_entry_type(entry) == FILE_WRITE && is_tier_migrating(entry->tier))) {
+	if (unlikely(nova_get_entry_type(entry) == FILE_WRITE && entry->updating == 1)) {
+		nova_info("[Get] Entry is being updated\n");
 		msleep(500);
 		goto retry;
 	}
 
-	// if (nova_get_entry_type(entry) == FILE_WRITE && is_tier_bdev(entry->tier)) {
-	if (get_tier(sbi, entry->block >> PAGE_SHIFT) != TIER_PMEM) {
+	if ( get_entry_tier(entry) != TIER_PMEM ) {
 		if (DEBUG_GET_NVMM) nova_info("[Get] Get from TIER_BDEV\n");
 		ret = (unsigned long) (entry->block >> PAGE_SHIFT) + pgoff
 			- entry->pgoff;

@@ -151,6 +151,10 @@ inline unsigned long blockoff_to_virt(unsigned long blockoff) {
     return vpmem_start - (vsbi->num_blocks << PAGE_SHIFT) + ( blockoff << PAGE_SHIFT);
 }
 
+inline int get_entry_tier(struct nova_file_write_entry *entry) {
+	return get_tier(vsbi, entry->block >> PAGE_SHIFT);
+}
+
 typedef struct vpte_t vpte_t;
 struct vpte_t {
     struct vpte_t *next;

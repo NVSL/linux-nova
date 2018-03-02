@@ -74,7 +74,8 @@ struct nova_file_write_entry {
 	u8	reassigned;	/* Data is not latest */
 	u8	updating;	/* Data is being written */
 	// u8	padding;
-	u8  tier;		/* Which tier is the data resides now*/
+	// u8  tier;		/* Which tier is the data resides now*/
+	u8  seq_count;	/* Sequential combo counter */
 	__le32	num_pages;
 	__le64	block;          /* offset of first block in this write */
 	__le64	pgoff;          /* file offset at the beginning of this write */
