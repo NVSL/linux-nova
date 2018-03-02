@@ -138,6 +138,9 @@ unsigned int nova_free_old_entry(struct super_block *sb,
 
 	if (!entry)
 		return 0;
+	
+	// nova_info("free\n");
+	// print_a_write_entry(entry);
 
 	NOVA_START_TIMING(free_old_t, free_time);
 
@@ -168,6 +171,7 @@ unsigned int nova_free_old_entry(struct super_block *sb,
 
 	nova_dbgv("%s: pgoff %lu, free %u blocks\n",
 				__func__, pgoff, num_free);
+	// nova_info("old_nvmm %lu\n", old_nvmm);
 	nova_free_data_blocks(sb, sih, old_nvmm, num_free);
 
 out:
@@ -1251,9 +1255,10 @@ static u64 nova_extend_inode_log(struct super_block *sb, struct nova_inode *pi,
 		nova_memlock_inode(sb, pi);
 	}
 
-
+	// nova_info("B sih->log_pages %lu\n", sih->log_pages);
 	nova_inode_log_fast_gc(sb, pi, sih, curr_p,
 			       new_block, alter_new_block, allocated, 0);
+	// nova_info("A sih->log_pages %lu\n", sih->log_pages);
 
 //	nova_dbg("After append log pages:\n");
 //	nova_print_inode_log_page(sb, inode);

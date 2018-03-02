@@ -86,7 +86,7 @@
 #define TIER_MIGRATING 	255
 #define BDEV_COUNT_MAX 	10
 
-#define MIGRATION_POLICY 2
+#define MIGRATION_POLICY 1
 #define MIGRATION_ROTATE 1
 #define MIGRATION_DOWNWARD 2
 
@@ -1048,7 +1048,10 @@ long nova_alloc_blocks_in_free_list(struct super_block *sb,
 	struct free_list *free_list, unsigned short btype,
 	enum alloc_type atype, unsigned long num_blocks,
 	unsigned long *new_blocknr, enum nova_alloc_direction from_tail);
-
+int nova_new_blocks(struct super_block *sb, unsigned long *blocknr,
+	unsigned int num, unsigned short btype, int zero,
+	enum alloc_type atype, int cpuid, enum nova_alloc_direction from_tail);
+	
 /* bbuild.c */
 inline void set_bm(unsigned long bit, struct scan_bitmap *bm,
 	enum bm_type type);
@@ -1215,6 +1218,7 @@ int migrate_a_file(struct inode *inode, int from, int to);
 int migrate_a_file_to_pmem(struct inode *inode);
 int do_migrate_a_file_rotate(struct inode *inode);
 int do_migrate_a_file_downward(struct inode *inode);
+void print_a_write_entry(struct nova_file_write_entry *entry);
 
 /* mprotect.c */
 extern int nova_dax_mem_protect(struct super_block *sb,

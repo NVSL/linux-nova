@@ -304,6 +304,10 @@ int nova_bdev_write_blockoff(struct nova_sb_info *sbi, unsigned long blockoff,
 	int tier = get_tier(sbi, blockoff);
 	struct block_device *device = get_bdev_raw(sbi, tier);
 	unsigned long blk_off = get_raw_from_blocknr(sbi, blockoff);
+	if (tier == TIER_PMEM) {
+		nova_info("blockoff in TIER_PMEM: %lu\n", blockoff);
+		return -1;
+	}
 	return nova_bdev_write_block(sbi, device, blk_off, size, page, sync);
 }
 
@@ -930,11 +934,15 @@ long nova_alloc_block_tier(struct nova_sb_info *sbi, int tier, int cpuid,
 
 	// Tier pmem
 	if (is_tier_pmem(tier)) {
-		struct free_list *free_list = nova_get_free_list(sb, cpuid);
-		spin_lock(&free_list->s_lock);
-		allocated = nova_alloc_blocks_in_free_list(sb, free_list, 
-			NOVA_DEFAULT_BLOCK_TYPE, DATA, num_blocks, blocknr, from_tail);
-		spin_unlock(&free_list->s_lock);
+
+		allocated = nova_new_blocks(sb, blocknr, num_blocks,
+			NOVA_DEFAULT_BLOCK_TYPE, ALLOC_INIT_ZERO, DATA, cpuid, ALLOC_FROM_TAIL);
+
+		// struct free_list *free_list = nova_get_free_list(sb, cpuid);
+		// spin_lock(&free_list->s_lock);
+		// allocated = nova_alloc_blocks_in_free_list(sb, free_list, 
+		// 	NOVA_DEFAULT_BLOCK_TYPE, DATA, num_blocks, blocknr, from_tail);
+		// spin_unlock(&free_list->s_lock);
 		return allocated;
 	}
 	// Tier bdev

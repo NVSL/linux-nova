@@ -22,6 +22,7 @@ int vpmem_range_rwsem_set(unsigned long vaddr, unsigned long count, bool down);
 bool vpmem_is_range_rwsem_locked(unsigned long vaddr, unsigned long count);
 
 inline unsigned long virt_to_blockoff(unsigned long vaddr);
+inline unsigned long virt_to_block(unsigned long vaddr);
 inline unsigned long blockoff_to_virt(unsigned long blockoff);
 
 // #endif // __VPMEM_H

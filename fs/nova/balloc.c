@@ -699,7 +699,7 @@ static int nova_get_candidate_free_list(struct super_block *sb)
 	return cpuid;
 }
 
-static int nova_new_blocks(struct super_block *sb, unsigned long *blocknr,
+int nova_new_blocks(struct super_block *sb, unsigned long *blocknr,
 	unsigned int num, unsigned short btype, int zero,
 	enum alloc_type atype, int cpuid, enum nova_alloc_direction from_tail)
 {

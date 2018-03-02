@@ -133,6 +133,13 @@ inline int get_bdev(unsigned long pgidx) {
 }
 */
 
+inline unsigned long virt_to_block(unsigned long vaddr) {
+	struct super_block *sb = vsbi->sb;
+	struct nova_super_block *ps = nova_get_super(sb);
+    if ( vaddr > vpmem_start ) return virt_to_blockoff(vaddr);
+    else return ( vaddr - (unsigned long)ps ) >> PAGE_SHIFT;
+}
+
 // Virtual address to global block offset
 inline unsigned long virt_to_blockoff(unsigned long vaddr) {
     // return (vaddr-vpmem_start + vsbi->initsize) >> PAGE_SHIFT;

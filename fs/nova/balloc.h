@@ -67,9 +67,6 @@ enum alloc_type {
 	DATA,
 };
 
-
-
-
 int nova_alloc_block_free_lists(struct super_block *sb);
 void nova_delete_free_lists(struct super_block *sb);
 inline struct nova_range_node *nova_alloc_blocknode(struct super_block *sb);
