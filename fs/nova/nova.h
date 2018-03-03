@@ -1248,10 +1248,13 @@ int nova_update_truncated_block_parity(struct super_block *sb,
 	struct inode *inode, loff_t newsize);
 
 /* profile.c */
-inline int nova_sih_increase_wcount(struct nova_inode_info_header *sih, size_t len);
+inline int nova_sih_increase_wcount(struct super_block *sb, struct nova_inode_info_header *sih, size_t len);
 inline bool nova_sih_is_sync(struct nova_inode_info_header *sih);
-inline bool nova_sih_judge_sync(struct nova_inode_info_header *sih);
+inline bool nova_prof_judge_sync(struct nova_inode_info_header *sih);
 inline bool nova_file_judge_sync(struct file *file);
+unsigned int nova_get_prev_seq_count(struct super_block *sb, struct nova_inode_info_header *sih, 
+    unsigned long pgoff, int num_pages);
+inline bool nova_prof_judge_seq(struct nova_file_write_entry *entry);
 
 /* rebuild.c */
 int nova_reset_csum_parity_range(struct super_block *sb,

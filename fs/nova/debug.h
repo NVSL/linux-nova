@@ -14,6 +14,7 @@
 #define DEBUG_BFL_INFO 1
 
 #define DEBUG_PROF_SYNC 1
+#define DEBUG_PROF_SEQ 1
 
 #define DEBUG_DO_MIGRATION 0
 #define DEBUG_MIGRATION 0

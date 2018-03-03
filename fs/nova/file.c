@@ -722,6 +722,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	unsigned long total_blocks;
 	unsigned long blocknr = 0;
 	unsigned int data_bits;
+	unsigned int seq_count = 0;
 	int allocated = 0;
 	void *kmem;
 	u64 file_size;
@@ -790,7 +791,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 
 	epoch_id = nova_get_epoch_id(sb);
 
-	nova_sih_increase_wcount(sih, len);
+	nova_sih_increase_wcount(sb, sih, len);
 
 	update.tail = sih->log_tail;
 	update.alter_tail = sih->alter_log_tail;
@@ -851,6 +852,11 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 		nova_init_file_write_entry(sb, sih, &entry_data, epoch_id,
 					start_blk, allocated, blocknr, time,
 					file_size);
+
+		seq_count = nova_get_prev_seq_count(sb, sih, start_blk, allocated);
+		entry_data.seq_count = seq_count;
+		
+		nova_prof_judge_seq(&entry_data);
 
 		ret = nova_append_file_write_entry(sb, pi, inode,
 					&entry_data, &update);
