@@ -259,13 +259,16 @@ static void nova_update_link_change_entry(struct inode *inode,
 	struct nova_link_change_entry *entry,
 	struct nova_log_entry_info *entry_info)
 {
+	struct nova_inode_info *si = NOVA_I(inode);
+	struct nova_inode_info_header *sih = &si->header;
+
 	entry->entry_type	= LINK_CHANGE;
 	entry->epoch_id		= cpu_to_le64(entry_info->epoch_id);
 	entry->trans_id		= cpu_to_le64(entry_info->trans_id);
 	entry->invalid		= 0;
 	entry->links		= cpu_to_le16(inode->i_nlink);
 	entry->ctime		= cpu_to_le32(inode->i_ctime.tv_sec);
-	entry->flags		= cpu_to_le32(inode->i_flags);
+	entry->flags		= cpu_to_le32(sih->i_flags);
 	entry->generation	= cpu_to_le32(inode->i_generation);
 
 	nova_update_entry_csum(entry);

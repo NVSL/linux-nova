@@ -39,7 +39,7 @@ long nova_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 
 	switch (cmd) {
 	case FS_IOC_GETFLAGS:
-		flags = le32_to_cpu(pi->i_flags) & NOVA_FL_USER_VISIBLE;
+		flags = (sih->i_flags) & NOVA_FL_USER_VISIBLE;
 		return put_user(flags, (int __user *)arg);
 	case FS_IOC_SETFLAGS: {
 		unsigned int oldflags;
@@ -80,6 +80,7 @@ long nova_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		flags |= oldflags & ~FS_FL_USER_MODIFIABLE;
 		inode->i_ctime = current_time(inode);
 		nova_set_inode_flags(inode, pi, flags);
+		sih->i_flags = flags;
 
 		update.tail = 0;
 		update.alter_tail = 0;

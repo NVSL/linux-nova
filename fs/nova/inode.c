@@ -1156,6 +1156,7 @@ struct inode *nova_new_vfs_inode(enum nova_new_inode_type type,
 	sih->i_blk_type = NOVA_DEFAULT_BLOCK_TYPE;
 
 	nova_set_inode_flags(inode, pi, le32_to_cpu(pi->i_flags));
+	sih->i_flags = le32_to_cpu(pi->i_flags);
 
 	if (insert_inode_locked(inode) < 0) {
 		nova_err(sb, "nova_new_inode failed ino %lx\n", inode->i_ino);
