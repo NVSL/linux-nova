@@ -1262,11 +1262,22 @@ static void nova_setsize(struct inode *inode, loff_t oldsize, loff_t newsize,
 }
 
 int nova_getattr(const struct path *path, struct kstat *stat,
-		 u32 request_mask, unsigned int flags)
+		 u32 request_mask, unsigned int query_flags)
 {
-	struct inode *inode;
+	struct inode *inode = d_inode(path->dentry);
+	struct nova_inode_info *si = NOVA_I(inode);
+	struct nova_inode_info_header *sih = &si->header;
+	unsigned int flags = sih->i_flags;
 
-	inode = path->dentry->d_inode;
+	if (flags & FS_APPEND_FL)
+		stat->attributes |= STATX_ATTR_APPEND;
+	if (flags & FS_COMPR_FL)
+		stat->attributes |= STATX_ATTR_COMPRESSED;
+	if (flags & FS_IMMUTABLE_FL)
+		stat->attributes |= STATX_ATTR_IMMUTABLE;
+	if (flags & FS_NODUMP_FL)
+		stat->attributes |= STATX_ATTR_NODUMP;
+
 	generic_fillattr(inode, stat);
 	/* stat->blocks should be the number of 512B blocks */
 	stat->blocks = (inode->i_blocks << inode->i_sb->s_blocksize_bits) >> 9;

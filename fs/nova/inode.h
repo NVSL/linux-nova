@@ -373,7 +373,7 @@ extern int nova_write_inode(struct inode *inode, struct writeback_control *wbc);
 extern void nova_dirty_inode(struct inode *inode, int flags);
 extern int nova_notify_change(struct dentry *dentry, struct iattr *attr);
 extern int nova_getattr(const struct path *path, struct kstat *stat,
-			u32 request_mask, unsigned int flags);
+			u32 request_mask, unsigned int query_flags);
 extern void nova_set_inode_flags(struct inode *inode, struct nova_inode *pi,
 	unsigned int flags);
 extern unsigned long nova_find_region(struct inode *inode, loff_t *offset,
