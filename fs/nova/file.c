@@ -127,7 +127,7 @@ static int nova_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 
 	NOVA_START_TIMING(fsync_t, fsync_time);
 	nova_info("nova_fsync is called\n");
-	nova_file_judge_sync(file);
+	nova_prof_judge_sync(file);
 	if (datasync)
 		NOVA_STATS_ADD(fdatasync, 1);
 
@@ -159,6 +159,9 @@ persist:
 
 static int nova_migration(struct inode *inode, struct file *file) {
 	struct super_block *sb = inode->i_sb;
+	
+	struct nova_inode_info *si = NOVA_I(inode);
+	struct nova_inode_info_header *sih = &si->header;
 
 	if (DEBUG_DO_MIGRATION) {
 		if(rwsem_is_locked(&inode->i_rwsem)) nova_info("nova_flush is locked\n");
@@ -205,6 +208,7 @@ static int nova_migration(struct inode *inode, struct file *file) {
 		print_all_bfl(sb);
 	}	
 
+	print_file_write_entries(sb, sih);
 	sb_start_write(inode->i_sb);
 	inode_lock(inode);
 	
@@ -214,6 +218,7 @@ static int nova_migration(struct inode *inode, struct file *file) {
 	inode_unlock(inode);
 	sb_end_write(inode->i_sb);
 
+	print_file_write_entries(sb, sih);
 	if (DEBUG_BFL_INFO) {
 		print_all_bfl(sb);
 		nova_info("[End migration]\n");
@@ -791,7 +796,14 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 
 	epoch_id = nova_get_epoch_id(sb);
 
+	/* Profiler */
 	nova_sih_increase_wcount(sb, sih, len);
+
+	if ( num_blocks > 16 ) {
+		seq_count = nova_get_prev_seq_count(sb, sih, start_blk, num_blocks);
+		if ( !nova_sih_judge_sync(sih) && nova_prof_judge_seq(seq_count) )
+			nova_info("This should be allocated in DRAM cache.\n");
+	}
 
 	update.tail = sih->log_tail;
 	update.alter_tail = sih->alter_log_tail;
@@ -853,10 +865,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 					start_blk, allocated, blocknr, time,
 					file_size);
 
-		seq_count = nova_get_prev_seq_count(sb, sih, start_blk, allocated);
 		entry_data.seq_count = seq_count;
-		
-		nova_prof_judge_seq(&entry_data);
 
 		ret = nova_append_file_write_entry(sb, pi, inode,
 					&entry_data, &update);
@@ -914,6 +923,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 
 	sih->trans_id++;
 out:
+	print_file_write_entries(sb, sih);
 	if (ret < 0)
 		nova_cleanup_incomplete_write(sb, sih, blocknr, allocated,
 						begin_tail, update.tail);

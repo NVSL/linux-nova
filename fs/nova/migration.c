@@ -37,11 +37,46 @@ int init_dram_buffer(struct nova_sb_info *sbi) {
     return 0;
 }
 
-void print_a_write_entry(struct nova_file_write_entry *entry) {
-    nova_info("Entry [P]%p [B]%lu\n", entry, virt_to_block((unsigned long)entry));
+void print_a_write_entry(struct nova_file_write_entry *entry, int n) {
+    nova_info("Entry #%d [P]%p [B]%lu\n", n, entry, virt_to_block((unsigned long)entry));
     nova_info("||Type|Tier| num_pg | block  | pgoff  ||");
     nova_info("||%4u|%4u|%8u|%8llu|%8llu||", entry->entry_type, get_entry_tier(entry),
     entry->num_pages, entry->block  >> PAGE_SHIFT, entry->pgoff);
+}
+
+int print_file_write_entries(struct super_block *sb, struct nova_inode_info_header *sih) {
+	void *addr;
+    struct nova_inode *pi = nova_get_block(sb, sih->pi_addr);
+	struct nova_file_write_entry *entry;
+    int i = 0;
+    // pi->log_head, pi->log_tail
+	u64 curr_p = pi->log_head;
+	size_t entry_size = sizeof(struct nova_file_write_entry);
+
+    nova_info("Print [start]\n");
+	while (curr_p && curr_p != sih->log_tail) {
+		if (is_last_entry(curr_p, entry_size))
+			curr_p = next_log_page(sb, curr_p);
+
+		if (curr_p == 0) {
+			nova_err(sb, "%s: File inode %lu log is NULL!\n",
+				__func__, sih->ino);
+			return -EINVAL;
+		}
+
+		addr = (void *) nova_get_block(sb, curr_p);
+		entry = (struct nova_file_write_entry *) addr;
+		// nova_info("curr_p %llu\n",curr_p);
+		// nova_info("[entry] %llu,%llu,%u\n", 
+        // entry->block >> PAGE_SHIFT, entry->pgoff, entry->num_pages);
+
+        print_a_write_entry(entry, i++);
+
+		curr_p += entry_size;
+	}
+    nova_info("Print [end]\n");
+
+	return 0;
 }
 
 /*
@@ -200,6 +235,10 @@ int nova_clone_write_entry(struct nova_sb_info *sbi, struct nova_inode_info *si,
     struct inode *inode = &si->vfs_inode;
     struct nova_inode *pi = nova_get_block(sb, sih->pi_addr);
 	unsigned int data_bits;
+
+	void *addr;
+	struct nova_file_write_entry *entryc;
+    
     int ret = 0;
 	// u64 begin_tail = 0;
 	// u64 file_size = cpu_to_le64(inode->i_size);
@@ -230,6 +269,12 @@ int nova_clone_write_entry(struct nova_sb_info *sbi, struct nova_inode_info *si,
         return ret;
     }
     
+
+    addr = (void *) nova_get_block(sb, update->tail);
+    entryc = (struct nova_file_write_entry *) addr;
+
+	nova_flush_buffer(entryc, sizeof(struct nova_file_write_entry), 1);
+
 	data_bits = blk_type_to_shift[sih->i_blk_type];
 	sih->i_blocks += (le32_to_cpu(entry->num_pages) << (data_bits - sb->s_blocksize_bits));
 

@@ -34,8 +34,7 @@ inline bool nova_sih_is_sync(struct nova_inode_info_header *sih) {
     else return false;
 }
 
-// Judge and reset wcount
-inline bool nova_prof_judge_sync(struct nova_inode_info_header *sih) {
+inline bool nova_sih_judge_sync(struct nova_inode_info_header *sih) {
     if ((sih->wcount & ((1UL << 63) - 1)) >> SYNC_BIT == 0) {
         if (DEBUG_PROF_SYNC) nova_info("Inode sih %lu is async (%lu).\n", sih->ino, sih->wcount);
         sih->wcount = 0;
@@ -48,9 +47,10 @@ inline bool nova_prof_judge_sync(struct nova_inode_info_header *sih) {
     }
 }
 
-inline bool nova_file_judge_sync(struct file *file) {
+// Judge and reset wcount
+inline bool nova_prof_judge_sync(struct file *file) {
 	struct nova_inode_info *si = NOVA_I(file->f_mapping->host);
-	return nova_prof_judge_sync(&si->header);
+	return nova_sih_judge_sync(&si->header);
 }
 
 // Profiler module #2
@@ -73,8 +73,13 @@ unsigned int nova_get_prev_seq_count(struct super_block *sb, struct nova_inode_i
     return entry->seq_count + 1;
 }
 
+inline bool nova_prof_judge_seq(unsigned int seq_count) {
+    if (seq_count >> SEQ_BIT == 0) return false;
+    else return true;
+}
+
 // Judge seq_count
-inline bool nova_prof_judge_seq(struct nova_file_write_entry *entry) {
+inline bool nova_entry_judge_seq(struct nova_file_write_entry *entry) {
     if (entry->seq_count >> SEQ_BIT == 0) {
         if (DEBUG_PROF_SEQ) nova_info("Entry index %llu is random (%u).\n", entry->pgoff, entry->seq_count);
         return false;

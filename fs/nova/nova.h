@@ -1205,6 +1205,7 @@ extern long nova_compat_ioctl(struct file *file, unsigned int cmd,
 
 /* migration.c */
 int init_dram_buffer(struct nova_sb_info *sbi);
+int print_file_write_entries(struct super_block *sb, struct nova_inode_info_header *sih);
 int buffer_data_block_from_bdev(struct nova_sb_info *sbi, int tier, unsigned long blockoff);
 inline int clear_dram_buffer(struct nova_sb_info *sbi, unsigned long number);
 inline int put_dram_buffer(struct nova_sb_info *sbi, unsigned long number);
@@ -1215,7 +1216,7 @@ int migrate_a_file(struct inode *inode, int from, int to);
 int migrate_a_file_to_pmem(struct inode *inode);
 int do_migrate_a_file_rotate(struct inode *inode);
 int do_migrate_a_file_downward(struct inode *inode);
-void print_a_write_entry(struct nova_file_write_entry *entry);
+void print_a_write_entry(struct nova_file_write_entry *entry, int n);
 
 /* mprotect.c */
 extern int nova_dax_mem_protect(struct super_block *sb,
@@ -1250,11 +1251,12 @@ int nova_update_truncated_block_parity(struct super_block *sb,
 /* profile.c */
 inline int nova_sih_increase_wcount(struct super_block *sb, struct nova_inode_info_header *sih, size_t len);
 inline bool nova_sih_is_sync(struct nova_inode_info_header *sih);
-inline bool nova_prof_judge_sync(struct nova_inode_info_header *sih);
-inline bool nova_file_judge_sync(struct file *file);
+inline bool nova_sih_judge_sync(struct nova_inode_info_header *sih);
+inline bool nova_prof_judge_sync(struct file *file);
 unsigned int nova_get_prev_seq_count(struct super_block *sb, struct nova_inode_info_header *sih, 
     unsigned long pgoff, int num_pages);
-inline bool nova_prof_judge_seq(struct nova_file_write_entry *entry);
+inline bool nova_prof_judge_seq(unsigned int seq_count);
+inline bool nova_entry_judge_seq(struct nova_file_write_entry *entry);
 
 /* rebuild.c */
 int nova_reset_csum_parity_range(struct super_block *sb,
