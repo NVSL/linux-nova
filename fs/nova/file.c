@@ -329,6 +329,7 @@ next:
 		nova_memunlock_inode(sb, pi);
 		pi->i_flags |= cpu_to_le32(NOVA_EOFBLOCKS_FL);
 		nova_memlock_inode(sb, pi);
+		sih->i_flags |= cpu_to_le32(NOVA_EOFBLOCKS_FL);
 	}
 
 	if (!(mode & FALLOC_FL_KEEP_SIZE) && new_size > inode->i_size) {

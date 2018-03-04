@@ -85,6 +85,7 @@ struct nova_inode_info_header {
 	struct list_head list;		/* SB list of mmap sih */
 	int num_vmas;
 	unsigned short i_mode;		/* Dir or file? */
+	unsigned int i_flags;
 	unsigned long log_pages;	/* Num of log pages */
 	unsigned long i_size;
 	unsigned long i_blocks;

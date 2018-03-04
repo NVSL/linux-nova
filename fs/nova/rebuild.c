@@ -147,6 +147,7 @@ static int nova_rebuild_inode_finish(struct super_block *sb,
 
 	sih->i_size = le64_to_cpu(reb->i_size);
 	sih->i_mode = le64_to_cpu(reb->i_mode);
+	sih->i_flags = le32_to_cpu(reb->i_flags);
 	sih->trans_id = reb->trans_id + 1;
 
 	nova_memunlock_inode(sb, pi);
