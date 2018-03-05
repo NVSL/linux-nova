@@ -1493,7 +1493,7 @@ int nova_failure_recovery(struct super_block *sb)
 	free_resources(sb);
 
 	nova_dbg("Failure recovery total recovered %lu\n",
-				sbi->s_inodes_used_count);
+			sbi->s_inodes_used_count - NOVA_NORMAL_INODE_START);
 	return ret;
 }
 
