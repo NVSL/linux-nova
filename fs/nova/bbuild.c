@@ -51,6 +51,8 @@ void nova_init_header(struct super_block *sb,
 	sih->valid_entries = 0;
 	sih->num_entries = 0;
 	sih->wcount = 0;
+	sih->ltier = 0;
+	INIT_LIST_HEAD(&sih->lru_list);
 	sih->last_setattr = 0;
 	sih->last_link_change = 0;
 	sih->last_dentry = 0;

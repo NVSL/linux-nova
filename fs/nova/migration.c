@@ -38,25 +38,42 @@ int init_dram_buffer(struct nova_sb_info *sbi) {
 }
 
 void print_a_write_entry(struct nova_file_write_entry *entry, int n) {
-    nova_info("Entry #%d [P]%p [B]%lu\n", n, entry, virt_to_block((unsigned long)entry));
-    nova_info("||Type|Tier| num_pg | block  | pgoff  ||");
-    nova_info("||%4u|%4u|%8u|%8llu|%8llu||", entry->entry_type, get_entry_tier(entry),
+    nova_info("#%3d [P]%p [B]%lu\n", n, entry, virt_to_block((unsigned long)entry));
+    nova_info("     ||Type|Tier| num_pg | block  | pgoff  ||");
+    nova_info("     ||%4u|%4u|%8u|%8llu|%8llu||", entry->entry_type, get_entry_tier(entry),
     entry->num_pages, entry->block  >> PAGE_SHIFT, entry->pgoff);
 }
 
 int print_file_write_entries(struct super_block *sb, struct nova_inode_info_header *sih) {
 	void *addr;
+    struct nova_inode_log_page *addrp;
     struct nova_inode *pi = nova_get_block(sb, sih->pi_addr);
 	struct nova_file_write_entry *entry;
+    unsigned int inv, num;
+    unsigned long epoch_id;
     int i = 0;
     // pi->log_head, pi->log_tail
 	u64 curr_p = pi->log_head;
 	size_t entry_size = sizeof(struct nova_file_write_entry);
 
     nova_info("Print [start]\n");
+
+    nova_info("valid %u deleted %u link %u\n", pi->valid, pi->deleted, pi->i_links_count);
+    addrp = nova_get_block(sb, curr_p);
+    inv = addrp->page_tail.invalid_entries;
+    num = addrp->page_tail.num_entries;
+    epoch_id = addrp->page_tail.epoch_id;
+    nova_info("Log page: %p num:%u invalid: %u epoch: %lu", addrp, num, inv, epoch_id);
+
 	while (curr_p && curr_p != sih->log_tail) {
-		if (is_last_entry(curr_p, entry_size))
+		if (is_last_entry(curr_p, entry_size)) {
 			curr_p = next_log_page(sb, curr_p);
+		    addrp = nova_get_block(sb, curr_p);
+            inv = addrp->page_tail.invalid_entries;
+            num = addrp->page_tail.num_entries;
+            epoch_id = addrp->page_tail.epoch_id;
+            nova_info("Log page: %p num:%u invalid: %u epoch: %lu", addrp, num, inv, epoch_id);
+        }
 
 		if (curr_p == 0) {
 			nova_err(sb, "%s: File inode %lu log is NULL!\n",
@@ -613,6 +630,8 @@ int migrate_a_file(struct inode *inode, int from, int to)
     unsigned int n2 = 0;
     loff_t isize = 0;
     unsigned int osb = sbi->bdev_list[to - TIER_BDEV_LOW].opt_size_bit;
+
+    nova_update_sih_ltier(sb, sih, to);
 
     if (is_tier_pmem(to)) return migrate_a_file_by_entries(inode, from, to);
     // return migrate_a_file_by_entries(inode, from, to);

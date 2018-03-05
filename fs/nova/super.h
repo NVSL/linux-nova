@@ -191,6 +191,8 @@ struct nova_sb_info {
 	/* Free block list for block devices */
 	struct bdev_free_list *bdev_free_list;
 
+	struct list_head *inode_lru_lists;
+
 	unsigned long per_list_blocks;
 };
 

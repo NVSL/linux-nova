@@ -740,6 +740,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	int try_inplace = 0;
 	u64 epoch_id;
 	u32 time;
+	int write_tier = TIER_PMEM;
 
 	if (len == 0)
 		return 0;
@@ -801,9 +802,14 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 
 	if ( num_blocks > 16 ) {
 		seq_count = nova_get_prev_seq_count(sb, sih, start_blk, num_blocks);
-		if ( !nova_sih_judge_sync(sih) && nova_prof_judge_seq(seq_count) )
+		if (!nova_sih_judge_sync(sih) && nova_prof_judge_seq(seq_count)){
 			nova_info("This should be allocated in DRAM cache.\n");
+			/* TODOzsa: write tier in DRAM */
+			write_tier = TIER_PMEM;
+		}
 	}
+
+	nova_update_sih_ltier(sb, sih, write_tier);
 
 	update.tail = sih->log_tail;
 	update.alter_tail = sih->alter_log_tail;

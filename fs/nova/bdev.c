@@ -667,6 +667,39 @@ alloc:
 	return ret_blocks;
 }
 
+void print_all_lru(struct super_block *sb){	
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	struct list_head *list;
+	struct nova_inode_info_header *sih, *tmpsih;
+	int count = 0;
+	// unsigned long tmp[10] = {0};
+	int i;
+	char ctmp[50] = {0};
+	char htmp[5] = {'\0'};
+
+	nova_info("-----------------------------------------------------------\n");
+	nova_info("                    [Inode LRU lists]\n");
+	nova_info("|Tier|CPU| #0| #1| #2| #3| #4| #5| #6| #7| #8| #9|\n");
+	for (i=0;i<(TIER_BDEV_HIGH+1)*sbi->cpus;++i) {
+		ctmp[0]='\0';
+		htmp[0]='\0';
+		list = nova_get_inode_lru_lists(sbi, i/sbi->cpus, i%sbi->cpus);
+		count = 0;
+		list_for_each_entry_safe(sih, tmpsih, list, lru_list) {
+			// tmp[count++] = sih->ino;
+			sprintf(htmp, "%3lu|", sih->ino);
+			strcat(ctmp, htmp);
+			if (count++>9) break;
+		}		
+		// nova_info("|%4d|%3d|%3lu|%3lu|%3lu|%3lu|%3lu|%3lu|%3lu|%3lu|%3lu|%3lu|\n",
+		// i/sbi->cpus, i%sbi->cpus, tmp[0], tmp[1], tmp[2], tmp[3],
+		// tmp[4], tmp[5], tmp[6], tmp[7], tmp[8], tmp[9]);
+		nova_info("|%4d|%3d|%s\n", i/sbi->cpus, i%sbi->cpus, ctmp);
+	}
+
+	nova_info("-----------------------------------------------------------\n");
+}
+
 void print_all_bfl(struct super_block *sb){	
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct bdev_free_list *bfl = NULL;
@@ -693,6 +726,8 @@ void print_all_bfl(struct super_block *sb){
 		bfl->num_free_blocks, bfl->num_total_blocks, bfl->num_blocknode);
 	}
 	nova_info("-----------------------------------------------------------\n");
+
+	print_all_lru(sb);
 }
 
 // blocknr: global block number

@@ -94,6 +94,8 @@ struct nova_inode_info_header {
 	unsigned long valid_entries;	/* For thorough GC */
 	unsigned long num_entries;	/* For thorough GC */
 	unsigned long wcount;
+	int ltier;				/* lowest tier */
+	struct list_head lru_list;	
 	u64 last_setattr;		/* Last setattr entry */
 	u64 last_link_change;		/* Last link change entry */
 	u64 last_dentry;		/* Last updated dentry */

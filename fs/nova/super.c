@@ -894,6 +894,13 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 		goto out;
 	}
 
+	if (nova_alloc_inode_lru_lists(sb)) {
+		retval = -ENOMEM;
+		nova_err(sb, "%s: Failed to allocate bdev block free lists.",
+			 __func__);
+		goto out;
+	}
+
 	nova_sysfs_init(sb);
 
 	/* Init a new nova instance */

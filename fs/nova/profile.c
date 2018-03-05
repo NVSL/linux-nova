@@ -1,3 +1,4 @@
+#include <linux/list.h>
 #include "nova.h"
 
 #define SYNC_BIT        20
@@ -92,6 +93,43 @@ inline bool nova_entry_judge_seq(struct nova_file_write_entry *entry) {
 
 // Profiler module #3
 // Hot vs. Cold
+int nova_alloc_inode_lru_lists(struct super_block *sb) {
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+    int i;
+    sbi->inode_lru_lists = kcalloc((TIER_BDEV_HIGH + 1)*sbi->cpus, sizeof(struct list_head), GFP_KERNEL);
+    for (i=0;i<(TIER_BDEV_HIGH + 1)*sbi->cpus;++i) {
+	    INIT_LIST_HEAD(&sbi->inode_lru_lists[i]);
+    }
+	if (!sbi->inode_lru_lists)
+		return -ENOMEM;
+    return 0;
+}
 
+inline struct list_head *nova_get_inode_lru_lists(struct nova_sb_info *sbi, int tier, int cpu) {
+    return &sbi->inode_lru_lists[tier*sbi->cpus+cpu];
+}
+
+int nova_move_inode_lru_list(struct nova_sb_info *sbi, struct nova_inode_info_header *sih, int tier) {
+    int cpu = sih->ino % sbi->cpus;
+    struct list_head *new_list = nova_get_inode_lru_lists(sbi, tier, cpu);    
+    if (sih->lru_list.next != &sih->lru_list && sih->lru_list.prev != &sih->lru_list) {
+		list_del(&sih->lru_list);
+    }
+    list_add_tail(&sih->lru_list, new_list);
+    sih->ltier = tier;
+    return 0;
+}
+
+int nova_update_sih_ltier(struct super_block *sb, struct nova_inode_info_header *sih, int tier) {
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+    return nova_move_inode_lru_list(sbi, sih, tier);
+}
+
+int nova_unlink_inode_lru_list(struct nova_sb_info *sbi, struct nova_inode_info_header *sih) {
+    if (sih->lru_list.next != &sih->lru_list && sih->lru_list.prev != &sih->lru_list) {
+		list_del(&sih->lru_list);
+    }
+    return 0;
+}
 
 // Action
