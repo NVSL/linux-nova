@@ -1012,19 +1012,23 @@ out:
 	sih->i_size = entry->size;
 }
 
-static void nova_traverse_file_write_entry(struct super_block *sb,
+static unsigned long nova_traverse_file_write_entry(struct super_block *sb,
 	struct nova_inode_info_header *sih, struct nova_file_write_entry *entry,
 	struct nova_file_write_entry *entryc, struct task_ring *ring,
 	unsigned long base, struct scan_bitmap *bm)
 {
+	unsigned long max_blocknr = 0;
 	sih->i_size = entryc->size;
 
 	if (entryc->num_pages != entryc->invalid_pages) {
+		max_blocknr = entryc->pgoff + entryc->num_pages - 1;
 		if (entryc->pgoff < base + MAX_PGOFF &&
 				entryc->pgoff + entryc->num_pages > base)
 			nova_set_ring_array(sb, sih, entry, entryc,
 						ring, base, bm);
 	}
+
+	return max_blocknr;
 }
 
 static int nova_traverse_file_inode_log(struct super_block *sb,
@@ -1033,7 +1037,7 @@ static int nova_traverse_file_inode_log(struct super_block *sb,
 {
 	char entry_copy[NOVA_MAX_ENTRY_LEN];
 	unsigned long base = 0;
-	unsigned long last_blocknr;
+	unsigned long last_blocknr = 0, curr_last;
 	u64 ino = pi->nova_ino;
 	void *entry, *entryc;
 	unsigned int btype;
@@ -1051,7 +1055,6 @@ static int nova_traverse_file_inode_log(struct super_block *sb,
 	entryc = (metadata_csum == 0) ? NULL : entry_copy;
 
 again:
-	sih->i_size = 0;
 	curr_p = pi->log_head;
 	nova_dbg_verbose("Log head 0x%llx, tail 0x%llx\n",
 				curr_p, pi->log_tail);
@@ -1096,9 +1099,11 @@ again:
 			curr_p += sizeof(struct nova_link_change_entry);
 			break;
 		case FILE_WRITE:
-			nova_traverse_file_write_entry(sb, sih, WENTRY(entry),
+			curr_last = nova_traverse_file_write_entry(sb, sih, WENTRY(entry),
 						WENTRY(entryc), ring, base, bm);
 			curr_p += sizeof(struct nova_file_write_entry);
+			if (last_blocknr < curr_last)
+				last_blocknr = curr_last;
 			break;
 		case MMAP_WRITE:
 			curr_p += sizeof(struct nova_mmap_entry);
@@ -1124,10 +1129,6 @@ again:
 		}
 	}
 
-	if (sih->i_size == 0)
-		return 0;
-
-	last_blocknr = (sih->i_size - 1) >> data_bits;
 	nova_set_file_bm(sb, sih, ring, bm, base, last_blocknr);
 	if (last_blocknr >= base + MAX_PGOFF) {
 		base += MAX_PGOFF;
