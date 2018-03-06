@@ -1387,6 +1387,7 @@ int nova_free_contiguous_log_blocks(struct super_block *sb,
 int nova_free_inode_log(struct super_block *sb, struct nova_inode *pi,
 	struct nova_inode_info_header *sih)
 {
+	struct nova_inode *alter_pi;
 	int freed = 0;
 	timing_t free_time;
 
@@ -1400,7 +1401,15 @@ int nova_free_inode_log(struct super_block *sb, struct nova_inode *pi,
 		nova_memunlock_inode(sb, pi);
 		pi->log_head = pi->log_tail = 0;
 		pi->alter_log_head = pi->alter_log_tail = 0;
-		nova_flush_buffer(&pi->log_head, CACHELINE_SIZE, 0);
+		nova_update_inode_checksum(pi);
+		if (metadata_csum) {
+			alter_pi = (struct nova_inode *)nova_get_block(sb,
+						sih->alter_pi_addr);
+			if (alter_pi) {
+				memcpy_to_pmem_nocache(alter_pi, pi,
+						sizeof(struct nova_inode));
+			}
+		}
 		nova_memlock_inode(sb, pi);
 	}
 
