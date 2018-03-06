@@ -503,6 +503,8 @@ int nova_check_inode_integrity(struct super_block *sb, u64 ino, u64 pi_addr,
 	} else if (inode_bad) {
 		nova_dbg("%s: inode %llu checksum error, trying to repair using the replica\n",
 			 __func__, ino);
+		nova_print_inode(pi);
+		nova_print_inode(alter_pi);
 		ret = nova_repair_inode(sb, pi, alter_pic);
 		if (ret != 0)
 			goto fail;
