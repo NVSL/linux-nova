@@ -37,8 +37,9 @@ int init_dram_buffer(struct nova_sb_info *sbi) {
     return 0;
 }
 
-void print_a_write_entry(struct nova_file_write_entry *entry, int n) {
-    nova_info("#%3d [P]%p [B]%lu\n", n, entry, virt_to_block((unsigned long)entry));
+void print_a_write_entry(struct nova_file_write_entry *entry, int n, bool valid) {
+    if (valid) nova_info("\e[0;32m#%3d\e[0m [P]%p [B]%lu\n", n, entry, virt_to_block((unsigned long)entry));
+    else nova_info("\e[1;31m#%3d\e[0m [P]%p [B]%lu\n", n, entry, virt_to_block((unsigned long)entry));
     nova_info("     ||Type|Tier| num_pg | block  | pgoff  ||");
     nova_info("     ||%4u|%4u|%8u|%8llu|%8llu||", entry->entry_type, get_entry_tier(entry),
     entry->num_pages, entry->block  >> PAGE_SHIFT, entry->pgoff);
@@ -52,6 +53,7 @@ int print_file_write_entries(struct super_block *sb, struct nova_inode_info_head
     unsigned int inv, num;
     unsigned long epoch_id;
     int i = 0;
+    int j = 0;
     // pi->log_head, pi->log_tail
 	u64 curr_p = pi->log_head;
 	size_t entry_size = sizeof(struct nova_file_write_entry);
@@ -64,7 +66,7 @@ int print_file_write_entries(struct super_block *sb, struct nova_inode_info_head
     num = addrp->page_tail.num_entries;
     epoch_id = addrp->page_tail.epoch_id;
     nova_info("Log page: %p num:%u invalid: %u epoch: %lu", addrp, num, inv, epoch_id);
-
+    
 	while (curr_p && curr_p != sih->log_tail) {
 		if (is_last_entry(curr_p, entry_size)) {
 			curr_p = next_log_page(sb, curr_p);
@@ -73,6 +75,7 @@ int print_file_write_entries(struct super_block *sb, struct nova_inode_info_head
             num = addrp->page_tail.num_entries;
             epoch_id = addrp->page_tail.epoch_id;
             nova_info("Log page: %p num:%u invalid: %u epoch: %lu", addrp, num, inv, epoch_id);
+            j = 0;
         }
 
 		if (curr_p == 0) {
@@ -87,7 +90,9 @@ int print_file_write_entries(struct super_block *sb, struct nova_inode_info_head
 		// nova_info("[entry] %llu,%llu,%u\n", 
         // entry->block >> PAGE_SHIFT, entry->pgoff, entry->num_pages);
 
-        print_a_write_entry(entry, i++);
+        print_a_write_entry(entry, i, j<num);
+        ++i;
+        ++j;
 
 		curr_p += entry_size;
 	}
@@ -274,6 +279,7 @@ int nova_clone_write_entry(struct nova_sb_info *sbi, struct nova_inode_info *si,
 	entry_data.entry_type = FILE_WRITE;
     entry_data.block = cpu_to_le64(nova_get_block_off(sb, block,
 							sih->i_blk_type));     
+    entry_data.updating = 0;
 
 	nova_update_entry_csum(&entry_data);
     // print_a_write_entry(&entry_data);
@@ -395,7 +401,7 @@ int migrate_group_entry_blocks(struct nova_sb_info *sbi, struct inode *inode, in
 
     ret = nova_alloc_block_tier(sbi, to, ANY_CPU, &blocknr, opt_size, ALLOC_FROM_TAIL);
     if (ret<0) {
-        nova_info("[Migration] Block allocation error.\n");
+        nova_info("[Migration] Block group allocation error.\n");
         return ret;
     }
     
@@ -455,7 +461,10 @@ int migrate_group_entry_blocks(struct nova_sb_info *sbi, struct inode *inode, in
 }
 
 bool is_entry_cross_boundary(struct nova_sb_info *sbi, struct nova_file_write_entry *entry, int tier) {
-    unsigned int osb = sbi->bdev_list[tier - TIER_BDEV_LOW].opt_size_bit;
+    unsigned int osb = 0;
+    // There is no boundary in PMEM
+    if (tier==TIER_PMEM) return false;
+    osb = sbi->bdev_list[tier - TIER_BDEV_LOW].opt_size_bit;
     if ( (entry->pgoff >> osb) !=  
         ( (entry->pgoff + entry->num_pages - 1) >> osb ) )
         return true;
@@ -629,11 +638,12 @@ int migrate_a_file(struct inode *inode, int from, int to)
     unsigned int n1 = 0;
     unsigned int n2 = 0;
     loff_t isize = 0;
+    bool cangroup = true;
     unsigned int osb = sbi->bdev_list[to - TIER_BDEV_LOW].opt_size_bit;
 
     nova_update_sih_ltier(sb, sih, to);
 
-    if (is_tier_pmem(to)) return migrate_a_file_by_entries(inode, from, to);
+    if (from>=to) return migrate_a_file_by_entries(inode, from, to);
     // return migrate_a_file_by_entries(inode, from, to);
     if (DEBUG_MIGRATION) nova_info("[Migration] Start migrating inode:%lu from:T%d to:T%d\n",
         inode->i_ino, from, to);
@@ -648,12 +658,16 @@ int migrate_a_file(struct inode *inode, int from, int to)
     
     for (i=0;i<=end_index>>osb;++i) {
 next:
+        cangroup = true;
         n1 = 0;
         n2 = 0;
         index = i<<osb;
         do {
             entry = nova_find_next_entry(sb, sih, index);
             if (entry) {
+                if (get_entry_tier(entry) == to) {
+                        goto mig;
+                }
                 if ( (entry->pgoff)>>osb > i ) {
                     if (n1==0) {
                         i = (entry->pgoff)>>osb;
@@ -681,7 +695,7 @@ next:
         } while (index < (i+1)<<osb);
 
         if (index == (i+1)<<osb) {
-            if (n1!=1) {
+            if (n1!=1 && cangroup) {
                 migrate_group_entry_blocks(sbi, inode, from, to, i<<osb, ((i+1)<<osb) -1, &update);
                 nentry += n1;
                 continue;
@@ -692,6 +706,7 @@ next:
                 continue;
             }
         }
+    // This osb section can only be migrated individually
 mig: 
         index = i<<osb;
         do {

@@ -365,7 +365,7 @@ static inline void *nova_get_block(struct super_block *sb, u64 block)
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_super_block *ps = nova_get_super(sb);
 	if (is_logical_offset(sbi, block)){
-		return block ? ((void *)blockoff_to_virt(block>>PAGE_SHIFT)) : NULL;
+		return block ? ((void *)block_to_virt(block)) : NULL;
 	}
 	else
 		return block ? ((void *)ps + block) : NULL;
@@ -1216,7 +1216,7 @@ int migrate_a_file(struct inode *inode, int from, int to);
 int migrate_a_file_to_pmem(struct inode *inode);
 int do_migrate_a_file_rotate(struct inode *inode);
 int do_migrate_a_file_downward(struct inode *inode);
-void print_a_write_entry(struct nova_file_write_entry *entry, int n);
+void print_a_write_entry(struct nova_file_write_entry *entry, int n, bool valid);
 
 /* mprotect.c */
 extern int nova_dax_mem_protect(struct super_block *sb,

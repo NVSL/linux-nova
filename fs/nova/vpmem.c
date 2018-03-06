@@ -140,6 +140,10 @@ inline unsigned long virt_to_block(unsigned long vaddr) {
     else return ( vaddr - (unsigned long)ps ) >> PAGE_SHIFT;
 }
 
+inline unsigned long block_to_virt(unsigned long block) {
+    return vpmem_start - (vsbi->num_blocks << PAGE_SHIFT) + block;
+}
+
 // Virtual address to global block offset
 inline unsigned long virt_to_blockoff(unsigned long vaddr) {
     // return (vaddr-vpmem_start + vsbi->initsize) >> PAGE_SHIFT;
