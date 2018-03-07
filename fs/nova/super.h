@@ -47,20 +47,19 @@ struct nova_super_block {
  * The first block contains super blocks;
  * The second block contains reserved inodes;
  * The third block is reserved.
- * The fourth block contains pointers to journal pages.
- * The fifth/sixth block contains pointers to inode tables.
- * The seventh/eighth blocks are void by now.
+ * The fourth/fifth block contains pointers to inode tables.
+ * The sixth block (and following 16 blocks) contains pointers to journal pages.
  *
  * If data protection is enabled, more blocks are reserverd for checksums and
  * parities and the number is derived according to the whole storage size.
  */
-#define	HEAD_RESERVED_BLOCKS	8
+#define	HEAD_RESERVED_BLOCKS	32
 
 #define SUPER_BLOCK_START       0 // Superblock
 #define	RESERVE_INODE_START	1 // Reserved inodes
-#define	JOURNAL_START		3 // journal pointer table
-#define	INODE_TABLE0_START	4 // inode table
-#define	INODE_TABLE1_START	5 // replica inode table
+#define	INODE_TABLE0_START	3 // inode table
+#define	INODE_TABLE1_START	4 // replica inode table
+#define	JOURNAL_START		5 // journal pointer table
 
 /* For replica super block and replica reserved inodes */
 #define	TAIL_RESERVED_BLOCKS	2
@@ -77,7 +76,7 @@ struct nova_super_block {
 					 * lists in INODE_TABLE0_START. */
 #define NOVA_BLOCKNODE_INO	(3)     /* Storage for allocator state */
 #define NOVA_LITEJOURNAL_INO	(4)     /* Storage for lightweight journals */
-#define NOVA_INODELIST1_INO	(5)     /* Storage for Inode free list */
+#define NOVA_INODELIST_INO	(5)     /* Storage for Inode free list */
 #define NOVA_SNAPSHOT_INO	(6)	/* Storage for snapshot state */
 #define NOVA_TEST_PERF_INO	(7)
 
