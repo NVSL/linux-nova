@@ -1216,7 +1216,7 @@ int migrate_a_file(struct inode *inode, int from, int to);
 int migrate_a_file_to_pmem(struct inode *inode);
 int do_migrate_a_file_rotate(struct inode *inode);
 int do_migrate_a_file_downward(struct inode *inode);
-void print_a_write_entry(struct nova_file_write_entry *entry, int n, bool valid);
+void print_a_write_entry(struct super_block *sb, struct nova_file_write_entry *entry, int n);
 
 /* mprotect.c */
 extern int nova_dax_mem_protect(struct super_block *sb,
