@@ -293,7 +293,7 @@ static void nova_destroy_inode_trees(struct super_block *sb)
 static int nova_init_inode_list_from_inode(struct super_block *sb)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
-	struct nova_inode *pi = nova_get_inode_by_ino(sb, NOVA_INODELIST1_INO);
+	struct nova_inode *pi = nova_get_inode_by_ino(sb, NOVA_INODELIST_INO);
 	struct nova_inode_info_header sih;
 	struct nova_range_node_lowhigh *entry;
 	struct nova_range_node *range_node;
@@ -444,7 +444,7 @@ static u64 nova_save_free_list_blocknodes(struct super_block *sb, int cpu,
 
 void nova_save_inode_list_to_log(struct super_block *sb)
 {
-	struct nova_inode *pi = nova_get_inode_by_ino(sb, NOVA_INODELIST1_INO);
+	struct nova_inode *pi = nova_get_inode_by_ino(sb, NOVA_INODELIST_INO);
 	struct nova_inode_info_header sih;
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	unsigned long num_blocks;
@@ -455,7 +455,7 @@ void nova_save_inode_list_to_log(struct super_block *sb)
 	u64 new_block;
 	int allocated;
 
-	sih.ino = NOVA_INODELIST1_INO;
+	sih.ino = NOVA_INODELIST_INO;
 	sih.i_blk_type = NOVA_DEFAULT_BLOCK_TYPE;
 	sih.i_blocks = 0;
 
