@@ -16,6 +16,7 @@ void vpmem_reset(void);
 int vpmem_cache_pages(unsigned long vaddr, unsigned long count);   // To cache a particular page
 int vpmem_cache_pages_safe(unsigned long vaddr, unsigned long count);
 int vpmem_flush_pages(unsigned long vaddr, unsigned long count);   // To free a cached page if it was presented
+int vpmem_invalidate_pages(unsigned long vaddr, unsigned long count); 
 unsigned long vpmem_cached(unsigned long vaddr, unsigned long count);        // To check if a particular page is present in the cache
 
 int vpmem_range_rwsem_set(unsigned long vaddr, unsigned long count, bool down);

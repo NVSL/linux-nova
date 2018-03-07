@@ -619,9 +619,12 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 		} else {
 			nr = PAGE_SIZE;
 		}
-		
+
+		vpmem_invalidate_pages(blockoff_to_virt(entry->block >> PAGE_SHIFT), le32_to_cpu(entry->num_pages));
+
 		nvmm = get_nvmm(sb, sih, entryc, index);
 		dax_mem = nova_get_block(sb, (nvmm << PAGE_SHIFT));
+
 		if (DEBUG_GET_NVMM) nova_info("nvmm: %lu, dax_mem: %p\n", nvmm, dax_mem);
 		// print_a_page(dax_mem);
 

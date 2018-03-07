@@ -223,6 +223,25 @@ void flush_page(vpte_t *p) {
 
 }
 
+void invalidate_page(vpte_t *p) {
+    if(p == NULL) {
+        return;
+    }
+    if(p->next) p->next->prev = NULL;
+    if(p == pagetable->tail)
+        pagetable->tail = NULL;
+    pagetable->head = p->next;
+    // TODO: What if kernel flushes the page?
+    pagetable->size--;
+
+    unlock_page(p->page);
+    
+    pte_clear(&init_mm, p->vaddr, &p->pte);
+    on_each_cpu(do_flush_page, (void*)p->vaddr, 1);
+    p->page = 0;
+
+}
+
 void vpmem_pagecache_init(void) {        
     pagetable->head = NULL;
     pagetable->tail = NULL;
@@ -381,6 +400,27 @@ int vpmem_flush_pages(unsigned long vaddr, unsigned long count)
         curr = curr->next;
         if(p->vaddr >= vaddr && p->vaddr < end) {
             flush_page(p);
+            m--;
+        }
+    }
+    return 0;
+}
+
+int vpmem_invalidate_pages(unsigned long vaddr, unsigned long count)
+{
+    unsigned long m=0;
+    vpte_t *curr, *p;
+    unsigned long end = 0; 
+    if(!pagetable) return -EINVAL;
+    vaddr &= PAGE_MASK;
+    end = vaddr + (count << PAGE_SHIFT);
+    m = count;
+    curr = pagetable->head;
+    while(curr && m > 0) {
+        p = curr;
+        curr = curr->next;
+        if(p->vaddr >= vaddr && p->vaddr < end) {
+            invalidate_page(p);
             m--;
         }
     }

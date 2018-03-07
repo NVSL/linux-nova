@@ -947,6 +947,9 @@ long nova_bdev_alloc_blocks(struct nova_sb_info *sbi, int tier, int cpuid,
 		cpuid = smp_processor_id();
 
 	ret = nova_new_blocks_from_bdev(sb, tier, blocknr, num_blocks, cpuid, from_tail);
+
+    vpmem_invalidate_pages(blockoff_to_virt(*blocknr), num_blocks);
+	
 	return ret;
 }
 
