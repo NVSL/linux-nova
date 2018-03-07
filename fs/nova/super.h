@@ -54,6 +54,7 @@ struct nova_super_block {
  * parities and the number is derived according to the whole storage size.
  */
 #define	HEAD_RESERVED_BLOCKS	32
+#define	NUM_JOURNAL_PAGES	16
 
 #define SUPER_BLOCK_START       0 // Superblock
 #define	RESERVE_INODE_START	1 // Reserved inodes
