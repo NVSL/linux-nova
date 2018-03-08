@@ -44,23 +44,24 @@ struct nova_super_block {
 /* ======================= Reserved blocks ========================= */
 
 /*
- * The first block contains super blocks;
- * The second block contains reserved inodes;
- * The third block is reserved.
- * The fourth/fifth block contains pointers to inode tables.
- * The sixth block (and following 16 blocks) contains pointers to journal pages.
+ * Block 0 contains super blocks;
+ * Block 1 contains reserved inodes;
+ * Block 2 - 15 are reserved.
+ * Block 16 - 31 contain pointers to inode table.
+ * Block 32 - 47 contain pointers to replica inode table.
+ * Block 48 - 63 contain pointers to journal pages.
  *
  * If data protection is enabled, more blocks are reserverd for checksums and
  * parities and the number is derived according to the whole storage size.
  */
-#define	HEAD_RESERVED_BLOCKS	32
+#define	HEAD_RESERVED_BLOCKS	64
 #define	NUM_JOURNAL_PAGES	16
 
 #define SUPER_BLOCK_START       0 // Superblock
 #define	RESERVE_INODE_START	1 // Reserved inodes
-#define	INODE_TABLE0_START	3 // inode table
-#define	INODE_TABLE1_START	4 // replica inode table
-#define	JOURNAL_START		5 // journal pointer table
+#define	INODE_TABLE0_START	16 // inode table
+#define	INODE_TABLE1_START	32 // replica inode table
+#define	JOURNAL_START		48 // journal pointer table
 
 /* For replica super block and replica reserved inodes */
 #define	TAIL_RESERVED_BLOCKS	2
