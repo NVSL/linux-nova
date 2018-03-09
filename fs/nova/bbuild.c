@@ -654,7 +654,7 @@ static void nova_update_4K_map(struct super_block *sb,
 	}
 }
 
-struct scan_bitmap *global_bm[64];
+struct scan_bitmap *global_bm[MAX_CPUS];
 
 static int nova_build_blocknode_map(struct super_block *sb,
 	unsigned long initsize)
