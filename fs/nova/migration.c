@@ -690,7 +690,7 @@ int migrate_a_file(struct inode *inode, int from, int to)
     
     unsigned int osb = sbi->bdev_list[to - TIER_BDEV_LOW].opt_size_bit;
 
-    nova_update_sih_tier(sb, sih, to);
+    nova_update_sih_tier(sb, sih, to, true);
 
     if (from >= to) return migrate_a_file_by_entries(inode, from, to);
     // return migrate_a_file_by_entries(inode, from, to);
@@ -932,7 +932,7 @@ struct inode *pop_an_inode_to_migrate(struct nova_sb_info *sbi, int tier) {
     for (jj=cpu;jj<cpu+sbi->cpus;++jj) {
         j = jj%(sbi->cpus);
         list = nova_get_inode_lru_lists(sbi, tier, j);
-        list_for_each_entry_safe(sih, tmpsih, list, lru_list) {
+        list_for_each_entry_safe(sih, tmpsih, list, lru_list[tier]) {
             if(DEBUG_MIGRATION) nova_info("Inode %lu is poped.\n", sih->ino);
             si = container_of(sih, struct nova_inode_info, header);
             return &si->vfs_inode;
@@ -973,7 +973,7 @@ int do_migrate_a_file_rotate(struct inode *inode) {
 int do_migrate_a_file_downward(struct super_block *sb) {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
     struct inode *this;
-    // int ret;
+    
     int i;
 	if(DEBUG_MIGRATION) nova_info("[Migration-Downward]\n");
 
@@ -993,7 +993,6 @@ again:
         goto again;
     }
     else if(DEBUG_MIGRATION) nova_info("PMEM usage low.\n");
-
         
     for (i=TIER_BDEV_LOW;i<TIER_BDEV_HIGH;++i) {
         if (is_bdev_usage_high(sbi, i)) {

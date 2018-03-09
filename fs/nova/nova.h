@@ -90,7 +90,7 @@
 #define MIGRATION_DOWNWARD 2
 #define MIGRATION_POLICY 2
 
-#define MIGRATION_DOWNWARD_PERC 1
+#define MIGRATION_DOWNWARD_PERC 5
 
 /*
  * Debug code
@@ -1259,7 +1259,7 @@ inline bool nova_prof_judge_seq(unsigned int seq_count);
 inline bool nova_entry_judge_seq(struct nova_file_write_entry *entry);
 int nova_alloc_inode_lru_lists(struct super_block *sb);
 inline struct list_head *nova_get_inode_lru_lists(struct nova_sb_info *sbi, int tier, int cpu);
-int nova_update_sih_tier(struct super_block *sb, struct nova_inode_info_header *sih, int tier);
+int nova_update_sih_tier(struct super_block *sb, struct nova_inode_info_header *sih, int tier, bool force);
 int nova_unlink_inode_lru_list(struct nova_sb_info *sbi, struct nova_inode_info_header *sih);
 
 /* rebuild.c */

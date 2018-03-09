@@ -685,7 +685,7 @@ void print_all_lru(struct super_block *sb){
 		htmp[0]='\0';
 		list = nova_get_inode_lru_lists(sbi, i/sbi->cpus, i%sbi->cpus);
 		count = 0;
-		list_for_each_entry_safe(sih, tmpsih, list, lru_list) {
+		list_for_each_entry_safe(sih, tmpsih, list, lru_list[i/sbi->cpus]) {
 			// tmp[count++] = sih->ino;
 			sprintf(htmp, "%3lu|", sih->ino);
 			strcat(ctmp, htmp);

@@ -109,25 +109,38 @@ inline struct list_head *nova_get_inode_lru_lists(struct nova_sb_info *sbi, int 
     return &sbi->inode_lru_lists[tier*sbi->cpus+cpu];
 }
 
-int nova_move_inode_lru_list(struct nova_sb_info *sbi, struct nova_inode_info_header *sih, int tier) {
-    int cpu = sih->ino % sbi->cpus;
-    struct list_head *new_list = nova_get_inode_lru_lists(sbi, tier, cpu); 
-    if (sih->lru_list.next != &sih->lru_list && sih->lru_list.prev != &sih->lru_list) {
-            list_del(&sih->lru_list);
-        }        
-    list_add_tail(&sih->lru_list, new_list);
-    sih->ltier = tier;
+int nova_unlink_inode_lru_list(struct nova_sb_info *sbi, struct nova_inode_info_header *sih) {
+    int i;
+    for (i=0;i<=TIER_BDEV_HIGH;++i) {
+        if (sih->lru_list[i].next != &sih->lru_list[i] && sih->lru_list[i].prev != &sih->lru_list[i]) {
+            list_del(&sih->lru_list[i]);
+            sih->lru_list[i].next = &sih->lru_list[i];
+            sih->lru_list[i].prev = &sih->lru_list[i];
+        }
+    }     
     return 0;
 }
 
-int nova_update_sih_tier(struct super_block *sb, struct nova_inode_info_header *sih, int tier) {
+/*
+ * Update htier and ltier in sih
+ * force: true - used in migration or whole file movement
+ *        false - used in file write or partial file movement
+ */
+int nova_update_sih_tier(struct super_block *sb, struct nova_inode_info_header *sih, int tier, bool force) {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
-    return nova_move_inode_lru_list(sbi, sih, tier);
-}
-
-int nova_unlink_inode_lru_list(struct nova_sb_info *sbi, struct nova_inode_info_header *sih) {
-    if (sih->lru_list.next != &sih->lru_list && sih->lru_list.prev != &sih->lru_list) {
-        list_del(&sih->lru_list);
+    int cpu = sih->ino % sbi->cpus;
+    struct list_head *new_list = nova_get_inode_lru_lists(sbi, tier, cpu);
+    if (force) {
+        nova_unlink_inode_lru_list(sbi, sih);
+        list_add_tail(&sih->lru_list[tier], new_list);
+        sih->htier = tier;
+        sih->ltier = tier;
+    }
+    else {
+        if (sih->ltier > tier) sih->ltier = tier;
+        if (sih->htier < tier) sih->htier = tier;
+        list_del(&sih->lru_list[tier]);
+        list_add_tail(&sih->lru_list[tier], new_list);
     }
     return 0;
 }

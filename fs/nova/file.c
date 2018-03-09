@@ -815,7 +815,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 		}
 	}
 
-	nova_update_sih_tier(sb, sih, write_tier);
+	nova_update_sih_tier(sb, sih, write_tier, false);
 
 	update.tail = sih->log_tail;
 	update.alter_tail = sih->alter_log_tail;
