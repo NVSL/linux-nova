@@ -84,11 +84,11 @@
 // #define TIER_BDEV_HIGH 	2
 #define TIER_DRAM 	 	254
 #define TIER_MIGRATING 	255
-#define BDEV_COUNT_MAX 	10
+#define BDEV_COUNT_MAX 	5
 
 #define MIGRATION_ROTATE 1
 #define MIGRATION_DOWNWARD 2
-#define MIGRATION_POLICY 1
+#define MIGRATION_POLICY 2
 
 #define MIGRATION_DOWNWARD_PERC 1
 
@@ -1215,7 +1215,7 @@ inline bool is_dram_buffer_addr(struct nova_sb_info *sbi, void *addr);
 int migrate_a_file(struct inode *inode, int from, int to);
 int migrate_a_file_to_pmem(struct inode *inode);
 int do_migrate_a_file_rotate(struct inode *inode);
-int do_migrate_a_file_downward(struct inode *inode);
+int do_migrate_a_file_downward(struct super_block *sb);
 void print_a_write_entry(struct super_block *sb, struct nova_file_write_entry *entry, int n);
 
 /* mprotect.c */
@@ -1259,7 +1259,7 @@ inline bool nova_prof_judge_seq(unsigned int seq_count);
 inline bool nova_entry_judge_seq(struct nova_file_write_entry *entry);
 int nova_alloc_inode_lru_lists(struct super_block *sb);
 inline struct list_head *nova_get_inode_lru_lists(struct nova_sb_info *sbi, int tier, int cpu);
-int nova_update_sih_ltier(struct super_block *sb, struct nova_inode_info_header *sih, int tier);
+int nova_update_sih_tier(struct super_block *sb, struct nova_inode_info_header *sih, int tier);
 int nova_unlink_inode_lru_list(struct nova_sb_info *sbi, struct nova_inode_info_header *sih);
 
 /* rebuild.c */

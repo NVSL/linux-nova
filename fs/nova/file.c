@@ -208,17 +208,20 @@ static int nova_migration(struct inode *inode, struct file *file) {
 		print_all_bfl(sb);
 	}	
 
-	print_file_write_entries(sb, sih);
-	sb_start_write(inode->i_sb);
-	inode_lock(inode);
+	if (DEBUG_WRITE_ENTRY) print_file_write_entries(sb, sih);
 	
-	if ( MIGRATION_POLICY == MIGRATION_ROTATE ) do_migrate_a_file_rotate(inode);
-	if ( MIGRATION_POLICY == MIGRATION_DOWNWARD ) do_migrate_a_file_downward(inode);
 	
-	inode_unlock(inode);
-	sb_end_write(inode->i_sb);
+	if ( MIGRATION_POLICY == MIGRATION_ROTATE ) {
+		sb_start_write(inode->i_sb);
+		inode_lock(inode);
+		do_migrate_a_file_rotate(inode);
+		inode_unlock(inode);
+		sb_end_write(inode->i_sb);
+	}
+	
+	if ( MIGRATION_POLICY == MIGRATION_DOWNWARD ) do_migrate_a_file_downward(sb);
 
-	print_file_write_entries(sb, sih);
+	if (DEBUG_WRITE_ENTRY) print_file_write_entries(sb, sih);
 	if (DEBUG_BFL_INFO) {
 		print_all_bfl(sb);
 		nova_info("[End migration]\n");
@@ -812,7 +815,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 		}
 	}
 
-	nova_update_sih_ltier(sb, sih, write_tier);
+	nova_update_sih_tier(sb, sih, write_tier);
 
 	update.tail = sih->log_tail;
 	update.alter_tail = sih->alter_log_tail;
@@ -932,7 +935,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 
 	sih->trans_id++;
 out:
-	print_file_write_entries(sb, sih);
+	if (DEBUG_WRITE_ENTRY) print_file_write_entries(sb, sih);
 	if (ret < 0)
 		nova_cleanup_incomplete_write(sb, sih, blocknr, allocated,
 						begin_tail, update.tail);
