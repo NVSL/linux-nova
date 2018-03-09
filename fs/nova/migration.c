@@ -40,17 +40,16 @@ int init_dram_buffer(struct nova_sb_info *sbi) {
 void print_a_write_entry(struct super_block *sb, struct nova_file_write_entry *entry, int n) {
     char *ii;
     char stmp[100] = {0};
-    bool valid = true;
 	char *ctmp = kzalloc(300, GFP_KERNEL);
     int count = 0;
     char* addr;
     int i;
-    if (valid) nova_info("\e[0;32m#%3d\e[0m [P]%p [B]%lu\n", n, entry, virt_to_block((unsigned long)entry));
-    else nova_info("\e[1;31m#%3d\e[0m [P]%p [B]%lu\n", n, entry, virt_to_block((unsigned long)entry));
+    nova_info("\e[0;32m#%3d\e[0m [P]%p [B]%lu\n", n, entry, virt_to_block((unsigned long)entry));
+    // nova_info("\e[1;31m#%3d\e[0m [P]%p [B]%lu\n", n, entry, virt_to_block((unsigned long)entry));
     nova_info("     ||Type|Tier| num_pg | block  | pgoff  ||");
     nova_info("     ||%4u|%4u|%8u|%8llu|%8llu||", entry->entry_type, get_entry_tier(entry),
         entry->num_pages, entry->block  >> PAGE_SHIFT, entry->pgoff);
-    if (valid) {
+    if (entry->entry_type == FILE_WRITE) {
         addr = nova_get_block(sb, entry->block);
         for (ii=(char *)addr; ii<(char *)(addr+((entry->num_pages)<<PAGE_SHIFT)); ii+=1024) {
             ctmp[count++] = *ii;
@@ -78,25 +77,28 @@ int print_file_write_entries(struct super_block *sb, struct nova_inode_info_head
 	u64 curr_p = pi->log_head;
 	size_t entry_size = sizeof(struct nova_file_write_entry);
 
-    nova_info("Print [start]\n");
+    nova_info("Print Inode #%lu [start]\n", sih->ino);
 
     nova_info("valid %u deleted %u link %u\n", pi->valid, pi->deleted, pi->i_links_count);
     addrp = nova_get_block(sb, curr_p);
     inv = addrp->page_tail.invalid_entries;
     num = addrp->page_tail.num_entries;
     epoch_id = addrp->page_tail.epoch_id;
-    nova_info("Log page: %p num:%u invalid: %u epoch: %lu", addrp, num, inv, epoch_id);
+    nova_info("\e[0;34m Log page: %p num:%u invalid: %u epoch: %lu \e[0m",
+        addrp, num, inv, epoch_id);
     
 	while (curr_p && curr_p != sih->log_tail) {
-		if (is_last_entry(curr_p, entry_size)) {
+        if (is_last_entry(curr_p, entry_size)) {
 			curr_p = next_log_page(sb, curr_p);
 		    addrp = nova_get_block(sb, curr_p);
             inv = addrp->page_tail.invalid_entries;
             num = addrp->page_tail.num_entries;
             epoch_id = addrp->page_tail.epoch_id;
-            nova_info("Log page: %p num:%u invalid: %u epoch: %lu", addrp, num, inv, epoch_id);
+            nova_info("\e[0;34m Log page: %p num:%u invalid: %u epoch: %lu \e[0m", 
+                addrp, num, inv, epoch_id);
             j = 0;
         }
+        if (num == 0) break;
 
 		if (curr_p == 0) {
 			nova_err(sb, "%s: File inode %lu log is NULL!\n",
@@ -104,21 +106,20 @@ int print_file_write_entries(struct super_block *sb, struct nova_inode_info_head
 			return -EINVAL;
 		}
 
-		addr = (void *) nova_get_block(sb, curr_p);
-		entry = (struct nova_file_write_entry *) addr;
 		// nova_info("curr_p %llu\n",curr_p);
 		// nova_info("[entry] %llu,%llu,%u\n", 
         // entry->block >> PAGE_SHIFT, entry->pgoff, entry->num_pages);
-
         if (j<num){
-            print_a_write_entry(sb, entry, i);
-            ++i;
+            addr = (void *) nova_get_block(sb, curr_p);
+            entry = (struct nova_file_write_entry *) addr;
+            if (entry->entry_type != FILE_WRITE) break;
+            print_a_write_entry(sb, entry, i++);
         }
         ++j;
 
-		curr_p += entry_size;
+		curr_p += entry_size;		
 	}
-    nova_info("Print [end]\n");
+    nova_info("Print Inode #%lu [end]\n", sih->ino);
 
 	return 0;
 }
@@ -265,49 +266,43 @@ int migrate_blocks(struct nova_sb_info *sbi, unsigned long blockfrom,
  * Because in the ultimate design, each block will only have one buffer page.
  */ 
 bool is_entry_busy(struct nova_sb_info *sbi, struct nova_file_write_entry *entry) {    
-    if (!is_tier_bdev(get_entry_tier(entry))) return 0;
-    if (vpmem_is_range_rwsem_locked(blockoff_to_virt(entry->block >> PAGE_SHIFT), le32_to_cpu(entry->num_pages))) return 1;
-    
-    return 0;
+    if (!is_tier_bdev(get_entry_tier(entry))) return false;
+    if (vpmem_is_range_rwsem_locked(blockoff_to_virt(entry->block >> PAGE_SHIFT), le32_to_cpu(entry->num_pages))) return true;
+    return false;
 }
 
+/*
+ * Clone and assign a write entry
+ * block: New global block number
+ * num_pages: 0 - Normal clone (single migration)
+ *            else - Set num_pages manually (group migration)
+ */ 
 int nova_clone_write_entry(struct nova_sb_info *sbi, struct nova_inode_info *si, 
-    struct nova_file_write_entry *entry, int tier, unsigned long block, struct nova_inode_update *update) {
+    struct nova_file_write_entry *entry, int tier, unsigned long block, 
+    unsigned int num_pages, struct nova_inode_update *update) {
 	struct super_block *sb = sbi->sb;
 	struct nova_inode_info_header *sih = &si->header;
 	struct nova_file_write_entry entry_data;
+	struct nova_file_write_entry *entryc;
     struct inode *inode = &si->vfs_inode;
     struct nova_inode *pi = nova_get_block(sb, sih->pi_addr);
 	unsigned int data_bits;
-
 	void *addr;
-	struct nova_file_write_entry *entryc;
-    
     int ret = 0;
-	// u64 begin_tail = 0;
-	// u64 file_size = cpu_to_le64(inode->i_size);
-	// u64 epoch_id = nova_get_epoch_id(sb);
-	// u32 time = current_time(inode).tv_sec;
 
+    memcpy_mcsafe(&entry_data, entry, sizeof(struct nova_file_write_entry));
 
-    // nova_init_file_write_entry(sb, sih, &entry_data, epoch_id,
-	// 	entry->pgoff, entry->num_pages, 
-    //     block, time, file_size);
-
-    memcpy(&entry_data, entry, sizeof(struct nova_file_write_entry));
-
-    print_a_write_entry(sb, entry, 0);
+    if (DEBUG_MIGRATION_CLONE) print_a_write_entry(sb, entry, 0);
 
 	entry_data.entry_type = FILE_WRITE;
-    entry_data.block = cpu_to_le64(nova_get_block_off(sb, block,
-							sih->i_blk_type));     
+    entry_data.block = cpu_to_le64(nova_get_block_off(sb, block, sih->i_blk_type));
     entry_data.updating = 0;
-
+    if (num_pages!=0) entry_data.num_pages = num_pages;
 	nova_update_entry_csum(&entry_data);
-    print_a_write_entry(sb, &entry_data, 0);
+
+    if (DEBUG_MIGRATION_CLONE) print_a_write_entry(sb, &entry_data, 0);
 
     ret = nova_append_file_write_entry(sb, pi, inode, &entry_data, update);
-
     if (ret) {
         nova_dbg("%s: append inode entry failed\n", __func__);
         ret = -ENOSPC;
@@ -315,9 +310,9 @@ int nova_clone_write_entry(struct nova_sb_info *sbi, struct nova_inode_info *si,
     }
     
     addr = (void *) nova_get_block(sb, update->curr_entry);
-    entryc = (struct nova_file_write_entry *) addr;
+    entryc = (struct nova_file_write_entry *)addr;
 
-    print_a_write_entry(sb, entryc, 0);
+    if (DEBUG_MIGRATION_CLONE) print_a_write_entry(sb, entryc, 0);
 
 	nova_flush_buffer(entryc, sizeof(struct nova_file_write_entry), 1);
 
@@ -325,12 +320,9 @@ int nova_clone_write_entry(struct nova_sb_info *sbi, struct nova_inode_info *si,
 	sih->i_blocks += (le32_to_cpu(entry->num_pages) << (data_bits - sb->s_blocksize_bits));
 	inode->i_blocks = sih->i_blocks;
     
-	mutex_lock(&sbi->bb_mutex);
-	nova_assign_write_entry(sb, sih, entryc, entryc, true);
-	mutex_unlock(&sbi->bb_mutex);
-	// sih->trans_id++;
+	ret = nova_assign_write_entry(sb, sih, entryc, entryc, true);
 
-    return 0;
+    return ret;
 }
 
 int migrate_entry_blocks(struct nova_sb_info *sbi, int from, int to,
@@ -344,8 +336,6 @@ int migrate_entry_blocks(struct nova_sb_info *sbi, int from, int to,
     /* Step 1. Check */
     if (!entry) return ret;
     if (get_entry_tier(entry) != from) return ret;
-
-    // print_a_write_entry(entry);
 
     if (is_entry_busy(sbi, entry)) {
         if (DEBUG_MIGRATION_CHECK) nova_info("entry->block %lu is busy\n", 
@@ -398,49 +388,53 @@ int migrate_entry_blocks(struct nova_sb_info *sbi, int from, int to,
 
     // nova_info("en %llu blocknr %lu p %lx", entryt.block >> PAGE_SHIFT, blocknr, blockoff_to_virt(blocknr));
 
+    // Temp solution: memcpy to invalidate the page cache
+    if (is_tier_bdev(to)) {
+        memcpy_mcsafe(nova_get_block(sb, blocknr << PAGE_SHIFT),
+            nova_get_block(sb, entry->block), entry->num_pages << PAGE_SHIFT);
+    }
     // nova_bdev_read_blockoff(sbi, blocknr, le32_to_cpu(entry->num_pages), 
     //     virt_to_page(nova_get_block(sb, entryt.block)), BIO_SYNC);
-
-    if (is_tier_pmem(from) && is_tier_bdev(to)) {
-        memcpy(nova_get_block(sb, blocknr << PAGE_SHIFT), nova_get_block(sb, entry->block),
-            entry->num_pages << PAGE_SHIFT);
-    }
-
-    if (is_tier_bdev(to)) vpmem_invalidate_pages(blockoff_to_virt(blocknr), le32_to_cpu(entry->num_pages));
-    
+    // if (is_tier_bdev(to)) vpmem_invalidate_pages(blockoff_to_virt(blocknr), le32_to_cpu(entry->num_pages));
     // if (is_tier_bdev(to)) vpmem_cache_pages_safe(blockoff_to_virt(blocknr), le32_to_cpu(entry->num_pages));
 
     /* Step 4. Free */
+    /* The free step is now included in the clone write entry function */
+
     // ret = nova_free_blocks_tier(sbi, entry->block >> PAGE_SHIFT, entry->num_pages);
+
     // Update tiering info
     entry->updating = 0;
-    // print_a_write_entry(entry);
     
 	nova_update_entry_csum(entry);
 
-    if (!blocknr_hint) ret = nova_clone_write_entry(sbi, si, entry, to, blocknr, update);
-    if (is_tier_bdev(to)) vpmem_invalidate_pages(blockoff_to_virt(blocknr), le32_to_cpu(entry->num_pages));
+    if (!blocknr_hint) ret = nova_clone_write_entry(sbi, si, entry, to, blocknr, 0, update);
     
     return ret;
 }
 
+/* 
+ * Group migration
+ * Range: [start_index, end_index - 1]
+ * Makes sure that the file entries fit the boundary of optsize 
+ */
 int migrate_group_entry_blocks(struct nova_sb_info *sbi, struct inode *inode, int from, int to,
     pgoff_t start_index, pgoff_t end_index, struct nova_inode_update *update) {
 	struct super_block *sb = sbi->sb;
 	struct nova_inode_info *si = NOVA_I(inode);
 	struct nova_inode_info_header *sih = &si->header;
-    struct nova_inode *pi = nova_get_block(sb, sih->pi_addr);
+    // struct nova_inode *pi = nova_get_block(sb, sih->pi_addr);
     int ret = 0;
-	u64 epoch_id;
-	u32 time;
-	u64 file_size = cpu_to_le64(inode->i_size);
+	// u64 epoch_id;
+	// u32 time;
+	// u64 file_size = cpu_to_le64(inode->i_size);
     unsigned long blocknr = 0;
     unsigned int opt_size = 1 << sbi->bdev_list[to - TIER_BDEV_LOW].opt_size_bit;
 	struct nova_file_write_entry *entry;
 	struct nova_file_write_entry *entry_first = NULL;
 	struct nova_file_write_entry entry_data;
     pgoff_t index = start_index;
-	unsigned int data_bits;
+	// unsigned int data_bits;
     unsigned int num_pages;
     unsigned long pgoff;
 
@@ -463,41 +457,15 @@ int migrate_group_entry_blocks(struct nova_sb_info *sbi, struct inode *inode, in
             index = pgoff + num_pages;
         }
         else break;
-    } while (index <= end_index);
+    } while (index < end_index);
 
     entry_first = nova_get_write_entry(sb, sih, start_index);
 
     if (DEBUG_MIGRATION_MERGE) nova_info("Merge entry: [Before] [entry] %llu,%llu,%u\n", 
         entry_first->block >> PAGE_SHIFT, entry_first->pgoff, entry_first->num_pages);
 
-	epoch_id = nova_get_epoch_id(sb);
-	time = current_time(inode).tv_sec;
-    nova_init_file_write_entry(sb, sih, &entry_data, epoch_id,
-		entry_first->pgoff, opt_size, 
-        blocknr, time, file_size);
 
-	nova_update_entry_csum(&entry_data);
-    ret = nova_append_file_write_entry(sb, pi, inode, &entry_data, update);
-    if (ret) {
-        nova_dbg("%s: append inode entry failed\n", __func__);
-        ret = -ENOSPC;
-    }
-    
-	data_bits = blk_type_to_shift[sih->i_blk_type];
-	sih->i_blocks += (opt_size << (data_bits - sb->s_blocksize_bits));
-
-    // begin_tail = update->curr_entry;
-    // nova_memunlock_inode(sb, pi);
-	// nova_update_inode(sb, inode, pi, update, 1);
-	// nova_memlock_inode(sb, pi);
-    
-    // if (*bt==0) *bt = (unsigned long)begin_tail;
-    // ret = nova_reassign_file_tree(sb, sih, begin_tail, true);
-	// if (ret) return ret;
-
-	inode->i_blocks = sih->i_blocks;
-    
-	sih->trans_id++;
+    ret = nova_clone_write_entry(sbi, si, entry_first, to, blocknr, end_index - start_index, update);
 
     if (DEBUG_MIGRATION_MERGE) nova_info("Merge entry: [After ] [entry] %llu,%llu,%u\n", 
         entry_data.block >> PAGE_SHIFT, entry_data.pgoff, entry_data.num_pages);
@@ -511,69 +479,91 @@ bool is_entry_cross_boundary(struct nova_sb_info *sbi, struct nova_file_write_en
     if (tier==TIER_PMEM) return false;
     osb = sbi->bdev_list[tier - TIER_BDEV_LOW].opt_size_bit;
     if ( (entry->pgoff >> osb) !=  
-        ( (entry->pgoff + entry->num_pages - 1) >> osb ) )
+        ( (entry->pgoff + entry->num_pages - 1) >> osb ) ) {
+        nova_info("cross entry: entry->pgoff:%llu entry->num_pages:%u\n", entry->pgoff, entry->num_pages);
         return true;
+    }
     else return false;
 }
 
-// TODOzsa: concurrency
-int nova_split_entry(struct super_block *sb, struct inode *inode,
-    struct nova_file_write_entry *entry, int tier) {
-	struct nova_sb_info *sbi = NOVA_SB(sb);
-	struct nova_inode_info *si = NOVA_I(inode);
+/*
+ * Split a write entry into two halves
+ * If the entry is like: ||** **** *|||
+ *   Then the first half:  **
+ *   The second half:         **** *
+ * Normally, the entry only crosses the boundary once.
+ */
+int nova_split_write_entry(struct nova_sb_info *sbi, struct nova_inode_info *si, 
+    struct nova_file_write_entry *entry, int tier, struct nova_inode_update *update) {
+	struct super_block *sb = sbi->sb;
 	struct nova_inode_info_header *sih = &si->header;
+	struct nova_file_write_entry entry_data1, entry_data2;
+	struct nova_file_write_entry *entryc;
+    struct inode *inode = &si->vfs_inode;
     struct nova_inode *pi = nova_get_block(sb, sih->pi_addr);
-	struct nova_inode_update update;
-	struct nova_file_write_entry entry_data;
-    int ret = 0;
 	unsigned int data_bits;
-	u64 epoch_id;
-	u32 time;
-	u64 file_size = cpu_to_le64(inode->i_size);
-	u64 begin_tail = 0;
     unsigned int osb = sbi->bdev_list[tier - TIER_BDEV_LOW].opt_size_bit;
+    unsigned int num_pages1 = (((entry->pgoff >> osb) +1) << osb) - entry->pgoff;
+	unsigned int num_pages2 = entry->num_pages - num_pages1;
+	void *addr;
+    int ret = 0;
 
-    unsigned int num_pages = le32_to_cpu(entry->num_pages);
-    unsigned long pgoff = le64_to_cpu(entry->pgoff);
-    unsigned long num_prev = ((pgoff + num_pages -1) >> osb << osb )- pgoff;
-
-	update.tail = sih->log_tail;
-	update.alter_tail = sih->alter_log_tail;
-
-    nova_info("Split entry: [Before] [entry] %llu,%lu,%u\n", entry->block >> PAGE_SHIFT, pgoff, num_pages);
-
-	epoch_id = nova_get_epoch_id(sb);
-	time = current_time(inode).tv_sec;
-    nova_init_file_write_entry(sb, sih, &entry_data, epoch_id,
-		pgoff + num_prev, num_pages - num_prev, 
-        (entry->block >> PAGE_SHIFT) + num_prev, time, file_size);
+    nova_info("entry->pgoff:%llu entry->num_pages:%u osb:%u\n", entry->pgoff, entry->num_pages, ((1<<osb) - 1));
+    nova_info("num_pages1:%u num_pages2:%u\n", num_pages1, num_pages2);
     
-	nova_update_entry_csum(&entry_data);
-    entry->num_pages = cpu_to_le32(num_prev);
+    memcpy_mcsafe(&entry_data1, entry, sizeof(struct nova_file_write_entry));
+    memcpy_mcsafe(&entry_data2, entry, sizeof(struct nova_file_write_entry));
 
-    ret = nova_append_file_write_entry(sb, pi, inode, &entry_data, &update);
+    if (DEBUG_MIGRATION_CLONE) print_a_write_entry(sb, entry, 0);
+
+	entry_data1.entry_type = FILE_WRITE;
+	entry_data2.entry_type = FILE_WRITE;
+	entry_data1.num_pages = num_pages1;
+	entry_data2.num_pages = num_pages2;
+    entry_data2.block = entry->block + (num_pages1 << PAGE_SHIFT);
+    entry_data2.pgoff = entry->pgoff + num_pages1;
+    entry_data1.updating = 0;
+    entry_data2.updating = 0;
+
+	nova_update_entry_csum(&entry_data1);
+	nova_update_entry_csum(&entry_data2);
+
+    if (DEBUG_MIGRATION_CLONE) print_a_write_entry(sb, &entry_data1, 0);
+    if (DEBUG_MIGRATION_CLONE) print_a_write_entry(sb, &entry_data2, 0);
+
+    /* Assign entry #1 */
+    ret = nova_append_file_write_entry(sb, pi, inode, &entry_data1, update);
     if (ret) {
         nova_dbg("%s: append inode entry failed\n", __func__);
         ret = -ENOSPC;
+        return ret;
     }
-    
+    addr = (void *) nova_get_block(sb, update->curr_entry);
+    entryc = (struct nova_file_write_entry *)addr;
+    if (DEBUG_MIGRATION_CLONE) print_a_write_entry(sb, entryc, 0);
+	nova_flush_buffer(entryc, sizeof(struct nova_file_write_entry), 1);
+    data_bits = blk_type_to_shift[sih->i_blk_type];
+	sih->i_blocks += (le32_to_cpu(entry->num_pages) << (data_bits - sb->s_blocksize_bits));
+	inode->i_blocks = sih->i_blocks;    
+	ret = nova_assign_write_entry(sb, sih, entryc, entryc, false);
+
+    /* Assign entry #2 */
+    ret = nova_append_file_write_entry(sb, pi, inode, &entry_data2, update);
+    if (ret) {
+        nova_dbg("%s: append inode entry failed\n", __func__);
+        ret = -ENOSPC;
+        return ret;
+    }    
+    addr = (void *) nova_get_block(sb, update->curr_entry);
+    entryc = (struct nova_file_write_entry *)addr;
+    if (DEBUG_MIGRATION_CLONE) print_a_write_entry(sb, entryc, 0);
+	nova_flush_buffer(entryc, sizeof(struct nova_file_write_entry), 1);
 	data_bits = blk_type_to_shift[sih->i_blk_type];
-	sih->i_blocks += ((le32_to_cpu(entry->num_pages) - num_prev) << (data_bits - sb->s_blocksize_bits));
-    begin_tail = update.curr_entry;
-    nova_memunlock_inode(sb, pi);
-	nova_update_inode(sb, inode, pi, &update, 1);
-	nova_memlock_inode(sb, pi);
+	sih->i_blocks += (le32_to_cpu(entry->num_pages) << (data_bits - sb->s_blocksize_bits));
+	inode->i_blocks = sih->i_blocks;    
+	ret = nova_assign_write_entry(sb, sih, entryc, entryc, false);
 
-    ret = nova_reassign_file_tree(sb, sih, begin_tail, false);
-	if (ret) return ret;
-
-	inode->i_blocks = sih->i_blocks;
-
-	sih->trans_id++;
-
-    nova_info("[After] [entry] %llu,%lu,%u [new_entry] %llu,%llu,%u\n", 
-        entry->block >> PAGE_SHIFT, pgoff, le32_to_cpu(entry->num_pages),
-        entry_data.block >> PAGE_SHIFT, entry_data.pgoff, entry_data.num_pages);
+	ret = nova_invalidate_write_entry(sb, entry, 1, entry->num_pages);
 
     return ret;
 }
@@ -596,7 +586,6 @@ int migrate_a_file_by_entries(struct inode *inode, int from, int to)
 	u64 begin_tail = 0;
     unsigned int num_pages;
     unsigned long pgoff;
-    // unsigned long bt = 0;
     pgoff_t index = 0;
     pgoff_t end_index = 0;
     int ret = 0;
@@ -613,7 +602,7 @@ int migrate_a_file_by_entries(struct inode *inode, int from, int to)
 
 	isize = i_size_read(inode);
 	end_index = (isize) >> PAGE_SHIFT;
-    // nova_info("1 index:%lu end_index:%lu ret:%d\n", index, end_index, ret);
+    
     do {
         entry = nova_find_next_entry(sb, sih, index);
         // nova_info("entry %p\n", entry);
@@ -647,8 +636,6 @@ int migrate_a_file_by_entries(struct inode *inode, int from, int to)
     nova_memunlock_inode(sb, pi);
 	nova_update_inode(sb, inode, pi, &update, 1);
 	nova_memlock_inode(sb, pi);
-
-    // if (*bt==0) *bt = (unsigned long)begin_tail;
 
     // ret = nova_reassign_file_tree(sb, sih, begin_tail, true);
     
@@ -684,19 +671,19 @@ int migrate_a_file(struct inode *inode, int from, int to)
     unsigned long pgoff;
 
     int ret = 0;
-    // unsigned long bt = 0;
     unsigned int i = 0;
     unsigned int nentry = 0;
     unsigned int n1 = 0;
     unsigned int n2 = 0;
     loff_t isize = 0;
-    bool cangroup = true;
+    
     unsigned int osb = sbi->bdev_list[to - TIER_BDEV_LOW].opt_size_bit;
 
     nova_update_sih_ltier(sb, sih, to);
 
-    // if (from>=to) return migrate_a_file_by_entries(inode, from, to);
-    return migrate_a_file_by_entries(inode, from, to);
+    if (from >= to) return migrate_a_file_by_entries(inode, from, to);
+    // return migrate_a_file_by_entries(inode, from, to);
+
     if (DEBUG_MIGRATION) nova_info("[Migration] Start migrating inode:%lu from:T%d to:T%d\n",
         inode->i_ino, from, to);
 
@@ -710,7 +697,6 @@ int migrate_a_file(struct inode *inode, int from, int to)
     
     for (i=0;i<=end_index>>osb;++i) {
 next:
-        cangroup = true;
         n1 = 0;
         n2 = 0;
         index = i<<osb;
@@ -731,7 +717,7 @@ next:
                     if (n1 == 0) {
                         goto mig;
                     }
-                    nova_split_entry(sb, inode, entry, to);
+                    nova_split_write_entry(sbi, si, entry, to, &update);
                 }
                 if (get_entry_tier(entry) == from) {
                     pgoff = le64_to_cpu(entry->pgoff);
@@ -747,8 +733,8 @@ next:
         } while (index < (i+1)<<osb);
 
         if (index == (i+1)<<osb) {
-            if (n1!=1 && cangroup) {
-                migrate_group_entry_blocks(sbi, inode, from, to, i<<osb, ((i+1)<<osb) -1, &update);
+            if (n1!=1) {
+                migrate_group_entry_blocks(sbi, inode, from, to, i<<osb, (i+1)<<osb, &update);
                 nentry += n1;
                 continue;
             }
@@ -767,10 +753,10 @@ mig:
             // nova_info("index:%lu ret:%d\n", index, ret);
 
             if (entry) {
-                if ( (entry->pgoff)>>osb > i ) break;
-                if (is_entry_cross_boundary(sbi, entry, to)) {
-                    nova_split_entry(sb, inode, entry, to);
-                }
+                if ((entry->pgoff)>>osb > i) break;
+                // if (is_entry_cross_boundary(sbi, entry, to)) {
+                //     nova_split_write_entry(sbi, si, entry, to, &update);
+                // }
                 if (get_entry_tier(entry) == from) {
                     if (DEBUG_MIGRATION) nova_info("[Migration] Migrating ( one ) write entry with index:%lu\n", index);
                     ret = migrate_entry_blocks(sbi, from, to, si, entry, 0, &update);
@@ -789,9 +775,6 @@ mig:
     nova_memunlock_inode(sb, pi);
 	nova_update_inode(sb, inode, pi, &update, 1);
 	nova_memlock_inode(sb, pi);
-
-    ret = nova_reassign_file_tree(sb, sih, begin_tail, true);
-	if (ret) return ret;
 
 	nova_inode_log_fast_gc(sb, pi, sih, 0, 0, 0, 0, 1);
 
@@ -870,6 +853,7 @@ bool is_bdev_usage_high(struct nova_sb_info *sbi, int tier) {
     return used * 100 > MIGRATION_DOWNWARD_PERC * total;
 }
 
+// Get an inode with tier, starting from the smallest inode number
 struct inode *pop_an_inode_to_migrate(struct nova_sb_info *sbi, int tier) {
 	struct super_block *sb = sbi->sb;
 	struct inode_map *inode_map;

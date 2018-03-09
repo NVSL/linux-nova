@@ -101,7 +101,7 @@ int nova_reassign_logentry(struct super_block *sb, void *entry,
 	return nova_invalidate_reassign_logentry(sb, entry, type, 1, 0);
 }
 
-static inline int nova_invalidate_write_entry(struct super_block *sb,
+inline int nova_invalidate_write_entry(struct super_block *sb,
 	struct nova_file_write_entry *entry, int reassign,
 	unsigned int num_free)
 {

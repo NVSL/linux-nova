@@ -266,11 +266,13 @@ static inline size_t nova_get_log_entry_size(struct super_block *sb,
 	return size;
 }
 
-
 int nova_invalidate_logentry(struct super_block *sb, void *entry,
 	enum nova_entry_type type, unsigned int num_free);
 int nova_reassign_logentry(struct super_block *sb, void *entry,
 	enum nova_entry_type type);
+inline int nova_invalidate_write_entry(struct super_block *sb,
+	struct nova_file_write_entry *entry, int reassign,
+	unsigned int num_free);
 int nova_inplace_update_log_entry(struct super_block *sb,
 	struct inode *inode, void *entry,
 	struct nova_log_entry_info *entry_info);
