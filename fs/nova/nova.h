@@ -1212,7 +1212,7 @@ inline int put_dram_buffer(struct nova_sb_info *sbi, unsigned long number);
 int clear_dram_buffer_range(struct nova_sb_info *sbi, unsigned long blockoff, unsigned long length);
 int put_dram_buffer_range(struct nova_sb_info *sbi, unsigned long blockoff, unsigned long length);
 inline bool is_dram_buffer_addr(struct nova_sb_info *sbi, void *addr);
-int migrate_a_file(struct inode *inode, int from, int to);
+int migrate_a_file(struct inode *inode, int to, bool force);
 int migrate_a_file_to_pmem(struct inode *inode);
 int do_migrate_a_file_rotate(struct inode *inode);
 int do_migrate_a_file_downward(struct super_block *sb);
@@ -1249,7 +1249,8 @@ int nova_update_truncated_block_parity(struct super_block *sb,
 	struct inode *inode, loff_t newsize);
 
 /* profile.c */
-inline int nova_sih_increase_wcount(struct super_block *sb, struct nova_inode_info_header *sih, size_t len);
+inline int nova_sih_increase_wcount(struct super_block *sb, struct nova_inode_info_header *sih, 
+	size_t len);
 inline bool nova_sih_is_sync(struct nova_inode_info_header *sih);
 inline bool nova_sih_judge_sync(struct nova_inode_info_header *sih);
 inline bool nova_prof_judge_sync(struct file *file);
@@ -1259,7 +1260,8 @@ inline bool nova_prof_judge_seq(unsigned int seq_count);
 inline bool nova_entry_judge_seq(struct nova_file_write_entry *entry);
 int nova_alloc_inode_lru_lists(struct super_block *sb);
 inline struct list_head *nova_get_inode_lru_lists(struct nova_sb_info *sbi, int tier, int cpu);
-int nova_update_sih_tier(struct super_block *sb, struct nova_inode_info_header *sih, int tier, bool force);
+int nova_update_sih_tier(struct super_block *sb, struct nova_inode_info_header *sih, 
+    int tier, bool force, bool write);
 int nova_unlink_inode_lru_list(struct nova_sb_info *sbi, struct nova_inode_info_header *sih);
 
 /* rebuild.c */

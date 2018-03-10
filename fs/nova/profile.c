@@ -109,9 +109,9 @@ inline struct list_head *nova_get_inode_lru_lists(struct nova_sb_info *sbi, int 
     return &sbi->inode_lru_lists[tier*sbi->cpus+cpu];
 }
 
-int nova_unlink_inode_lru_list(struct nova_sb_info *sbi, struct nova_inode_info_header *sih) {
+int nova_remove_inode_lru_list(struct nova_sb_info *sbi, struct nova_inode_info_header *sih, int tier) {
     int i;
-    for (i=0;i<=TIER_BDEV_HIGH;++i) {
+    for (i=0;i<=tier;++i) {
         if (sih->lru_list[i].next != &sih->lru_list[i] && sih->lru_list[i].prev != &sih->lru_list[i]) {
             list_del(&sih->lru_list[i]);
             sih->lru_list[i].next = &sih->lru_list[i];
@@ -121,12 +121,20 @@ int nova_unlink_inode_lru_list(struct nova_sb_info *sbi, struct nova_inode_info_
     return 0;
 }
 
+inline int nova_unlink_inode_lru_list(struct nova_sb_info *sbi, struct nova_inode_info_header *sih) {
+    return nova_remove_inode_lru_list(sbi, sih, TIER_BDEV_HIGH);
+}
+
 /*
  * Update htier and ltier in sih
- * force: true - used in migration or whole file movement
+ * force: true - used in migration or whole file force movement
+ *               in this case, write is always true
  *        false - used in file write or partial file movement
+ *                write: true - include this tier
+ *                       false - partial migration
  */
-int nova_update_sih_tier(struct super_block *sb, struct nova_inode_info_header *sih, int tier, bool force) {
+int nova_update_sih_tier(struct super_block *sb, struct nova_inode_info_header *sih, 
+    int tier, bool force, bool write) {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
     int cpu = sih->ino % sbi->cpus;
     struct list_head *new_list = nova_get_inode_lru_lists(sbi, tier, cpu);
@@ -137,10 +145,18 @@ int nova_update_sih_tier(struct super_block *sb, struct nova_inode_info_header *
         sih->ltier = tier;
     }
     else {
-        if (sih->ltier > tier) sih->ltier = tier;
-        if (sih->htier < tier) sih->htier = tier;
-        list_del(&sih->lru_list[tier]);
-        list_add_tail(&sih->lru_list[tier], new_list);
+        if (write) {
+            list_del(&sih->lru_list[tier]);
+            list_add_tail(&sih->lru_list[tier], new_list);
+            if (sih->ltier > tier) sih->ltier = tier;
+            if (sih->htier < tier) sih->htier = tier;
+        }
+        else {     
+            nova_remove_inode_lru_list(sbi, sih, tier);
+            list_add_tail(&sih->lru_list[tier], new_list);
+            if (sih->ltier < tier) sih->ltier = tier;       
+            if (sih->htier < sih->ltier) sih->htier = sih->ltier;       
+        }
     }
     return 0;
 }
