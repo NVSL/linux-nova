@@ -161,7 +161,8 @@ struct nova_sb_info {
 	void *zero_parity;
 	
 	/* VPMEM */
-	char *vpmem;
+	void *vpmem;
+	unsigned long vpmem_num_blocks;
 
 	/* Block device buffer */
 	char *bdev_buffer;

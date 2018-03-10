@@ -812,6 +812,16 @@ inline int get_tier_range_node(struct nova_sb_info *sbi,
 	return get_tier_range(sbi, nrn->range_low, nrn->range_high - nrn->range_low + 1);
 }
 
+int get_suitable_tier(struct super_block *sb, unsigned long num_blocks) {
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	int i;
+	for (i=TIER_BDEV_LOW; i<=TIER_BDEV_HIGH; ++i) {
+		if (num_blocks >> (sbi->bdev_list[i - TIER_BDEV_LOW].opt_size_bit) == 0)
+			return i-1;
+	}
+	return i-1;
+}
+
 // blocknr: global block number
 int nova_free_blocks_from_bdev(struct nova_sb_info *sbi, unsigned long blocknr,
 	unsigned long num_blocks)

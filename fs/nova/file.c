@@ -726,7 +726,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	struct nova_inode *pi, inode_copy;
 	struct nova_file_write_entry entry_data;
 	struct nova_inode_update update;
-	ssize_t	    written = 0;
+	ssize_t	written = 0;
 	loff_t pos;
 	size_t count, offset, copied;
 	unsigned long start_blk, num_blocks;
@@ -806,14 +806,19 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	/* Profiler */
 	nova_sih_increase_wcount(sb, sih, len);
 
-	if ( num_blocks > 16 ) {
+	write_tier = get_suitable_tier(sb, num_blocks);
+
+	nova_info("This [1] %lu should be allocated in TIER #%d.\n", num_blocks, write_tier);
+
+	if (write_tier != TIER_PMEM) {
 		seq_count = nova_get_prev_seq_count(sb, sih, start_blk, num_blocks);
-		if (!nova_sih_judge_sync(sih) && nova_prof_judge_seq(seq_count)){
-			nova_info("This should be allocated in DRAM cache.\n");
-			/* TODOzsa: write tier in DRAM */
+		nova_info("seq_count %u \n", seq_count);
+		if (nova_sih_judge_sync(sih) || !nova_prof_judge_seq(seq_count)){
 			write_tier = TIER_PMEM;
 		}
 	}
+
+	nova_info("This [2] %lu should be allocated in TIER #%d.\n", num_blocks, write_tier);
 
 	nova_update_sih_tier(sb, sih, write_tier, false, true);
 
@@ -823,14 +828,20 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 		offset = pos & (nova_inode_blk_size(sih) - 1);
 		start_blk = pos >> sb->s_blocksize_bits;
 
-		/* don't zero-out the allocated blocks */
-		allocated = nova_new_data_blocks(sb, sih, &blocknr, start_blk,
-				 num_blocks, ALLOC_NO_INIT, ANY_CPU,
-				 ALLOC_FROM_HEAD);
+		if (write_tier == TIER_PMEM) {
+			/* don't zero-out the allocated blocks */
+			allocated = nova_new_data_blocks(sb, sih, &blocknr, start_blk,
+					num_blocks, ALLOC_NO_INIT, ANY_CPU,
+					ALLOC_FROM_HEAD);
+		}
+		else {
+			allocated = nova_alloc_block_tier(NOVA_SB(sb), write_tier, ANY_CPU, 
+				&blocknr, num_blocks, ALLOC_FROM_HEAD);
+		}
 
 		nova_dbg_verbose("%s: alloc %d blocks @ %lu\n", __func__,
 						allocated, blocknr);
-
+        
 		if (allocated <= 0) {
 			nova_dbg("%s alloc blocks failed %d\n", __func__,
 								allocated);

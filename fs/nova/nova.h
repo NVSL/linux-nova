@@ -1068,6 +1068,7 @@ unsigned long get_offset_of_tier(struct nova_sb_info *sbi, int tier);
 int get_bfl_index(struct nova_sb_info *sbi, unsigned long blocknr);
 inline int get_tier_range_node(struct nova_sb_info *sbi, 
 	struct nova_range_node* nrn);
+int get_suitable_tier(struct super_block *sb, unsigned long num_blocks);
 inline unsigned long get_raw_from_blocknr(struct nova_sb_info *sbi, 
 	unsigned long blocknr);
 inline unsigned long get_blocknr_from_raw(struct nova_sb_info *sbi, int tier, 

@@ -27,13 +27,14 @@
 
 extern void nova_error_mng(struct super_block *sb, const char *fmt, ...);
 
+// Check if the range fits PMEM or VPMEM
 static inline int nova_range_check(struct super_block *sb, void *p,
 					 unsigned long len)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 
-	if (p < sbi->virt_addr ||
-			p + len > sbi->virt_addr + sbi->initsize) {
+	if ((p < sbi->virt_addr || p + len > sbi->virt_addr + sbi->initsize) &&
+	(p < sbi->vpmem || p + len > sbi->vpmem + (unsigned long)(sbi->vpmem_num_blocks << PAGE_SHIFT))) {
 		nova_err(sb, "access pmem out of range: pmem range %p - %p, access range %p - %p\n",
 				sbi->virt_addr,
 				sbi->virt_addr + sbi->initsize,

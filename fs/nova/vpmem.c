@@ -539,7 +539,9 @@ int vpmem_setup(struct nova_sb_info *sbi, unsigned long offset)
         map_page[i] = size;
         map_valid[i] = true;
     }
-        
+    
+    sbi->vpmem_num_blocks = size;
+    
     // print_all_bdev(sbi);
 
     printk(KERN_INFO "vpmem: vpmem starts at %016lx (%lu GB)\n", 
