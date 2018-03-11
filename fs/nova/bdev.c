@@ -958,7 +958,7 @@ long nova_bdev_alloc_blocks(struct nova_sb_info *sbi, int tier, int cpuid,
 
 	ret = nova_new_blocks_from_bdev(sb, tier, blocknr, num_blocks, cpuid, from_tail);
 
-    vpmem_invalidate_pages(blockoff_to_virt(*blocknr), num_blocks);
+    // vpmem_invalidate_pages(blockoff_to_virt(*blocknr), num_blocks);
 	
 	return ret;
 }
@@ -1004,7 +1004,7 @@ long nova_alloc_block_tier(struct nova_sb_info *sbi, int tier, int cpuid,
 int nova_free_blocks_tier(struct nova_sb_info *sbi, unsigned long blocknr,
 	unsigned long num_blocks) {
 	struct super_block *sb = sbi->sb;
-	int tier = get_tier_range(sbi, blocknr, num_blocks);
+	int tier = get_tier(sbi, blocknr);
 	if (tier == -1) {
 		nova_info("Can not find tier of blocknr.\n");
 		nova_info("blocknr: %lu, num_blocks:%lu.\n", blocknr, num_blocks);

@@ -225,7 +225,7 @@ int nova_get_bdev_info(struct nova_sb_info *sbi){
 		sbi->bdev_list[i].minors = bd_disk->minors;
 		sbi->bdev_list[i].capacity_sector = nsector;
 		sbi->bdev_list[i].capacity_page = nsector>>3;
-		sbi->bdev_list[i].opt_size_bit = 0+i; //temp value
+		sbi->bdev_list[i].opt_size_bit = 6+i; //temp value
 		strcat(sbi->bdev_list[i].bdev_name,bd_disk->disk_name);
 		TIER_BDEV_HIGH++;
 	}
@@ -273,7 +273,7 @@ int nova_get_one_bdev_info(struct nova_sb_info *sbi, char *bdev_path){
 	sbi->bdev_list[i].minors = bd_disk->minors;
 	sbi->bdev_list[i].capacity_sector = nsector;
 	sbi->bdev_list[i].capacity_page = nsector>>3;
-	sbi->bdev_list[i].opt_size_bit = 0; //temp value
+	sbi->bdev_list[i].opt_size_bit = 6; //temp value
 	strcat(sbi->bdev_list[i].bdev_name,bd_disk->disk_name);
 	TIER_BDEV_HIGH++;
 	nova_info("Tier %d is set to %s\n", TIER_BDEV_HIGH, bdev_path);

@@ -56,7 +56,6 @@ inline bool nova_prof_judge_sync(struct file *file) {
 
 // Profiler module #2
 // Sequential vs. Random
-
 bool is_entry_time_out(struct super_block *sb, struct nova_file_write_entry *entry) {
     unsigned int interval = 30;  /* 30 seconds */
     if ( timespec_trunc(current_kernel_time(),sb->s_time_gran).tv_sec

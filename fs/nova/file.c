@@ -623,7 +623,7 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 			nr = PAGE_SIZE;
 		}
 
-		vpmem_invalidate_pages(blockoff_to_virt(entry->block >> PAGE_SHIFT), le32_to_cpu(entry->num_pages));
+		// vpmem_invalidate_pages(blockoff_to_virt(entry->block >> PAGE_SHIFT), le32_to_cpu(entry->num_pages));
 
 		nvmm = get_nvmm(sb, sih, entryc, index);
 		dax_mem = nova_get_block(sb, (nvmm << PAGE_SHIFT));
@@ -808,8 +808,6 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 
 	write_tier = get_suitable_tier(sb, num_blocks);
 
-	nova_info("This [1] %lu should be allocated in TIER #%d.\n", num_blocks, write_tier);
-
 	if (write_tier != TIER_PMEM) {
 		seq_count = nova_get_prev_seq_count(sb, sih, start_blk, num_blocks);
 		nova_info("seq_count %u \n", seq_count);
@@ -818,7 +816,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 		}
 	}
 
-	nova_info("This [2] %lu should be allocated in TIER #%d.\n", num_blocks, write_tier);
+	nova_info("This %lu should be allocated in TIER #%d.\n", num_blocks, write_tier);
 
 	nova_update_sih_tier(sb, sih, write_tier, false, true);
 

@@ -388,7 +388,6 @@ int nova_free_blocks(struct super_block *sb, unsigned long blocknr,
 
 		ret = nova_free_blocks_tier(sbi, blockoff, num_blocks);
 
-
 		NOVA_END_TIMING(free_blocks_t, free_time);
 		return ret;
 	}
