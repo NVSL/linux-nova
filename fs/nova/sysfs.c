@@ -143,11 +143,11 @@ static int nova_seq_IO_show(struct seq_file *seq, void *v)
 		Countstats[dax_read_t] ?
 			IOstats[read_bytes] / Countstats[dax_read_t] : 0);
 	seq_printf(seq, "COW write %llu, bytes %llu, average %llu, write breaks %llu, average %llu\n",
-		Countstats[cow_write_t], IOstats[cow_write_bytes],
-		Countstats[cow_write_t] ?
-			IOstats[cow_write_bytes] / Countstats[cow_write_t] : 0,
-		IOstats[cow_write_breaks], Countstats[cow_write_t] ?
-			IOstats[cow_write_breaks] / Countstats[cow_write_t]
+		Countstats[do_cow_write_t], IOstats[cow_write_bytes],
+		Countstats[do_cow_write_t] ?
+			IOstats[cow_write_bytes] / Countstats[do_cow_write_t] : 0,
+		IOstats[cow_write_breaks], Countstats[do_cow_write_t] ?
+			IOstats[cow_write_breaks] / Countstats[do_cow_write_t]
 			: 0);
 	seq_printf(seq, "Inplace write %llu, bytes %llu, average %llu, write breaks %llu, average %llu\n",
 		Countstats[inplace_write_t], IOstats[inplace_write_bytes],
