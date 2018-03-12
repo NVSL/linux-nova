@@ -807,6 +807,10 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 
 	if (DEBUG_STARTUP_TEST) bdev_test(sbi);
 
+	retval = start_bm_thread(sbi);
+	if (retval)
+		goto out;
+
 	nova_dbg("measure timing %d, metadata checksum %d, inplace update %d, wprotect %d, data checksum %d, data parity %d, DRAM checksum %d\n",
 		measure_timing, metadata_csum,
 		inplace_data_updates, wprotect,	 data_csum,
@@ -1130,6 +1134,7 @@ static void nova_put_super(struct super_block *sb)
 	if (DEBUG_BFL_INFO) print_all_bfl(sb);
 	nova_print_curr_epoch_id(sb);
 
+	stop_bm_thread(sbi);
 	vpmem_cleanup();
 	
 	/* It's unmount time, so unmap the nova memory */
@@ -1156,7 +1161,6 @@ static void nova_put_super(struct super_block *sb)
 	kfree(sbi->bb_pages);
 	kfree(sbi->bal_head);
 	kfree(sbi->bdev_buffer);
-
 	
 	for (i = 0; i < sbi->cpus; i++) {
 		inode_map = &sbi->inode_maps[i];

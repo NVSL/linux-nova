@@ -27,7 +27,7 @@
 #define VPMEM_START       (VMALLOC_START + _AC(16UL << 40, UL))
 #define VPMEM_END         (VPMEM_START + _AC((VPMEM_SIZE_TB << 40) - 1, UL))
 
-#define MAX_PAGES           12800
+#define MAX_PAGES           1280000
 #define SPM_META_SIZE_MB    _AC(1, UL)
 #define SPM_META_SIZE       _AC(SPM_META_SIZE_MB << 20, UL)
 #define SPM_PGCACHE_SIZE_MB _AC(50, UL)

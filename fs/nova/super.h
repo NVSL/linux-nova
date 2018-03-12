@@ -189,9 +189,13 @@ struct nova_sb_info {
 	struct bdev_info *bdev_list;
 	int bdev_count;
 	
+	/* Background migration thread */
+	struct nova_kthread *bm_thread;	
+
 	/* Free block list for block devices */
 	struct bdev_free_list *bdev_free_list;
 
+	struct mutex *il_mutex;
 	struct list_head *inode_lru_lists;
 
 	unsigned long per_list_blocks;

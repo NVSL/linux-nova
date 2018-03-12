@@ -293,7 +293,8 @@ int migrate_blocks(struct nova_sb_info *sbi, unsigned long blockfrom,
  * Only check the corresponding mb-page, not the other pages.
  * Because in the ultimate design, each block will only have one buffer page.
  */ 
-bool is_entry_busy(struct nova_sb_info *sbi, struct nova_file_write_entry *entry) {    
+bool is_entry_busy(struct nova_sb_info *sbi, struct nova_file_write_entry *entry) {   
+    if (entry->updating == 3) return true; 
     if (!is_tier_bdev(get_entry_tier(entry))) return false;
     if (vpmem_is_range_rwsem_locked(blockoff_to_virt(entry->block >> PAGE_SHIFT), le32_to_cpu(entry->num_pages))) return true;
     return false;
@@ -389,7 +390,7 @@ int migrate_entry_blocks(struct nova_sb_info *sbi, int to, struct nova_inode_inf
     nentry.pgoff = new_pgoff;
 
     /* Step 2. Allocate */
-    entry->updating = 1;
+    entry->updating = 3;
 
     // TODOzsa: Could be wrong
     if (DEBUG_MIGRATION_ALLOC) nova_info("[Migration] entry->block %lu\n", 
@@ -449,11 +450,12 @@ int migrate_entry_blocks(struct nova_sb_info *sbi, int to, struct nova_inode_inf
     // ret = nova_free_blocks_tier(sbi, entry->block >> PAGE_SHIFT, entry->num_pages);
 
     // Update tiering info
-    entry->updating = 0;
     
-	nova_update_entry_csum(entry);
-
     if (!blocknr_hint) ret = nova_clone_write_entry(sbi, si, &nentry, to, blocknr, 0, update);
+
+    entry->updating = 0;
+
+	nova_update_entry_csum(entry);
     
     return ret;
 }
@@ -707,8 +709,9 @@ int migrate_a_file_by_entries(struct inode *inode, int to, bool force)
 	nova_inode_log_fast_gc(sb, pi, sih, 0, 0, 0, 0, 1);
     // nova_info("sih->log_pages: %lu\n",sih->log_pages);
     
+    sih->updating = 0;
     // ret = nova_reassign_file_tree(sb, sih, begin_tail, true);
-	if (ret) return ret;
+	// if (ret) return ret;
 
     if (DEBUG_MIGRATION) nova_info("[Migration] End migrating inode:%lu to:T%d force:%d\n",
         inode->i_ino, to, force);
@@ -740,8 +743,11 @@ int migrate_a_file(struct inode *inode, int to, bool force)
     unsigned int n1 = 0;
     unsigned int n2 = 0;
     loff_t isize = 0;
+    int progress = 0;
     
     unsigned int osb = sbi->bdev_list[to - TIER_BDEV_LOW].opt_size_bit;
+
+    sih->updating = 1;
 
     nova_update_sih_tier(sb, sih, to, force, false);
 
@@ -764,6 +770,9 @@ next:
         n1 = 0;
         n2 = 0;
         index = i<<osb;
+        if (i*10 > progress*(end_index>>osb)) {
+            if (DEBUG_MIGRATION) nova_info("[Migration] Progress:%3d%% Index:%lu\n", 10*(progress++), index);
+        }
         do {
             entry = nova_find_next_entry(sb, sih, index);
             if (entry) {
@@ -865,6 +874,8 @@ mig:
     if (DEBUG_MIGRATION) nova_info("[Migration] End migrating inode:%lu (%d entries)\n",
         inode->i_ino, nentry);
 
+    sih->updating = 0;
+
     return ret;
 }
 
@@ -877,7 +888,7 @@ unsigned long nova_pmem_used(struct nova_sb_info *sbi) {
 		fl = nova_get_free_list(sb, i);
         used += fl->block_end - fl->block_start + 1 - fl->num_free_blocks;
 	}
-	if(DEBUG_MIGRATION) nova_info("[Usage] PMEM: Used:  %lu\n", used);
+	// if(DEBUG_MIGRATION) nova_info("[Usage] PMEM: Used:  %lu\n", used);
     return used;
 }
 
@@ -890,16 +901,26 @@ unsigned long nova_pmem_total(struct nova_sb_info *sbi) {
 		fl = nova_get_free_list(sb, i);
         total += fl->block_end - fl->block_start + 1;
 	}
-	if(DEBUG_MIGRATION) nova_info("[Usage] PMEM: Total: %lu\n", total);
+	// if(DEBUG_MIGRATION) nova_info("[Usage] PMEM: Total: %lu\n", total);
     return total;
 }
 
 bool is_pmem_usage_high(struct nova_sb_info *sbi) {
     unsigned long used = nova_pmem_used(sbi);
     unsigned long total = nova_pmem_total(sbi);
-    // Usage high: used / total > MIGRATION_DOWNWARD_PERC / 100
-    if(DEBUG_MIGRATION) nova_info("PMEM usage: %lu / %lu.\n", used * 100, MIGRATION_DOWNWARD_PERC * total);
-    return used * 100 > MIGRATION_DOWNWARD_PERC * total;
+    // Usage high: used / total > MIGRATION_DOWN_PMEM_PERC / 100
+    if(DEBUG_MIGRATION) nova_info("PMEM usage: U:%lu T:%lu %lu / %lu.\n",
+        used, total, used * 100, MIGRATION_DOWN_PMEM_PERC * total);
+    return used * 100 > MIGRATION_DOWN_PMEM_PERC * total;
+}
+
+bool is_pmem_usage_really_high(struct nova_sb_info *sbi) {
+    unsigned long used = nova_pmem_used(sbi);
+    unsigned long total = nova_pmem_total(sbi);
+    // Usage high: used / total > MIGRATION_FORCE_PERC / 100
+    if(DEBUG_MIGRATION) nova_info("PMEM usage: U:%lu T:%lu %lu / %lu.\n",
+        used, total, used * 100, MIGRATION_FORCE_PERC * total);
+    return used * 100 > MIGRATION_FORCE_PERC * total;
 }
 
 unsigned long nova_bdev_used(struct nova_sb_info *sbi, int tier) {
@@ -910,7 +931,7 @@ unsigned long nova_bdev_used(struct nova_sb_info *sbi, int tier) {
 		bfl = nova_get_bdev_free_list(sbi,tier,i);
         used += bfl->num_total_blocks - bfl->num_free_blocks;
 	}
-	if(DEBUG_MIGRATION) nova_info("[Usage] BDEV-T%d: Used:  %lu\n", tier, used);
+	// if(DEBUG_MIGRATION) nova_info("[Usage] BDEV-T%d: Used:  %lu\n", tier, used);
     return used;
 }
 
@@ -922,16 +943,41 @@ unsigned long nova_bdev_total(struct nova_sb_info *sbi, int tier) {
 		bfl = nova_get_bdev_free_list(sbi, tier, i);
         total += bfl->num_total_blocks;
 	}
-	if(DEBUG_MIGRATION) nova_info("[Usage] BDEV-T%d: Total: %lu\n", tier, total);
+	// if(DEBUG_MIGRATION) nova_info("[Usage] BDEV-T%d: Total: %lu\n", tier, total);
     return total;
 }
 
 bool is_bdev_usage_high(struct nova_sb_info *sbi, int tier) {
     unsigned long used = nova_bdev_used(sbi, tier);
     unsigned long total = nova_bdev_total(sbi, tier);
-    // Usage high: used / total > MIGRATION_DOWNWARD_PERC / 100
-    if(DEBUG_MIGRATION) nova_info("BDEV T%d usage: %lu / %lu.\n", tier, used * 100, MIGRATION_DOWNWARD_PERC * total);
-    return used * 100 > MIGRATION_DOWNWARD_PERC * total;
+    // Usage high: used / total > MIGRATION_DOWN_BDEV_PERC / 100
+    if(DEBUG_MIGRATION) nova_info("B-T%d usage: U:%lu T:%lu %lu / %lu.\n", 
+        tier, used, total, used * 100, MIGRATION_DOWN_BDEV_PERC * total);
+    return used * 100 > MIGRATION_DOWN_BDEV_PERC * total;
+}
+
+bool is_bdev_usage_really_high(struct nova_sb_info *sbi, int tier) {
+    unsigned long used = nova_bdev_used(sbi, tier);
+    unsigned long total = nova_bdev_total(sbi, tier);
+    // Usage high: used / total > MIGRATION_FORCE_PERC / 100
+    if(DEBUG_MIGRATION) nova_info("B-T%d usage: U:%lu T:%lu %lu / %lu.\n", 
+        tier, used, total, used * 100, MIGRATION_FORCE_PERC * total);
+    return used * 100 > MIGRATION_FORCE_PERC * total;
+}
+
+inline bool is_tier_usage_really_high(struct nova_sb_info *sbi, int tier) {
+    if (tier == TIER_PMEM) return is_pmem_usage_really_high(sbi);
+    else return is_bdev_usage_really_high(sbi, tier);
+}
+
+int get_available_tier(struct super_block *sb, int tier) {
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+    int i;
+    if (!is_tier_usage_really_high(sbi, tier)) return tier;
+    for (i=TIER_PMEM;i<=TIER_BDEV_HIGH;++i) {
+        if (!is_tier_usage_really_high(sbi, i)) return i;
+    }
+    return TIER_PMEM;
 }
 
 // Get an inode with tier, starting from the smallest inode number
@@ -991,21 +1037,40 @@ struct inode *pop_an_inode_to_migrate_by_ino(struct nova_sb_info *sbi, int tier)
  *        [2] The lru inode of [tier, other cpu]
  *        [3] NULL
  */
-struct inode *pop_an_inode_to_migrate(struct nova_sb_info *sbi, int tier) {
+struct inode *pop_an_inode_to_migrate(struct nova_sb_info *sbi, int tier, unsigned long cpu_off) {
     struct nova_inode_info *si;
 	struct nova_inode_info_header *sih, *tmpsih;
 	struct list_head *list;
+    struct mutex *mutex;
+    struct inode *ret;
     int j, jj;
     int cpu = smp_processor_id();
 
-    for (jj=cpu;jj<cpu+sbi->cpus;++jj) {
+    for (jj=cpu+cpu_off;jj<cpu+cpu_off+sbi->cpus;++jj) {
         j = jj%(sbi->cpus);
+		mutex = nova_get_inode_lru_mutex(sbi, tier, j);
+        mutex_lock(mutex);
         list = nova_get_inode_lru_lists(sbi, tier, j);
         list_for_each_entry_safe(sih, tmpsih, list, lru_list[tier]) {
-            if(DEBUG_MIGRATION) nova_info("Inode %lu is poped.\n", sih->ino);
+            if (sih->ino<36) {
+                mutex_unlock(mutex);
+                continue;
+            }
+            if (sih->updating==1) {
+                mutex_unlock(mutex);
+                continue;
+            }
+            if (DEBUG_MIGRATION) nova_info("Inode %lu is poped.\n", sih->ino);
             si = container_of(sih, struct nova_inode_info, header);
-            return &si->vfs_inode;
+            ret = &si->vfs_inode;
+            if (inode_trylock(ret)) {
+	            inode_unlock(ret);
+                mutex_unlock(mutex);
+                return ret;
+            }
+            if (DEBUG_MIGRATION) nova_info("Inode %lu is locked.\n", sih->ino);
         }
+        mutex_unlock(mutex);
     }
     return NULL;
 }
@@ -1042,43 +1107,97 @@ int do_migrate_a_file_rotate(struct inode *inode) {
 int do_migrate_a_file_downward(struct super_block *sb) {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
     struct inode *this;
+    unsigned long cpu_off = 0;
     
     int i;
-	if (DEBUG_MIGRATION) nova_info("[Migration-Downward]\n");
+	// if (DEBUG_MIGRATION) nova_info("[Migration-Downward]\n");
 
 again:
     if (is_pmem_usage_high(sbi)) {
-        if(DEBUG_MIGRATION) nova_info("PMEM usage high.\n");
-        this = pop_an_inode_to_migrate(sbi, TIER_PMEM);
+        if(DEBUG_MIGRATION) nova_info("\e[1;31mPMEM usage high.\e[0m\n");
+        this = pop_an_inode_to_migrate(sbi, TIER_PMEM, cpu_off);
         if (!this) {
             if(DEBUG_MIGRATION) nova_info("PMEM usage is high yet no inode is found.\n");
             return 0;
         }
-        sb_start_write(this->i_sb);
-	    inode_lock(this);
+        cpu_off++;
+        if (!inode_trylock(this)) goto again;
 	    migrate_a_file(this, TIER_BDEV_LOW, false);
 	    inode_unlock(this);
-	    sb_end_write(this->i_sb);
         goto again;
     }
-    else if(DEBUG_MIGRATION) nova_info("PMEM usage low.\n");
-        
+    else if(DEBUG_MIGRATION) nova_info("\e[1;32mPMEM usage low.\e[0m\n");
+            
     for (i=TIER_BDEV_LOW;i<TIER_BDEV_HIGH;++i) {
         if (is_bdev_usage_high(sbi, i)) {
-            if(DEBUG_MIGRATION) nova_info("BDEV T%d usage high.\n",i);
-            this = pop_an_inode_to_migrate(sbi, i);
+            if(DEBUG_MIGRATION) nova_info("\e[1;31mB-T%d usage high.\e[0m\n",i);
+            this = pop_an_inode_to_migrate(sbi, i, cpu_off);
             if (!this) {
-                if(DEBUG_MIGRATION) nova_info("BDEV T%d usage is high yet no inode is found.\n", i);
+                if(DEBUG_MIGRATION) nova_info("B-T%d usage is high yet no inode is found.\n", i);
             }
-            sb_start_write(this->i_sb);
-	        inode_lock(this);
+            cpu_off++;
+            if (!inode_trylock(this)) goto again;
             migrate_a_file(this, i+1, false);
 	        inode_unlock(this);
-	        sb_end_write(this->i_sb);
             goto again;
         }
-        else if(DEBUG_MIGRATION) nova_info("BDEV T%d usage low.\n",i);
+        else if(DEBUG_MIGRATION) nova_info("\e[1;32mB-T%d usage low.\e[0m\n",i);
     }
     
     return 0;
+}
+
+inline void wake_up_bm(struct super_block *sb) {
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	if (sbi->bm_thread) {
+		smp_wmb();
+		wake_up_process(sbi->bm_thread->nova_task);
+	}
+}
+
+static int bm_thread_func(void *data) {
+	struct nova_sb_info *sbi = data;
+	struct super_block *sb = sbi->sb;
+	int time_count = 0;  
+    do {
+		set_current_state(TASK_UNINTERRUPTIBLE);
+		// schedule();
+		schedule_timeout_interruptible(msecs_to_jiffies(BM_THREAD_SLEEP_TIME));
+        nova_info("Background migration thread\n");
+        if ( MIGRATION_POLICY == MIGRATION_DOWNWARD ) do_migrate_a_file_downward(sb);
+    } while(!kthread_should_stop());  
+    return time_count;
+}
+
+int start_bm_thread(struct nova_sb_info *sbi) {
+	struct nova_kthread *bm_thread = NULL;
+	int err = 0;
+
+	sbi->bm_thread = NULL;
+	/* Initialize background migration kthread */
+	bm_thread = kmalloc(sizeof(struct nova_kthread), GFP_KERNEL);
+	if (!bm_thread) {
+		return -ENOMEM;
+	}
+
+	init_waitqueue_head(&(bm_thread->wait_queue_head));
+	bm_thread->nova_task = kthread_run(bm_thread_func, sbi, "HMFS_warp");
+	sbi->bm_thread = bm_thread;
+	if (IS_ERR(bm_thread->nova_task)) {
+		err = PTR_ERR(bm_thread->nova_task);
+		goto free;
+	}
+	return 0;
+
+free:
+	kfree(bm_thread);
+	return err;
+}
+
+void stop_bm_thread(struct nova_sb_info *sbi) {
+	if (sbi->bm_thread) {
+		kthread_stop(sbi->bm_thread->nova_task);
+		kfree(sbi->bm_thread);
+		sbi->bm_thread = NULL;
+	}
 }

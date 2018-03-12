@@ -90,7 +90,11 @@
 #define MIGRATION_DOWNWARD 2
 #define MIGRATION_POLICY 2
 
-#define MIGRATION_DOWNWARD_PERC 4
+#define MIGRATION_DOWN_PMEM_PERC 4
+#define MIGRATION_DOWN_BDEV_PERC 20
+#define MIGRATION_FORCE_PERC 90
+
+#define BM_THREAD_SLEEP_TIME 10000
 
 /*
  * Debug code
@@ -603,6 +607,11 @@ static inline unsigned long nova_tier_end_block(struct nova_sb_info *sbi,
 	return 0;
 }
 
+// Background migration thread
+struct nova_kthread {
+	struct task_struct *nova_task;
+	wait_queue_head_t wait_queue_head;
+};
 
 #include "mprotect.h"
 
@@ -1219,6 +1228,12 @@ int do_migrate_a_file_rotate(struct inode *inode);
 int do_migrate_a_file_downward(struct super_block *sb);
 void print_a_write_entry(struct super_block *sb, struct nova_file_write_entry *entry, int n);
 
+int get_available_tier(struct super_block *sb, int tier);
+
+inline void wake_up_bm(struct super_block *sb);
+int start_bm_thread(struct nova_sb_info *sbi);
+void stop_bm_thread(struct nova_sb_info *sbi);
+
 /* mprotect.c */
 extern int nova_dax_mem_protect(struct super_block *sb,
 				 void *vaddr, unsigned long size, int rw);
@@ -1261,6 +1276,7 @@ inline bool nova_prof_judge_seq(unsigned int seq_count);
 inline bool nova_entry_judge_seq(struct nova_file_write_entry *entry);
 int nova_alloc_inode_lru_lists(struct super_block *sb);
 inline struct list_head *nova_get_inode_lru_lists(struct nova_sb_info *sbi, int tier, int cpu);
+inline struct mutex *nova_get_inode_lru_mutex(struct nova_sb_info *sbi, int tier, int cpu);
 int nova_update_sih_tier(struct super_block *sb, struct nova_inode_info_header *sih, 
     int tier, bool force, bool write);
 int nova_unlink_inode_lru_list(struct nova_sb_info *sbi, struct nova_inode_info_header *sih);

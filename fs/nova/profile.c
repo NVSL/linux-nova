@@ -96,16 +96,24 @@ int nova_alloc_inode_lru_lists(struct super_block *sb) {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
     int i;
     sbi->inode_lru_lists = kcalloc((TIER_BDEV_HIGH + 1)*sbi->cpus, sizeof(struct list_head), GFP_KERNEL);
+    sbi->il_mutex = kcalloc((TIER_BDEV_HIGH + 1)*sbi->cpus, sizeof(struct mutex), GFP_KERNEL);
     for (i=0;i<(TIER_BDEV_HIGH + 1)*sbi->cpus;++i) {
 	    INIT_LIST_HEAD(&sbi->inode_lru_lists[i]);
+	    mutex_init(&sbi->il_mutex[i]);
     }
 	if (!sbi->inode_lru_lists)
+		return -ENOMEM;
+	if (!sbi->il_mutex)
 		return -ENOMEM;
     return 0;
 }
 
 inline struct list_head *nova_get_inode_lru_lists(struct nova_sb_info *sbi, int tier, int cpu) {
     return &sbi->inode_lru_lists[tier*sbi->cpus+cpu];
+}
+
+inline struct mutex *nova_get_inode_lru_mutex(struct nova_sb_info *sbi, int tier, int cpu) {
+    return &sbi->il_mutex[tier*sbi->cpus+cpu];
 }
 
 int nova_remove_inode_lru_list(struct nova_sb_info *sbi, struct nova_inode_info_header *sih, int tier) {
@@ -136,7 +144,9 @@ int nova_update_sih_tier(struct super_block *sb, struct nova_inode_info_header *
     int tier, bool force, bool write) {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
     int cpu = sih->ino % sbi->cpus;
+	struct mutex *mutex = nova_get_inode_lru_mutex(sbi, tier, cpu);
     struct list_head *new_list = nova_get_inode_lru_lists(sbi, tier, cpu);
+    mutex_lock(mutex);
     if (force) {
         nova_unlink_inode_lru_list(sbi, sih);
         list_add_tail(&sih->lru_list[tier], new_list);
@@ -157,5 +167,6 @@ int nova_update_sih_tier(struct super_block *sb, struct nova_inode_info_header *
             if (sih->htier < sih->ltier) sih->htier = sih->ltier;       
         }
     }
+    mutex_unlock(mutex);
     return 0;
 }

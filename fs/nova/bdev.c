@@ -670,6 +670,7 @@ alloc:
 void print_all_lru(struct super_block *sb){	
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct list_head *list;
+	struct mutex *mutex;
 	struct nova_inode_info_header *sih, *tmpsih;
 	int count = 0;
 	// unsigned long tmp[10] = {0};
@@ -683,6 +684,8 @@ void print_all_lru(struct super_block *sb){
 	for (i=0;i<(TIER_BDEV_HIGH+1)*sbi->cpus;++i) {
 		ctmp[0]='\0';
 		htmp[0]='\0';
+		mutex = nova_get_inode_lru_mutex(sbi, i/sbi->cpus, i%sbi->cpus);
+		mutex_lock(mutex);
 		list = nova_get_inode_lru_lists(sbi, i/sbi->cpus, i%sbi->cpus);
 		count = 0;
 		list_for_each_entry_safe(sih, tmpsih, list, lru_list[i/sbi->cpus]) {
@@ -690,7 +693,8 @@ void print_all_lru(struct super_block *sb){
 			sprintf(htmp, "%3lu|", sih->ino);
 			strcat(ctmp, htmp);
 			if (count++>9) break;
-		}		
+		}	
+		mutex_unlock(mutex);	
 		// nova_info("|%4d|%3d|%3lu|%3lu|%3lu|%3lu|%3lu|%3lu|%3lu|%3lu|%3lu|%3lu|\n",
 		// i/sbi->cpus, i%sbi->cpus, tmp[0], tmp[1], tmp[2], tmp[3],
 		// tmp[4], tmp[5], tmp[6], tmp[7], tmp[8], tmp[9]);

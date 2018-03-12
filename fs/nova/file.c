@@ -162,6 +162,8 @@ static int nova_migration(struct inode *inode, struct file *file) {
 	
 	struct nova_inode_info *si = NOVA_I(inode);
 	struct nova_inode_info_header *sih = &si->header;
+	
+	wake_up_bm(sb);
 
 	if (DEBUG_DO_MIGRATION) {
 		if(rwsem_is_locked(&inode->i_rwsem)) nova_info("nova_flush is locked\n");
@@ -202,6 +204,7 @@ static int nova_migration(struct inode *inode, struct file *file) {
 	}
 
 	if (DEBUG_DO_MIGRATION) nova_info("Do migration.\n");
+
 	// Tiering migration
 	if (DEBUG_BFL_INFO) {
 		nova_info("[Start migration]\n");
@@ -209,8 +212,7 @@ static int nova_migration(struct inode *inode, struct file *file) {
 	}	
 
 	if (DEBUG_WRITE_ENTRY) print_file_write_entries(sb, sih);
-	
-	
+		
 	if ( MIGRATION_POLICY == MIGRATION_ROTATE ) {
 		sb_start_write(inode->i_sb);
 		inode_lock(inode);
@@ -219,7 +221,7 @@ static int nova_migration(struct inode *inode, struct file *file) {
 		sb_end_write(inode->i_sb);
 	}
 	
-	if ( MIGRATION_POLICY == MIGRATION_DOWNWARD ) do_migrate_a_file_downward(sb);
+	// if ( MIGRATION_POLICY == MIGRATION_DOWNWARD ) do_migrate_a_file_downward(sb);
 
 	if (DEBUG_WRITE_ENTRY) print_file_write_entries(sb, sih);
 	if (DEBUG_BFL_INFO) {
@@ -747,6 +749,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	u64 epoch_id;
 	u32 time;
 	int write_tier = TIER_PMEM;
+	int old_write_tier = TIER_PMEM;
 
 	if (len == 0)
 		return 0;
@@ -808,15 +811,18 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 
 	write_tier = get_suitable_tier(sb, num_blocks);
 
+	old_write_tier = write_tier;
+
 	if (write_tier != TIER_PMEM) {
 		seq_count = nova_get_prev_seq_count(sb, sih, start_blk, num_blocks);
-		nova_info("seq_count %u \n", seq_count);
 		if (nova_sih_judge_sync(sih) || !nova_prof_judge_seq(seq_count)){
 			write_tier = TIER_PMEM;
 		}
 	}
+	
+	write_tier = get_available_tier(sb, write_tier);
 
-	nova_info("This %lu should be allocated in TIER #%d.\n", num_blocks, write_tier);
+	// nova_info("[Write] %lu blocks in [tier #%d] -> [seq %u tier #%d].\n", num_blocks, old_write_tier, seq_count, write_tier);
 
 	nova_update_sih_tier(sb, sih, write_tier, false, true);
 
