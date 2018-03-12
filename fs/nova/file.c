@@ -651,7 +651,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	if (len == 0)
 		return 0;
 
-	NOVA_START_TIMING(cow_write_t, cow_write_time);
+	NOVA_START_TIMING(do_cow_write_t, cow_write_time);
 
 	if (!access_ok(VERIFY_READ, buf, len)) {
 		ret = -EFAULT;
@@ -822,7 +822,7 @@ out:
 		nova_cleanup_incomplete_write(sb, sih, blocknr, allocated,
 						begin_tail, update.tail);
 
-	NOVA_END_TIMING(cow_write_t, cow_write_time);
+	NOVA_END_TIMING(do_cow_write_t, cow_write_time);
 	NOVA_STATS_ADD(cow_write_bytes, written);
 
 	if (try_inplace)
@@ -840,10 +840,14 @@ ssize_t nova_cow_file_write(struct file *filp,
 	struct address_space *mapping = filp->f_mapping;
 	struct inode *inode = mapping->host;
 	int ret;
+	timing_t time;
+
 
 	if (len == 0)
 		return 0;
-	
+
+	NOVA_START_TIMING(cow_write_t, time);
+
 	sb_start_write(inode->i_sb);
 	inode_lock(inode);
 
@@ -852,6 +856,7 @@ ssize_t nova_cow_file_write(struct file *filp,
 	inode_unlock(inode);
 	sb_end_write(inode->i_sb);
 
+	NOVA_END_TIMING(cow_write_t, time);
 	return ret;
 }
 
@@ -925,6 +930,9 @@ static ssize_t nova_wrap_rw_iter(struct kiocb *iocb, struct iov_iter *iter)
 	unsigned long seg;
 	unsigned long nr_segs = iter->nr_segs;
 	const struct iovec *iv = iter->iov;
+	timing_t wrap_iter_time;
+
+	NOVA_START_TIMING(wrap_iter_t, wrap_iter_time);
 
 	nova_dbgv("%s %s: %lu segs\n", __func__,
 			iov_iter_rw(iter) == READ ? "read" : "write",
@@ -969,6 +977,7 @@ err:
 		inode_unlock_shared(inode);
 	}
 
+	NOVA_END_TIMING(wrap_iter_t, wrap_iter_time);
 	return ret;
 }
 

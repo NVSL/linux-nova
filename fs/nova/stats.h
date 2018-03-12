@@ -52,12 +52,14 @@ enum timing_category {
 	/* I/O operations */
 	io_title_t,
 	dax_read_t,
+	do_cow_write_t,
 	cow_write_t,
 	inplace_write_t,
 	copy_to_nvmm_t,
 	dax_get_block_t,
 	read_iter_t,
 	write_iter_t,
+	wrap_iter_t,
 
 	/* Memory operations */
 	memory_title_t,

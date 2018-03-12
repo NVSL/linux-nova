@@ -49,12 +49,14 @@ const char *Timingstring[TIMING_NUM] = {
 	/* I/O operations */
 	"================ I/O operations ================",
 	"dax_read",
+	"do_cow_write",
 	"cow_write",
 	"inplace_write",
 	"copy_to_nvmm",
 	"dax_get_block",
 	"read_iter",
 	"write_iter",
+	"wrap_iter",
 
 	/* Memory operations */
 	"============== Memory operations ===============",
@@ -226,11 +228,11 @@ static void nova_print_IO_stats(struct super_block *sb)
 		Countstats[dax_read_t] ?
 			IOstats[read_bytes] / Countstats[dax_read_t] : 0);
 	nova_info("COW write %llu, bytes %llu, average %llu, write breaks %llu, average %llu\n",
-		Countstats[cow_write_t], IOstats[cow_write_bytes],
-		Countstats[cow_write_t] ?
-			IOstats[cow_write_bytes] / Countstats[cow_write_t] : 0,
-		IOstats[cow_write_breaks], Countstats[cow_write_t] ?
-			IOstats[cow_write_breaks] / Countstats[cow_write_t]
+		Countstats[do_cow_write_t], IOstats[cow_write_bytes],
+		Countstats[do_cow_write_t] ?
+			IOstats[cow_write_bytes] / Countstats[do_cow_write_t] : 0,
+		IOstats[cow_write_breaks], Countstats[do_cow_write_t] ?
+			IOstats[cow_write_breaks] / Countstats[do_cow_write_t]
 			: 0);
 	nova_info("Inplace write %llu, bytes %llu, average %llu, write breaks %llu, average %llu\n",
 		Countstats[inplace_write_t], IOstats[inplace_write_bytes],
