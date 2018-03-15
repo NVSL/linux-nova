@@ -162,8 +162,6 @@ static int nova_migration(struct inode *inode, struct file *file) {
 	
 	struct nova_inode_info *si = NOVA_I(inode);
 	struct nova_inode_info_header *sih = &si->header;
-	
-	wake_up_bm(sb);
 
 	if (DEBUG_DO_MIGRATION) {
 		if(rwsem_is_locked(&inode->i_rwsem)) nova_info("nova_flush is locked\n");
@@ -241,19 +239,25 @@ end:
 /* This callback is called when a file is closed */
 static int nova_flush(struct file *file, fl_owner_t id)
 {
-	nova_info("nova_flush is called\n");
+	// nova_info("nova_flush is called\n");
 	PERSISTENT_BARRIER();
 	return 0;
 }
 
 static int nova_release(struct inode *inode, struct file *file)
 {
-	nova_info("nova_release is called\n");
+	struct nova_inode_info *si = NOVA_I(inode);
+	struct nova_inode_info_header *sih = &si->header;
+	nova_info("nova_release (ino:%lu) is called\n", inode->i_ino);
+    up_read(&sih->mig_sem);
 	return nova_migration(inode, file);
 }
 
 static int nova_open(struct inode *inode, struct file *filp)
 {
+	struct nova_inode_info *si = NOVA_I(inode);
+	struct nova_inode_info_header *sih = &si->header;
+    down_read(&sih->mig_sem);
 	return generic_file_open(inode, filp);
 }
 
@@ -547,7 +551,7 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 	// struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_inode_info *si = NOVA_I(inode);
 	struct nova_inode_info_header *sih = &si->header;
-	struct nova_file_write_entry *entry;
+	struct nova_file_write_entry *entry = NULL;
 	struct nova_file_write_entry *entryc, entry_copy;
 	pgoff_t index, end_index;
 	unsigned long offset;
@@ -559,6 +563,8 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 	pos = *ppos;
 	index = pos >> PAGE_SHIFT;
 	offset = pos & ~PAGE_MASK;
+
+    // down_read(&sih->mig_sem);
 
 	if (!access_ok(VERIFY_WRITE, buf, len)) {
 		error = -EFAULT;
@@ -613,8 +619,8 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 		/* Find contiguous blocks */
 		if (index < entryc->pgoff ||
 			index - entryc->pgoff >= entryc->num_pages) {
-			nova_err(sb, "%s ERROR: %lu, entry pgoff %llu, num %u, blocknr %llu tier %d\n",
-				__func__, index, entry->pgoff,
+			nova_err(sb, "%s ERROR: Ino:%lu %lu, entry pgoff %llu, num %u, blocknr %llu tier %d\n",
+				__func__, sih->ino, index, entry->pgoff,
 				entry->num_pages, entry->block >> PAGE_SHIFT, get_entry_tier(entry));
 			return -EINVAL;
 		}
@@ -688,6 +694,10 @@ out:
 	if (filp)
 		file_accessed(filp);
 		
+	if (entry) nova_update_sih_tier(sb, sih, get_entry_tier(entry), false, true);
+
+    // up_read(&sih->mig_sem);
+	
 	NOVA_STATS_ADD(read_bytes, copied);
 
 	nova_dbgv("%s returned %zu\n", __func__, copied);
@@ -754,6 +764,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	if (len == 0)
 		return 0;
 
+    // down_read(&sih->mig_sem);
 	NOVA_START_TIMING(cow_write_t, cow_write_time);
 
 	if (!access_ok(VERIFY_READ, buf, len)) {
@@ -951,6 +962,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	sih->trans_id++;
 out:
 	if (DEBUG_WRITE_ENTRY) print_file_write_entries(sb, sih);
+    // up_read(&sih->mig_sem);
 	if (ret < 0)
 		nova_cleanup_incomplete_write(sb, sih, blocknr, allocated,
 						begin_tail, update.tail);

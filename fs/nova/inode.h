@@ -97,7 +97,7 @@ struct nova_inode_info_header {
 	int htier;				/* highest tier */
 	int ltier;				/* lowest tier */
 	struct list_head lru_list[BDEV_COUNT_MAX+1];
-	int updating;
+    struct rw_semaphore mig_sem;
 	u64 last_setattr;		/* Last setattr entry */
 	u64 last_link_change;		/* Last link change entry */
 	u64 last_dentry;		/* Last updated dentry */

@@ -609,7 +609,7 @@ static int nova_get_candidate_bdev_free_list(struct super_block *sb, int tier)
  * num_block: Number of blocks of the request
  * from_tail: Direction
  */ 
-static int nova_new_blocks_from_bdev(struct super_block *sb, int tier, 
+static long nova_new_blocks_from_bdev(struct super_block *sb, int tier, 
 	unsigned long *blocknr,	unsigned int num_blocks, int cpuid, 
 	enum nova_alloc_direction from_tail) {
 
@@ -983,10 +983,8 @@ long nova_alloc_block_tier(struct nova_sb_info *sbi, int tier, int cpuid,
 
 	// Tier pmem
 	if (is_tier_pmem(tier)) {
-
 		allocated = nova_new_blocks(sb, blocknr, num_blocks,
 			NOVA_DEFAULT_BLOCK_TYPE, ALLOC_INIT_ZERO, DATA, cpuid, ALLOC_FROM_TAIL);
-
 		// struct free_list *free_list = nova_get_free_list(sb, cpuid);
 		// spin_lock(&free_list->s_lock);
 		// allocated = nova_alloc_blocks_in_free_list(sb, free_list, 
@@ -1014,6 +1012,11 @@ int nova_free_blocks_tier(struct nova_sb_info *sbi, unsigned long blocknr,
 		nova_info("blocknr: %lu, num_blocks:%lu.\n", blocknr, num_blocks);
 		return -EINVAL;
 	}
+	if (DEBUG_MIGRATION_FREE) 
+		if (num_blocks==0) {
+			nova_info("Free 0 blocknr: %lu, num_blocks:%lu.\n", blocknr, num_blocks);
+			return 0;
+		}
 
 	if (is_tier_pmem(tier)) {
 		if (DEBUG_MIGRATION_FREE) nova_info("Free tier_pmem.\n");

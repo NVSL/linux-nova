@@ -377,6 +377,7 @@ int nova_free_blocks(struct super_block *sb, unsigned long blocknr,
 
 	NOVA_START_TIMING(free_blocks_t, free_time);
 
+	if (DEBUG_MIGRATION_FREE) nova_info("Free blocknr:%lu num:%d\n", blocknr, num);
 	// For bdev, the data blocks on bdev and vpmem are both "data to be freed"
 	dax_mem = nova_get_block(sb, (blocknr << PAGE_SHIFT));
 	if (is_dram_buffer_addr(sbi, dax_mem)) {
@@ -386,7 +387,8 @@ int nova_free_blocks(struct super_block *sb, unsigned long blocknr,
 		put_dram_buffer_range(sbi, blockoff, num_blocks);
 		clear_dram_buffer_range(sbi, blockoff, num_blocks);
 
-		ret = nova_free_blocks_tier(sbi, blockoff, num_blocks);
+		ret = nova_free_blocks_tier(sbi, blocknr, num_blocks);
+		// ret = nova_free_blocks_tier(sbi, blockoff, num_blocks);
 
 		NOVA_END_TIMING(free_blocks_t, free_time);
 		return ret;
@@ -507,6 +509,7 @@ int nova_free_data_blocks(struct super_block *sb,
 		return -EINVAL;
 	}
 	NOVA_START_TIMING(free_data_t, free_time);
+	if (DEBUG_MIGRATION_FREE) nova_info("nova_free_data_blocks\n");
 	ret = nova_free_blocks(sb, blocknr, num, sih->i_blk_type, 0);
 	if (ret) {
 		nova_err(sb, "Inode %lu: free %d data block from %lu to %lu failed!\n",
@@ -531,6 +534,7 @@ int nova_free_log_blocks(struct super_block *sb,
 		return -EINVAL;
 	}
 	NOVA_START_TIMING(free_log_t, free_time);
+	if (DEBUG_MIGRATION_FREE) nova_info("nova_free_log_blocks\n");
 	ret = nova_free_blocks(sb, blocknr, num, sih->i_blk_type, 1);
 	if (ret) {
 		nova_err(sb, "Inode %lu: free %d log block from %lu to %lu failed!\n",

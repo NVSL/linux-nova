@@ -208,7 +208,7 @@ void flush_page(vpte_t *p) {
     // TODO: What if kernel flushes the page?
     pagetable->size--;
 
-    unlock_page(p->page);
+    // unlock_page(p->page);
     if(pte_dirty(p->pte)) { 
         ret = nova_bdev_write_blockoff(vsbi, p->blockoff, 1, p->page, BIO_SYNC);
         if(ret) {
@@ -234,7 +234,7 @@ void invalidate_page(vpte_t *p) {
     // TODO: What if kernel flushes the page?
     pagetable->size--;
 
-    unlock_page(p->page);
+    // unlock_page(p->page);
     
     pte_clear(&init_mm, p->vaddr, &p->pte);
     on_each_cpu(do_flush_page, (void*)p->vaddr, 1);
@@ -305,7 +305,7 @@ vpte_t *newpage(unsigned long vaddr) {
     p->page = alloc_page(GFP_KERNEL|__GFP_ZERO);
 #endif
 
-    lock_page(p->page);
+    // lock_page(p->page);
     
     if(pagetable->head==NULL) pagetable->head=p;
     if(pagetable->tail) {

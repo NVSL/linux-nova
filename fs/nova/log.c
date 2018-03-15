@@ -171,8 +171,13 @@ unsigned int nova_free_old_entry(struct super_block *sb,
 
 	nova_dbgv("%s: pgoff %lu, free %u blocks\n",
 				__func__, pgoff, num_free);
-	// nova_info("old_nvmm %lu\n", old_nvmm);
-	nova_free_data_blocks(sb, sih, old_nvmm, num_free);
+	// nova_free_data_blocks(sb, sih, old_nvmm, num_free);
+	if (nova_free_data_blocks(sb, sih, old_nvmm, num_free)) {
+		if (DEBUG_MIGRATION_FREE) {
+			nova_info("old_nvmm %lu num_free %u\n", old_nvmm, num_free);
+			print_a_write_entry(sb, entry, 0);
+		}
+	}
 
 out:
 	sih->i_blocks -= num_free;
