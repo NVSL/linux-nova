@@ -184,7 +184,8 @@ int modify_a_page(void* addr, int keychar) {
 
 // Print the page in terminal
 void print_a_page(void* addr) {
-	char* c = addr;
+	void* addrp = (void *)(((unsigned long)addr >> PAGE_SHIFT) << PAGE_SHIFT);
+	char* c = addrp;
 	// wordline: how many characters are shown in one line
 	int wordline = 128;
 	char* p = kzalloc(wordline*sizeof(char)+1,GFP_KERNEL);
@@ -192,7 +193,7 @@ void print_a_page(void* addr) {
 	int j = 0;
 	char space = ' ';
 	p[wordline]='\0';
-	nova_info("[Page data] %p\n",addr);
+	nova_info("[Page data] %p\n",addrp);
 	// if (c[i]) nova_info("[Page data] (Start with: %c)\n",c[i]);
 	// else nova_info("[Page data] \n");
 	nova_info("----------------\n");
@@ -202,7 +203,7 @@ void print_a_page(void* addr) {
 			strncat(p,c+i+j,32);
 			strcat(p,&space);
 		}
-		nova_info("%p %s\n",addr+i,p);
+		nova_info("%p %s\n",addrp+i,p);
 		i+=wordline;
 	}
 	nova_info("----------------\n");

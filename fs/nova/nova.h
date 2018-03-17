@@ -368,7 +368,7 @@ static inline void *nova_get_block(struct super_block *sb, u64 block)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_super_block *ps = nova_get_super(sb);
-	if (is_logical_offset(sbi, block)){
+	if (is_logical_offset(sbi, le64_to_cpu(block))){
 		return block ? ((void *)block_to_virt(block)) : NULL;
 	}
 	else
@@ -643,7 +643,6 @@ static unsigned long get_nvmm(struct super_block *sb,
 	struct nova_inode_info_header *sih,
 	struct nova_file_write_entry *entry, unsigned long pgoff)
 {
-	// int mb_index = 0;
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	unsigned long ret = 0;
 

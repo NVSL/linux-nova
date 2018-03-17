@@ -248,7 +248,7 @@ static int nova_release(struct inode *inode, struct file *file)
 {
 	struct nova_inode_info *si = NOVA_I(inode);
 	struct nova_inode_info_header *sih = &si->header;
-	nova_info("nova_release (ino:%lu) is called\n", inode->i_ino);
+	nova_info("nova_release (inode %lu) is called\n", inode->i_ino);
     up_read(&sih->mig_sem);
 	return nova_migration(inode, file);
 }
@@ -578,6 +578,9 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 	nova_dbgv("%s: inode %lu, offset %lld, count %lu, size %lld\n",
 		__func__, inode->i_ino,	pos, len, isize);
 
+	nova_info("Read inode %lu, offset %lld, count %lu, size %lld\n",
+		inode->i_ino, pos, len, isize);
+
 	if (len > isize - pos)
 		len = isize - pos;
 
@@ -603,6 +606,11 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 		}
 
 		entry = nova_get_write_entry(sb, sih, index);
+		if (!nova_get_entry_type(entry)) {
+			nova_info("Error: Entry at inode %lu %lu has type 0.\n", sih->ino, index);
+			// print_a_page(entry);
+			// entry = NULL;
+		}
 		if (unlikely(entry == NULL)) {
 			nova_dbgv("Required extent not found: pgoff %lu, inode size %lld\n",
 				index, isize);
@@ -619,7 +627,8 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 		/* Find contiguous blocks */
 		if (index < entryc->pgoff ||
 			index - entryc->pgoff >= entryc->num_pages) {
-			nova_err(sb, "%s ERROR: Ino:%lu %lu, entry pgoff %llu, num %u, blocknr %llu tier %d\n",
+			print_a_write_entry(sb, entry, -2);
+			nova_err(sb, "%s ERROR: Inode %lu %lu, entry pgoff %llu, num %u, blocknr %llu tier %d\n",
 				__func__, sih->ino, index, entry->pgoff,
 				entry->num_pages, entry->block >> PAGE_SHIFT, get_entry_tier(entry));
 			return -EINVAL;
@@ -767,7 +776,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
     // down_read(&sih->mig_sem);
 	NOVA_START_TIMING(cow_write_t, cow_write_time);
 
-	if (!access_ok(VERIFY_READ, buf, len)) {
+		if (!access_ok(VERIFY_READ, buf, len)) {
 		ret = -EFAULT;
 		goto out;
 	}
@@ -777,6 +786,9 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 		pos = i_size_read(inode);
 
 	count = len;
+
+	nova_info("Write inode %lu, offset %lld, count %lu\n",
+		inode->i_ino, pos, len);
 
 	pi = nova_get_block(sb, sih->pi_addr);
 

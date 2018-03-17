@@ -118,12 +118,15 @@ inline struct mutex *nova_get_inode_lru_mutex(struct nova_sb_info *sbi, int tier
 
 int nova_remove_inode_lru_list(struct nova_sb_info *sbi, struct nova_inode_info_header *sih, int tier) {
     int i;
+    int cpu = sih->ino % sbi->cpus;
+	struct mutex *mutex;
     for (i=0;i<=tier;++i) {
-        if (sih->lru_list[i].next != &sih->lru_list[i] && sih->lru_list[i].prev != &sih->lru_list[i]) {
-            list_del(&sih->lru_list[i]);
-            sih->lru_list[i].next = &sih->lru_list[i];
-            sih->lru_list[i].prev = &sih->lru_list[i];
+        mutex = nova_get_inode_lru_mutex(sbi, i, cpu);
+        mutex_lock(mutex);
+        if (sih->lru_list[i].next != &sih->lru_list[i] || sih->lru_list[i].prev != &sih->lru_list[i]) {
+            list_del_init(&sih->lru_list[i]);
         }
+        mutex_unlock(mutex);
     }     
     return 0;
 }
@@ -146,27 +149,30 @@ int nova_update_sih_tier(struct super_block *sb, struct nova_inode_info_header *
     int cpu = sih->ino % sbi->cpus;
 	struct mutex *mutex = nova_get_inode_lru_mutex(sbi, tier, cpu);
     struct list_head *new_list = nova_get_inode_lru_lists(sbi, tier, cpu);
-    mutex_lock(mutex);
     if (force) {
         nova_unlink_inode_lru_list(sbi, sih);
+        mutex_lock(mutex);
         list_add_tail(&sih->lru_list[tier], new_list);
+        mutex_unlock(mutex);
         sih->htier = tier;
         sih->ltier = tier;
     }
     else {
         if (write) {
-            list_del(&sih->lru_list[tier]);
-            list_add_tail(&sih->lru_list[tier], new_list);
+            mutex_lock(mutex);
+            list_move_tail(&sih->lru_list[tier], new_list);
+            mutex_unlock(mutex);
             if (sih->ltier > tier) sih->ltier = tier;
             if (sih->htier < tier) sih->htier = tier;
         }
         else {     
             nova_remove_inode_lru_list(sbi, sih, tier);
+            mutex_lock(mutex);
             list_add_tail(&sih->lru_list[tier], new_list);
+            mutex_unlock(mutex);
             if (sih->ltier < tier) sih->ltier = tier;       
             if (sih->htier < sih->ltier) sih->htier = sih->ltier;       
         }
     }
-    mutex_unlock(mutex);
     return 0;
 }
