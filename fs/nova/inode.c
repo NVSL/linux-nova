@@ -899,6 +899,7 @@ static int nova_free_inode_resource(struct super_block *sb,
 void nova_evict_inode(struct inode *inode)
 {
 	struct super_block *sb = inode->i_sb;
+	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_inode *pi = nova_get_inode(sb, inode);
 	struct nova_inode_info *si = NOVA_I(inode);
 	struct nova_inode_info_header *sih = &si->header;
@@ -913,6 +914,8 @@ void nova_evict_inode(struct inode *inode)
 		NOVA_ASSERT(0);
 		goto out;
 	}
+
+	nova_unlink_inode_lru_list(sbi, sih);
 
 	// pi can be NULL if the file has already been deleted, but a handle
 	// remains.

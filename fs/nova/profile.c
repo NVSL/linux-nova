@@ -132,6 +132,8 @@ int nova_remove_inode_lru_list(struct nova_sb_info *sbi, struct nova_inode_info_
 }
 
 inline int nova_unlink_inode_lru_list(struct nova_sb_info *sbi, struct nova_inode_info_header *sih) {
+    down_write(&sih->mig_sem);
+    up_write(&sih->mig_sem);
     return nova_remove_inode_lru_list(sbi, sih, TIER_BDEV_HIGH);
 }
 
@@ -150,7 +152,7 @@ int nova_update_sih_tier(struct super_block *sb, struct nova_inode_info_header *
 	struct mutex *mutex = nova_get_inode_lru_mutex(sbi, tier, cpu);
     struct list_head *new_list = nova_get_inode_lru_lists(sbi, tier, cpu);
     if (force) {
-        nova_unlink_inode_lru_list(sbi, sih);
+        nova_remove_inode_lru_list(sbi, sih, TIER_BDEV_HIGH);
         mutex_lock(mutex);
         list_add_tail(&sih->lru_list[tier], new_list);
         mutex_unlock(mutex);

@@ -772,8 +772,8 @@ int migrate_a_file(struct inode *inode, int to, bool force)
 
     nova_update_sih_tier(sb, sih, to, force, false);
 
-    // if (to == TIER_PMEM) return migrate_a_file_by_entries(inode, to, force);
-    return migrate_a_file_by_entries(inode, to, force);
+    if (to == TIER_PMEM) return migrate_a_file_by_entries(inode, to, force);
+    // return migrate_a_file_by_entries(inode, to, force);
 
     if (DEBUG_MIGRATION) nova_info("[Migration] Start migrating inode %lu to:T%d force:%d\n",
         inode->i_ino, to, force);

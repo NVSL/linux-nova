@@ -516,6 +516,9 @@ static long nova_alloc_blocks_in_bdev_free_list(struct super_block *sb,
 		curr_blocks = curr->range_high - curr->range_low + 1;
 
 		if (num_blocks >= curr_blocks) {
+			if (num_blocks > curr_blocks)
+				goto next;
+
 			if (curr == bfl->first_node) {
 				next_node = rb_next(temp);
 				if (next_node)
@@ -843,7 +846,7 @@ int nova_free_blocks_from_bdev(struct nova_sb_info *sbi, unsigned long blocknr,
 	int index = 0;
 	int ret;
 
-	if (num_blocks <= 0) {
+	if (num_blocks == 0) {
 		nova_dbg("%s ERROR: free %lu\n", __func__, num_blocks);
 		return -EINVAL;
 	}
@@ -870,7 +873,7 @@ int nova_free_blocks_from_bdev(struct nova_sb_info *sbi, unsigned long blocknr,
 	block_low = blocknr;
 	block_high = blocknr + num_blocks - 1;
 
-	if (DEBUG_MIGRATION_FREE) nova_info("Free: %lu - %lu\n", block_low, block_high);
+	if (DEBUG_MIGRATION_FREE) nova_info("Free bdev: %lu - %lu\n", block_low, block_high);
 
 	if (blocknr < bfl->block_start ||
 			blocknr + num_blocks > bfl->block_end + 1) {

@@ -257,6 +257,7 @@ static int nova_open(struct inode *inode, struct file *filp)
 {
 	struct nova_inode_info *si = NOVA_I(inode);
 	struct nova_inode_info_header *sih = &si->header;
+	nova_info("nova_open (inode %lu) is called\n", sih->ino);
     down_read(&sih->mig_sem);
 	return generic_file_open(inode, filp);
 }
@@ -558,6 +559,7 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 	loff_t isize, pos;
 	size_t copied = 0, error = 0;
 	timing_t memcpy_time;
+	int i = 0;
 	// unsigned long mb_offset = 0;
 
 	pos = *ppos;
@@ -605,9 +607,11 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 				goto out;
 		}
 
+redo:
 		entry = nova_get_write_entry(sb, sih, index);
 		if (!nova_get_entry_type(entry)) {
-			nova_info("Error: Entry at inode %lu %lu has type 0.\n", sih->ino, index);
+			nova_info("Error: Entry at inode %lu %lu has type 0. (%d)\n", sih->ino, index, i);
+			if (i++ < 5) goto redo;
 			// print_a_page(entry);
 			// entry = NULL;
 		}

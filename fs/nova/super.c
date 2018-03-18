@@ -323,7 +323,6 @@ static int nova_parse_tiering_options(struct nova_sb_info *sbi, char *options)
 	substring_t args[MAX_OPT_ARGS];
 	char *bdev_path = kmalloc(20*sizeof(char),GFP_KERNEL); // block devices for tiering
 
-
 	if (!options)
 		return 0;
 
