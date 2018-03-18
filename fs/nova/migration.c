@@ -743,6 +743,8 @@ int migrate_a_file_by_entries(struct inode *inode, int to, bool force)
     return ret;
 }
 
+
+// sih->mig_sem is (write) locked before calling this function
 int migrate_a_file(struct inode *inode, int to, bool force)
 {
 	struct super_block *sb = inode->i_sb;
@@ -767,9 +769,6 @@ int migrate_a_file(struct inode *inode, int to, bool force)
     int progress = 0;
     
     unsigned int osb = sbi->bdev_list[to - TIER_BDEV_LOW].opt_size_bit;
-
-    down_write(&sih->mig_sem);
-
     nova_update_sih_tier(sb, sih, to, force, false);
 
     if (to == TIER_PMEM) return migrate_a_file_by_entries(inode, to, force);
@@ -1059,6 +1058,7 @@ struct inode *pop_an_inode_to_migrate_by_ino(struct nova_sb_info *sbi, int tier)
  * Order: [1] The lru inode of [tier, this cpu]
  *        [2] The lru inode of [tier, other cpu]
  *        [3] NULL
+ * Return an inode with mig_sem and i_rwsem locked
  */
 struct inode *pop_an_inode_to_migrate(struct nova_sb_info *sbi, int tier) {
 	struct super_block *sb = sbi->sb;
@@ -1085,10 +1085,6 @@ struct inode *pop_an_inode_to_migrate(struct nova_sb_info *sbi, int tier) {
                 nova_info("Error: sih->ino is %lu\n", sih->ino);
                 continue;
             }
-            if (down_write_trylock(&sih->mig_sem)==0) {
-                continue;
-            }
-            up_write(&sih->mig_sem);
             pi = nova_get_block(sb, sih->pi_addr);
             if (pi==NULL) {
                 nova_info("Error: pi is NULL, sih->pi_addr %lu\n", sih->pi_addr);
@@ -1104,13 +1100,19 @@ struct inode *pop_an_inode_to_migrate(struct nova_sb_info *sbi, int tier) {
                 nova_info("Error: ret is NULL\n");
                 continue;
             }
-            if (inode_trylock(ret)) {
-                inode_unlock(ret);
-                mutex_unlock(mutex);
-                if (DEBUG_MIGRATION) nova_info("Inode %lu is poped.\n", sih->ino);
-                return ret;
+            if (inode_trylock(ret)==0) {
+                continue;
             }
-            if (DEBUG_MIGRATION) nova_info("Inode %lu is locked.\n", sih->ino);
+            if (down_write_trylock(&sih->mig_sem)==0) {
+                inode_unlock(ret);
+                if (DEBUG_MIGRATION) nova_info("Inode %lu is locked.\n", sih->ino);
+                continue;
+            }
+            // inode_unlock(ret);
+            // mutex_unlock(mutex);
+            if (DEBUG_MIGRATION) nova_info("Inode %lu is poped.\n", sih->ino);
+            mutex_unlock(mutex);
+            return ret;
         }
         mutex_unlock(mutex);
     }
@@ -1162,7 +1164,7 @@ again:
             if(DEBUG_MIGRATION) nova_info("PMEM usage is high yet no inode is found.\n");
             return 0;
         }
-        if (!inode_trylock(this)) goto again;
+        // if (!inode_trylock(this)) goto again;
 	    migrate_a_file(this, TIER_BDEV_LOW, false);
 	    inode_unlock(this);
         goto again;
@@ -1177,7 +1179,7 @@ again:
                 if(DEBUG_MIGRATION) nova_info("B-T%d usage is high yet no inode is found.\n", i);
                 return 0;
             }
-            if (!inode_trylock(this)) goto again;
+            // if (!inode_trylock(this)) goto again;
             migrate_a_file(this, i+1, false);
 	        inode_unlock(this);
             goto again;

@@ -633,6 +633,8 @@ int buffer_data_block_from_bdev_range(struct nova_sb_info *sbi, int tier, int bl
 void nova_update_entry_csum(void *entry);
 int get_tier(struct nova_sb_info *sbi, unsigned long blocknr);
 inline int get_entry_tier(struct nova_file_write_entry *entry);
+void print_a_write_entry(struct super_block *sb, struct nova_file_write_entry *entry, int n);
+void print_a_page(void* addr);
 
 /*
  * Find data at a file offset (pgoff) in the data pointed to by a write log
@@ -672,11 +674,14 @@ retry:
 				(unsigned long) entry->num_pages <= pgoff) {
 			struct nova_sb_info *sbi = NOVA_SB(sb);
 			u64 curr;
-
+			
+					nova_info("entry2: %p", entry);
+					print_a_write_entry(sb, entry, -2);
+			
 			curr = nova_get_addr_off(sbi, entry);
-			nova_dbg("Entry ERROR: inode %lu, curr 0x%llx, pgoff %lu, entry pgoff %llu, num %u\n",
+			nova_dbg("Entry ERROR: inode %lu, curr 0x%llx(%p), pgoff %lu, entry pgoff %llu, num %u\n",
 				sih->ino,
-				curr, pgoff, entry->pgoff, entry->num_pages);
+				curr, entry, pgoff, entry->pgoff, entry->num_pages);
 			nova_print_nova_log_pages(sb, sih);
 			nova_print_nova_log(sb, sih);
 			NOVA_ASSERT(0);
@@ -1089,7 +1094,6 @@ int nova_bdev_write_blockoff(struct nova_sb_info *sbi, unsigned long blockoff,
 	unsigned long size, struct page *page, bool sync);
 int nova_bdev_read_blockoff(struct nova_sb_info *sbi, unsigned long blockoff, 
 	unsigned long size, struct page *page, bool sync);
-void print_a_page(void* addr);
 int nova_free_blocks_from_bdev(struct nova_sb_info *sbi, unsigned long blocknr,
 	unsigned long num_blocks);
 int nova_bdev_free_blocks(struct nova_sb_info *sbi, int tier, unsigned long blocknr,
@@ -1225,7 +1229,6 @@ int migrate_a_file(struct inode *inode, int to, bool force);
 int migrate_a_file_to_pmem(struct inode *inode);
 int do_migrate_a_file_rotate(struct inode *inode);
 int do_migrate_a_file_downward(struct super_block *sb);
-void print_a_write_entry(struct super_block *sb, struct nova_file_write_entry *entry, int n);
 
 int get_available_tier(struct super_block *sb, int tier);
 
