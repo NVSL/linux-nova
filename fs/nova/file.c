@@ -248,7 +248,7 @@ static int nova_release(struct inode *inode, struct file *file)
 {
 	struct nova_inode_info *si = NOVA_I(inode);
 	struct nova_inode_info_header *sih = &si->header;
-	nova_info("nova_release (inode %lu) is called\n", inode->i_ino);
+	if (DEBUG_FORE_FILE) nova_info("nova_release (inode %lu) is called\n", inode->i_ino);
     up_read(&sih->mig_sem);
 	return nova_migration(inode, file);
 }
@@ -257,7 +257,7 @@ static int nova_open(struct inode *inode, struct file *filp)
 {
 	struct nova_inode_info *si = NOVA_I(inode);
 	struct nova_inode_info_header *sih = &si->header;
-	nova_info("nova_open (inode %lu) is called\n", sih->ino);
+	if (DEBUG_FORE_FILE) nova_info("nova_open (inode %lu) is called\n", sih->ino);
     down_read(&sih->mig_sem);
 	return generic_file_open(inode, filp);
 }
@@ -559,14 +559,10 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 	loff_t isize, pos;
 	size_t copied = 0, error = 0;
 	timing_t memcpy_time;
-	int i = 0;
-	// unsigned long mb_offset = 0;
 
 	pos = *ppos;
 	index = pos >> PAGE_SHIFT;
 	offset = pos & ~PAGE_MASK;
-
-    // down_read(&sih->mig_sem);
 
 	if (!access_ok(VERIFY_WRITE, buf, len)) {
 		error = -EFAULT;
@@ -579,9 +575,6 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 
 	nova_dbgv("%s: inode %lu, offset %lld, count %lu, size %lld\n",
 		__func__, inode->i_ino,	pos, len, isize);
-
-	nova_info("Read inode %lu, offset %lld, count %lu, size %lld\n",
-		inode->i_ino, pos, len, isize);
 
 	if (len > isize - pos)
 		len = isize - pos;
@@ -607,16 +600,8 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 				goto out;
 		}
 
-redo:
 		entry = nova_get_write_entry(sb, sih, index);
-		if (!nova_get_entry_type(entry)) {
-			nova_info("Error: Entry at inode %lu %lu has type 0. (%d)\n", sih->ino, index, i);
-			if (i++ < 5) goto redo;
-			print_file_write_entries(sb, sih);
-			get_nvmm(sb, sih, entry, index);
-			// print_a_page(entry);
-			// entry = NULL;
-		}
+		
 		if (unlikely(entry == NULL)) {
 			nova_dbgv("Required extent not found: pgoff %lu, inode size %lld\n",
 				index, isize);
@@ -675,7 +660,6 @@ skip_verify:
 		NOVA_START_TIMING(memcpy_r_nvmm_t, memcpy_time);
 
 		if (!zero) {
-			// nova_info("[Read] Read from:%p %p nr %lu\n",dax_mem,dax_mem + offset, nr);
 			left = __copy_to_user(buf + copied,
 						dax_mem + offset, nr);
 		}
@@ -710,8 +694,6 @@ out:
 		file_accessed(filp);
 		
 	if (entry) nova_update_sih_tier(sb, sih, get_entry_tier(entry), false, true);
-
-    // up_read(&sih->mig_sem);
 	
 	NOVA_STATS_ADD(read_bytes, copied);
 
@@ -779,7 +761,6 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	if (len == 0)
 		return 0;
 
-    // down_read(&sih->mig_sem);
 	NOVA_START_TIMING(cow_write_t, cow_write_time);
 
 		if (!access_ok(VERIFY_READ, buf, len)) {
@@ -792,10 +773,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 		pos = i_size_read(inode);
 
 	count = len;
-
-	nova_info("Write inode %lu, offset %lld, count %lu\n",
-		inode->i_ino, pos, len);
-
+	
 	pi = nova_get_block(sb, sih->pi_addr);
 
 	/* nova_inode tail pointer will be updated and we make sure all other
@@ -851,7 +829,8 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	
 	write_tier = get_available_tier(sb, write_tier);
 
-	// nova_info("[Write] %lu blocks in [tier #%d] -> [seq %u tier #%d].\n", num_blocks, old_write_tier, seq_count, write_tier);
+	// nova_info("[Write] %lu blocks in [tier #%d] -> [seq %u tier #%d].\n", 
+	// 	num_blocks, old_write_tier, seq_count, write_tier);
 
 	nova_update_sih_tier(sb, sih, write_tier, false, true);
 
@@ -980,7 +959,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	sih->trans_id++;
 out:
 	if (DEBUG_WRITE_ENTRY) print_file_write_entries(sb, sih);
-    // up_read(&sih->mig_sem);
+	
 	if (ret < 0)
 		nova_cleanup_incomplete_write(sb, sih, blocknr, allocated,
 						begin_tail, update.tail);

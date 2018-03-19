@@ -385,7 +385,11 @@ static inline int nova_get_reference(struct super_block *sb, u64 block,
 	return rc;
 }
 
-// TODOzsa: This is no longer correct in tiering NOVA
+/* TODOzsa: 
+ * 		This is no longer correct in tiering NOVA.
+ * 		However, if we only have data blocks in BDEV, 
+ * 		this function will not cause any trouble.
+ */
 static inline u64
 nova_get_addr_off(struct nova_sb_info *sbi, void *addr)
 {
@@ -640,7 +644,6 @@ void print_a_page(void* addr);
  * Find data at a file offset (pgoff) in the data pointed to by a write log
  * entry.
  */
-// TODOzsa: check boundary
 static unsigned long get_nvmm(struct super_block *sb,
 	struct nova_inode_info_header *sih,
 	struct nova_file_write_entry *entry, unsigned long pgoff)
@@ -655,13 +658,14 @@ static unsigned long get_nvmm(struct super_block *sb,
 	
 retry:
 	if (unlikely(nova_get_entry_type(entry) == FILE_WRITE && entry->updating == 1)) {
-		nova_info("[Get] Entry is being updated\n");
+		// This should not happen
+		nova_info("Error: get_nvmm(): Entry is being updated\n");
 		msleep(500);
 		goto retry;
 	}
 
 	if ( get_entry_tier(entry) != TIER_PMEM ) {
-		if (DEBUG_GET_NVMM) nova_info("[Get] Get from TIER_BDEV\n");
+		if (DEBUG_GET_NVMM) nova_info("[Get_nvmm] Get from TIER_BDEV\n");
 		ret = (unsigned long) (entry->block >> PAGE_SHIFT) + pgoff
 			- entry->pgoff;
 		if (DEBUG_GET_NVMM) nova_info("ret %lu %lx block %llu num %d\n", ret,
@@ -669,14 +673,15 @@ retry:
 		return ret;
 	}
 	else {
-		if (DEBUG_GET_NVMM) nova_info("[Get] Get from TIER_PMEM\n");
+		if (DEBUG_GET_NVMM) nova_info("[Get_nvmm] Get from TIER_PMEM\n");
 		if (entry->pgoff > pgoff || (unsigned long) entry->pgoff +
 				(unsigned long) entry->num_pages <= pgoff) {
 			struct nova_sb_info *sbi = NOVA_SB(sb);
 			u64 curr;
-			
-					nova_info("entry2: %p", entry);
-					print_a_write_entry(sb, entry, -2);
+			if (DEBUG_GET_NVMM) {
+				nova_info("Entry: %p", entry);
+				print_a_write_entry(sb, entry, -2);
+			}
 			
 			curr = nova_get_addr_off(sbi, entry);
 			nova_dbg("Entry ERROR: inode %lu, curr 0x%llx(%p), pgoff %lu, entry pgoff %llu, num %u\n",

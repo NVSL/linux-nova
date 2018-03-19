@@ -72,6 +72,14 @@ struct inode_table {
 
 /*
  * NOVA-specific inode state kept in DRAM
+ * 
+ * Tiering metadata
+ * wount: write count (in bytes) between two fsync
+ * htier & ltier: the highest and lowest tier number of this inode
+ * lru list: the node of this file in the linked list
+ * mig_sem: migration semaphore
+ * 		- down/up write: mirgation, deletion
+ * 		- down/up read: open/close
  */
 struct nova_inode_info_header {
 	/* For files, tree holds a map from file offsets to
