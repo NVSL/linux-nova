@@ -59,9 +59,9 @@ void print_a_write_entry(struct super_block *sb, struct nova_file_write_entry *e
     nova_info("\e[0;32m#%3d\e[0m [P]%p [B]%lu\n", n, entry, virt_to_block((unsigned long)entry));
     // nova_info("\e[1;31m#%3d\e[0m [P]%p [B]%lu\n", n, entry, virt_to_block((unsigned long)entry));
     if (entry->entry_type == FILE_WRITE || n == -2) {
-        nova_info("     ||Type|Tier| num_pg | block  | pgoff  ||");
-        nova_info("     ||%4u|%4u|%8u|%8llu|%8llu||", entry->entry_type, get_entry_tier(entry),
-            entry->num_pages, entry->block  >> PAGE_SHIFT, entry->pgoff);
+        nova_info("     ||Type|Tier| num_pg |invalidp| block  | pgoff  ||");
+        nova_info("     ||%4u|%4u|%8u|%8u|%8llu|%8llu||", entry->entry_type, get_entry_tier(entry),
+            entry->num_pages, entry->invalid_pages, entry->block  >> PAGE_SHIFT, entry->pgoff);
         addr = nova_get_block(sb, entry->block);
         for (ii=(char *)addr; ii<(char *)(addr+((entry->num_pages)<<PAGE_SHIFT)); ii+=1024) {
             ctmp[count++] = *ii;
@@ -89,7 +89,7 @@ int print_file_write_entries(struct super_block *sb, struct nova_inode_info_head
 	unsigned long curr_p = le64_to_cpu(pi->log_head);
 	size_t entry_size = sizeof(struct nova_file_write_entry);
 
-    nova_info("Print Inode #%lu [start]\n", sih->ino);
+    nova_info("Print Inode %lu [start]\n", sih->ino);
 
     nova_info("valid %u deleted %u link %u\n", pi->valid, pi->deleted, pi->i_links_count);
     addrp = nova_get_block(sb, curr_p);
@@ -132,7 +132,7 @@ int print_file_write_entries(struct super_block *sb, struct nova_inode_info_head
 
 		curr_p += entry_size;		
 	}
-    nova_info("Print Inode #%lu [end]\n", sih->ino);
+    nova_info("Print Inode %lu [end]\n", sih->ino);
 
 	return 0;
 }
@@ -397,6 +397,7 @@ int migrate_entry_blocks(struct nova_sb_info *sbi, int to, struct nova_inode_inf
 
     memcpy_mcsafe(&nentry, entry, sizeof(struct nova_file_write_entry));
     nentry.num_pages = new_num_pages;
+    nentry.invalid_pages = 0;
     nentry.block += (new_pgoff - nentry.pgoff) << PAGE_SHIFT;
     nentry.pgoff = new_pgoff;
 
@@ -596,6 +597,8 @@ int nova_split_write_entry(struct nova_sb_info *sbi, struct nova_inode_info *si,
     entry_data2.block = entry->block + ((new_pgoff - entry->pgoff + num_pages1) << PAGE_SHIFT);
     entry_data1.pgoff = new_pgoff;
     entry_data2.pgoff = new_pgoff + num_pages1;
+    entry_data1.invalid_pages = 0;
+    entry_data2.invalid_pages = 0;
     entry_data1.updating = 0;
     entry_data2.updating = 0;
 
@@ -771,6 +774,9 @@ int migrate_a_file(struct inode *inode, int to, bool force)
     unsigned int osb = sbi->bdev_list[to - TIER_BDEV_LOW].opt_size_bit;
     nova_update_sih_tier(sb, sih, to, force, false);
 
+    nova_info("[Migration] end 1\n");
+    print_file_write_entries(sb, sih);
+
     if (to == TIER_PMEM) return migrate_a_file_by_entries(inode, to, force);
     // return migrate_a_file_by_entries(inode, to, force);
 
@@ -888,7 +894,13 @@ mig:
 	nova_update_inode(sb, inode, pi, &update, 1);
 	nova_memlock_inode(sb, pi);
 
+    nova_info("[Migration] end 2\n");
+    print_file_write_entries(sb, sih);
+
 	nova_inode_log_fast_gc(sb, pi, sih, 0, 0, 0, 0, 1);
+
+    nova_info("[Migration] end 3\n");
+    print_file_write_entries(sb, sih);
 
     if (DEBUG_MIGRATION) nova_info("[Migration] End migrating inode %lu to:T%d force:%d\n",
         inode->i_ino, to, force);

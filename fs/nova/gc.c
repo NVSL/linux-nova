@@ -712,6 +712,9 @@ int nova_inode_log_fast_gc(struct super_block *sb,
 
 	NOVA_END_TIMING(fast_gc_t, gc_time);
 
+    nova_info("[Migration] gc \n");
+    print_file_write_entries(sb, sih);
+
 	if (sih->num_entries == 0)
 		return 0;
 

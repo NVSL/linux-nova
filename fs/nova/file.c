@@ -612,6 +612,7 @@ redo:
 		if (!nova_get_entry_type(entry)) {
 			nova_info("Error: Entry at inode %lu %lu has type 0. (%d)\n", sih->ino, index, i);
 			if (i++ < 5) goto redo;
+			print_file_write_entries(sb, sih);
 			get_nvmm(sb, sih, entry, index);
 			// print_a_page(entry);
 			// entry = NULL;
