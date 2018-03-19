@@ -679,8 +679,8 @@ int migrate_a_file_by_entries(struct inode *inode, int to, bool force)
     nova_update_sih_tier(sb, sih, to, force, false);
 
     if (DEBUG_MIGRATION) 
-        nova_info("[Migration] Start migrating (by entries) inode %lu to:T%d force:%d\n",
-        inode->i_ino, to, force);
+        nova_info("[Migration] Start migrating (by entries) inode %lu to:T%d force:%d (cpu:%d)\n",
+        inode->i_ino, to, force, smp_processor_id());
 
 	update.tail = sih->log_tail;
 	update.alter_tail = sih->alter_log_tail;
@@ -782,8 +782,8 @@ int migrate_a_file(struct inode *inode, int to, bool force)
     if (to == TIER_PMEM) 
         return migrate_a_file_by_entries(inode, to, force);
 
-    if (DEBUG_MIGRATION) nova_info("[Migration] Start migrating inode %lu to:T%d force:%d\n",
-        inode->i_ino, to, force);
+    if (DEBUG_MIGRATION) nova_info("[Migration] Start migrating inode %lu to:T%d force:%d (cpu:%d)\n",
+        inode->i_ino, to, force, smp_processor_id());
 
 	update.tail = sih->log_tail;
 	update.alter_tail = sih->alter_log_tail;
@@ -1123,7 +1123,7 @@ struct inode *pop_an_inode_to_migrate(struct nova_sb_info *sbi, int tier) {
                 continue;
             }
             if (!inode_trylock(ret)) {
-                nova_info("Error: isize rw_sem is locked.\n");
+                nova_info("Error: ret->rw_sem is locked.\n");
                 continue;
             }
             if (!down_write_trylock(&sih->mig_sem)) {
@@ -1210,11 +1210,11 @@ again:
     return 0;
 }
 
-inline void wake_up_bm(struct super_block *sb) {
-	struct nova_sb_info *sbi = NOVA_SB(sb);
+void wake_up_bm(struct nova_sb_info *sbi) {
+    int i;
 	if (sbi->bm_thread) {
 		smp_wmb();
-		wake_up_process(sbi->bm_thread->nova_task);
+        for (i=0; i<sbi->cpus; ++i) wake_up_process(sbi->bm_thread[i].nova_task);
 	}
 }
 
@@ -1222,11 +1222,13 @@ static int bm_thread_func(void *data) {
 	struct nova_sb_info *sbi = data;
 	struct super_block *sb = sbi->sb;
 	int time_count = 0;  
+    int cpu = 0;
     do {
 		// set_current_state(TASK_UNINTERRUPTIBLE);
 		// schedule();
 		schedule_timeout_interruptible(msecs_to_jiffies(BM_THREAD_SLEEP_TIME));
-        nova_info("------- [Background Migration Thread] -------\n");
+        cpu = smp_processor_id();
+        nova_info("---- [Background Migration Thread - C%2d] ----\n", cpu);
         if ( MIGRATION_POLICY == MIGRATION_DOWNWARD ) do_migrate_a_file_downward(sb);
     } while(!kthread_should_stop());  
     return time_count;
@@ -1234,22 +1236,30 @@ static int bm_thread_func(void *data) {
 
 int start_bm_thread(struct nova_sb_info *sbi) {
 	struct nova_kthread *bm_thread = NULL;
-	int err = 0;
+	int i, err = 0;
+    int cpus = sbi->cpus;
 
 	sbi->bm_thread = NULL;
 	/* Initialize background migration kthread */
-	bm_thread = kmalloc(sizeof(struct nova_kthread), GFP_KERNEL);
+	bm_thread = kcalloc(cpus, sizeof(struct nova_kthread), GFP_KERNEL);
 	if (!bm_thread) {
 		return -ENOMEM;
 	}
 
-	init_waitqueue_head(&(bm_thread->wait_queue_head));
-	bm_thread->nova_task = kthread_run(bm_thread_func, sbi, "NOVA_BM");
-	sbi->bm_thread = bm_thread;
-	if (IS_ERR(bm_thread->nova_task)) {
-		err = PTR_ERR(bm_thread->nova_task);
-		goto free;
+	for (i=0; i<cpus; ++i) {
+        init_waitqueue_head(&(bm_thread[i].wait_queue_head));
+        bm_thread[i].nova_task = kthread_create(bm_thread_func, sbi, "NOVA_BM");
+		kthread_bind(bm_thread[i].nova_task, i);
+
+        if (IS_ERR(bm_thread[i].nova_task)) {
+            err = PTR_ERR(bm_thread[i].nova_task);
+            goto free;
+        }
 	}
+
+	sbi->bm_thread = bm_thread;
+    wake_up_bm(sbi);
+
 	return 0;
 
 free:
@@ -1258,8 +1268,9 @@ free:
 }
 
 void stop_bm_thread(struct nova_sb_info *sbi) {
-	if (sbi->bm_thread) {
-		kthread_stop(sbi->bm_thread->nova_task);
+    int i;
+	if (sbi->bm_thread) {		
+	    for (i=0; i<sbi->cpus; ++i) kthread_stop(sbi->bm_thread[i].nova_task);
 		kfree(sbi->bm_thread);
 		sbi->bm_thread = NULL;
 	}

@@ -1237,7 +1237,7 @@ int do_migrate_a_file_downward(struct super_block *sb);
 
 int get_available_tier(struct super_block *sb, int tier);
 
-inline void wake_up_bm(struct super_block *sb);
+void wake_up_bm(struct nova_sb_info *sbi);
 int start_bm_thread(struct nova_sb_info *sbi);
 void stop_bm_thread(struct nova_sb_info *sbi);
 
