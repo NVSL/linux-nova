@@ -475,7 +475,7 @@ u64 nova_print_log_entry(struct super_block *sb, u64 curr)
 		break;
 	default:
 		nova_dbg("%s: unknown type %d, 0x%llx\n", __func__, type, curr);
-		curr += sizeof(struct nova_file_write_entry);
+		curr = 0;
 		NOVA_ASSERT(0);
 		break;
 	}
@@ -491,7 +491,7 @@ void nova_print_curr_log_page(struct super_block *sb, u64 curr)
 	start = BLOCK_OFF(curr);
 	end = PAGE_TAIL(curr);
 
-	while (start < end)
+	while (start < end && start != 0)
 		start = nova_print_log_entry(sb, start);
 
 	tail = nova_get_block(sb, end);
@@ -511,6 +511,12 @@ void nova_print_nova_log(struct super_block *sb,
 	curr = sih->log_head;
 	nova_dbg("Pi %lu: log head 0x%llx, tail 0x%llx\n",
 			sih->ino, curr, sih->log_tail);
+
+	if (sih->ino != NOVA_ROOT_INO && sih->ino < NOVA_NORMAL_INODE_START) {
+		nova_dbg("Special inode, return\n");
+		return;
+	}
+
 	while (curr != sih->log_tail) {
 		if ((curr & (PAGE_SIZE - 1)) == LOG_BLOCK_TAIL) {
 			struct nova_inode_page_tail *tail =
@@ -523,6 +529,8 @@ void nova_print_nova_log(struct super_block *sb,
 		} else {
 			curr = nova_print_log_entry(sb, curr);
 		}
+		if (curr == 0)
+			break;
 	}
 }
 
