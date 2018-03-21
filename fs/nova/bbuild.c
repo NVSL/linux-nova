@@ -224,6 +224,7 @@ static int nova_init_blockmap_from_inode(struct super_block *sb)
 	if (ret)
 		goto out;
 
+	sih.ino = NOVA_BLOCKNODE_INO;
 	curr_p = sih.log_head;
 	if (curr_p == 0) {
 		nova_dbg("%s: pi head is 0!\n", __func__);
@@ -309,6 +310,7 @@ static int nova_init_inode_list_from_inode(struct super_block *sb)
 	if (ret)
 		goto out;
 
+	sih.ino = NOVA_INODELIST_INO;
 	sbi->s_inodes_used_count = 0;
 	curr_p = sih.log_head;
 	if (curr_p == 0) {
