@@ -1228,7 +1228,7 @@ static int bm_thread_func(void *data) {
 		// schedule();
 		schedule_timeout_interruptible(msecs_to_jiffies(BM_THREAD_SLEEP_TIME));
         cpu = smp_processor_id();
-        nova_info("---- [Background Migration Thread - C%2d] ----\n", cpu);
+        if (DEBUG_KTHREAD) nova_info("---- [Background Migration Thread - C%2d] ----\n", cpu);
         if ( MIGRATION_POLICY == MIGRATION_DOWNWARD ) do_migrate_a_file_downward(sb);
     } while(!kthread_should_stop());  
     return time_count;

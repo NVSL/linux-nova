@@ -19,6 +19,7 @@
  */
 
 #include "nova.h"
+#include "bdev.h"
 #include "inode.h"
 
 const char *proc_dirname = "fs/NOVA";
@@ -191,6 +192,62 @@ static int nova_seq_IO_open(struct inode *inode, struct file *file)
 static const struct file_operations nova_seq_IO_fops = {
 	.owner		= THIS_MODULE,
 	.open		= nova_seq_IO_open,
+	.read		= seq_read,
+	.write		= nova_seq_clear_stats,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
+
+static int nova_seq_ts_show(struct seq_file *seq, void *v)
+{
+	struct super_block *sb = seq->private;
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	struct free_list *fl = NULL;
+	struct bdev_free_list *bfl = NULL;
+	int i;
+
+	nova_get_timing_stats();
+	nova_get_IO_stats();
+
+	seq_puts(seq, "                ============ NOVA tiering stats ============\n\n");
+
+	seq_printf(seq, "---------------------------------------------------------------------------\n");
+	seq_printf(seq, "                           [PMEM free lists]\n");
+	seq_printf(seq, "|Tier|CPU|  Start  |   End   | Used  |L-Thres|H-Thres| Free  | Total |Node|\n");
+	for (i=0;i<sbi->cpus;++i) {
+		fl = nova_get_free_list(sb, i);
+		seq_printf(seq, "|%4d|%3d|%9lu|%9lu|%7lu|%7lu|%7lu|%7lu|%7lu|%4lu|\n",
+		0, fl->index, fl->block_start, fl->block_end, fl->block_end - fl->block_start + 1 - fl->num_free_blocks,
+		(fl->block_end - fl->block_start + 1)*MIGRATION_DOWN_PMEM_PERC/100, 
+		(fl->block_end - fl->block_start + 1)*MIGRATION_FORCE_PERC/100,
+		fl->num_free_blocks, fl->block_end - fl->block_start + 1, fl->num_blocknode);
+	}
+
+	seq_printf(seq, "---------------------------------------------------------------------------\n");
+	seq_printf(seq, "                           [BDEV free lists]\n");
+	seq_printf(seq, "|Tier|CPU|  Start  |   End   | Used  |L-Thres|H-Thres| Free  | Total |Node|\n");
+	for (i=0;i<TIER_BDEV_HIGH*sbi->cpus;++i) {
+		bfl = nova_get_bdev_free_list_flat(sbi,i);
+		seq_printf(seq, "|%4d|%3d|%9lu|%9lu|%7lu|%7lu|%7lu|%7lu|%7lu|%4lu|\n",
+		bfl->tier, bfl->cpu, bfl->block_start, bfl->block_end, bfl->num_total_blocks - bfl->num_free_blocks,
+		bfl->num_total_blocks*MIGRATION_DOWN_BDEV_PERC/100, bfl->num_total_blocks*MIGRATION_FORCE_PERC/100,
+		bfl->num_free_blocks, bfl->num_total_blocks, bfl->num_blocknode);
+	}
+	seq_printf(seq, "---------------------------------------------------------------------------\n");
+
+	seq_puts(seq, "\n");
+
+	return 0;
+}
+
+static int nova_seq_ts_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, nova_seq_ts_show, PDE_DATA(inode));
+}
+
+static const struct file_operations nova_seq_ts_fops = {
+	.owner		= THIS_MODULE,
+	.open		= nova_seq_ts_open,
 	.read		= seq_read,
 	.write		= nova_seq_clear_stats,
 	.llseek		= seq_lseek,
@@ -509,6 +566,8 @@ void nova_sysfs_init(struct super_block *sb)
 				 &nova_seq_timing_fops, sb);
 		proc_create_data("IO_stats", 0444, sbi->s_proc,
 				 &nova_seq_IO_fops, sb);
+		proc_create_data("tiering_stats", 0444, sbi->s_proc,
+				 &nova_seq_ts_fops, sb);
 		proc_create_data("allocator", 0444, sbi->s_proc,
 				 &nova_seq_allocator_fops, sb);
 		proc_create_data("create_snapshot", 0444, sbi->s_proc,
@@ -531,6 +590,7 @@ void nova_sysfs_exit(struct super_block *sb)
 	if (sbi->s_proc) {
 		remove_proc_entry("timing_stats", sbi->s_proc);
 		remove_proc_entry("IO_stats", sbi->s_proc);
+		remove_proc_entry("tiering_stats", sbi->s_proc);
 		remove_proc_entry("allocator", sbi->s_proc);
 		remove_proc_entry("create_snapshot", sbi->s_proc);
 		remove_proc_entry("delete_snapshot", sbi->s_proc);

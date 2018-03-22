@@ -5,7 +5,7 @@
  * Too many debug messages will lead to a crash!
  */
 
-#define DEBUG_NOT_PERF 1
+#define DEBUG_NOT_PERF 0
 
 #define DEBUG_XFSTESTS 0
 
@@ -15,6 +15,7 @@
 #define DEBUG_BDEV_RW 0
 #define DEBUG_BFL_INFO 0
 #define DEBUG_WRITE_ENTRY 0
+#define DEBUG_KTHREAD 0
 
 #define DEBUG_FORE_ALLOC 0
 #define DEBUG_FORE_FILE 0
@@ -23,7 +24,7 @@
 #define DEBUG_PROF_SEQ 0
 
 #define DEBUG_DO_MIGRATION 0
-#define DEBUG_MIGRATION 1
+#define DEBUG_MIGRATION 0
 
 #define DEBUG_MIGRATION_CHECK 0
 #define DEBUG_MIGRATION_ALLOC 0

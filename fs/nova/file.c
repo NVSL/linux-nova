@@ -250,7 +250,8 @@ static int nova_release(struct inode *inode, struct file *file)
 	struct nova_inode_info_header *sih = &si->header;
 	if (DEBUG_FORE_FILE) nova_info("nova_release (inode %lu) is called\n", inode->i_ino);
     up_read(&sih->mig_sem);
-	return nova_migration(inode, file);
+	if (0) return nova_migration(inode, file);
+	return 0;
 }
 
 static int nova_open(struct inode *inode, struct file *filp)
