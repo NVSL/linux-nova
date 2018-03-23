@@ -199,18 +199,18 @@ void nova_init_blockmap(struct super_block *sb, int recovery)
 }
 
 static inline int nova_rbtree_compare_rangenode(struct nova_range_node *curr,
-	unsigned long range_low)
+	unsigned long key)
 {
-	if (range_low < curr->range_low)
+	if (key < curr->range_low)
 		return -1;
-	if (range_low > curr->range_high)
+	if (key > curr->range_high)
 		return 1;
 
 	return 0;
 }
 
 int nova_find_range_node(struct nova_sb_info *sbi,
-	struct rb_root *tree, unsigned long range_low,
+	struct rb_root *tree, unsigned long key,
 	struct nova_range_node **ret_node)
 {
 	struct nova_range_node *curr = NULL;
@@ -222,7 +222,7 @@ int nova_find_range_node(struct nova_sb_info *sbi,
 
 	while (temp) {
 		curr = container_of(temp, struct nova_range_node, node);
-		compVal = nova_rbtree_compare_rangenode(curr, range_low);
+		compVal = nova_rbtree_compare_rangenode(curr, key);
 
 		if (compVal == -1) {
 			temp = temp->rb_left;
