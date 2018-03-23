@@ -348,6 +348,12 @@ nova_get_block_off(struct super_block *sb, unsigned long blocknr,
 	return (u64)blocknr << PAGE_SHIFT;
 }
 
+static inline int nova_get_cpuid(struct super_block *sb)
+{
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+
+	return smp_processor_id() % sbi->cpus;
+}
 
 static inline u64 nova_get_epoch_id(struct super_block *sb)
 {

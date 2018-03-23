@@ -1289,7 +1289,7 @@ static int failure_thread_func(void *data)
 	unsigned long last_blocknr;
 	unsigned int data_bits;
 	u64 curr, curr1;
-	int cpuid = smp_processor_id();
+	int cpuid = nova_get_cpuid(sb);
 	unsigned long i;
 	unsigned long max_size = 0;
 	u64 pi_addr = 0;

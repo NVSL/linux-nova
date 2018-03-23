@@ -475,7 +475,7 @@ int nova_inplace_update_log_entry(struct super_block *sb,
 		goto out;
 	}
 
-	cpu = smp_processor_id();
+	cpu = nova_get_cpuid(sb);
 	spin_lock(&sbi->journal_locks[cpu]);
 	nova_memunlock_journal(sb);
 	journal_tail = nova_create_logentry_transaction(sb, entry, type, cpu);

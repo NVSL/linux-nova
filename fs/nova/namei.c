@@ -88,7 +88,7 @@ static void nova_lite_transaction_for_new_inode(struct super_block *sb,
 
 	NOVA_START_TIMING(create_trans_t, trans_time);
 
-	cpu = smp_processor_id();
+	cpu = nova_get_cpuid(sb);
 	spin_lock(&sbi->journal_locks[cpu]);
 	nova_memunlock_journal(sb);
 
@@ -308,7 +308,7 @@ static void nova_lite_transaction_for_time_and_link(struct super_block *sb,
 
 	NOVA_START_TIMING(link_trans_t, trans_time);
 
-	cpu = smp_processor_id();
+	cpu = nova_get_cpuid(sb);
 	spin_lock(&sbi->journal_locks[cpu]);
 	nova_memunlock_journal(sb);
 
@@ -816,7 +816,7 @@ static int nova_rename(struct inode *old_dir,
 			goto out;
 	}
 
-	cpu = smp_processor_id();
+	cpu = nova_get_cpuid(sb);
 	spin_lock(&sbi->journal_locks[cpu]);
 	nova_memunlock_journal(sb);
 	if (new_inode && new_inode->i_nlink == 0)
