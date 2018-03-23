@@ -210,6 +210,12 @@ void print_a_page(void* addr) {
 	kfree(p);
 }
 
+int nova_init_tiering_stat(struct super_block *sb) {
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+    sbi->stat = kzalloc(sizeof(struct tiering_stat), GFP_KERNEL);
+    return 0;
+}
+
 static void nova_submit_bio_wait_endio(struct bio *bio)
 {
 	struct submit_bio_ret *ret = bio->bi_private;

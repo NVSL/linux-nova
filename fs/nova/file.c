@@ -21,6 +21,7 @@
 #include <linux/falloc.h>
 #include <asm/mman.h>
 #include "nova.h"
+#include "bdev.h"
 #include "inode.h"
 
 
@@ -126,8 +127,8 @@ static int nova_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 	timing_t fsync_time;
 
 	NOVA_START_TIMING(fsync_t, fsync_time);
-	nova_info("nova_fsync is called\n");
-	nova_prof_judge_sync(file);
+	if (DEBUG_FORE_FILE) nova_info("nova_fsync is called\n");
+	if (MODE_FORE_ALLOC) nova_prof_judge_sync(file);
 	if (datasync)
 		NOVA_STATS_ADD(fdatasync, 1);
 
@@ -733,6 +734,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	struct nova_inode_info *si = NOVA_I(inode);
 	struct nova_inode_info_header *sih = &si->header;
 	struct super_block *sb = inode->i_sb;
+	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_inode *pi, inode_copy;
 	struct nova_file_write_entry entry_data;
 	struct nova_inode_update update;
@@ -814,22 +816,28 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 
 	epoch_id = nova_get_epoch_id(sb);
 
-	/* Profiler */
-	nova_sih_increase_wcount(sb, sih, len);
+	if (MODE_FORE_ALLOC) {			
+		if (MODE_KEEP_STAT) sbi->stat->write += len;
 
-	write_tier = get_suitable_tier(sb, num_blocks);
+		/* Profiler */
+		nova_sih_increase_wcount(sb, sih, len);
 
-	old_write_tier = write_tier;
+		write_tier = get_suitable_tier(sb, num_blocks);
 
-	if (write_tier != TIER_PMEM) {
-		seq_count = nova_get_prev_seq_count(sb, sih, start_blk, num_blocks);
-		if (nova_sih_judge_sync(sih) || !nova_prof_judge_seq(seq_count)){
-			write_tier = TIER_PMEM;
+		old_write_tier = write_tier;
+
+		if (write_tier != TIER_PMEM) {
+			seq_count = nova_get_prev_seq_count(sb, sih, start_blk, num_blocks);
+			if (nova_sih_judge_sync(sih) || !nova_prof_judge_seq(seq_count)){
+				write_tier = TIER_PMEM;
+			}
 		}
+		
+		write_tier = get_available_tier(sb, write_tier);
+
+		if (MODE_KEEP_STAT && write_tier!=TIER_PMEM) sbi->stat->write_dram += len;
 	}
 	
-	write_tier = get_available_tier(sb, write_tier);
-
 	// nova_info("[Write] %lu blocks in [tier #%d] -> [seq %u tier #%d].\n", 
 	// 	num_blocks, old_write_tier, seq_count, write_tier);
 
@@ -856,6 +864,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 						allocated, blocknr);
         
 		if (allocated <= 0) {
+			nova_info("Error: allocated: %d\n", allocated);
 			nova_dbg("%s alloc blocks failed %d\n", __func__,
 								allocated);
 			ret = allocated;

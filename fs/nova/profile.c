@@ -67,10 +67,17 @@ unsigned int nova_get_prev_seq_count(struct super_block *sb, struct nova_inode_i
     unsigned long pgoff, int num_pages) {
 	struct nova_file_write_entry *entry;
     entry = nova_find_next_entry(sb, sih, pgoff);
+    if (!entry) goto tail;
+    if (is_entry_time_out(sb, entry)) goto tail;
+    if (entry->pgoff <= pgoff && entry->pgoff + entry->num_pages - 1 >= pgoff + num_pages/2) 
+        return entry->seq_count + 1;
+tail:
+    entry = nova_find_next_entry(sb, sih, pgoff + num_pages/2);
     if (!entry) return 0;
     if (is_entry_time_out(sb, entry)) return 0;
-    if (entry->pgoff > pgoff || entry->pgoff + entry->num_pages < pgoff + num_pages) return 0;
-    return entry->seq_count + 1;
+    if (entry->pgoff <= pgoff + num_pages/2 && entry->pgoff + entry->num_pages >= pgoff + num_pages) 
+        return entry->seq_count + 1;
+    return 0;
 }
 
 inline bool nova_prof_judge_seq(unsigned int seq_count) {

@@ -5,7 +5,12 @@
  * Too many debug messages will lead to a crash!
  */
 
-#define DEBUG_NOT_PERF 0
+#define MODE_KEEP_STAT 1
+#define MODE_USE_MEMCPY 1
+#define MODE_USE_GROUP 1
+
+#define MODE_FORE_ALLOC 0
+#define MODE_BACK_MIG 1
 
 #define DEBUG_XFSTESTS 0
 

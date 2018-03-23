@@ -189,6 +189,8 @@ struct nova_sb_info {
 	struct bdev_info *bdev_list;
 	int bdev_count;
 	
+	struct tiering_stat *stat;
+
 	/* Background migration thread */
 	struct nova_kthread *bm_thread;	
 

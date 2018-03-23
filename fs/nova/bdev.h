@@ -1,6 +1,12 @@
 #ifndef __BDEV_H
 #define __BDEV_H
 
+struct tiering_stat {
+	unsigned long write;
+	unsigned long write_dram;
+	unsigned long mig_group;
+};
+
 /*
  * Block device static status
  */

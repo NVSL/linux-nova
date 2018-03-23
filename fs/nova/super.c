@@ -225,7 +225,7 @@ int nova_get_bdev_info(struct nova_sb_info *sbi){
 		sbi->bdev_list[i].minors = bd_disk->minors;
 		sbi->bdev_list[i].capacity_sector = nsector;
 		sbi->bdev_list[i].capacity_page = nsector>>3;
-		sbi->bdev_list[i].opt_size_bit = 6+i; //temp value
+		sbi->bdev_list[i].opt_size_bit = BDEV_OPT_SIZE_BIT + i; //temp value
 		strcat(sbi->bdev_list[i].bdev_name,bd_disk->disk_name);
 		TIER_BDEV_HIGH++;
 	}
@@ -273,7 +273,7 @@ int nova_get_one_bdev_info(struct nova_sb_info *sbi, char *bdev_path){
 	sbi->bdev_list[i].minors = bd_disk->minors;
 	sbi->bdev_list[i].capacity_sector = nsector;
 	sbi->bdev_list[i].capacity_page = nsector>>3;
-	sbi->bdev_list[i].opt_size_bit = 6; //temp value
+	sbi->bdev_list[i].opt_size_bit = BDEV_OPT_SIZE_BIT; //temp value
 	strcat(sbi->bdev_list[i].bdev_name,bd_disk->disk_name);
 	TIER_BDEV_HIGH++;
 	nova_info("Tier %d is set to %s\n", TIER_BDEV_HIGH, bdev_path);
@@ -904,6 +904,13 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 		goto out;
 	}
 
+	if (nova_init_tiering_stat(sb)) {
+		retval = -ENOMEM;
+		nova_err(sb, "%s: Failed to allocate bdev block free lists.",
+			 __func__);
+		goto out;
+	}
+
 	nova_sysfs_init(sb);
 
 	/* Init a new nova instance */
@@ -1016,6 +1023,8 @@ out:
 	kfree(sbi->journal_locks);
 	sbi->journal_locks = NULL;
 
+	kfree(sbi->stat);
+	sbi->stat = NULL;
 
 	kfree(sbi->bb_pages);
 	sbi->bb_pages = NULL;
@@ -1157,6 +1166,7 @@ static void nova_put_super(struct super_block *sb)
 	kfree(sbi->bdev_free_list);
 	kfree(sbi->bdev_list);
 	kfree(sbi->journal_locks);
+	kfree(sbi->stat);
 	kfree(sbi->bb_pages);
 	kfree(sbi->bal_head);
 	kfree(sbi->bdev_buffer);

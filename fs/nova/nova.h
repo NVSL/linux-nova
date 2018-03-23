@@ -85,6 +85,7 @@
 #define TIER_DRAM 	 	254
 #define TIER_MIGRATING 	255
 #define BDEV_COUNT_MAX 	5
+#define BDEV_OPT_SIZE_BIT 6
 
 #define MIGRATION_ROTATE 1
 #define MIGRATION_DOWNWARD 2
@@ -1079,6 +1080,7 @@ int nova_recovery(struct super_block *sb);
 /* bdev.c */
 int nova_init_bio(void);
 int nova_destroy_bio(void);
+int nova_init_tiering_stat(struct super_block *sb);
 int flush_bal_entry(struct nova_sb_info *sbi);
 int nova_alloc_bdev_block_free_lists(struct super_block *sb);
 void nova_init_bdev_blockmap(struct super_block *sb, int recovery);
@@ -1234,9 +1236,12 @@ int migrate_a_file(struct inode *inode, int to, bool force);
 int migrate_a_file_to_pmem(struct inode *inode);
 int do_migrate_a_file_rotate(struct inode *inode);
 int do_migrate_a_file_downward(struct super_block *sb);
-
 int get_available_tier(struct super_block *sb, int tier);
 
+unsigned long nova_pmem_used(struct nova_sb_info *sbi);
+unsigned long nova_pmem_total(struct nova_sb_info *sbi);
+unsigned long nova_bdev_used(struct nova_sb_info *sbi, int tier);
+unsigned long nova_bdev_total(struct nova_sb_info *sbi, int tier);
 void wake_up_bm(struct nova_sb_info *sbi);
 int start_bm_thread(struct nova_sb_info *sbi);
 void stop_bm_thread(struct nova_sb_info *sbi);

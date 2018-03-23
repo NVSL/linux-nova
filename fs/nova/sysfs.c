@@ -205,37 +205,68 @@ static int nova_seq_ts_show(struct seq_file *seq, void *v)
 	struct free_list *fl = NULL;
 	struct bdev_free_list *bfl = NULL;
 	int i;
+    unsigned long used, total;
+    unsigned long sumu = 0;
+	unsigned long sumt = 0;
 
 	nova_get_timing_stats();
 	nova_get_IO_stats();
 
-	seq_puts(seq, "                ============ NOVA tiering stats ============\n\n");
+	seq_puts(seq, "TNOVA status\n");
+	seq_printf(seq, "-----------------------------------\n");
+	seq_printf(seq, "|  Write  |  Write-C  | Group Mig |\n");
+    seq_printf(seq, "|%9lu|%11lu|%11lu|\n",
+		sbi->stat->write >> 12, sbi->stat->write_dram  >> 12, sbi->stat->mig_group);
+	
+	seq_printf(seq, "-----------------------------------\n");
+	used = nova_pmem_used(sbi);
+	sumu += used;
+	total = nova_pmem_total(sbi);
+	sumt += total;
+	seq_printf(seq, "|Tier|  Used  |Perc|Targ|  Total  |\n");
+	seq_printf(seq, "-----------------------------------\n");
+    seq_printf(seq, "|%4d|%8lu|%3lu%%|%3u%%|%9lu|\n",
+        0, used, used * 100 / total, MIGRATION_DOWN_PMEM_PERC, total);
+            
+    for (i=TIER_BDEV_LOW;i<=TIER_BDEV_HIGH;++i) {
+    	used = nova_bdev_used(sbi, i);
+		sumu += used;
+    	total = nova_bdev_total(sbi, i);
+		sumt += total;
+		if (i!=TIER_BDEV_HIGH)
+    	seq_printf(seq, "|%4d|%8lu|%3lu%%|%3u%%|%9lu|\n",
+        	i, used, used * 100 / total, MIGRATION_DOWN_BDEV_PERC, total);
+		else
+    	seq_printf(seq, "|%4d|%8lu|%3lu%%| N/A|%9lu|\n",
+        	i, used, used * 100 / total, total);
+    }
+	seq_printf(seq, "-----------------------------------\n");
+	seq_printf(seq, "|NOVA|%8lu|%3lu%%| N/A|%9lu|\n", sumu, sumu * 100 / sumt, sumt);
 
-	seq_printf(seq, "---------------------------------------------------------------------------\n");
-	seq_printf(seq, "                           [PMEM free lists]\n");
-	seq_printf(seq, "|Tier|CPU|  Start  |   End   | Used  |L-Thres|H-Thres| Free  | Total |Node|\n");
+
+	seq_printf(seq, "-----------------------------------------------------------------------------\n");
+	seq_printf(seq, "                            [PMEM free lists]\n");
+	seq_printf(seq, "|Tier|CPU|  Start  |   End   |  Used  |L-Thres|H-Thres|  Free  | Total |Node|\n");
 	for (i=0;i<sbi->cpus;++i) {
 		fl = nova_get_free_list(sb, i);
-		seq_printf(seq, "|%4d|%3d|%9lu|%9lu|%7lu|%7lu|%7lu|%7lu|%7lu|%4lu|\n",
+		seq_printf(seq, "|%4d|%3d|%9lu|%9lu|%8lu|%7lu|%7lu|%8lu|%7lu|%4lu|\n",
 		0, fl->index, fl->block_start, fl->block_end, fl->block_end - fl->block_start + 1 - fl->num_free_blocks,
 		(fl->block_end - fl->block_start + 1)*MIGRATION_DOWN_PMEM_PERC/100, 
 		(fl->block_end - fl->block_start + 1)*MIGRATION_FORCE_PERC/100,
 		fl->num_free_blocks, fl->block_end - fl->block_start + 1, fl->num_blocknode);
 	}
 
-	seq_printf(seq, "---------------------------------------------------------------------------\n");
-	seq_printf(seq, "                           [BDEV free lists]\n");
-	seq_printf(seq, "|Tier|CPU|  Start  |   End   | Used  |L-Thres|H-Thres| Free  | Total |Node|\n");
+	seq_printf(seq, "-----------------------------------------------------------------------------\n");
+	seq_printf(seq, "                            [BDEV free lists]\n");
+	seq_printf(seq, "|Tier|CPU|  Start  |   End   |  Used  |L-Thres|H-Thres|  Free  | Total |Node|\n");
 	for (i=0;i<TIER_BDEV_HIGH*sbi->cpus;++i) {
 		bfl = nova_get_bdev_free_list_flat(sbi,i);
-		seq_printf(seq, "|%4d|%3d|%9lu|%9lu|%7lu|%7lu|%7lu|%7lu|%7lu|%4lu|\n",
+		seq_printf(seq, "|%4d|%3d|%9lu|%9lu|%8lu|%7lu|%7lu|%8lu|%7lu|%4lu|\n",
 		bfl->tier, bfl->cpu, bfl->block_start, bfl->block_end, bfl->num_total_blocks - bfl->num_free_blocks,
 		bfl->num_total_blocks*MIGRATION_DOWN_BDEV_PERC/100, bfl->num_total_blocks*MIGRATION_FORCE_PERC/100,
 		bfl->num_free_blocks, bfl->num_total_blocks, bfl->num_blocknode);
 	}
-	seq_printf(seq, "---------------------------------------------------------------------------\n");
-
-	seq_puts(seq, "\n");
+	seq_printf(seq, "-----------------------------------------------------------------------------\n");
 
 	return 0;
 }
