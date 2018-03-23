@@ -412,7 +412,7 @@ static int nova_append_snapshot_list_entry(struct super_block *sb,
 	u64 curr_p;
 	u64 new_page = 0;
 
-	cpuid = smp_processor_id();
+	cpuid = nova_get_cpuid(sb);
 	list = &info->lists[cpuid];
 
 retry:

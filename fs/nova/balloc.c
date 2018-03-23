@@ -699,7 +699,7 @@ static int nova_new_blocks(struct super_block *sb, unsigned long *blocknr,
 
 	NOVA_START_TIMING(new_blocks_t, alloc_time);
 	if (cpuid == ANY_CPU)
-		cpuid = smp_processor_id();
+		cpuid = nova_get_cpuid(sb);
 
 retry:
 	free_list = nova_get_free_list(sb, cpuid);
