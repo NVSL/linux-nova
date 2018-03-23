@@ -233,7 +233,7 @@ int nova_get_bdev_info(struct nova_sb_info *sbi){
 	return 0;
 }
 
-int nova_get_one_bdev_info(struct nova_sb_info *sbi, char *bdev_path){
+int nova_get_one_bdev_info(struct nova_sb_info *sbi, char *bdev_path, unsigned long size){
 	struct block_device *bdev_raw;
 	struct gendisk*	bd_disk = NULL;
 	unsigned long nsector;
@@ -271,6 +271,7 @@ int nova_get_one_bdev_info(struct nova_sb_info *sbi, char *bdev_path){
 	nsector = get_capacity(bd_disk);
 	sbi->bdev_list[i].major = bd_disk->major;
 	sbi->bdev_list[i].minors = bd_disk->minors;
+	if (size!=0) nsector = size << 21;
 	sbi->bdev_list[i].capacity_sector = nsector;
 	sbi->bdev_list[i].capacity_page = nsector>>3;
 	sbi->bdev_list[i].opt_size_bit = BDEV_OPT_SIZE_BIT; //temp value
@@ -296,7 +297,7 @@ static loff_t nova_max_size(int bits)
 
 enum {
 	Opt_bpi, Opt_init, Opt_snapshot, Opt_mode, Opt_uid,
-	Opt_gid, Opt_blocksize, Opt_wprotect, Opt_bdev, 
+	Opt_gid, Opt_blocksize, Opt_wprotect, Opt_bdev, Opt_bsize,
 	Opt_err_cont, Opt_err_panic, Opt_err_ro,
 	Opt_dbgmask, Opt_err
 };
@@ -310,6 +311,7 @@ static const match_table_t tokens = {
 	{ Opt_gid,	     "gid=%u"		  },
 	{ Opt_wprotect,	     "wprotect"		  },
 	{ Opt_bdev,	     "bdev=%s"		  },
+	{ Opt_bsize,	     "bsize=%u"		  },
 	{ Opt_err_cont,	     "errors=continue"	  },
 	{ Opt_err_panic,     "errors=panic"	  },
 	{ Opt_err_ro,	     "errors=remount-ro"  },
@@ -320,6 +322,8 @@ static const match_table_t tokens = {
 static int nova_parse_tiering_options(struct nova_sb_info *sbi, char *options)
 {
 	char *p;
+	unsigned int input = 0;
+	unsigned long size = 0;
 	substring_t args[MAX_OPT_ARGS];
 	char *bdev_path = kmalloc(20*sizeof(char),GFP_KERNEL); // block devices for tiering
 
@@ -333,6 +337,12 @@ static int nova_parse_tiering_options(struct nova_sb_info *sbi, char *options)
 			continue;
 
 		token = match_token(p, tokens, args);
+		if(token == Opt_bsize) {
+			if (match_int(&args[0], &input)){
+				return -EINVAL;
+			}
+			size = (unsigned long) input;
+		}
 		if(token == Opt_bdev) {
 			bdev_path = match_strdup(args);
 			if (!bdev_path) {
@@ -341,10 +351,12 @@ static int nova_parse_tiering_options(struct nova_sb_info *sbi, char *options)
 			if (strcmp(bdev_path,"auto")==0) {
 				return nova_get_bdev_info(sbi);
 			}
-			if (nova_get_one_bdev_info(sbi,bdev_path) != 0) {
+			if (nova_get_one_bdev_info(sbi,bdev_path,size) != 0) {
 				nova_info("Get bdev [%s] failed!\n", bdev_path);
 				continue;
 			}
+			input = 0;
+			size = 0;		
 		}
 	}
 

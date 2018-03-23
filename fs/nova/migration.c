@@ -238,7 +238,7 @@ inline bool should_migrate_entry(struct nova_file_write_entry *entry, int to, bo
 inline int migrate_blocks_pmem_to_bdev(struct nova_sb_info *sbi, 
     void *dax_mem, unsigned long nr, int tier, unsigned long blockoff) {
     return nova_bdev_write_block(sbi, get_bdev_raw(sbi, tier), blockoff, nr,
-        address_to_page(dax_mem), BIO_ASYNC);
+        address_to_page(dax_mem), BIO_SYNC);
 }
 
 /*
@@ -247,7 +247,7 @@ inline int migrate_blocks_pmem_to_bdev(struct nova_sb_info *sbi,
 inline int migrate_blocks_bdev_to_pmem(struct nova_sb_info *sbi, 
     void *dax_mem, unsigned long nr, int tier, unsigned long blockoff) {
     return nova_bdev_read_block(sbi, get_bdev_raw(sbi, tier), blockoff, nr, 
-        address_to_page(dax_mem), BIO_ASYNC);
+        address_to_page(dax_mem), BIO_SYNC);
 }
 
 /*

@@ -5,6 +5,7 @@
  * Too many debug messages will lead to a crash!
  */
 
+/* Mode */
 #define MODE_KEEP_STAT 1
 #define MODE_USE_MEMCPY 1
 #define MODE_USE_GROUP 1
@@ -12,6 +13,13 @@
 #define MODE_FORE_ALLOC 0
 #define MODE_BACK_MIG 1
 
+/* Configure */
+#define BDEV_OPT_SIZE_BIT 6
+#define MIGRATION_DOWN_PMEM_PERC 4
+#define MIGRATION_DOWN_BDEV_PERC 20
+#define MIGRATION_FORCE_PERC 90
+
+/* Debug */
 #define DEBUG_XFSTESTS 0
 
 #define DEBUG_INIT 0
