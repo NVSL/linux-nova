@@ -218,7 +218,7 @@ void flush_page(vpte_t *p) {
         }
     }
     pte_clear(&init_mm, p->vaddr, &p->pte);
-    on_each_cpu(do_flush_page, (void*)p->vaddr, 1);
+    // on_each_cpu(do_flush_page, (void*)p->vaddr, 1);
     p->page = 0;
 
 }
