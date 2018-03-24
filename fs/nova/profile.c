@@ -158,6 +158,15 @@ int nova_update_sih_tier(struct super_block *sb, struct nova_inode_info_header *
     int cpu = sih->ino % sbi->cpus;
 	struct mutex *mutex = nova_get_inode_lru_mutex(sbi, tier, cpu);
     struct list_head *new_list = nova_get_inode_lru_lists(sbi, tier, cpu);
+    struct nova_inode_info *si = container_of(sih, struct nova_inode_info, header);
+    if (unlikely(!si)) {
+        nova_info("Error: si is NULL.\n");
+        return -1;
+    }
+    if (!S_ISREG(si->vfs_inode.i_mode)) {
+        if (DEBUG_PROF_HOT) nova_info("Error: si is NULL.\n");
+        return -2;
+    }
     if (force) {
         nova_remove_inode_lru_list(sbi, sih, TIER_BDEV_HIGH);
         mutex_lock(mutex);

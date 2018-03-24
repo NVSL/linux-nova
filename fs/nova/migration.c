@@ -1120,12 +1120,12 @@ struct inode *pop_an_inode_to_migrate(struct nova_sb_info *sbi, int tier) {
                 continue;
             }
             if (!inode_trylock(ret)) {
-                nova_info("Error: ret->rw_sem is locked.\n");
+                if (DEBUG_MIGRATION) nova_info("Error: Inode %lu rw_sem is locked.\n", sih->ino);
                 continue;
             }
             if (!down_write_trylock(&sih->mig_sem)) {
                 inode_unlock(ret);
-                if (DEBUG_MIGRATION) nova_info("Inode %lu is locked.\n", sih->ino);
+                if (DEBUG_MIGRATION) nova_info("Error: Inode %lu is locked.\n", sih->ino);
                 continue;
             }
             if (DEBUG_MIGRATION) nova_info("Inode %lu is poped.\n", sih->ino);
@@ -1176,6 +1176,7 @@ int do_migrate_a_file_downward(struct super_block *sb) {
 	// if (DEBUG_MIGRATION) nova_info("[Migration-Downward]\n");
 
 again_pmem:
+    if (kthread_should_stop()) return -1;
     if (is_pmem_usage_high(sbi)) {
         if(DEBUG_MIGRATION) nova_info("\e[1;31mPMEM usage high.\e[0m\n");
         this = pop_an_inode_to_migrate(sbi, TIER_PMEM);
@@ -1183,13 +1184,14 @@ again_pmem:
             if(DEBUG_MIGRATION) nova_info("PMEM usage is high yet no inode is found.\n");
             goto again_bdev;
         }
-	    migrate_a_file(this, TIER_BDEV_LOW, false);
+	    migrate_a_file(this, get_available_tier(sb, TIER_BDEV_LOW), false);
 	    inode_unlock(this);
         goto again_pmem;
     }
     else if(DEBUG_MIGRATION) nova_info("\e[1;32mPMEM usage low.\e[0m\n");
             
 again_bdev:
+    if (kthread_should_stop()) return -1;
     for (i=TIER_BDEV_LOW;i<TIER_BDEV_HIGH;++i) {
         if (is_bdev_usage_high(sbi, i)) {
             if(DEBUG_MIGRATION) nova_info("\e[1;31mB-T%d usage high.\e[0m\n",i);
@@ -1198,7 +1200,7 @@ again_bdev:
                 if(DEBUG_MIGRATION) nova_info("B-T%d usage is high yet no inode is found.\n", i);
                 return 0;
             }
-            migrate_a_file(this, i+1, false);
+            migrate_a_file(this, get_available_tier(sb, i+1), false);
 	        inode_unlock(this);
             goto again_bdev;
         }
