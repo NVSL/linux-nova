@@ -140,7 +140,7 @@ static int nova_failure_insert_inodetree(struct super_block *sb,
 		inode_map->num_range_node_inode--;
 		prev->range_high = next->range_high;
 		nova_update_range_node_checksum(prev);
-		nova_free_inode_node(sb, next);
+		nova_free_inode_node(next);
 		goto finish;
 	}
 	if (prev && (internal_low == prev->range_high + 1)) {
@@ -165,7 +165,7 @@ static int nova_failure_insert_inodetree(struct super_block *sb,
 	ret = nova_insert_inodetree(sbi, new_node, cpu);
 	if (ret) {
 		nova_err(sb, "%s failed\n", __func__);
-		nova_free_inode_node(sb, new_node);
+		nova_free_inode_node(new_node);
 		goto finish;
 	}
 	inode_map->num_range_node_inode++;
@@ -260,7 +260,7 @@ static int nova_init_blockmap_from_inode(struct super_block *sb)
 						blknode);
 		if (ret) {
 			nova_err(sb, "%s failed\n", __func__);
-			nova_free_blocknode(sb, blknode);
+			nova_free_blocknode(blknode);
 			NOVA_ASSERT(0);
 			nova_destroy_blocknode_trees(sb);
 			goto out;
@@ -338,7 +338,7 @@ static int nova_init_inode_list_from_inode(struct super_block *sb)
 		cpuid = (entry->range_low & CPUID_MASK) >> 56;
 		if (cpuid >= sbi->cpus) {
 			nova_err(sb, "Invalid cpuid %lu\n", cpuid);
-			nova_free_inode_node(sb, range_node);
+			nova_free_inode_node(range_node);
 			NOVA_ASSERT(0);
 			nova_destroy_inode_trees(sb);
 			goto out;
@@ -350,7 +350,7 @@ static int nova_init_inode_list_from_inode(struct super_block *sb)
 		ret = nova_insert_inodetree(sbi, range_node, cpuid);
 		if (ret) {
 			nova_err(sb, "%s failed, %d\n", __func__, cpuid);
-			nova_free_inode_node(sb, range_node);
+			nova_free_inode_node(range_node);
 			NOVA_ASSERT(0);
 			nova_destroy_inode_trees(sb);
 			goto out;
@@ -573,7 +573,7 @@ static int nova_insert_blocknode_map(struct super_block *sb,
 	ret = nova_insert_blocktree(tree, blknode);
 	if (ret) {
 		nova_err(sb, "%s failed\n", __func__);
-		nova_free_blocknode(sb, blknode);
+		nova_free_blocknode(blknode);
 		goto out;
 	}
 	if (!free_list->first_node)
