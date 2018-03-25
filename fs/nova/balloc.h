@@ -121,4 +121,6 @@ extern int nova_insert_range_node(struct rb_root *tree,
 extern int nova_find_range_node(struct rb_root *tree,
 	unsigned long key, enum node_type type,
 	struct nova_range_node **ret_node);
+extern void nova_destroy_range_node_tree(struct super_block *sb,
+	struct rb_root *tree);
 #endif

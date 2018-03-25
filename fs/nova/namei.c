@@ -540,6 +540,25 @@ out_err:
 	goto out;
 }
 
+static int nova_check_dir_rbtree(struct super_block *sb,
+	struct nova_inode_info_header *sih)
+{
+	struct nova_range_node *curr;
+	struct nova_dentry *entry;
+	struct rb_node *temp;
+
+	temp = rb_first(&sih->rb_tree);
+	while (temp) {
+		curr = container_of(temp, struct nova_range_node, node);
+		entry = curr->direntry;
+		if (!is_dir_init_entry(sb, entry))
+			return 0;
+		temp = rb_next(temp);
+	}
+
+	return 1;
+}
+
 /*
  * routine to check that the specified directory is empty (for rmdir)
  */
@@ -556,6 +575,9 @@ static int nova_empty_dir(struct inode *inode)
 	int i;
 
 	sb = inode->i_sb;
+	if (test_opt(sb, RBTREE_DIR))
+		return nova_check_dir_rbtree(sb, sih);
+
 	nr_entries = radix_tree_gang_lookup(&sih->tree,
 					(void **)entries, pos, 4);
 	if (nr_entries > 2)

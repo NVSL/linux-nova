@@ -175,21 +175,6 @@ finish:
 	return ret;
 }
 
-static void nova_destroy_range_node_tree(struct super_block *sb,
-	struct rb_root *tree)
-{
-	struct nova_range_node *curr;
-	struct rb_node *temp;
-
-	temp = rb_first(tree);
-	while (temp) {
-		curr = container_of(temp, struct nova_range_node, node);
-		temp = rb_next(temp);
-		rb_erase(&curr->node, tree);
-		nova_free_range_node(curr);
-	}
-}
-
 static void nova_destroy_blocknode_tree(struct super_block *sb, int cpu)
 {
 	struct free_list *free_list;
