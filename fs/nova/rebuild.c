@@ -535,7 +535,7 @@ static inline int nova_replay_add_dentry(struct super_block *sb,
 		return -EINVAL;
 
 	nova_dbg_verbose("%s: add %s\n", __func__, entry->name);
-	return nova_insert_dir_radix_tree(sb, sih,
+	return nova_insert_dir_tree(sb, sih,
 			entryc->name, entryc->name_len, entry);
 }
 
@@ -544,7 +544,7 @@ static inline int nova_replay_remove_dentry(struct super_block *sb,
 	struct nova_inode_info_header *sih, struct nova_dentry *entry)
 {
 	nova_dbg_verbose("%s: remove %s\n", __func__, entry->name);
-	nova_remove_dir_radix_tree(sb, sih, entry->name,
+	nova_remove_dir_tree(sb, sih, entry->name,
 					entry->name_len, 1, NULL);
 	return 0;
 }

@@ -38,7 +38,7 @@ struct nova_dentry *nova_find_dentry(struct super_block *sb,
 	return direntry;
 }
 
-int nova_insert_dir_radix_tree(struct super_block *sb,
+int nova_insert_dir_tree(struct super_block *sb,
 	struct nova_inode_info_header *sih, const char *name,
 	int namelen, struct nova_dentry *direntry)
 {
@@ -65,7 +65,7 @@ static int nova_check_dentry_match(struct super_block *sb,
 	return strncmp(dentry->name, name, namelen);
 }
 
-int nova_remove_dir_radix_tree(struct super_block *sb,
+int nova_remove_dir_tree(struct super_block *sb,
 	struct nova_inode_info_header *sih, const char *name, int namelen,
 	int replay, struct nova_dentry **create_dentry)
 {
@@ -333,7 +333,7 @@ int nova_add_dentry(struct dentry *dentry, u64 ino, int inc_link,
 	curr_entry = update->curr_entry;
 	direntry = (struct nova_dentry *)nova_get_block(sb, curr_entry);
 	sih->last_dentry = curr_entry;
-	ret = nova_insert_dir_radix_tree(sb, sih, name, namelen, direntry);
+	ret = nova_insert_dir_tree(sb, sih, name, namelen, direntry);
 
 	sih->trans_id++;
 	NOVA_END_TIMING(add_dentry_t, add_dentry_time);
@@ -406,7 +406,7 @@ int nova_remove_dentry(struct dentry *dentry, int dec_link,
 		goto out;
 	}
 
-	ret = nova_remove_dir_radix_tree(sb, sih, entry->name, entry->len, 0,
+	ret = nova_remove_dir_tree(sb, sih, entry->name, entry->len, 0,
 					&old_dentry);
 
 	if (ret)
