@@ -108,18 +108,17 @@ extern int nova_new_log_blocks(struct super_block *sb,
 extern unsigned long nova_count_free_blocks(struct super_block *sb);
 inline int nova_search_inodetree(struct nova_sb_info *sbi,
 	unsigned long ino, struct nova_range_node **ret_node);
-inline int nova_insert_blocktree(struct nova_sb_info *sbi,
-	struct rb_root *tree, struct nova_range_node *new_node);
+inline int nova_insert_blocktree(struct rb_root *tree,
+	struct nova_range_node *new_node);
 inline int nova_insert_inodetree(struct nova_sb_info *sbi,
 	struct nova_range_node *new_node, int cpu);
-int nova_find_free_slot(struct nova_sb_info *sbi,
-	struct rb_root *tree, unsigned long range_low,
+int nova_find_free_slot(struct rb_root *tree, unsigned long range_low,
 	unsigned long range_high, struct nova_range_node **prev,
 	struct nova_range_node **next);
 
 extern int nova_insert_range_node(struct rb_root *tree,
 	struct nova_range_node *new_node, enum node_type type);
-extern int nova_find_range_node(struct nova_sb_info *sbi,
-	struct rb_root *tree, unsigned long key, enum node_type type,
+extern int nova_find_range_node(struct rb_root *tree,
+	unsigned long key, enum node_type type,
 	struct nova_range_node **ret_node);
 #endif

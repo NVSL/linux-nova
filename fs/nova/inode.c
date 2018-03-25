@@ -162,7 +162,7 @@ inline int nova_search_inodetree(struct nova_sb_info *sbi,
 	cpu = ino % sbi->cpus;
 	tree = &sbi->inode_maps[cpu].inode_inuse_tree;
 	internal_ino = ino / sbi->cpus;
-	return nova_find_range_node(sbi, tree, internal_ino,
+	return nova_find_range_node(tree, internal_ino,
 			NODE_INODE, ret_node);
 }
 
