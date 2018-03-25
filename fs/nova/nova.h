@@ -997,10 +997,10 @@ extern const struct vm_operations_struct nova_dax_vm_ops;
 
 /* dir.c */
 extern const struct file_operations nova_dir_operations;
-int nova_insert_dir_radix_tree(struct super_block *sb,
+int nova_insert_dir_tree(struct super_block *sb,
 	struct nova_inode_info_header *sih, const char *name,
 	int namelen, struct nova_dentry *direntry);
-int nova_remove_dir_radix_tree(struct super_block *sb,
+int nova_remove_dir_tree(struct super_block *sb,
 	struct nova_inode_info_header *sih, const char *name, int namelen,
 	int replay, struct nova_dentry **create_dentry);
 int nova_append_dentry(struct super_block *sb, struct nova_inode *pi,
