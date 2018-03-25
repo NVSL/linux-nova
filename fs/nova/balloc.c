@@ -201,6 +201,15 @@ void nova_init_blockmap(struct super_block *sb, int recovery)
 static inline int nova_rbtree_compare_rangenode(struct nova_range_node *curr,
 	unsigned long key, enum node_type type)
 {
+	if (type == NODE_DIR) {
+		if (key < curr->hash)
+			return -1;
+		if (key > curr->hash)
+			return 1;
+		return 0;
+	}
+
+	/* Block and inode */
 	if (key < curr->range_low)
 		return -1;
 	if (key > curr->range_high)
