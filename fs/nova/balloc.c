@@ -140,13 +140,12 @@ static void nova_init_free_list(struct super_block *sb,
 	nova_data_parity_init_free_list(sb, free_list);
 }
 
-inline struct nova_range_node *nova_alloc_blocknode(struct super_block *sb)
+struct nova_range_node *nova_alloc_blocknode(struct super_block *sb)
 {
 	return nova_alloc_range_node(sb);
 }
 
-inline void nova_free_blocknode(struct super_block *sb,
-	struct nova_range_node *node)
+void nova_free_blocknode(struct nova_range_node *node)
 {
 	nova_free_range_node(node);
 }
@@ -182,7 +181,7 @@ void nova_init_blockmap(struct super_block *sb, int recovery)
 			ret = nova_insert_blocktree(tree, blknode);
 			if (ret) {
 				nova_err(sb, "%s failed\n", __func__);
-				nova_free_blocknode(sb, blknode);
+				nova_free_blocknode(blknode);
 				return;
 			}
 			free_list->first_node = blknode;
@@ -288,7 +287,7 @@ int nova_insert_range_node(struct rb_root *tree,
 	return 0;
 }
 
-inline int nova_insert_blocktree(struct rb_root *tree,
+int nova_insert_blocktree(struct rb_root *tree,
 	struct nova_range_node *new_node)
 {
 	int ret;
@@ -430,7 +429,7 @@ static int nova_free_blocks(struct super_block *sb, unsigned long blocknr,
 		nova_update_range_node_checksum(prev);
 		if (free_list->last_node == next)
 			free_list->last_node = prev;
-		nova_free_blocknode(sb, next);
+		nova_free_blocknode(next);
 		goto block_found;
 	}
 	if (prev && (block_low == prev->range_high + 1)) {
@@ -477,7 +476,7 @@ block_found:
 out:
 	spin_unlock(&free_list->s_lock);
 	if (new_node_used == 0)
-		nova_free_blocknode(sb, curr_node);
+		nova_free_blocknode(curr_node);
 
 	NOVA_END_TIMING(free_blocks_t, free_time);
 	return ret;
@@ -624,7 +623,7 @@ static long nova_alloc_blocks_in_free_list(struct super_block *sb,
 			free_list->num_blocknode--;
 			num_blocks = curr_blocks;
 			*new_blocknr = curr->range_low;
-			nova_free_blocknode(sb, curr);
+			nova_free_blocknode(curr);
 			found = 1;
 			break;
 		}
@@ -765,7 +764,7 @@ alloc:
 
 // Allocate data blocks.  The offset for the allocated block comes back in
 // blocknr.  Return the number of blocks allocated.
-inline int nova_new_data_blocks(struct super_block *sb,
+int nova_new_data_blocks(struct super_block *sb,
 	struct nova_inode_info_header *sih, unsigned long *blocknr,
 	unsigned long start_blk, unsigned int num,
 	enum nova_alloc_init zero, int cpu,
@@ -793,7 +792,7 @@ inline int nova_new_data_blocks(struct super_block *sb,
 
 // Allocate log blocks.	 The offset for the allocated block comes back in
 // blocknr.  Return the number of blocks allocated.
-inline int nova_new_log_blocks(struct super_block *sb,
+int nova_new_log_blocks(struct super_block *sb,
 			struct nova_inode_info_header *sih,
 			unsigned long *blocknr, unsigned int num,
 			enum nova_alloc_init zero, int cpu,
