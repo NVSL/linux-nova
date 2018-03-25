@@ -81,6 +81,7 @@ struct nova_inode_info_header {
 	 * dentry log entry.
 	 */
 	struct radix_tree_root tree;
+	struct rb_root rb_tree;		/* If use RB tree for directory */
 	struct rb_root vma_tree;	/* Write vmas */
 	struct list_head list;		/* SB list of mmap sih */
 	int num_vmas;

@@ -403,8 +403,16 @@ struct nova_range_node {
 	struct rb_node node;
 	struct vm_area_struct *vma;
 	unsigned long mmap_entry;
-	unsigned long range_low;
-	unsigned long range_high;
+	union {
+		struct {
+			unsigned long range_low;
+			unsigned long range_high;
+		};
+		struct {
+			unsigned long hash;
+			void *direntry;
+		};
+	};
 	u32	csum;		/* Protect vma, range low/high */
 };
 

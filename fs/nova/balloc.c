@@ -265,8 +265,9 @@ int nova_insert_range_node(struct rb_root *tree,
 		} else if (compVal == 1) {
 			temp = &((*temp)->rb_right);
 		} else {
-			nova_dbg("%s: entry %lu - %lu already exists: %lu - %lu\n",
-				 __func__, new_node->range_low,
+			nova_dbg("%s: type %d entry %lu - %lu already exists: "
+				"%lu - %lu\n",
+				 __func__, type, new_node->range_low,
 				new_node->range_high, curr->range_low,
 				curr->range_high);
 			return -EINVAL;
