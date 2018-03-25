@@ -72,6 +72,7 @@ enum alloc_type {
 enum node_type {
 	NODE_BLOCK = 1,
 	NODE_INODE,
+	NODE_DIR,
 };
 
 
