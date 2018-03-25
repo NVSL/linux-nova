@@ -179,7 +179,7 @@ void nova_init_blockmap(struct super_block *sb, int recovery)
 			blknode->range_low = free_list->block_start;
 			blknode->range_high = free_list->block_end;
 			nova_update_range_node_checksum(blknode);
-			ret = nova_insert_blocktree(sbi, tree, blknode);
+			ret = nova_insert_blocktree(tree, blknode);
 			if (ret) {
 				nova_err(sb, "%s failed\n", __func__);
 				nova_free_blocknode(sb, blknode);
@@ -218,9 +218,8 @@ static inline int nova_rbtree_compare_rangenode(struct nova_range_node *curr,
 	return 0;
 }
 
-int nova_find_range_node(struct nova_sb_info *sbi,
-	struct rb_root *tree, unsigned long key, enum node_type type,
-	struct nova_range_node **ret_node)
+int nova_find_range_node(struct rb_root *tree, unsigned long key,
+	enum node_type type, struct nova_range_node **ret_node)
 {
 	struct nova_range_node *curr = NULL;
 	struct rb_node *temp;
@@ -289,8 +288,8 @@ int nova_insert_range_node(struct rb_root *tree,
 	return 0;
 }
 
-inline int nova_insert_blocktree(struct nova_sb_info *sbi,
-	struct rb_root *tree, struct nova_range_node *new_node)
+inline int nova_insert_blocktree(struct rb_root *tree,
+	struct nova_range_node *new_node)
 {
 	int ret;
 
@@ -303,8 +302,7 @@ inline int nova_insert_blocktree(struct nova_sb_info *sbi,
 
 
 /* Used for both block free tree and inode inuse tree */
-int nova_find_free_slot(struct nova_sb_info *sbi,
-	struct rb_root *tree, unsigned long range_low,
+int nova_find_free_slot(struct rb_root *tree, unsigned long range_low,
 	unsigned long range_high, struct nova_range_node **prev,
 	struct nova_range_node **next)
 {
@@ -313,7 +311,7 @@ int nova_find_free_slot(struct nova_sb_info *sbi,
 	int check_prev = 0, check_next = 0;
 	int ret;
 
-	ret = nova_find_range_node(sbi, tree, range_low, NODE_BLOCK, &ret_node);
+	ret = nova_find_range_node(tree, range_low, NODE_BLOCK, &ret_node);
 	if (ret) {
 		nova_dbg("%s ERROR: %lu - %lu already in free list\n",
 			__func__, range_low, range_high);
@@ -415,7 +413,7 @@ static int nova_free_blocks(struct super_block *sb, unsigned long blocknr,
 		goto out;
 	}
 
-	ret = nova_find_free_slot(sbi, tree, block_low,
+	ret = nova_find_free_slot(tree, block_low,
 					block_high, &prev, &next);
 
 	if (ret) {
@@ -453,7 +451,7 @@ static int nova_free_blocks(struct super_block *sb, unsigned long blocknr,
 	curr_node->range_high = block_high;
 	nova_update_range_node_checksum(curr_node);
 	new_node_used = 1;
-	ret = nova_insert_blocktree(sbi, tree, curr_node);
+	ret = nova_insert_blocktree(tree, curr_node);
 	if (ret) {
 		new_node_used = 0;
 		goto out;

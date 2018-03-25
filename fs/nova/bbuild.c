@@ -87,7 +87,8 @@ inline void set_bm(unsigned long bit, struct scan_bitmap *bm,
 	}
 }
 
-static inline int get_cpuid(struct nova_sb_info *sbi, unsigned long blocknr)
+static inline int get_block_cpuid(struct nova_sb_info *sbi,
+	unsigned long blocknr)
 {
 	return blocknr / sbi->per_list_blocks;
 }
@@ -123,7 +124,7 @@ static int nova_failure_insert_inodetree(struct super_block *sb,
 	tree = &inode_map->inode_inuse_tree;
 	mutex_lock(&inode_map->inode_table_mutex);
 
-	ret = nova_find_free_slot(sbi, tree, internal_low, internal_high,
+	ret = nova_find_free_slot(tree, internal_low, internal_high,
 					&prev, &next);
 	if (ret) {
 		nova_dbg("%s: ino %lu - %lu already exists!: %d\n",
@@ -251,12 +252,12 @@ static int nova_init_blockmap_from_inode(struct super_block *sb)
 		blknode->range_low = le64_to_cpu(entry->range_low);
 		blknode->range_high = le64_to_cpu(entry->range_high);
 		nova_update_range_node_checksum(blknode);
-		cpuid = get_cpuid(sbi, blknode->range_low);
+		cpuid = get_block_cpuid(sbi, blknode->range_low);
 
 		/* FIXME: Assume NR_CPUS not change */
 		free_list = nova_get_free_list(sb, cpuid);
-		ret = nova_insert_blocktree(sbi,
-				&free_list->block_free_tree, blknode);
+		ret = nova_insert_blocktree(&free_list->block_free_tree,
+						blknode);
 		if (ret) {
 			nova_err(sb, "%s failed\n", __func__);
 			nova_free_blocknode(sb, blknode);
@@ -551,7 +552,6 @@ void nova_save_blocknode_mappings_to_log(struct super_block *sb)
 static int nova_insert_blocknode_map(struct super_block *sb,
 	int cpuid, unsigned long low, unsigned long high)
 {
-	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct free_list *free_list;
 	struct rb_root *tree;
 	struct nova_range_node *blknode = NULL;
@@ -570,7 +570,7 @@ static int nova_insert_blocknode_map(struct super_block *sb,
 	blknode->range_low = low;
 	blknode->range_high = high;
 	nova_update_range_node_checksum(blknode);
-	ret = nova_insert_blocktree(sbi, tree, blknode);
+	ret = nova_insert_blocktree(tree, blknode);
 	if (ret) {
 		nova_err(sb, "%s failed\n", __func__);
 		nova_free_blocknode(sb, blknode);
