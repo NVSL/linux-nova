@@ -773,7 +773,12 @@ int migrate_a_file(struct inode *inode, int to, bool force)
     loff_t isize = 0;
     // int progress = 0;
     
+	timing_t mig_time;
+
     unsigned int osb = sbi->bdev_list[to - TIER_BDEV_LOW].opt_size_bit;
+
+	NOVA_START_TIMING(mig_t, mig_time);
+    
     nova_update_sih_tier(sb, sih, to, force, false);
 
     if (!MODE_USE_GROUP || to == TIER_PMEM) 
@@ -912,6 +917,8 @@ mig:
         inode->i_ino, to, force, oentry, nentry);
 
     up_write(&sih->mig_sem);
+
+	NOVA_END_TIMING(mig_t, mig_time);
 
     return ret;
 }
@@ -1085,6 +1092,10 @@ struct inode *pop_an_inode_to_migrate(struct nova_sb_info *sbi, int tier) {
     struct inode *ret;
     int cpu = smp_processor_id();
     int j, jj;
+	timing_t pop_time;
+
+	NOVA_START_TIMING(pop_t, pop_time);
+
     for (jj=cpu;jj<cpu+sbi->cpus;++jj) {
         j = jj%(sbi->cpus);
         mutex = nova_get_inode_lru_mutex(sbi, tier, j);
@@ -1130,11 +1141,13 @@ struct inode *pop_an_inode_to_migrate(struct nova_sb_info *sbi, int tier) {
             }
             if (DEBUG_MIGRATION) nova_info("Inode %lu is poped.\n", sih->ino);
             mutex_unlock(mutex);
+	        NOVA_END_TIMING(pop_t, pop_time);
             return ret;
         }
         mutex_unlock(mutex);
     }
         
+	NOVA_END_TIMING(pop_t, pop_time);
     return NULL;
 }
 

@@ -157,6 +157,11 @@ const char *Timingstring[TIMING_NUM] = {
 	"delete_snapshot",
 	"append_snapshot_filedata",
 	"append_snapshot_inode",
+
+	/* Tiering */
+	"=================== Tiering ====================",
+	"migrate_a_file",
+	"pop_a_file",
 };
 
 u64 Timingstats[TIMING_NUM];

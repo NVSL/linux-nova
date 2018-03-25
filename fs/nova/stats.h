@@ -158,6 +158,11 @@ enum timing_category {
 	append_snapshot_file_t,
 	append_snapshot_inode_t,
 
+	/* Tiering */
+	tiering_title_t,
+	mig_t,
+	pop_t,
+
 	/* Sentinel */
 	TIMING_NUM,
 };
