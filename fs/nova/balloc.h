@@ -68,6 +68,12 @@ enum alloc_type {
 };
 
 
+/* Range node type */
+enum node_type {
+	NODE_BLOCK = 1,
+	NODE_INODE,
+};
+
 
 
 int nova_alloc_block_free_lists(struct super_block *sb);
@@ -111,8 +117,8 @@ int nova_find_free_slot(struct nova_sb_info *sbi,
 	struct nova_range_node **next);
 
 extern int nova_insert_range_node(struct rb_root *tree,
-				  struct nova_range_node *new_node);
+	struct nova_range_node *new_node, enum node_type type);
 extern int nova_find_range_node(struct nova_sb_info *sbi,
-				struct rb_root *tree, unsigned long key,
-				struct nova_range_node **ret_node);
+	struct rb_root *tree, unsigned long key, enum node_type type,
+	struct nova_range_node **ret_node);
 #endif

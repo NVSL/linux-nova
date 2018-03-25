@@ -199,7 +199,7 @@ void nova_init_blockmap(struct super_block *sb, int recovery)
 }
 
 static inline int nova_rbtree_compare_rangenode(struct nova_range_node *curr,
-	unsigned long key)
+	unsigned long key, enum node_type type)
 {
 	if (key < curr->range_low)
 		return -1;
@@ -210,7 +210,7 @@ static inline int nova_rbtree_compare_rangenode(struct nova_range_node *curr,
 }
 
 int nova_find_range_node(struct nova_sb_info *sbi,
-	struct rb_root *tree, unsigned long key,
+	struct rb_root *tree, unsigned long key, enum node_type type,
 	struct nova_range_node **ret_node)
 {
 	struct nova_range_node *curr = NULL;
@@ -222,7 +222,7 @@ int nova_find_range_node(struct nova_sb_info *sbi,
 
 	while (temp) {
 		curr = container_of(temp, struct nova_range_node, node);
-		compVal = nova_rbtree_compare_rangenode(curr, key);
+		compVal = nova_rbtree_compare_rangenode(curr, key, type);
 
 		if (compVal == -1) {
 			temp = temp->rb_left;
@@ -245,7 +245,7 @@ int nova_find_range_node(struct nova_sb_info *sbi,
 
 
 int nova_insert_range_node(struct rb_root *tree,
-	struct nova_range_node *new_node)
+	struct nova_range_node *new_node, enum node_type type)
 {
 	struct nova_range_node *curr;
 	struct rb_node **temp, *parent;
@@ -257,7 +257,7 @@ int nova_insert_range_node(struct rb_root *tree,
 	while (*temp) {
 		curr = container_of(*temp, struct nova_range_node, node);
 		compVal = nova_rbtree_compare_rangenode(curr,
-					new_node->range_low);
+					new_node->range_low, type);
 		parent = *temp;
 
 		if (compVal == -1) {
@@ -284,7 +284,7 @@ inline int nova_insert_blocktree(struct nova_sb_info *sbi,
 {
 	int ret;
 
-	ret = nova_insert_range_node(tree, new_node);
+	ret = nova_insert_range_node(tree, new_node, NODE_BLOCK);
 	if (ret)
 		nova_dbg("ERROR: %s failed %d\n", __func__, ret);
 
@@ -303,7 +303,7 @@ int nova_find_free_slot(struct nova_sb_info *sbi,
 	int check_prev = 0, check_next = 0;
 	int ret;
 
-	ret = nova_find_range_node(sbi, tree, range_low, &ret_node);
+	ret = nova_find_range_node(sbi, tree, range_low, NODE_BLOCK, &ret_node);
 	if (ret) {
 		nova_dbg("%s ERROR: %lu - %lu already in free list\n",
 			__func__, range_low, range_high);
