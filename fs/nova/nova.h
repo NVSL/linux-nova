@@ -404,10 +404,12 @@ struct nova_range_node {
 	struct vm_area_struct *vma;
 	unsigned long mmap_entry;
 	union {
+		/* Block, inode */
 		struct {
 			unsigned long range_low;
 			unsigned long range_high;
 		};
+		/* Dir node */
 		struct {
 			unsigned long hash;
 			void *direntry;

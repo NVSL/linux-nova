@@ -185,8 +185,6 @@ static int nova_gc_assign_dentry(struct super_block *sb,
 	struct nova_inode_info_header *sih, struct nova_dentry *old_dentry,
 	struct nova_dentry *new_dentry)
 {
-	struct nova_dentry *temp;
-	void **pentry;
 	struct nova_range_node *ret_node = NULL;
 	unsigned long hash;
 	int found = 0;
@@ -197,20 +195,11 @@ static int nova_gc_assign_dentry(struct super_block *sb,
 			old_dentry->name, hash);
 
 	/* FIXME: hash collision ignored here */
-	if (test_opt(sb, RBTREE_DIR)) {
-		found = nova_find_range_node(&sih->rb_tree, hash,
+	found = nova_find_range_node(&sih->rb_tree, hash,
 				NODE_DIR, &ret_node);
-		if (found == 1 && hash == ret_node->hash)
-			if (ret_node->direntry == old_dentry)
-				ret_node->direntry = new_dentry;
-	} else {
-		pentry = radix_tree_lookup_slot(&sih->tree, hash);
-		if (pentry) {
-			temp = radix_tree_deref_slot(pentry);
-			if (temp == old_dentry)
-				radix_tree_replace_slot(&sih->tree, pentry,
-						new_dentry);
-		}
+	if (found == 1 && hash == ret_node->hash) {
+		if (ret_node->direntry == old_dentry)
+			ret_node->direntry = new_dentry;
 	}
 
 	return ret;
