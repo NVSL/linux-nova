@@ -540,53 +540,25 @@ out_err:
 	goto out;
 }
 
-static int nova_check_dir_rbtree(struct super_block *sb,
-	struct nova_inode_info_header *sih)
-{
-	struct nova_range_node *curr;
-	struct nova_dentry *entry;
-	struct rb_node *temp;
-
-	temp = rb_first(&sih->rb_tree);
-	while (temp) {
-		curr = container_of(temp, struct nova_range_node, node);
-		entry = curr->direntry;
-		if (!is_dir_init_entry(sb, entry))
-			return 0;
-		temp = rb_next(temp);
-	}
-
-	return 1;
-}
-
 /*
  * routine to check that the specified directory is empty (for rmdir)
  */
 static int nova_empty_dir(struct inode *inode)
 {
-	struct super_block *sb;
+	struct super_block *sb = inode->i_sb;
 	struct nova_inode_info *si = NOVA_I(inode);
 	struct nova_inode_info_header *sih = &si->header;
+	struct nova_range_node *curr;
 	struct nova_dentry *entry;
 	struct nova_dentry *entryc, entry_copy;
-	unsigned long pos = 0;
-	struct nova_dentry *entries[4];
-	int nr_entries;
-	int i;
-
-	sb = inode->i_sb;
-	if (test_opt(sb, RBTREE_DIR))
-		return nova_check_dir_rbtree(sb, sih);
-
-	nr_entries = radix_tree_gang_lookup(&sih->tree,
-					(void **)entries, pos, 4);
-	if (nr_entries > 2)
-		return 0;
+	struct rb_node *temp;
 
 	entryc = (metadata_csum == 0) ? entry : &entry_copy;
 
-	for (i = 0; i < nr_entries; i++) {
-		entry = entries[i];
+	temp = rb_first(&sih->rb_tree);
+	while (temp) {
+		curr = container_of(temp, struct nova_range_node, node);
+		entry = curr->direntry;
 
 		if (metadata_csum == 0)
 			entryc = entry;
@@ -595,6 +567,8 @@ static int nova_empty_dir(struct inode *inode)
 
 		if (!is_dir_init_entry(sb, entryc))
 			return 0;
+
+		temp = rb_next(temp);
 	}
 
 	return 1;

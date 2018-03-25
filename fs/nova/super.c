@@ -183,7 +183,7 @@ static loff_t nova_max_size(int bits)
 
 enum {
 	Opt_bpi, Opt_init, Opt_snapshot, Opt_mode, Opt_uid,
-	Opt_gid, Opt_dax, Opt_wprotect, Opt_dir_rb,
+	Opt_gid, Opt_dax, Opt_wprotect,
 	Opt_err_cont, Opt_err_panic, Opt_err_ro,
 	Opt_dbgmask, Opt_err
 };
@@ -197,7 +197,6 @@ static const match_table_t tokens = {
 	{ Opt_gid,	     "gid=%u"		  },
 	{ Opt_dax,	     "dax"		  },
 	{ Opt_wprotect,	     "wprotect"		  },
-	{ Opt_dir_rb,	     "dir_rbtree"	  },
 	{ Opt_err_cont,	     "errors=continue"	  },
 	{ Opt_err_panic,     "errors=panic"	  },
 	{ Opt_err_ro,	     "errors=remount-ro"  },
@@ -283,10 +282,6 @@ static int nova_parse_options(char *options, struct nova_sb_info *sbi,
 				goto bad_opt;
 			set_opt(sbi->s_mount_opt, PROTECT);
 			nova_info("NOVA: Enabling new Write Protection (CR0.WP)\n");
-			break;
-		case Opt_dir_rb:
-			set_opt(sbi->s_mount_opt, RBTREE_DIR);
-			nova_info("Enable directory RB tree\n");
 			break;
 		case Opt_dbgmask:
 			if (match_int(&args[0], &option))
