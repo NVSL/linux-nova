@@ -128,12 +128,12 @@ int nova_remove_inode_lru_list(struct nova_sb_info *sbi, struct nova_inode_info_
     int cpu = sih->ino % sbi->cpus;
 	struct mutex *mutex;
     for (i=0;i<=tier;++i) {
-        mutex = nova_get_inode_lru_mutex(sbi, i, cpu);
-        mutex_lock(mutex);
         if (sih->lru_list[i].next != &sih->lru_list[i] || sih->lru_list[i].prev != &sih->lru_list[i]) {
+            mutex = nova_get_inode_lru_mutex(sbi, i, cpu);
+            mutex_lock(mutex);
             list_del_init(&sih->lru_list[i]);
+            mutex_unlock(mutex);
         }
-        mutex_unlock(mutex);
     }     
     return 0;
 }
