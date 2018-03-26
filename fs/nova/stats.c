@@ -161,6 +161,7 @@ const char *Timingstring[TIMING_NUM] = {
 	/* Tiering */
 	"=================== Tiering ====================",
 	"migrate_a_file",
+	"update_sih_tier",
 	"pop_a_file",
 };
 

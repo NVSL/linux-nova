@@ -673,7 +673,7 @@ int migrate_a_file_by_entries(struct inode *inode, int to, bool force)
     unsigned int nentry = 0;
     loff_t isize = 0;
     
-    nova_update_sih_tier(sb, sih, to, force, false);
+    // nova_update_sih_tier(sb, sih, to, force, false);
 
     if (DEBUG_MIGRATION) 
         nova_info("[Migration] Start migrating (by entries) inode %lu to:T%d force:%d (cpu:%d)\n",
@@ -776,10 +776,10 @@ int migrate_a_file(struct inode *inode, int to, bool force)
 	timing_t mig_time;
 
     unsigned int osb = sbi->bdev_list[to - TIER_BDEV_LOW].opt_size_bit;
-
-	NOVA_START_TIMING(mig_t, mig_time);
     
     nova_update_sih_tier(sb, sih, to, force, false);
+
+	NOVA_START_TIMING(mig_t, mig_time);
 
     if (!MODE_USE_GROUP || to == TIER_PMEM) 
         return migrate_a_file_by_entries(inode, to, force);

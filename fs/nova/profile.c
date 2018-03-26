@@ -164,6 +164,11 @@ int nova_update_sih_tier(struct super_block *sb, struct nova_inode_info_header *
 	struct mutex *mutex = nova_get_inode_lru_mutex(sbi, tier, cpu);
     struct list_head *new_list = nova_get_inode_lru_lists(sbi, tier, cpu);
     struct nova_inode_info *si = container_of(sih, struct nova_inode_info, header);
+
+	timing_t usih_time;
+
+	NOVA_START_TIMING(usih_t, usih_time);
+
     if (unlikely(!si)) {
         nova_info("Error: si is NULL.\n");
         return -1;
@@ -197,5 +202,8 @@ int nova_update_sih_tier(struct super_block *sb, struct nova_inode_info_header *
             if (sih->htier < sih->ltier) sih->htier = sih->ltier;       
         }
     }
+    
+	NOVA_END_TIMING(usih_t, usih_time);
+
     return 0;
 }
