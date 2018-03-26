@@ -162,6 +162,7 @@ const char *Timingstring[TIMING_NUM] = {
 	"=================== Tiering ====================",
 	"migrate_a_file",
 	"update_sih_tier",
+	"unlink_inode_lru_list",
 	"pop_a_file",
 };
 

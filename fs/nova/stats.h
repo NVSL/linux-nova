@@ -162,6 +162,7 @@ enum timing_category {
 	tiering_title_t,
 	mig_t,
 	usih_t,
+	rmsih_t,
 	pop_t,
 
 	/* Sentinel */

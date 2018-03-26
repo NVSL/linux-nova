@@ -695,7 +695,8 @@ out:
 	if (filp)
 		file_accessed(filp);
 		
-	if (entry) nova_update_sih_tier(sb, sih, get_entry_tier(entry), false, true);
+	// TODOzsa: Read-frequent entry -> Pinned page cache
+	// if (entry) nova_update_sih_tier(sb, sih, get_entry_tier(entry), false, true);
 	
 	NOVA_STATS_ADD(read_bytes, copied);
 

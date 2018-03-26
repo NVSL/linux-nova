@@ -140,13 +140,20 @@ int nova_remove_inode_lru_list(struct nova_sb_info *sbi, struct nova_inode_info_
 
 inline int nova_unlink_inode_lru_list(struct nova_sb_info *sbi, struct nova_inode_info_header *sih) {
     struct nova_inode_info *si = container_of(sih, struct nova_inode_info, header);
+	timing_t rmsih_time;
+
+
     if (!S_ISREG(si->vfs_inode.i_mode)) {
         if (DEBUG_PROF_HOT) nova_info("Error: si is not a regular file.\n");
         return -2;
     }
+	NOVA_START_TIMING(rmsih_t, rmsih_time);
     down_write(&sih->mig_sem);
     up_write(&sih->mig_sem);
+	NOVA_END_TIMING(rmsih_t, rmsih_time);
     return nova_remove_inode_lru_list(sbi, sih, TIER_BDEV_HIGH);
+
+
 }
 
 /*
