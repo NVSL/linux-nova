@@ -442,6 +442,10 @@ static int nova_parse_options(char *options, struct nova_sb_info *sbi,
 			set_opt(sbi->s_mount_opt, PROTECT);
 			nova_info("NOVA: Enabling new Write Protection (CR0.WP)\n");
 			break;
+		case Opt_bdev:
+			break;
+		case Opt_bsize:
+			break;
 		case Opt_dbgmask:
 			if (match_int(&args[0], &option))
 				goto bad_val;
@@ -1117,8 +1121,16 @@ int nova_remount(struct super_block *sb, int *mntflags, char *data)
 	old_sb_flags = sb->s_flags;
 	old_mount_opt = sbi->s_mount_opt;
 
-	TIER_BDEV_HIGH = 0;
-	nova_parse_tiering_options(sbi, data);
+	ret = nova_parse_tiering_options(sbi, data);
+	if (ret) {
+		nova_err(sb, "%s: Failed to get block device info.",
+			 __func__);
+		goto restore_opt;
+	}
+	if (TIER_BDEV_HIGH == 0) {
+		nova_info("No block device is found, invoking Auto Get.");
+		nova_get_bdev_info(sbi);
+	}
 
 	if (nova_parse_options(data, sbi, 1))
 		goto restore_opt;
