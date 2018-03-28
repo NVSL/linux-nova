@@ -159,7 +159,8 @@ inline int nova_unlink_inode_lru_list(struct nova_sb_info *sbi, struct nova_inod
 /*
  * Update htier and ltier in sih
  * force: true - used in migration or whole file force movement
- *               in this case, write is always true
+ *               write: true - force migration
+ *                      false - reload information during rebuild
  *        false - used in file write or partial file movement
  *                write: true - include this tier
  *                       false - partial migration
@@ -168,6 +169,7 @@ int nova_update_sih_tier(struct super_block *sb, struct nova_inode_info_header *
     int tier, bool force, bool write) {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
     int cpu = sih->ino % sbi->cpus;
+    int i;
 	struct mutex *mutex = nova_get_inode_lru_mutex(sbi, tier, cpu);
     struct list_head *new_list = nova_get_inode_lru_lists(sbi, tier, cpu);
     struct nova_inode_info *si = container_of(sih, struct nova_inode_info, header);
@@ -180,17 +182,28 @@ int nova_update_sih_tier(struct super_block *sb, struct nova_inode_info_header *
         nova_info("Error: si is NULL.\n");
         return -1;
     }
-    if (!S_ISREG(si->vfs_inode.i_mode)) {
+    if (!S_ISREG(sih->i_mode)) {
         if (DEBUG_PROF_HOT) nova_info("Error: si is not a regular file.\n");
         return -2;
     }
     if (force) {
-        nova_remove_inode_lru_list(sbi, sih, TIER_BDEV_HIGH);
-        mutex_lock(mutex);
-        list_add_tail(&sih->lru_list[tier], new_list);
-        mutex_unlock(mutex);
-        sih->htier = tier;
-        sih->ltier = tier;
+        if (write) {
+            nova_remove_inode_lru_list(sbi, sih, TIER_BDEV_HIGH);
+            mutex_lock(mutex);
+            list_add_tail(&sih->lru_list[tier], new_list);
+            mutex_unlock(mutex);
+            sih->htier = tier;
+            sih->ltier = tier;
+        }
+        else {
+            for (i=sih->ltier; i<=sih->htier; ++i) {
+                mutex = nova_get_inode_lru_mutex(sbi, i, cpu);
+                new_list = nova_get_inode_lru_lists(sbi, i, cpu);
+                mutex_lock(mutex);
+                list_move_tail(&sih->lru_list[i], new_list);
+                mutex_unlock(mutex);
+            }
+        }
     }
     else {
         if (write) {

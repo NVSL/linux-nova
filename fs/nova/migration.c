@@ -670,6 +670,7 @@ int migrate_a_file_by_entries(struct inode *inode, int to, bool force)
     pgoff_t index = 0;
     pgoff_t end_index = 0;
     int ret = 0;
+	void *addr;
     bool interrupted = false;
     unsigned int nentry = 0;
     loff_t isize = 0;
@@ -687,7 +688,7 @@ int migrate_a_file_by_entries(struct inode *inode, int to, bool force)
 	end_index = (isize) >> PAGE_SHIFT;
     
     do {
-        if (!list_empty(&sih->mig_sem.wait_list)) {
+        if (!list_empty(&sih->mig_sem.wait_list) || kthread_should_stop()) {
             interrupted = true;
             goto end;
         }
@@ -736,7 +737,13 @@ int migrate_a_file_by_entries(struct inode *inode, int to, bool force)
     } while (index <= end_index);
 
 end:
-    if (interrupted) nova_update_sih_tier(sb, sih, to, force, true);
+    if (interrupted) {
+        addr = (void *) nova_get_block(sb, update.curr_entry);
+        entry = (struct nova_file_write_entry *) addr;
+        entry->size = cpu_to_le64(isize);
+	    nova_update_entry_csum(&entry);
+        nova_update_sih_tier(sb, sih, to, force, true);
+    }
     else nova_update_sih_tier(sb, sih, to, force, false);
 
     nova_memunlock_inode(sb, pi);
@@ -753,7 +760,7 @@ end:
     if (DEBUG_MIGRATION) 
         nova_info("[Migration] End migrating (by entries) inode %lu to:T%d force:%d (%d entries)\n",
         inode->i_ino, to, force, nentry);
-        
+
     return ret;
 }
 
@@ -774,6 +781,7 @@ int migrate_a_file(struct inode *inode, int to, bool force)
     unsigned int num_pages;
     unsigned long pgoff;
 
+	void *addr;
     int ret = 0;
     bool interrupted = false;
     unsigned int i = 0;
@@ -807,7 +815,7 @@ int migrate_a_file(struct inode *inode, int to, bool force)
     
     for (i=0;i<=end_index>>osb;++i) {
 next:
-        if (!list_empty(&sih->mig_sem.wait_list)) {
+        if (!list_empty(&sih->mig_sem.wait_list) || kthread_should_stop()) {
             interrupted = true;
             goto end;
         }
@@ -922,7 +930,13 @@ mig:
     }
 
 end:
-    if (interrupted) nova_update_sih_tier(sb, sih, to, force, true);
+    if (interrupted) {
+        addr = (void *) nova_get_block(sb, update.curr_entry);
+        entry = (struct nova_file_write_entry *) addr;
+        entry->size = cpu_to_le64(isize);
+	    nova_update_entry_csum(&entry);
+        nova_update_sih_tier(sb, sih, to, force, true);
+    }
     else nova_update_sih_tier(sb, sih, to, force, false);
 
     nova_memunlock_inode(sb, pi);
@@ -1219,7 +1233,7 @@ again_pmem:
             goto again_bdev;
         }
 	    migrate_a_file(this, get_available_tier(sb, TIER_BDEV_LOW), false);
-        goto again_pmem;
+	    goto again_pmem;
     }
     else if(DEBUG_MIGRATION) nova_info("\e[1;32mPMEM usage low.\e[0m\n");
             
@@ -1253,7 +1267,6 @@ void wake_up_bm(struct nova_sb_info *sbi) {
 static int bm_thread_func(void *data) {
 	struct nova_sb_info *sbi = data;
 	struct super_block *sb = sbi->sb;
-	int time_count = 0;  
     int cpu = 0;
     do {
 		// set_current_state(TASK_UNINTERRUPTIBLE);
@@ -1263,7 +1276,7 @@ static int bm_thread_func(void *data) {
         if (DEBUG_KTHREAD) nova_info("---- [Background Migration Thread - C%2d] ----\n", cpu);
         if (MODE_BACK_MIG && MIGRATION_POLICY == MIGRATION_DOWNWARD ) do_migrate_a_file_downward(sb);
     } while(!kthread_should_stop());  
-    return time_count;
+    return 0;
 }
 
 int start_bm_thread(struct nova_sb_info *sbi) {
