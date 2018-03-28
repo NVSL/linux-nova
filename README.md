@@ -157,6 +157,8 @@ able to build and install it just as you would the mainline Linux source.
 
 To build NOVA, build the kernel with PMEM (`CONFIG_BLK_DEV_PMEM`), DAX (`CONFIG_FS_DAX`) and NOVA (`CONFIG_NOVA_FS`) support.  Install as usual.
 
+Documentation/filesystems/nova.txt provides more detailed instructions on building and using NOVA.
+
 ## Hacking and Contributing
 
 The NOVA source code is almost completely contains in the `fs/nova` directory.
