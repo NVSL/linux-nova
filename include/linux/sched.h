@@ -125,6 +125,10 @@ struct task_group;
 	} while (0)
 
 #else
+
+#define __set_task_state(tsk, state_value) do { (tsk)->state = (state_value); } while (0)
+#define set_task_state(tsk, state_value) smp_store_mb((tsk)->state, (state_value))
+
 /*
  * set_current_state() includes a barrier so that the write of current->state
  * is correctly serialised wrt the caller's subsequent test of whether to
@@ -553,6 +557,12 @@ struct task_struct {
 	int				wake_cpu;
 #endif
 	int				on_rq;
+
+	struct rwcst_semaphore		*rwlock;
+	struct rw_snode			*snode;
+	int				snode_nid;
+	atomic_t			no_cs_mig;
+	cpumask_t			old_cpumask, temp_cpumask;
 
 	int				prio;
 	int				static_prio;

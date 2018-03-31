@@ -2809,6 +2809,12 @@ bool single_task_running(void)
 }
 EXPORT_SYMBOL(single_task_running);
 
+int nr_running_tasks_current_rq(void)
+{
+	return raw_rq()->nr_running;
+}
+EXPORT_SYMBOL(nr_running_tasks_current_rq);
+
 unsigned long long nr_context_switches(void)
 {
 	int i;
