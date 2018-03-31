@@ -1068,6 +1068,7 @@ int reclaim_get_nvmm(struct super_block *sb, unsigned long nvmm,
 }
 
 void bdev_test(struct nova_sb_info *sbi) {
+	struct super_block *sb = sbi->sb;
 	struct block_device *bdev_raw = sbi->bdev_list[0].bdev_raw;
 	
 	struct page *pg;
@@ -1076,22 +1077,26 @@ void bdev_test(struct nova_sb_info *sbi) {
 	void *pg_vir_addr2 = NULL;
 	int ret=0;
 	int i=0;
+	unsigned long n1, n3;
+	void *addr = nova_get_block(sb, ((sbi->num_blocks >> 1) << PAGE_SHIFT));
+	int j, k, l;
+	timing_t t1, t2;
 
 	char *bdev_name = sbi->bdev_list[0].bdev_path;
 
 	unsigned long capacity_page = sbi->bdev_list[0].capacity_page;
 
-    nova_info("Block device test in.\n");
+    nova_info("Block device test IN.\n");
     
 	pg = alloc_page(GFP_KERNEL|__GFP_ZERO);
 	pg2 = alloc_page(GFP_KERNEL|__GFP_ZERO);
 	pg_vir_addr = page_address(pg);
 	pg_vir_addr2 = page_address(pg2);
 	
-	print_a_page(pg_vir_addr);
+	// print_a_page(pg_vir_addr);
 	modify_a_page(pg_vir_addr,'X');
-	print_a_page(pg_vir_addr);
-	print_a_page(pg_vir_addr2);
+	// print_a_page(pg_vir_addr);
+	// print_a_page(pg_vir_addr2);
 
     if (VFS_IO_TEST) {
         vfs_write_test();
@@ -1107,16 +1112,54 @@ void bdev_test(struct nova_sb_info *sbi) {
 	ret = nova_bdev_write_block(sbi, bdev_raw, 1, 1, pg, BIO_SYNC);
 	ret = nova_bdev_write_block(sbi, bdev_raw, capacity_page-1, 1, pg, BIO_SYNC);
 	// Page read
-	// for (i=0;i<capacity_page;i+=10000) {
+	/*
 	for (i=0;i<20;i+=1) {
 		// modify_a_page(pg_vir_addr,'C'+i%20);
 		// ret = nova_bdev_write_block(sbi, bdev_raw, i, 1, pg, BIO_SYNC);
 		// ret = nova_bdev_read_block(sbi, bdev_raw, i, 1, pg2, BIO_SYNC);
-		nova_info("[%s] [Block %d]\n",bdev_name,i);
+		
 		print_a_page(sbi->vpmem+i*IO_BLOCK_SIZE);
 	}
-	
-	nova_info("Block device test out %u.\n",bdev_raw->bd_block_size);
+	*/
+	for (k=TIER_BDEV_LOW;k<=TIER_BDEV_HIGH;++k) {
+		bdev_raw = sbi->bdev_list[k-TIER_BDEV_LOW].bdev_raw;
+		bdev_name = sbi->bdev_list[k-TIER_BDEV_LOW].bdev_path;
+		nova_info("[%s]\n",bdev_name);
+		for (l=0;l<2;++l) {
+			if (l==0) nova_info("[Write test]\n");
+			else nova_info("[Read test]\n");
+			n1 = 0;
+			for (i=0;i<=12;++i) {
+				j = 1<<i;
+				while (j>=0) {
+					modify_a_page(addr+(j<<PAGE_SHIFT),'A'+j%20);
+					j--;
+				}
+				if (l==0) {
+					getrawmonotonic(&t1);
+					for (j=0;j<4;++j) {
+						ret = nova_bdev_write_block(sbi, bdev_raw, ((j+1)<<12)+(1<<i), 1<<i, 
+							address_to_page(addr), BIO_SYNC);
+					}
+					getrawmonotonic(&t2);
+				}
+				else {
+					getrawmonotonic(&t1);
+					for (j=0;j<4;++j) {
+						ret = nova_bdev_read_block(sbi, bdev_raw, ((j+6)<<12)+(1<<i), 1<<i, 
+							address_to_page(addr), BIO_SYNC);
+					}
+					getrawmonotonic(&t2);					
+				}
+				n3 = t2.tv_nsec - t1.tv_nsec;
+				if (i==0) nova_info("[size]  %d   N/A %lu\n", i, n3);
+				else nova_info("[size] %2d %4lu%% %lu\n", i, n1*2*100/n3, n3);
+				n1 = n3;
+			}
+		}	
+	}
+
+	nova_info("Block device test OUT.\n");
 }
 
 void bfl_test(struct nova_sb_info *sbi) {
