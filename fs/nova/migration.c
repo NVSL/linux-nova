@@ -342,6 +342,8 @@ int nova_clone_write_entry(struct nova_sb_info *sbi, struct nova_inode_info *si,
     entry_data.block = cpu_to_le64(nova_get_block_off(sb, block, sih->i_blk_type));
     entry_data.updating = 0;
     entry_data.invalid_pages = 0;
+    entry_data.size = sih->i_size;
+    
     if (num_pages!=0) entry_data.num_pages = num_pages;
 	nova_update_entry_csum(&entry_data);
 
@@ -606,6 +608,8 @@ int nova_split_write_entry(struct nova_sb_info *sbi, struct nova_inode_info *si,
     entry_data2.invalid_pages = 0;
     entry_data1.updating = 0;
     entry_data2.updating = 0;
+    entry_data1.size = sih->i_size;
+    entry_data2.size = sih->i_size;
 
 	nova_update_entry_csum(&entry_data1);
 	nova_update_entry_csum(&entry_data2);
@@ -650,6 +654,12 @@ int nova_split_write_entry(struct nova_sb_info *sbi, struct nova_inode_info *si,
     return ret;
 }
 
+inline bool is_inode_wait_list_empty(struct inode *inode) {
+	struct nova_inode_info *si = NOVA_I(inode);
+	struct nova_inode_info_header *sih = &si->header;
+    return list_empty(&sih->mig_sem.wait_list) && list_empty(&inode->i_rwsem.wait_list);
+}
+
 /*
  * Migrate a file from one tier to another
  * How migration works: Check -> Allocate -> Copy -> Free
@@ -670,7 +680,7 @@ int migrate_a_file_by_entries(struct inode *inode, int to, bool force)
     pgoff_t index = 0;
     pgoff_t end_index = 0;
     int ret = 0;
-	void *addr;
+    
     bool interrupted = false;
     unsigned int nentry = 0;
     loff_t isize = 0;
@@ -688,7 +698,7 @@ int migrate_a_file_by_entries(struct inode *inode, int to, bool force)
 	end_index = (isize) >> PAGE_SHIFT;
     
     do {
-        if (!list_empty(&sih->mig_sem.wait_list) || kthread_should_stop()) {
+        if (!is_inode_wait_list_empty(inode) || kthread_should_stop()) {
             interrupted = true;
             goto end;
         }
@@ -737,13 +747,7 @@ int migrate_a_file_by_entries(struct inode *inode, int to, bool force)
     } while (index <= end_index);
 
 end:
-    if (interrupted) {
-        addr = (void *) nova_get_block(sb, update.curr_entry);
-        entry = (struct nova_file_write_entry *) addr;
-        entry->size = cpu_to_le64(isize);
-	    nova_update_entry_csum(&entry);
-        nova_update_sih_tier(sb, sih, to, force, true);
-    }
+    if (interrupted) nova_update_sih_tier(sb, sih, to, force, true);
     else nova_update_sih_tier(sb, sih, to, force, false);
 
     nova_memunlock_inode(sb, pi);
@@ -764,8 +768,7 @@ end:
     return ret;
 }
 
-
-// sih->mig_sem is (write) locked before calling this function
+// inode->i_rwsem and sih->mig_sem are (write) locked before calling this function
 int migrate_a_file(struct inode *inode, int to, bool force)
 {
 	struct super_block *sb = inode->i_sb;
@@ -781,7 +784,6 @@ int migrate_a_file(struct inode *inode, int to, bool force)
     unsigned int num_pages;
     unsigned long pgoff;
 
-	void *addr;
     int ret = 0;
     bool interrupted = false;
     unsigned int i = 0;
@@ -815,7 +817,7 @@ int migrate_a_file(struct inode *inode, int to, bool force)
     
     for (i=0;i<=end_index>>osb;++i) {
 next:
-        if (!list_empty(&sih->mig_sem.wait_list) || kthread_should_stop()) {
+        if (!is_inode_wait_list_empty(inode) || kthread_should_stop()) {
             interrupted = true;
             goto end;
         }
@@ -930,13 +932,7 @@ mig:
     }
 
 end:
-    if (interrupted) {
-        addr = (void *) nova_get_block(sb, update.curr_entry);
-        entry = (struct nova_file_write_entry *) addr;
-        entry->size = cpu_to_le64(isize);
-	    nova_update_entry_csum(&entry);
-        nova_update_sih_tier(sb, sih, to, force, true);
-    }
+    if (interrupted) nova_update_sih_tier(sb, sih, to, force, true);
     else nova_update_sih_tier(sb, sih, to, force, false);
 
     nova_memunlock_inode(sb, pi);
