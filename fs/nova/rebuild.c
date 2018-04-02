@@ -507,7 +507,7 @@ static int nova_rebuild_file_inode_tree(struct super_block *sb,
 	ret = nova_rebuild_inode_finish(sb, pi, sih, reb, curr_p);
 	sih->i_blocks = sih->log_pages + (sih->i_size >> data_bits);
 
-	nova_update_sih_tier(sb, sih, 0, true, false);
+	nova_update_sih_tier(sb, sih, 0, 2);
 out:
 //	nova_print_inode_log_page(sb, inode);
 	NOVA_END_TIMING(rebuild_file_t, rebuild_time);

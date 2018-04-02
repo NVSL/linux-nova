@@ -700,6 +700,7 @@ int migrate_a_file_by_entries(struct inode *inode, int to, bool force)
     do {
         if (!is_inode_wait_list_empty(inode) || kthread_should_stop()) {
             interrupted = true;
+            if (MODE_KEEP_STAT) sbi->stat->mig_interrupt++;
             goto end;
         }
 
@@ -747,8 +748,11 @@ int migrate_a_file_by_entries(struct inode *inode, int to, bool force)
     } while (index <= end_index);
 
 end:
-    if (interrupted) nova_update_sih_tier(sb, sih, to, force, true);
-    else nova_update_sih_tier(sb, sih, to, force, false);
+    if (interrupted) nova_update_sih_tier(sb, sih, to, 5);
+    else {
+        if (force) nova_update_sih_tier(sb, sih, to, 1);
+        else nova_update_sih_tier(sb, sih, to, 4);
+    }
 
     nova_memunlock_inode(sb, pi);
 	nova_update_inode(sb, inode, pi, &update, 1);
@@ -819,6 +823,7 @@ int migrate_a_file(struct inode *inode, int to, bool force)
 next:
         if (!is_inode_wait_list_empty(inode) || kthread_should_stop()) {
             interrupted = true;
+            if (MODE_KEEP_STAT) sbi->stat->mig_interrupt++;
             goto end;
         }
 
@@ -932,8 +937,11 @@ mig:
     }
 
 end:
-    if (interrupted) nova_update_sih_tier(sb, sih, to, force, true);
-    else nova_update_sih_tier(sb, sih, to, force, false);
+    if (interrupted) nova_update_sih_tier(sb, sih, to, 5);
+    else {
+        if (force) nova_update_sih_tier(sb, sih, to, 1);
+        else nova_update_sih_tier(sb, sih, to, 4);
+    }
 
     nova_memunlock_inode(sb, pi);
 	nova_update_inode(sb, inode, pi, &update, 1);

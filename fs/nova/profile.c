@@ -138,10 +138,26 @@ int nova_remove_inode_lru_list(struct nova_sb_info *sbi, struct nova_inode_info_
     return 0;
 }
 
+int nova_renew_inode_lru_list(struct nova_sb_info *sbi, struct nova_inode_info_header *sih) {
+    int i;
+    int cpu = sih->ino % sbi->cpus;
+	struct mutex *mutex;
+    struct list_head *new_list;
+    for (i=0;i<=TIER_BDEV_HIGH;++i) {
+        if (sih->lru_list[i].next != &sih->lru_list[i] || sih->lru_list[i].prev != &sih->lru_list[i]) {
+            mutex = nova_get_inode_lru_mutex(sbi, i, cpu);
+            new_list = nova_get_inode_lru_lists(sbi, i, cpu);
+            mutex_lock(mutex);
+            list_move_tail(&sih->lru_list[i], new_list);
+            mutex_unlock(mutex);
+        }
+    }     
+    return 0;
+}
+
 inline int nova_unlink_inode_lru_list(struct nova_sb_info *sbi, struct nova_inode_info_header *sih) {
     struct nova_inode_info *si = container_of(sih, struct nova_inode_info, header);
 	timing_t rmsih_time;
-
 
     if (!S_ISREG(si->vfs_inode.i_mode)) {
         if (DEBUG_PROF_HOT) nova_info("Error: si is not a regular file.\n");
@@ -152,21 +168,18 @@ inline int nova_unlink_inode_lru_list(struct nova_sb_info *sbi, struct nova_inod
     up_write(&sih->mig_sem);
 	NOVA_END_TIMING(rmsih_t, rmsih_time);
     return nova_remove_inode_lru_list(sbi, sih, TIER_BDEV_HIGH);
-
-
 }
 
 /*
  * Update htier and ltier in sih
- * force: true - used in migration or whole file force movement
- *               write: true - force migration
- *                      false - reload information during rebuild
- *        false - used in file write or partial file movement
- *                write: true - include this tier
- *                       false - partial migration
+ * mode: 1 - force migration
+ *       2 - reload information during rebuild
+ *       3 - include this tier
+ *       4 - partial migration
+ *       5 - interrupted migration
  */
 int nova_update_sih_tier(struct super_block *sb, struct nova_inode_info_header *sih, 
-    int tier, bool force, bool write) {
+    int tier, int mode) {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
     int cpu = sih->ino % sbi->cpus;
     int i;
@@ -186,16 +199,17 @@ int nova_update_sih_tier(struct super_block *sb, struct nova_inode_info_header *
         if (DEBUG_PROF_HOT) nova_info("Error: si is not a regular file.\n");
         return -2;
     }
-    if (force) {
-        if (write) {
+
+    switch (mode) {
+	    case 1:
             nova_remove_inode_lru_list(sbi, sih, TIER_BDEV_HIGH);
             mutex_lock(mutex);
             list_add_tail(&sih->lru_list[tier], new_list);
             mutex_unlock(mutex);
             sih->htier = tier;
             sih->ltier = tier;
-        }
-        else {
+		    break;
+	    case 2:
             for (i=sih->ltier; i<=sih->htier; ++i) {
                 mutex = nova_get_inode_lru_mutex(sbi, i, cpu);
                 new_list = nova_get_inode_lru_lists(sbi, i, cpu);
@@ -203,24 +217,30 @@ int nova_update_sih_tier(struct super_block *sb, struct nova_inode_info_header *
                 list_move_tail(&sih->lru_list[i], new_list);
                 mutex_unlock(mutex);
             }
-        }
-    }
-    else {
-        if (write) {
+		    break;
+	    case 3:
             mutex_lock(mutex);
             list_move_tail(&sih->lru_list[tier], new_list);
             mutex_unlock(mutex);
             if (sih->ltier > tier) sih->ltier = tier;
             if (sih->htier < tier) sih->htier = tier;
-        }
-        else {     
+		    break;
+	    case 4:
             nova_remove_inode_lru_list(sbi, sih, tier);
             mutex_lock(mutex);
             list_add_tail(&sih->lru_list[tier], new_list);
             mutex_unlock(mutex);
             if (sih->ltier < tier) sih->ltier = tier;       
-            if (sih->htier < sih->ltier) sih->htier = sih->ltier;       
-        }
+            if (sih->htier < sih->ltier) sih->htier = sih->ltier;    
+		    break;   
+	    case 5:
+            nova_renew_inode_lru_list(sbi, sih);
+            mutex_lock(mutex);
+            list_move_tail(&sih->lru_list[tier], new_list);
+            mutex_unlock(mutex);
+            if (sih->ltier < tier) sih->ltier = tier;       
+            if (sih->htier < sih->ltier) sih->htier = sih->ltier;
+		    break;
     }
     
 	NOVA_END_TIMING(usih_t, usih_time);

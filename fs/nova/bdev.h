@@ -5,6 +5,7 @@ struct tiering_stat {
 	unsigned long write;
 	unsigned long write_dram;
 	unsigned long mig_group;
+	unsigned long mig_interrupt;
 };
 
 /*

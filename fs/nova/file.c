@@ -259,7 +259,7 @@ static int nova_open(struct inode *inode, struct file *filp)
 {
 	struct nova_inode_info *si = NOVA_I(inode);
 	struct nova_inode_info_header *sih = &si->header;
-	if (DEBUG_FORE_FILE) nova_info("nova_open (inode %lu) is called\n", sih->ino);
+	if (DEBUG_FORE_FILE) nova_info("nova_open (inode %lu) is called\n", inode->i_ino);
     down_read(&sih->mig_sem);
 	return generic_file_open(inode, filp);
 }
@@ -842,7 +842,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	// nova_info("[Write] %lu blocks in [tier #%d] -> [seq %u tier #%d].\n", 
 	// 	num_blocks, old_write_tier, seq_count, write_tier);
 
-	nova_update_sih_tier(sb, sih, write_tier, false, true);
+	nova_update_sih_tier(sb, sih, write_tier, 3);
 
 	update.tail = sih->log_tail;
 	update.alter_tail = sih->alter_log_tail;
