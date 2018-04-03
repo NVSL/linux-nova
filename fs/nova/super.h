@@ -187,7 +187,6 @@ struct nova_sb_info {
 
 	/* NOVA-tiering */
 	struct bdev_info *bdev_list;
-	int bdev_count;
 	
 	struct tiering_stat *stat;
 

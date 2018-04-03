@@ -330,6 +330,8 @@ static int nova_parse_tiering_options(struct nova_sb_info *sbi, char *options)
 	if (!options)
 		return 0;
 
+	vpmem_reset();
+	
 	while ((p = strsep(&options, ",")) != NULL) {
 		int token;
 
@@ -359,8 +361,6 @@ static int nova_parse_tiering_options(struct nova_sb_info *sbi, char *options)
 			size = 0;		
 		}
 	}
-
-	vpmem_reset();
 
 	kfree(bdev_path);
 	return 0;
@@ -816,7 +816,7 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 	// nova_dbg("%s: dev pmem, phys_addr 0x%llx, virt_addr %p, size %ld\n",
     //             __func__, sbi->phys_addr, sbi->virt_addr, sbi->initsize);
 
-	vpmem_setup(sbi, 0);
+	vpmem_get(sbi, 0);
 	nova_dbg("%s: dev vpmem, phys_addr 0x%llx, virt_addr %p, size %ld\n",
 		__func__, sbi->phys_addr, sbi->virt_addr, sbi->initsize);
 
@@ -1167,7 +1167,6 @@ static void nova_put_super(struct super_block *sb)
 	nova_print_curr_epoch_id(sb);
 
 	stop_bm_thread(sbi);
-	vpmem_cleanup();
 	
 	/* It's unmount time, so unmap the nova memory */
 //	nova_print_free_lists(sb);
@@ -1208,6 +1207,8 @@ static void nova_put_super(struct super_block *sb)
 	kfree(sbi->nova_sb);
 	kfree(sbi);
 	sb->s_fs_info = NULL;
+
+	vpmem_put();
 }
 
 inline void nova_free_range_node(struct nova_range_node *node)
@@ -1484,7 +1485,7 @@ static int __init init_nova_fs(void)
 	return 0;
 
 out5:
-	vpmem_cleanup();
+	vpmem_put();
 out4:
 	nova_destroy_bio();
 out3:

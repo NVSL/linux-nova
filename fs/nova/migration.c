@@ -137,19 +137,19 @@ int print_file_write_entries(struct super_block *sb, struct nova_inode_info_head
 }
 
 /*
- * put_dram_buffer(): Release the spin lock of the buffer
- *      The buffer is still valid after put()
  * clear_dram_buffer(): Clear the metadata (and data) of the buffer
+ *      Used for file data deletion
  *      The buffer is invalid after clear()
- * Must call put() before clear()
- * There is NO DIRTY BUFFER in NOVA, since COW is applied to every write
+ * put_dram_buffer(): Flush the page to block device
+ *      Used for fsync
+ *      The buffer is still valid after put()
  */ 
 int clear_dram_buffer_range(struct nova_sb_info *sbi, unsigned long blockoff, unsigned long length) {
-    return vpmem_flush_pages(blockoff_to_virt(blockoff), length);
+    return vpmem_invalidate_pages(blockoff_to_virt(blockoff), length);
 }
 
 int put_dram_buffer_range(struct nova_sb_info *sbi, unsigned long blockoff, unsigned long length) {
-    return vpmem_range_rwsem_set(blockoff_to_virt(blockoff), length, RWSEM_UP);
+    return vpmem_flush_pages(blockoff_to_virt(blockoff), length);
 }
 
 bool is_dram_buffer_addr(struct nova_sb_info *sbi, void *addr) {
@@ -296,8 +296,8 @@ int is_entry_busy(struct nova_sb_info *sbi, struct nova_file_write_entry *entry)
     if (entry->updating == 1) return 1; 
     if (entry->updating == 3) return 3; 
     if (!is_tier_bdev(get_entry_tier(entry))) return 0;
-    if (vpmem_is_range_rwsem_locked(blockoff_to_virt(entry->block >> PAGE_SHIFT), 
-        le32_to_cpu(entry->num_pages))) return 2;
+    // if (vpmem_is_range_rwsem_locked(blockoff_to_virt(entry->block >> PAGE_SHIFT), 
+    //     le32_to_cpu(entry->num_pages))) return 2;
     return 0;
 }
 

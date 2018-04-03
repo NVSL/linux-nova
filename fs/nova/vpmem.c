@@ -3,10 +3,10 @@
 #include <linux/module.h>
 #include <linux/fs.h>
 #include <asm/uaccess.h>	/* for put_user */
-#include <asm/traps.h>	/* for put_user */
+#include <asm/traps.h>	    /* for put_user */
 #include <linux/vmalloc.h>
-#include <linux/slab.h> /* kmalloc */
-#include <asm/current.h> /* current */
+#include <linux/slab.h>     /* kmalloc */
+#include <asm/current.h>    /* current */
 #include <linux/rmap.h>
 #include <asm/ptrace.h>
 #include <asm/pgtable_64.h>
@@ -17,7 +17,13 @@
 #include <../mm/mm_internal.h>
 #include <linux/mutex.h>
 #include <linux/kthread.h>
+#include <linux/rbtree.h>
+#include <net/sock.h>
+#include <linux/netlink.h>
+#include <linux/skbuff.h>
+
 #include "bdev.h"
+#include "nova.h"
 
 #ifdef QT_WA
 #define KERN_INFO
@@ -27,29 +33,56 @@
 #define VPMEM_START       (VMALLOC_START + _AC(16UL << 40, UL))
 #define VPMEM_END         (VPMEM_START + _AC((VPMEM_SIZE_TB << 40) - 1, UL))
 
-#define MAX_PAGES           1280000
+#define MAX_PAGES           32768  // 128MB  32768*4
 #define SPM_META_SIZE_MB    _AC(1, UL)
 #define SPM_META_SIZE       _AC(SPM_META_SIZE_MB << 20, UL)
 #define SPM_PGCACHE_SIZE_MB _AC(50, UL)
 #define SPM_PGCACHE_SIZE    _AC(SPM_PGCACHE_SIZE_MB << 20, UL)
-#define USE_PMEM_CACHE      0
 
-struct nova_sb_info *vsbi;
+#define TRUE                1
+#define FALSE               0
+#define RB_TREE_PAGECACHE   1
+#define RING_BUF_PAGECACHE  2
+
+#define PAGECACHE_DSTRUCT   RB_TREE_PAGECACHE
+// #define USE_PMEM_CACHE   
+#define ENABLE_WRITEBACK 
+#define ENABLE_WRITE        
+// #define ENABLE_NETLINK   
+#define USE_LOCK           
+#define PAGECACHE_PREALLOC
+
+#ifdef ENABLE_NETLINK
+#   define nl_send(...)  vpmem_nl_send_msg(__VA_ARGS__)
+#else
+#   define nl_send(...) do { } while(0)
+#endif
+
+
+#define check_pointer(s, p) \
+    if((u64)p < TASK_SIZE_MAX && p != 0) { \
+        printk("ERROR: in %s  " #p " = %p\n", s, p); \
+    }
 
 unsigned long vpmem_start=0;
 unsigned long vpmem_end=0;
 unsigned long map_page[BDEV_COUNT_MAX]={0};
 bool map_valid[BDEV_COUNT_MAX]={0};
 
-static unsigned long faults=0;
-static unsigned long bdev_read=0;
-static unsigned long bdev_write=0;
-
-struct pmem_t {
-    void *virt_addr;
-	phys_addr_t	phys_addr;
-    unsigned long size;
-} pmem;
+unsigned long faults=0;
+unsigned long bdev_read=0;
+unsigned long bdev_write=0;
+unsigned long pte_not_present=0;
+unsigned long pte_not_found=0;
+unsigned long pgcache_full=0;
+unsigned long lru_refers=0;
+unsigned long evicts=0;
+unsigned long dif_mm=0;
+unsigned long dif_mm2=0;
+unsigned long dif_mm3=0;
+unsigned long dif_mm4=0;
+unsigned long already_cached=0;
+unsigned long leaked=0;
 
 enum x86_pf_error_code {
     PF_PROT  = 1 << 0,
@@ -60,7 +93,289 @@ enum x86_pf_error_code {
     PF_PK    = 1 << 5,
 };
 
-static __ref void *spp_getpage(void)
+struct pmem_t {
+    void *virt_addr;
+    phys_addr_t	phys_addr;
+    unsigned long size;
+} pmem;
+
+struct nova_sb_info *vsbi;
+
+#define NETLINK_USER 31
+
+#ifdef ENABLE_NETLINK
+struct sock *nl_sk = NULL;
+int pid=0;
+
+void vpmem_nl_recv_msg(struct sk_buff *skb) {
+    struct nlmsghdr *nlh = (struct nlmsghdr *)skb->data;
+    printk(KERN_INFO "Netlink received msg payload: '%s'\n", (char *)nlmsg_data(nlh));
+    pid = nlh->nlmsg_pid; /*pid of sending process */
+}
+
+void vpmem_nl_send_msg(const char *fmt, ...) {
+    va_list args;
+    char msg[512];
+    struct nlmsghdr *nlh;
+    int msg_size;
+    struct sk_buff *skb_out;
+
+    if(pid==0) return;
+
+    va_start(args, fmt);
+    vsprintf(msg, fmt, args);
+    va_end(args);
+
+    msg_size = strlen(msg);
+    skb_out = nlmsg_new(msg_size, 0);
+    nlh = nlmsg_put(skb_out, 0, 0, NLMSG_DONE, msg_size, 0);
+    NETLINK_CB(skb_out).dst_group = 0;
+    strncpy(nlmsg_data(nlh), msg, msg_size);
+
+    if (nlmsg_unicast(nl_sk, skb_out, pid) < 0) {
+        // pid = 0;
+        // printk(KERN_INFO "Error while sending bak to user\n");
+    }
+}
+
+int vpmem_nl_init(void) {
+    //This is for 3.6 kernels and above.
+    struct netlink_kernel_cfg cfg = {
+        .input = vpmem_nl_recv_msg,
+    };
+
+    nl_sk = netlink_kernel_create(&init_net, NETLINK_USER, &cfg);
+    if (!nl_sk)
+    {
+        printk(KERN_ALERT "Error creating socket.\n");
+        return -10;
+    }
+
+    return 0;
+}
+
+void vmpem_nl_cleanup(void) {
+    printk(KERN_INFO "exiting hello module\n");
+    netlink_kernel_release(nl_sk);
+}
+#endif
+
+/*********** Page Cache ***********/
+struct pgcache_node {
+#if PAGECACHE_DSTRUCT == RB_TREE_PAGECACHE
+    struct rb_node rb_node;
+    struct pgcache_node *lru_prev, *lru_next; // lru list
+    struct pgcache_node *evict_next;    // eviction list
+    struct pgcache_node *wb_next;    // write-back list
+    bool valid;
+    bool persistent;
+    bool pinned;
+    struct mutex lock;
+#endif
+    struct mm_struct *mm;
+    unsigned long address;
+    // unsigned long pfn;
+    struct page *page;
+};
+
+pte_t *pte_lookup(pgd_t *pgd, unsigned long address);
+inline bool writeback(void);
+inline void pop_from_evict_list(void);
+inline void push_to_evict_list(struct pgcache_node *pg);
+inline void push_to_wb_list(struct pgcache_node *pg);
+inline void push_victim_to_wb_list(unsigned int i);
+bool vpmem_load_block(unsigned long address, struct page *p);
+
+static struct rb_root pgcache = RB_ROOT;
+static struct pgcache_node *lru_head=0, *lru_tail=0;
+static struct pgcache_node *wb_head=0, *wb_tail=0;
+static struct pgcache_node *evict_head=0, *evict_tail=0;
+static unsigned int pgcache_size=0;
+static DEFINE_MUTEX(lru_lock);
+static DEFINE_MUTEX(wb_lock);
+static DEFINE_MUTEX(evict_lock);
+static DEFINE_MUTEX(pgcache_lock);
+static DEFINE_MUTEX(bdev_lock);
+
+// #ifdef PAGECACHE_PREALLOC
+// struct free_nodes {
+//     struct pgcache_node node;
+//     struct list_head list;
+// };
+// #endif
+
+#ifdef USE_LOCK
+#   define LOCK(x) mutex_lock(&x)
+#   define UNLOCK(x) mutex_unlock(&x)
+#else
+#   define LOCK(x) do {} while (0)
+#   define UNLOCK(x) do {} while (0)
+#endif
+
+#define lru_victim ((lru_head)?lru_head->address:0)
+
+struct pgcache_node *__pgcache_lookup(unsigned long address)
+{
+    struct rb_node *n = pgcache.rb_node;
+    struct pgcache_node *ans;
+
+    while (n)
+    {
+        ans = rb_entry(n, struct pgcache_node, rb_node);
+
+        if (address < ans->address)
+            n = n->rb_left;
+        else if (address > ans->address)
+            n = n->rb_right;
+        else
+            return ans;
+    }
+    return NULL;
+}
+
+struct pgcache_node *pgcache_lookup(unsigned long address)
+{
+    struct pgcache_node *r;
+    LOCK(pgcache_lock);
+    r = __pgcache_lookup(address);
+    UNLOCK(pgcache_lock);
+    return r;
+}
+
+void pgcache_lru_refer(struct pgcache_node *target)
+{
+    lru_refers++;
+    LOCK(lru_lock);
+    if(target == lru_tail) {
+        UNLOCK(lru_lock);
+        return;
+    }
+    if(target == lru_head) lru_head = target->lru_next;
+    if(target->lru_prev) target->lru_prev->lru_next = target->lru_next;
+    if(target->lru_next) target->lru_next->lru_prev = target->lru_prev;
+    target->lru_prev = lru_tail;
+    if(lru_tail) lru_tail->lru_next = target;
+    if(!lru_head) lru_head = target;
+    lru_tail = target;
+    UNLOCK(lru_lock);
+}
+
+struct pgcache_node *__pgcache_insert(unsigned long address, struct mm_struct *mm, bool *new)
+{
+    struct pgcache_node *p, *newp;
+    struct rb_node **link = &pgcache.rb_node, *parent=NULL;
+
+    if(new) *new=false;
+
+    /* Go to the bottom of the tree */
+    while (*link)
+    {
+        parent = *link;
+        p = rb_entry(parent, struct pgcache_node, rb_node);
+
+        if (p->address > address)
+            link = &(*link)->rb_left;
+        else if(p->address < address)
+            link = &(*link)->rb_right;
+        else {
+            LOCK(p->lock);
+            already_cached++;
+            pgcache_lru_refer(p);
+            p->mm = mm;
+            p->valid = true;
+            p->persistent = true;
+            UNLOCK(p->lock);
+            return p;
+        }
+    }
+
+    newp = (struct pgcache_node *)kmalloc(sizeof(struct pgcache_node), GFP_KERNEL | GFP_ATOMIC);
+    newp->page = alloc_page(GFP_KERNEL | GFP_ATOMIC);
+    if(!newp->page) {
+        printk("vpmem: NO PAGE LEFT!\n");
+    }
+    // newp->pfn = page_to_pfn(newp->page);
+    newp->address = address;
+    newp->mm = mm;
+    newp->evict_next = 0;
+    newp->wb_next = 0;
+    newp->valid = true;
+    newp->persistent = true;
+    newp->pinned = false;
+    newp->lru_next = 0;
+    lock_page(newp->page);
+    mutex_init(&newp->lock);
+    LOCK(lru_lock);
+    newp->lru_prev = lru_tail;
+    if(lru_tail) lru_tail->lru_next = newp;
+    if(!lru_head) lru_head = newp;
+    lru_tail = newp;
+    UNLOCK(lru_lock);
+    
+    if(new) *new=true;
+    pgcache_size++;
+    /* Put the new node there */
+    rb_link_node(&newp->rb_node, parent, link);
+    rb_insert_color(&newp->rb_node, &pgcache);
+
+    return newp;
+}
+
+struct pgcache_node *pgcache_insert(unsigned long address, struct mm_struct *mm, bool *new)
+{
+    struct pgcache_node *r;
+    LOCK(pgcache_lock);
+    r = __pgcache_insert(address, mm, new);
+    UNLOCK(pgcache_lock);
+    return r;
+}
+
+void __pgcache_erase(struct pgcache_node *victim)
+{
+    rb_erase(&victim->rb_node, &pgcache);
+    pgcache_size--;
+}
+
+void pgcache_remove(struct pgcache_node *victim)
+{
+    if(victim) {
+        LOCK(lru_lock);
+        if(victim == lru_head) lru_head = victim->lru_next;
+        if(victim == lru_tail) lru_tail = victim->lru_prev;
+        if(victim->lru_prev) victim->lru_prev->lru_next = victim->lru_next;
+        if(victim->lru_next) victim->lru_next->lru_prev = victim->lru_prev;
+        UNLOCK(lru_lock);
+        LOCK(pgcache_lock);
+        __pgcache_erase(victim);
+        UNLOCK(pgcache_lock);
+    }
+}
+
+void pgcache_flush_all(void)
+{
+#ifdef ENABLE_WRITEBACK
+    pop_from_evict_list();
+    push_victim_to_wb_list(pgcache_size);
+    LOCK(pgcache_lock);
+    while(writeback()) ;
+    UNLOCK(pgcache_lock);
+    pop_from_evict_list();
+#endif
+}
+
+void *vpmem_lru_refer(unsigned long address)
+{
+    if(TIER_BDEV_HIGH > 0) {
+        struct pgcache_node *target;
+        LOCK(pgcache_lock);
+        target = __pgcache_lookup(address & PAGE_MASK);
+        if(target) pgcache_lru_refer(target);
+        UNLOCK(pgcache_lock);
+    }
+    return (void*) address;
+}
+
+inline void *spp_getpage(void)
 {
     void *ptr;
 
@@ -75,54 +390,53 @@ static __ref void *spp_getpage(void)
     return ptr;
 }
 
-static p4d_t *fill_p4d(pgd_t *pgd, unsigned long vaddr)
+inline p4d_t *fill_p4d(struct mm_struct *mm, pgd_t *pgd, unsigned long address)
 {
     if (pgd_none(*pgd)) {
         p4d_t *p4d = (p4d_t *)spp_getpage();
-        pgd_populate(&init_mm, pgd, p4d);
+        pgd_populate(mm, pgd, p4d);
         if (p4d != p4d_offset(pgd, 0))
             printk(KERN_ERR "PAGETABLE BUG #00! %p <-> %p\n",
                    p4d, p4d_offset(pgd, 0));
     }
-    return p4d_offset(pgd, vaddr);
+    return p4d_offset(pgd, address);
 }
 
-static pud_t *fill_pud(p4d_t *p4d, unsigned long vaddr)
+inline pud_t *fill_pud(struct mm_struct *mm, p4d_t *p4d, unsigned long address)
 {
     if (p4d_none(*p4d)) {
         pud_t *pud = (pud_t *)spp_getpage();
-        p4d_populate(&init_mm, p4d, pud);
+        p4d_populate(mm, p4d, pud);
         if (pud != pud_offset(p4d, 0))
             printk(KERN_ERR "PAGETABLE BUG #01! %p <-> %p\n",
                    pud, pud_offset(p4d, 0));
     }
-    return pud_offset(p4d, vaddr);
+    return pud_offset(p4d, address);
 }
 
-static pmd_t *fill_pmd(pud_t *pud, unsigned long vaddr)
+inline pmd_t *fill_pmd(struct mm_struct *mm, pud_t *pud, unsigned long address)
 {
     if (pud_none(*pud)) {
         pmd_t *pmd = (pmd_t *) spp_getpage();
-        pud_populate(&init_mm, pud, pmd);
+        pud_populate(mm, pud, pmd);
         if (pmd != pmd_offset(pud, 0))
             printk(KERN_ERR "PAGETABLE BUG #02! %p <-> %p\n",
                    pmd, pmd_offset(pud, 0));
     }
-    return pmd_offset(pud, vaddr);
+    return pmd_offset(pud, address);
 }
 
-static pte_t *fill_pte(pmd_t *pmd, unsigned long vaddr)
+inline pte_t *fill_pte(struct mm_struct *mm, pmd_t *pmd, unsigned long address)
 {
     if (pmd_none(*pmd)) {
         pte_t *pte = (pte_t *) spp_getpage();
-        pmd_populate_kernel(&init_mm, pmd, pte);
+        pmd_populate_kernel(mm, pmd, pte);
         if (pte != pte_offset_kernel(pmd, 0))
             printk(KERN_ERR "PAGETABLE BUG #03!\n");
     }
-    return pte_offset_kernel(pmd, vaddr);
+    return pte_offset_kernel(pmd, address);
 }
 
-/*
 inline int get_bdev(unsigned long pgidx) {
     int i;
     for(i=0; i<TIER_BDEV_HIGH; i++) {
@@ -131,7 +445,350 @@ inline int get_bdev(unsigned long pgidx) {
     }
     return -EINVAL;
 }
-*/
+
+inline unsigned long virt_to_phys_block(unsigned long address) {
+    return (address-vpmem_start) >> PAGE_SHIFT;
+}
+
+pte_t *pte_lookup(pgd_t *, unsigned long);
+
+void flush_tlb_all(void)
+{
+    __flush_tlb_all();
+}
+
+/******************* TLB Flusher *******************/
+struct task_struct *wb_thread=0;
+
+inline bool writeback(void)
+{
+    struct page *p=0;
+    struct pgcache_node *pg;
+    unsigned long address=0;
+    bool ret=false;
+    LOCK(wb_lock);
+    pg=wb_head;
+    if(pg) {
+        LOCK(pg->lock);
+        wb_head=pg->wb_next;
+        pg->wb_next=NULL;
+        if(!pg->valid && pg->persistent) {
+            p = pg->page; // pfn_to_page(pg->pfn);
+            address = pg->address;
+        }
+        ret = true;
+        UNLOCK(pg->lock);
+    }
+    UNLOCK(wb_lock);
+
+    if(p) {
+        // if(PageDirty(p)) {
+            unsigned long block_offset = virt_to_phys_block(address);
+            int bdev_idx = get_bdev(block_offset), i;
+            for(i=bdev_idx-1; i>-1; i--) {
+                block_offset -= vsbi->bdev_list[i].capacity_page;
+            }
+
+            nl_send("wb %20lu %16lu %2d", address, block_offset, bdev_idx);
+            LOCK(bdev_lock);
+            if((i=nova_bdev_write_block(vsbi, vsbi->bdev_list[bdev_idx].bdev_raw, block_offset, 1, p, BIO_SYNC))) {
+                printk("vpmem:\033[1;32m could not write to bdev (%d) %lu\033[0m\n", i, ++dif_mm2);
+            } else {
+                bdev_write++;
+            }
+            UNLOCK(bdev_lock);
+        // }
+    } 
+    // else {
+    //     printk("vpmem:\033[1;31m No access to the physical page (%lu).\033[0m\n", ++dif_mm);
+    // }
+
+    if(pg) {
+        push_to_evict_list(pg);
+    }
+    return ret;
+}
+
+int wb_thread_worker(void *arg)
+{
+    schedule();
+    printk(KERN_INFO "vpmem: Start Write-Back thread.\n");
+    while(1) {
+        if(kthread_should_stop()) {
+            break;
+        }
+        schedule();
+        writeback();
+    }
+
+    set_current_state(TASK_INTERRUPTIBLE);
+    while (!kthread_should_stop())
+    {
+       schedule();
+       set_current_state(TASK_INTERRUPTIBLE);
+    }
+    set_current_state(TASK_RUNNING);
+
+    return 0;
+}
+
+void wb_thread_init(void) {
+#ifdef ENABLE_WRITEBACK 
+    wb_thread = kthread_run(wb_thread_worker, NULL, "Write-Back thread");
+#endif
+}
+
+void wb_thread_cleanup(void) {
+#ifdef ENABLE_WRITEBACK
+    if(wb_thread) {
+        int r=1;
+        if(wb_thread) r = kthread_stop(wb_thread);
+        if(!r) {
+            wb_thread=0;
+            printk(KERN_INFO "vpmem: Stop Write-Back thread.\n");
+        }
+    }
+#endif
+}
+
+pte_t newpage(unsigned long address, struct mm_struct *mm, struct page **pout) {
+    struct pgcache_node *p = 0;
+    pte_t pte;
+    bool new=false;
+
+    p = pgcache_insert(address, mm, &new);
+    pte = mk_pte(p->page, PAGE_KERNEL);
+    if(new) {
+        *pout = p->page;
+    } else {
+        *pout = 0;
+    }
+
+    return pte;
+}
+
+pte_t *pte_lookup(pgd_t *pgd, unsigned long address)
+{
+    p4d_t *p4d;
+    pud_t *pud;
+    pmd_t *pmd;
+
+    if(pgd==0) {
+        printk("vpmem:\033[1;32m pgd is null address = %p \033[0m\n", (void*)address);
+        return NULL;
+    }
+
+    if (pgd_none(*pgd)) {
+        printk("vpmem:\033[1;34m pgd is none address = %p \033[0m\n", (void*)address);
+        return NULL;
+    }
+
+    p4d = p4d_offset(pgd, address);
+    if (p4d_none(*p4d))
+        return NULL;
+
+    if (p4d_large(*p4d) || !p4d_present(*p4d))
+        return (pte_t *)p4d;
+
+    pud = pud_offset(p4d, address);
+    if (pud_none(*pud))
+        return NULL;
+
+    if (pud_large(*pud) || !pud_present(*pud))
+        return (pte_t *)pud;
+
+    pmd = pmd_offset(pud, address);
+    if (pmd_none(*pmd))
+        return NULL;
+
+    if (pmd_large(*pmd) || !pmd_present(*pmd))
+        return (pte_t *)pmd;
+
+    return pte_offset_kernel(pmd, address);
+}
+
+
+// pte_t create_page(unsigned long address, unsigned long error_code, struct page **p, struct mm_struct *mm)
+// {
+//     pte_t pte;
+
+//     *p = newpage(address, mm);
+//     pte = mk_pte(*p, PAGE_KERNEL);
+//     if(error_code & PF_WRITE) {
+//         SetPageDirty(*p);
+//     }
+//     return pte;
+// }
+
+int __pud_alloc(struct mm_struct *mm, p4d_t *p4d, unsigned long address)
+{
+	pud_t *new = pud_alloc_one(mm, address);
+	if (!new)
+		return -ENOMEM;
+
+	smp_wmb(); /* See comment in __pte_alloc */
+
+	spin_lock(&mm->page_table_lock);
+	if (p4d_present(*p4d))		/* Another has populated it */
+		pud_free(mm, new);
+	else
+		p4d_populate(mm, p4d, new);
+	spin_unlock(&mm->page_table_lock);
+	return 0;
+}
+
+int __pmd_alloc(struct mm_struct *mm, pud_t *pud, unsigned long address)
+{
+	spinlock_t *ptl;
+	pmd_t *new = pmd_alloc_one(mm, address);
+	if (!new)
+		return -ENOMEM;
+
+	smp_wmb(); /* See comment in __pte_alloc */
+
+	ptl = pud_lock(mm, pud);
+	if (!pud_present(*pud)) {
+		mm_inc_nr_pmds(mm);
+		pud_populate(mm, pud, new);
+	} else	/* Another has populated it */
+		pmd_free(mm, new);
+	spin_unlock(ptl);
+	return 0;
+}
+
+bool insert_tlb(pte_t ptein, unsigned long address) {
+    pgd_t *pgd;
+    p4d_t *p4d;
+    pud_t *pud;
+    pmd_t *pmd;
+    pte_t *pte;
+    struct mm_struct *mm = (current->mm)?current->mm:&init_mm;
+	// spinlock_t *ptl;
+
+    // if(unlikely(!pte)) {
+    //     printk("ERROR: NO PTE IN mm=%p address=%p\n", current->mm, (void*)address);
+    //     return false;
+    // }
+
+    spin_lock(&mm->page_table_lock);
+    // pgd = __va(read_cr3_pa()) + pgd_index(address); // pgd_offset(current->mm, address);
+    pgd = pgd_offset(mm, address);
+    p4d = fill_p4d(mm, pgd, address); // p4d_alloc(mm, pgd, address); 
+    pud = fill_pud(mm, p4d, address); // pud_alloc(mm, p4d, address); 
+    pmd = fill_pmd(mm, pud, address); // pmd_alloc(mm, pud, address); 
+    pte = fill_pte(mm, pmd, address);
+	// smp_wmb();
+
+	// ptl = pmd_lock(mm, pmd);
+	// if (likely(pmd_none(*pmd))) {	/* Has another populated it ? */
+	// 	atomic_long_inc(&mm->nr_ptes);
+	// 	pmd_populate(mm, pmd, pte);
+	// 	pte = NULL;
+	// }
+	// spin_unlock(ptl);
+	// if (pte)
+	// 	pte_free(mm, pte);
+
+    *pte = pte_mkclean(*pte);
+    set_pte(pte, ptein);
+    spin_unlock(&mm->page_table_lock);
+
+    __flush_tlb_one(address);
+    return true;
+}
+
+int vpmem_cache_pages(unsigned long address, unsigned long count)
+{
+    if(likely(count != 0)) {
+        address &= PAGE_MASK;
+        while(count-- > 0) {
+            struct page *p=0;
+            if(insert_tlb(newpage(address, (current->mm)?current->mm:&init_mm, &p), address)) {
+                if(p) {
+                    vpmem_load_block(address, p);
+                }
+            } else {
+                return 1;
+            }
+            address += PAGE_SIZE;
+        }
+    }
+    return 0;
+}
+
+int vpmem_flush_pages(unsigned long address, unsigned long count)
+{
+    struct pgcache_node *pg;
+    if(likely(count != 0)) {
+        address &= PAGE_MASK;
+        while(count-- > 0) {
+            pg = pgcache_lookup(address);
+            if(pg) {
+                push_to_wb_list(pg);
+            }
+            address += PAGE_SIZE;
+        }
+    }
+    while(writeback()) ;
+    pop_from_evict_list();
+    return 0;
+}
+
+int vpmem_invalidate_pages(unsigned long address, unsigned long count)
+{
+    struct pgcache_node *pg;
+    if (likely(count != 0))
+    {
+        address &= PAGE_MASK;
+        while (count-- > 0)
+        {
+            pg = pgcache_lookup(address);
+            if (pg)
+            {
+                push_to_evict_list(pg);
+                // LOCK(pg->lock);
+                // pg->persistent = false;
+                // push_to_wb_list(pg);
+                // UNLOCK(pg->lock);
+            }
+            address += PAGE_SIZE;
+        }
+    }
+    // while(writeback()) ;
+    pop_from_evict_list();
+    return 0;
+}
+
+unsigned long vpmem_cached(unsigned long address, unsigned long count)
+{
+    unsigned long cnt=0;
+    struct pgcache_node *pg;
+    if(likely(count != 0)) {
+        address &= PAGE_MASK;
+        while(count-- > 0) {
+            pg = pgcache_lookup(address);
+            if(pg) {
+                cnt++;
+            }
+            address += PAGE_SIZE;
+        }
+    }
+    return cnt;
+}
+
+int vpmem_pin_pages(unsigned long address, unsigned long count)
+{
+    struct pgcache_node *pg=pgcache_lookup((address &= PAGE_MASK));
+    unsigned long last = address + (count << PAGE_SHIFT);
+    while(pg && (address < last)) {
+        LOCK(pg->lock);
+        pg->pinned = true;
+        UNLOCK(pg->lock);
+        address += PAGE_SIZE;
+        pg = pgcache_lookup(address);
+    }
+    return 0;
+}
 
 inline unsigned long virt_to_block(unsigned long vaddr) {
 	struct super_block *sb = vsbi->sb;
@@ -159,352 +816,154 @@ inline int get_entry_tier(struct nova_file_write_entry *entry) {
 	return get_tier(vsbi, entry->block >> PAGE_SHIFT);
 }
 
-typedef struct vpte_t vpte_t;
-struct vpte_t {
-    struct vpte_t *next;
-    struct vpte_t *prev;
-    struct page *page;
-    pte_t pte;
-
-    unsigned long vaddr;
-
-    unsigned long blockoff;
-    struct rw_semaphore rwsem;
-
-    // int bdev_index;
-    // unsigned long block_offset;
-    // unsigned long block;
+struct fpage {
+    struct page *p;
+    unsigned long address;
 };
+struct fpage pgs[8];
+int pgsh=0,pgst=0;
 
-pte_t *pte_lookup(unsigned long address);
-
-void flush_tlb_all(void)
+bool vpmem_load_block(unsigned long address, struct page *p)
 {
-    __flush_tlb_all();
-}
+    unsigned long block_offset=virt_to_phys_block(address);
+    int bdev_idx=get_bdev(block_offset), i;
 
-struct pagetable_t {
-    int size;
-    vpte_t* head;
-    vpte_t* tail;
-    unsigned long byte;
-};
-struct pagetable_t *pagetable;
-
-static void do_flush_page(void *vaddr)
-{
-    __flush_tlb_one((u64)vaddr);
-}
-
-void flush_page(vpte_t *p) {
-    int ret = 0;
-    if(p == NULL) {
-        return;
+    if(pgsh!=pgst) {
+        printk("vpmem: if(pgsh!=pgst) h=%d t=%d\n", pgsh, pgst);
     }
-    if(p->next) p->next->prev = NULL;
-    if(p == pagetable->tail)
-        pagetable->tail = NULL;
-    pagetable->head = p->next;
-    // TODO: What if kernel flushes the page?
-    pagetable->size--;
 
-    // unlock_page(p->page);
-    if(pte_dirty(p->pte)) { 
-        ret = nova_bdev_write_blockoff(vsbi, p->blockoff, 1, p->page, BIO_SYNC);
-        if(ret) {
-            printk("vpmem: error: could not write to bdev (%d)\n", ret);
-        } else {
-            bdev_write++;
-        }
+    for(i=bdev_idx-1; i>-1; i--) {
+        block_offset -= vsbi->bdev_list[i].capacity_page;
     }
-    pte_clear(&init_mm, p->vaddr, &p->pte);
-    // on_each_cpu(do_flush_page, (void*)p->vaddr, 1);
-    p->page = 0;
-
-}
-
-void invalidate_page(vpte_t *p) {
-    if(p == NULL) {
-        return;
-    }
-    if(p->next) p->next->prev = NULL;
-    if(p == pagetable->tail)
-        pagetable->tail = NULL;
-    pagetable->head = p->next;
-    // TODO: What if kernel flushes the page?
-    pagetable->size--;
-
-    // unlock_page(p->page);
-    
-    pte_clear(&init_mm, p->vaddr, &p->pte);
-    on_each_cpu(do_flush_page, (void*)p->vaddr, 1);
-    p->page = 0;
-
-}
-
-void vpmem_pagecache_init(void) {        
-    pagetable->head = NULL;
-    pagetable->tail = NULL;
-    pagetable->byte = sizeof(struct pagetable_t);
-    pagetable->size = 0;
-}
-
-void vpmem_pagecache_cleanup(void) {
-    unsigned long m=0;
-    vpte_t *curr, *p;
-    if(!pagetable) return;
-    curr = pagetable->head;
-    m = pagetable->size;
-    printk("vpmem: pagetable->size = %lu\n", m);
-    while(curr) {
-        p = curr;
-        curr = curr->next;
-        flush_page(p);
-    }
-}
-
-#if USE_PMEM_CACHE == 1
-static void *pmalloc(unsigned long size) {
-    void *ret=0;
-    if(unlikely(pagetable->byte + size > SPM_META_SIZE))
-        pagetable->byte = sizeof(struct pagetable_t);
-    ret = (void *)(pagetable->byte + (unsigned long) pagetable);
-    pagetable->byte += size;
-    return ret;
-}
-
-static unsigned long pgidx=0;
-static struct page *palloc_page(void) {
-    struct page *page;
-    unsigned long addr;
-    pgidx++;
-    addr = pmem.phys_addr+pmem.size-(pgidx<<PAGE_SHIFT);
-    page = pfn_to_page(addr >> PAGE_SHIFT);
-    if(pgidx == MAX_PAGES) pgidx=0;
-    return page;
-}
-#endif
-
-vpte_t *newpage(unsigned long vaddr) {
-    vpte_t *p = NULL;
-    
-    if(pagetable->size >= MAX_PAGES)
-        flush_page(pagetable->head);
-
-#if USE_PMEM_CACHE == 1
-    p = (vpte_t*)pmalloc(sizeof(vpte_t));
-#else
-    p = (vpte_t*)kmalloc(sizeof(vpte_t), GFP_KERNEL);
-#endif
-
-    p->next = p->prev=0;
-
-#if USE_PMEM_CACHE == 1
-    p->page = palloc_page();
-#else
-    p->page = alloc_page(GFP_KERNEL|__GFP_ZERO);
-#endif
-
-    // lock_page(p->page);
-    
-    if(pagetable->head==NULL) pagetable->head=p;
-    if(pagetable->tail) {
-        pagetable->tail->next=p;
-        p->prev=pagetable->tail;
-    }
-    pagetable->tail=p;
-    pagetable->size++;
-
-    p->blockoff = virt_to_blockoff(vaddr);
-    p->vaddr = vaddr;
-    init_rwsem(&p->rwsem);
-    return p;
-}
-
-pte_t *pte_lookup(unsigned long address)
-{
-        pte_t *pte;
-        unsigned int level;
-
-        pte = lookup_address(address, &level);
-        if (!pte) return NULL;
-
-        return pte;
-}
-
-struct vpte_t *create_page(unsigned long vaddr) {
-    int ret = 0;
-    vpte_t *p=0;
-    
-    p = newpage(vaddr);
-    
-    // nova_info("vaddr:%p,blockoff:%lu page:%p\n", (void *)vaddr, p->blockoff, p->page);
-
-    ret = nova_bdev_read_blockoff(vsbi, p->blockoff, 1, p->page, BIO_SYNC);
-
-    p->pte = pte_mkclean(mk_pte(p->page, PAGE_KERNEL));
-    if(ret) {
-        printk("vpmem: error: could not read from bdev (%d)\n", ret);
+    native_irq_enable();
+    LOCK(bdev_lock);
+    if((i=nova_bdev_read_block(vsbi, vsbi->bdev_list[bdev_idx].bdev_raw, block_offset, 1, p, BIO_SYNC))) {
+        UNLOCK(bdev_lock);
+        printk("vpmem:\033[1;33m could not read from bdev (%d) %lu\033[0m\n", i, ++dif_mm2);
+        return false;
     } else {
+        UNLOCK(bdev_lock);
         bdev_read++;
+        return true;
     }
-
-    return p;
 }
 
-static DEFINE_SPINLOCK(pgt_lock);
-void insert_tlb(struct vpte_t *page) {
-    unsigned long vaddr = page->vaddr;
-    unsigned long flags;
-    pgd_t *pgd;
-    p4d_t *p4d;
-    pud_t *pud;
-    pmd_t *pmd;
-    pte_t *pte;
-    
-	spin_lock_irqsave(&pgt_lock, flags);
-    pgd = (pgd_t *)__va(read_cr3_pa()) + pgd_index(vaddr);
-    p4d = fill_p4d(pgd, vaddr);
-    pud = fill_pud(p4d, vaddr);
-    pmd = fill_pmd(pud, vaddr);
-    pte = fill_pte(pmd, vaddr);
-    *pte = pte_mkclean(*pte);
-    set_pte(pte, page->pte);
-    __flush_tlb_one(vaddr);
-	spin_unlock_irqrestore(&pgt_lock, flags);
-}
-
-int vpmem_cache_pages(unsigned long vaddr, unsigned long count)
+inline void pop_from_evict_list(void)
 {
-    unsigned long i;
-    struct vpte_t *page = NULL;
-    for(i=0; i<count; i++) {
-        page = create_page(vaddr & PAGE_MASK);
-        insert_tlb(page);
+    struct pgcache_node *pg;
+    struct page *p;
+    LOCK(evict_lock);
+    while((pg = evict_head)) {
+
+        LOCK(pg->lock);
+        evict_head = pg->evict_next;
+        pg->evict_next = NULL;
+        if(pg->valid) {
+            UNLOCK(pg->lock);
+            continue;
+        }
+        pgcache_remove(pg);
+        nl_send("ev %20lu %16lu %2d", pg->address, 0, 0);
+
+        p = pg->page;// pfn_to_page(pg->pfn); 
+        if(p) unlock_page(p);
+        // if(current->mm != pg->mm) {
+        //     if(pg->mm) {
+        //         if(atomic_read(&pg->mm->mm_count)) {
+        //             pte_t *ptep;
+        //             ptep = pte_lookup(pgd_offset(pg->mm, pg->address), pg->address);
+        //             if(ptep) pte_clear(pg->mm, pg->address, ptep);
+        //         }
+        //     }
+        // }
+        evicts++;
+        __flush_tlb_one(pg->address);
+
+        kfree(pg);
+        UNLOCK(pg->lock);
+        pg=0;
     }
-    return 0;
+    UNLOCK(evict_lock);
 }
 
-int vpmem_flush_pages(unsigned long vaddr, unsigned long count)
+inline void push_to_evict_list(struct pgcache_node *pg)
 {
-    unsigned long m=0;
-    vpte_t *curr, *p;
-    unsigned long end = 0; 
-    if(!pagetable) return -EINVAL;
-    vaddr &= PAGE_MASK;
-    end = vaddr + (count << PAGE_SHIFT);
-    m = count;
-    curr = pagetable->head;
-    while(curr && m > 0) {
-        p = curr;
-        curr = curr->next;
-        if(p->vaddr >= vaddr && p->vaddr < end) {
-            flush_page(p);
-            m--;
+    LOCK(evict_lock);
+    if(!evict_head) {
+        evict_head = evict_tail = pg;
+    } else {
+        if(evict_tail) evict_tail->evict_next = pg;
+        evict_tail = pg;
+    }
+    UNLOCK(evict_lock);
+}
+
+inline void push_to_wb_list(struct pgcache_node *pg)
+{
+    pg->valid=false;
+    LOCK(wb_lock);
+    if(!wb_head) wb_head = wb_tail = pg;
+    else if(wb_tail) wb_tail->wb_next = pg;
+    wb_tail = pg;
+    UNLOCK(wb_lock);
+}
+
+inline void push_victim_to_wb_list(unsigned int i)
+{
+    struct pgcache_node *pg;
+    while(i-->0) {  
+        LOCK(lru_lock);
+        pg = lru_head;
+        if(pg) {
+            LOCK(pg->lock);
+            if(lru_head) lru_head = lru_head->lru_next;
+            if(lru_head) lru_head->lru_prev = 0;
+            if(pg->lru_prev) pg->lru_prev->lru_next = pg->lru_next;
+            if(pg->lru_next) pg->lru_next->lru_prev = pg->lru_prev;
+            if(lru_tail == pg) lru_tail=lru_head=0;
+            pg->lru_next = 0;
+            pg->lru_prev = 0;
+            UNLOCK(lru_lock);
+            if(!pg->valid) continue;
+            push_to_wb_list(pg);
+            UNLOCK(pg->lock);
+        } else {
+            UNLOCK(lru_lock);
+            break;
         }
     }
-    return 0;
 }
 
-int vpmem_invalidate_pages(unsigned long vaddr, unsigned long count)
+bool vpmem_do_page_fault(struct pt_regs *regs, unsigned long error_code, unsigned long address)
 {
-    unsigned long m=0;
-    vpte_t *curr, *p;
-    unsigned long end = 0; 
-    if(!pagetable) return -EINVAL;
-    vaddr &= PAGE_MASK;
-    end = vaddr + (count << PAGE_SHIFT);
-    m = count;
-    curr = pagetable->head;
-    while(curr && m > 0) {
-        p = curr;
-        curr = curr->next;
-        if(p->vaddr >= vaddr && p->vaddr < end) {
-            invalidate_page(p);
-            m--;
-        }
-    }
-    return 0;
-}
-
-int vpmem_range_rwsem_set(unsigned long vaddr, unsigned long count, bool down)
-{
-    unsigned long m=0;
-    vpte_t *curr, *p;
-    unsigned long end = 0; 
-    if(!pagetable) return -EINVAL;
-    vaddr &= PAGE_MASK;
-    end = vaddr + (count << PAGE_SHIFT);
-    m = count;
-    curr = pagetable->head;
-    while(curr && m > 0) {
-        p = curr;
-        curr = curr->next;
-        if(p->vaddr >= vaddr && p->vaddr < end) {
-            if (down) down_read(&p->rwsem);
-            else if(rwsem_is_locked(&p->rwsem)) up_read(&p->rwsem);
-            m--;
-        }
-    }
-    return 0;
-}
-
-bool vpmem_is_range_rwsem_locked(unsigned long vaddr, unsigned long count)
-{
-    unsigned long m=0;
-    vpte_t *curr, *p;
-    unsigned long end = 0; 
-    if(!pagetable) return -EINVAL;
-    vaddr &= PAGE_MASK;
-    end = vaddr + (count << PAGE_SHIFT);
-    m = count;
-    curr = pagetable->head;
-    while(curr && m > 0) {
-        p = curr;
-        curr = curr->next;
-        if(p->vaddr >= vaddr && p->vaddr < end) {
-            if(rwsem_is_locked(&p->rwsem)) return true;
-            m--;
-        }
-    }
-    return false;
-}
-
-unsigned long vpmem_cached(unsigned long block, unsigned long count)
-{
-    unsigned long m=0;
-    vpte_t *curr, *p;
-    if(!pagetable) return -EINVAL;
-    m = count;
-    curr = pagetable->head;
-    while(curr && m > 0) {
-        p = curr;
-        curr = curr->next;
-        if(p->vaddr >= block && p->vaddr < block+count) {
-            m--;
-        }
-    }
-    return count-m;
-}
-
-int vpmem_cache_pages_safe(unsigned long vaddr, unsigned long count) {
-    unsigned long num = vpmem_cached(virt_to_blockoff(vaddr), count);
-    if (num == 0) return vpmem_cache_pages(vaddr, count);
-    else {
-        vpmem_flush_pages(vaddr, count);
-        return vpmem_cache_pages(vaddr, count);
-    }
-}
-
-bool vpmem_do_page_fault(struct pt_regs *regs, unsigned long error_code, unsigned long vaddr)
-{
-    struct vpte_t *page = NULL;
-    if (vaddr >= TASK_SIZE_MAX) {
+    if (address >= TASK_SIZE_MAX) {
         /* Make sure we are in reserved area: */
-        if (vaddr >= vpmem_start && vaddr < vpmem_end) {
+        if (address >= VPMEM_START && address < vpmem_end) {
+            struct page *p=0;
             faults++;
-            page = create_page(vaddr & PAGE_MASK);
-            insert_tlb(page);
+            address &= PAGE_MASK;
+
+#ifdef ENABLE_WRITEBACK
+            // 1. Evicting pages from the page cache which are already written-back
+            pop_from_evict_list();
+#endif
+
+            // 2. Handling the page fault
+            if(insert_tlb(newpage(address, (current->mm)?current->mm:&init_mm, &p), address)) {
+                if(p) {
+                    vpmem_load_block(address, p);
+                }
+                goto check_cache;
+            }
+            return false;
+
+check_cache:
+#ifdef ENABLE_WRITEBACK
+            // 3. Checking if the page cache is full and push the lru_victim to the wb_list
+            if(pgcache_size >= MAX_PAGES) {
+                push_victim_to_wb_list(pgcache_size-MAX_PAGES+2);
+            }
+#endif
             return true;
         } else {
             return false;
@@ -513,77 +972,107 @@ bool vpmem_do_page_fault(struct pt_regs *regs, unsigned long error_code, unsigne
     return false;
 }
 
+static DEFINE_MUTEX(checkout_lock);
+bool vpmem_checkout(unsigned long address)
+{
+    LOCK(checkout_lock);
+    if(pgsh!=pgst) {
+        struct fpage *p=&pgs[(pgsh++)%8];
+        vpmem_load_block(p->address, p->p);
+    }
+    UNLOCK(checkout_lock);
+    return true;
+}
+
 int vpmem_init(void)
 {
+#ifdef ENABLE_NETLINK
+    vpmem_nl_init();
+#endif
     vpmem_reset();
+    wb_thread_init();
     return 0;
+}
 
-} 
-
-int vpmem_setup(struct nova_sb_info *sbi, unsigned long offset) 
+int vpmem_get(struct nova_sb_info *sbi, unsigned long offset)
 {
     int i;
     unsigned long size=0;
 
     vsbi = sbi;
-    
-    flush_tlb_all();
-    vpmem_start = (VPMEM_START + (offset << 30));
 
-    sbi->vpmem = (char *)vpmem_start;
-    
+    flush_tlb_all();
+    vpmem_start = VPMEM_START + (offset << 30);
+    // vpmem_operations.do_page_fault = vpmem_do_page_fault;
+    // vpmem_operations.do_checkout = vpmem_checkout;
     install_vpmem_fault(vpmem_do_page_fault);
 
     for(i=0; i<TIER_BDEV_HIGH; i++) {
+        // nova_get_bdev_info(bdev_paths[i], i);
         size += sbi->bdev_list[i].capacity_page;
         map_page[i] = size;
         map_valid[i] = true;
     }
-    
-    sbi->vpmem_num_blocks = size;
-    
-    // print_all_bdev(sbi);
 
-    printk(KERN_INFO "vpmem: vpmem starts at %016lx (%lu GB)\n", 
-        vpmem_start, size >> 18);
+    printk(KERN_INFO "vpmem: vpmem starts at %016lx (%lu GB)\n",
+        vpmem_start,
+        size >> 18);
         
-    vpmem_end = vpmem_start + (size << 12);
+    size <<= PAGE_SHIFT;
+    vpmem_end = vpmem_start + size;
 
     pmem.phys_addr = sbi->phys_addr;
     pmem.virt_addr = sbi->virt_addr;
     pmem.size = sbi->initsize;
 
-    if (size > 0) {
-        pagetable = kmalloc(sizeof(struct pagetable_t), GFP_KERNEL);
-        // sbi->virt_addr = vpmem_start;
-        // sbi->initsize = size;
-        // sbi->replica_reserved_inodes_addr = vpmem_start + size -
-        //      (sbi->tail_reserved_blocks << PAGE_SHIFT);
-        // sbi->replica_sb_addr = vpmem_start + size - PAGE_SIZE;
-        vpmem_pagecache_init();
-    }
+    // if (size > 0) {
+    //     sbi->virt_addr = (void*)vpmem_start;
+    //     sbi->initsize = size;
+    //     sbi->replica_reserved_inodes_addr = (void*)vpmem_start + size -
+    //          (sbi->tail_reserved_blocks << PAGE_SHIFT);
+    //     sbi->replica_sb_addr = (void*)vpmem_start + size - PAGE_SIZE;
+    // }
 
-    printk(KERN_INFO "vpmem: vpmem_setup finished (size = %lu MB)\n", size >> 8);
+#ifdef USE_PMEM_CACHE
+    flist_init();
+#endif
+
+    printk(KERN_INFO "vpmem: vpmem_get finished (size = %lu KB)\n", size >> 10);
 
     return 0;
 }
 
-void vpmem_cleanup(void)
+void vpmem_put(void)
 {
-    vpmem_pagecache_cleanup();
-
+    wb_thread_cleanup();
+    printk(KERN_INFO "vpmem: pgcache_size = %u\n", pgcache_size);
+    pgcache_flush_all();
+    // vpmem_operations.do_page_fault = 0;
+    // vpmem_operations.do_checkout = 0;
     install_vpmem_fault(0);
     flush_tlb_all();
-    printk(KERN_INFO "vpmem: faults = %ld reads = %ld writes = %ld\n", faults, bdev_read, bdev_write);
+    printk(KERN_INFO "vpmem: faults = %lu reads = %lu writes = %lu pte_not_present=%lu pte_not_found=%lu pgcache_full=%lu\n",
+                faults, bdev_read, bdev_write, pte_not_present, pte_not_found, pgcache_full);
+    printk(KERN_INFO "vpmem: lru_refers = %lu evicts = %lu dif_mm = %lu already_cached = %lu dif_mm2 = %lu leaked = %lu\n",
+                lru_refers, evicts, dif_mm, already_cached, dif_mm2, leaked);
+    printk(KERN_INFO "vpmem: dif_mm3 = %lu dif_mm4 = %lu\n",
+                dif_mm3, dif_mm4);
+#ifdef ENABLE_NETLINK
+    vmpem_nl_cleanup();
+#endif
+#ifdef USE_PMEM_CACHE
+    flist_cleanup();
+#endif
 }
 
 void vpmem_reset(void)
 {
     int i;
+    // nova_total_size = 0;
     vpmem_end = 0;
-    for(i=0; i<TIER_BDEV_HIGH; i++) {
+    for(i=0; i<BDEV_COUNT_MAX; i++) {
         map_valid[i] = false;
         map_page[i] = 0;
+        // bdev_paths[i] = NULL;
     }
 }
-
