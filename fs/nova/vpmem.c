@@ -698,6 +698,7 @@ int vpmem_invalidate_pages(unsigned long address, unsigned long count)
     if(likely(count != 0)) {
         address &= PAGE_MASK;
         while(count-- > 0) {
+            dif_mm4++;
             pg = pgcache_lookup(address);
             if(pg) {
                 LOCK(pg->lock);
@@ -964,9 +965,11 @@ int vpmem_get(struct nova_sb_info *sbi, unsigned long offset)
 
     flush_tlb_all();
     vpmem_start = VPMEM_START + (offset << 30);
-    vpmem_operations.do_page_fault = vpmem_do_page_fault;
-    vpmem_operations.do_checkout = vpmem_checkout;
-    // install_vpmem_fault(vpmem_do_page_fault);
+    // vpmem_operations.do_page_fault = vpmem_do_page_fault;
+    // vpmem_operations.do_checkout = vpmem_checkout;
+    install_vpmem_fault(vpmem_do_page_fault);
+
+    sbi->vpmem = (char *)vpmem_start;
 
     /// for(i=0; i<bdev_count; i++) {
     ///     nova_get_bdev_info(bdev_paths[i], i);
@@ -981,6 +984,8 @@ int vpmem_get(struct nova_sb_info *sbi, unsigned long offset)
     printk(KERN_INFO "vpmem: vpmem starts at %016lx (%lu GB)\n",
         vpmem_start,
         size >> 18);
+        
+    sbi->vpmem_num_blocks = size;
     size <<= PAGE_SHIFT;
     vpmem_end = vpmem_start + size;
 
@@ -1012,9 +1017,9 @@ void vpmem_put(void)
     printk(KERN_INFO "vpmem: wb_list_size = %u\n", wb_list_size);
     printk(KERN_INFO "vpmem: evict_list_size = %u\n", evict_list_size);
     pgcache_flush_all();
-    vpmem_operations.do_page_fault = 0;
-    vpmem_operations.do_checkout = 0;
-    // install_vpmem_fault(0);
+    // vpmem_operations.do_page_fault = 0;
+    // vpmem_operations.do_checkout = 0;
+    install_vpmem_fault(0);
     flush_tlb_all();
     printk(KERN_INFO "vpmem: faults = %lu reads = %lu writes = %lu pte_not_present=%lu pte_not_found=%lu pgcache_full=%lu\n",
                 faults, bdev_read, bdev_write, pte_not_present, pte_not_found, pgcache_full);
