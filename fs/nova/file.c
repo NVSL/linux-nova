@@ -817,6 +817,8 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 
 	epoch_id = nova_get_epoch_id(sb);
 
+	write_tier = TIER_BDEV_LOW;
+
 	if (MODE_FORE_ALLOC) {			
 		if (MODE_KEEP_STAT) sbi->stat->write += len;
 
