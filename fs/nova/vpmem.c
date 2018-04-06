@@ -3,10 +3,10 @@
 #include <linux/module.h>
 #include <linux/fs.h>
 #include <asm/uaccess.h>	/* for put_user */
-#include <asm/traps.h>	/* for put_user */
+#include <asm/traps.h>	    /* for put_user */
 #include <linux/vmalloc.h>
-#include <linux/slab.h> /* kmalloc */
-#include <asm/current.h> /* current */
+#include <linux/slab.h>     /* kmalloc */
+#include <asm/current.h>    /* current */
 #include <linux/rmap.h>
 #include <asm/ptrace.h>
 #include <asm/pgtable_64.h>
@@ -979,9 +979,10 @@ int vpmem_get(struct nova_sb_info *sbi, unsigned long offset)
 
     flush_tlb_all();
     vpmem_start = VPMEM_START + (offset << 30);
-    vpmem_operations.do_page_fault = vpmem_do_page_fault;
+    
+    // vpmem_operations.do_page_fault = vpmem_do_page_fault;
     // vpmem_operations.do_checkout = vpmem_checkout;
-    // install_vpmem_fault(vpmem_do_page_fault);
+    install_vpmem_fault(vpmem_do_page_fault);
 
     sbi->vpmem = (char *)vpmem_start;
 
@@ -1031,9 +1032,11 @@ void vpmem_put(void)
     printk(KERN_INFO "vpmem: wb_list_size = %u\n", wb_list_size);
     printk(KERN_INFO "vpmem: evict_list_size = %u\n", evict_list_size);
     pgcache_flush_all();
-    vpmem_operations.do_page_fault = 0;
+
+    // vpmem_operations.do_page_fault = 0;
     // vpmem_operations.do_checkout = 0;
-    // install_vpmem_fault(0);
+    install_vpmem_fault(0);
+
     flush_tlb_all();
     printk(KERN_INFO "vpmem: faults = %lu reads = %lu writes = %lu pte_not_present=%lu pte_not_found=%lu pgcache_full=%lu\n",
                 faults, bdev_read, bdev_write, pte_not_present, pte_not_found, pgcache_full);
