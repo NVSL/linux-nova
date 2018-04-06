@@ -35,11 +35,9 @@ static inline int nova_range_check(struct super_block *sb, void *p,
 
 	if ((p < sbi->virt_addr || p + len > sbi->virt_addr + sbi->initsize) &&
 	(p < sbi->vpmem || p + len > sbi->vpmem + (unsigned long)(sbi->vpmem_num_blocks << PAGE_SHIFT))) {
-		nova_err(sb, "access pmem out of range: pmem range %p - %p, vpmem range %p - %p, access range %p - %p\n",
+		nova_err(sb, "access pmem out of range: pmem range %p - %p, access range %p - %p\n",
 				sbi->virt_addr,
 				sbi->virt_addr + sbi->initsize,
-				sbi->vpmem,
-				sbi->vpmem + (unsigned long)(sbi->vpmem_num_blocks << PAGE_SHIFT),
 				p, p + len);
 		dump_stack();
 		return -EINVAL;

@@ -58,6 +58,8 @@
 #   define nl_send(...) do { } while(0)
 #endif
 
+// #define current_mm ((current->mm)?current->mm:&init_mm)
+#define current_mm (&init_mm)
 
 #define check_pointer(s, p) \
     if((u64)p < TASK_SIZE_MAX && p != 0) { \
@@ -531,7 +533,7 @@ int wb_thread_worker(void *arg)
         }
         schedule();
         if(pgcache_size >= MAX_PAGES) {
-            printk("vpmem: REACHED THE MAX SIZE. Evicting %u pages\n", pgcache_size-MAX_PAGES+32);
+            // printk("vpmem: REACHED THE MAX SIZE. Evicting %u pages\n", pgcache_size-MAX_PAGES+32);
             push_victim_to_wb_list(pgcache_size-MAX_PAGES+32);
         }
         while(writeback()) schedule();
@@ -630,7 +632,7 @@ bool insert_tlb(pte_t ptein, unsigned long address) {
     pud_t *pud;
     pmd_t *pmd;
     pte_t *pte;
-    struct mm_struct *mm = (current->mm)?current->mm:&init_mm;
+    struct mm_struct *mm = current_mm;
 
 	smp_mb();
 
@@ -659,7 +661,7 @@ int vpmem_cache_pages(unsigned long address, unsigned long count)
         address &= PAGE_MASK;
         while(count-- > 0) {
             struct page *p=0;
-            if(insert_tlb(newpage(address, (current->mm)?current->mm:&init_mm, &p), address)) {
+            if(insert_tlb(newpage(address, current_mm, &p), address)) {
                 if(p) {
                     vpmem_load_block(address, p);
                 }
@@ -807,6 +809,7 @@ bool vpmem_load_block(unsigned long address, struct page *p)
 
 inline void pop_from_evict_list(void)
 {
+    // pte_t *pte;
     struct pgcache_node *pg;
     struct page *p;
     LOCK(evict_lock);
@@ -824,6 +827,17 @@ inline void pop_from_evict_list(void)
 
         p = pg->page;// pfn_to_page(pg->pfn); 
         if(p) unlock_page(p);
+        {
+            // pte_t *ptep = pte_lookup(pgd_offset(current_mm, pg->address), pg->address);
+            // if(ptep) {
+            //     pte_clear(current_mm, pg->address, ptep);
+            // }
+        }
+        // pte = pte_lookup(pgd_offset(current_mm, pg->address), pg->address);
+        // if(pte) {
+        //     pte_clear(current_mm, pg->address, pte);
+        // }
+
         // if(current->mm != pg->mm) {
         //     if(pg->mm) {
         //         if(atomic_read(&pg->mm->mm_count)) {
@@ -911,7 +925,7 @@ bool vpmem_do_page_fault(struct pt_regs *regs, unsigned long error_code, unsigne
 #endif
 
             // 2. Handling the page fault
-            if(insert_tlb(newpage(address, (current->mm)?current->mm:&init_mm, &p), address)) {
+            if(insert_tlb(newpage(address, current_mm, &p), address)) {
                 if(p) {
                     vpmem_load_block(address, p);
                 }
@@ -965,9 +979,9 @@ int vpmem_get(struct nova_sb_info *sbi, unsigned long offset)
 
     flush_tlb_all();
     vpmem_start = VPMEM_START + (offset << 30);
-    // vpmem_operations.do_page_fault = vpmem_do_page_fault;
+    vpmem_operations.do_page_fault = vpmem_do_page_fault;
     // vpmem_operations.do_checkout = vpmem_checkout;
-    install_vpmem_fault(vpmem_do_page_fault);
+    // install_vpmem_fault(vpmem_do_page_fault);
 
     sbi->vpmem = (char *)vpmem_start;
 
@@ -1017,9 +1031,9 @@ void vpmem_put(void)
     printk(KERN_INFO "vpmem: wb_list_size = %u\n", wb_list_size);
     printk(KERN_INFO "vpmem: evict_list_size = %u\n", evict_list_size);
     pgcache_flush_all();
-    // vpmem_operations.do_page_fault = 0;
+    vpmem_operations.do_page_fault = 0;
     // vpmem_operations.do_checkout = 0;
-    install_vpmem_fault(0);
+    // install_vpmem_fault(0);
     flush_tlb_all();
     printk(KERN_INFO "vpmem: faults = %lu reads = %lu writes = %lu pte_not_present=%lu pte_not_found=%lu pgcache_full=%lu\n",
                 faults, bdev_read, bdev_write, pte_not_present, pte_not_found, pgcache_full);
@@ -1048,4 +1062,3 @@ void vpmem_reset(void)
         // bdev_paths[i] = NULL;
     }
 }
-
