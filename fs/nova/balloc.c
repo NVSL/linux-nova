@@ -380,12 +380,11 @@ int nova_free_blocks(struct super_block *sb, unsigned long blocknr,
 	if (DEBUG_MIGRATION_FREE) nova_info("Free blocknr:%lu num:%d\n", blocknr, num);
 	// For bdev, the data blocks on bdev and vpmem are both "data to be freed"
 	dax_mem = nova_get_block(sb, (blocknr << PAGE_SHIFT));
-	if (is_dram_buffer_addr(sbi, dax_mem)) {
+	if (is_dram_buffer_addr(dax_mem)) {
 		blockoff = virt_to_blockoff((unsigned long)dax_mem);
 		num_blocks = nova_get_numblocks(btype) * num;
 
-		put_dram_buffer_range(sbi, blockoff, num_blocks);
-		clear_dram_buffer_range(sbi, blockoff, num_blocks);
+		clear_dram_buffer_range(blockoff, num_blocks);
 
 		ret = nova_free_blocks_tier(sbi, blocknr, num_blocks);
 		// ret = nova_free_blocks_tier(sbi, blockoff, num_blocks);

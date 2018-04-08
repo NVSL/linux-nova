@@ -1203,12 +1203,11 @@ static void nova_put_super(struct super_block *sb)
 	kfree(sbi->inode_maps);
 
 	nova_sysfs_exit(sb);
+	vpmem_put();
 
 	kfree(sbi->nova_sb);
 	kfree(sbi);
 	sb->s_fs_info = NULL;
-
-	vpmem_put();
 }
 
 inline void nova_free_range_node(struct nova_range_node *node)

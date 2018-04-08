@@ -857,7 +857,7 @@ int nova_free_blocks_from_bdev(struct nova_sb_info *sbi, unsigned long blocknr,
 		return -EINVAL;
 	}
 
-    ret = vpmem_flush_pages(blockoff_to_virt(blocknr), num_blocks);
+    ret = clear_dram_buffer_range(blocknr, num_blocks);
 
 	/* Pre-allocate blocknode */
 	curr_node = nova_alloc_blocknode(sb);
@@ -1054,13 +1054,12 @@ int nova_bdev_free_blocks(struct nova_sb_info *sbi, int tier, unsigned long bloc
 int reclaim_get_nvmm(struct super_block *sb, unsigned long nvmm,
 	struct nova_file_write_entry *entry, unsigned long pgoff){		
 	int ret = 0;
-	struct nova_sb_info *sbi = NOVA_SB(sb);
 	void *dax_mem = nova_get_block(sb, (nvmm << PAGE_SHIFT));
 	
-	if (is_dram_buffer_addr(sbi, dax_mem)) {
-		ret = put_dram_buffer_range(sbi, virt_to_blockoff((unsigned long)dax_mem), entry->num_pages);
+	if (is_dram_buffer_addr(dax_mem)) {
+		ret = put_dram_buffer_range(virt_to_blockoff((unsigned long)dax_mem), entry->num_pages);
 		if (ret) nova_info("put_dram_buffer_range ERROR.\n");
-		ret = clear_dram_buffer_range(sbi, virt_to_blockoff((unsigned long)dax_mem), entry->num_pages);
+		ret = clear_dram_buffer_range(virt_to_blockoff((unsigned long)dax_mem), entry->num_pages);
 		if (ret) nova_info("clear_dram_buffer_range ERROR.\n");
 		return 0;
 	}

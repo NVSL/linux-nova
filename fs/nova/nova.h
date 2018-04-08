@@ -1224,9 +1224,9 @@ int print_file_write_entries(struct super_block *sb, struct nova_inode_info_head
 int buffer_data_block_from_bdev(struct nova_sb_info *sbi, int tier, unsigned long blockoff);
 inline int clear_dram_buffer(struct nova_sb_info *sbi, unsigned long number);
 inline int put_dram_buffer(struct nova_sb_info *sbi, unsigned long number);
-int clear_dram_buffer_range(struct nova_sb_info *sbi, unsigned long blockoff, unsigned long length);
-int put_dram_buffer_range(struct nova_sb_info *sbi, unsigned long blockoff, unsigned long length);
-inline bool is_dram_buffer_addr(struct nova_sb_info *sbi, void *addr);
+int clear_dram_buffer_range(unsigned long blockoff, unsigned long length);
+int put_dram_buffer_range(unsigned long blockoff, unsigned long length);
+inline bool is_dram_buffer_addr(void *addr);
 int migrate_a_file(struct inode *inode, int to, bool force);
 int migrate_a_file_to_pmem(struct inode *inode);
 int do_migrate_a_file_rotate(struct inode *inode);

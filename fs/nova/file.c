@@ -633,8 +633,6 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 			nr = PAGE_SIZE;
 		}
 
-		// vpmem_invalidate_pages(blockoff_to_virt(entry->block >> PAGE_SHIFT), le32_to_cpu(entry->num_pages));
-
 		nvmm = get_nvmm(sb, sih, entryc, index);
 		dax_mem = nova_get_block(sb, (nvmm << PAGE_SHIFT));
 
@@ -672,9 +670,9 @@ skip_verify:
 
 		// reclaim_get_nvmm(sb, nvmm, entry, index);
 		
-		// if (is_dram_buffer_addr(sbi, dax_mem)) {
+		// if (is_dram_buffer_addr(dax_mem)) {
 		// 	if (DEBUG_BUFFERING) nova_info("put off %lu, nr %lu", mb_offset - index + (unsigned long)entry->pgoff, (unsigned long)entry->num_pages);
-		// 	put_dram_buffer_range(sbi, mb_offset - index + entry->pgoff, entry->num_pages);
+		// 	put_dram_buffer_range(mb_offset - index + entry->pgoff, entry->num_pages);
 		// }
 
 		if (left) {

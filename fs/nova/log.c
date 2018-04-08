@@ -158,7 +158,7 @@ unsigned int nova_free_old_entry(struct super_block *sb,
 		ret = nova_append_data_to_snapshot(sb, entryc, old_nvmm,
 				num_free, epoch_id);
 				
-		reclaim_get_nvmm(sb, old_nvmm, entryc, pgoff);
+		// reclaim_get_nvmm(sb, old_nvmm, entryc, pgoff);
 
 		if (ret == 0) {
 			// Perhaps to GC to free the entry itself
@@ -236,7 +236,7 @@ void nova_clear_last_page_tail(struct super_block *sb,
 	if (data_parity > 0)
 		nova_update_truncated_block_parity(sb, inode, newsize);
 
-	reclaim_get_nvmm(sb, nvmm >> PAGE_SHIFT, NULL, pgoff);
+	// reclaim_get_nvmm(sb, nvmm >> PAGE_SHIFT, NULL, pgoff);
 }
 
 static void nova_update_setattr_entry(struct inode *inode,

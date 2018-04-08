@@ -163,6 +163,9 @@ struct nova_sb_info {
 	/* VPMEM */
 	void *vpmem;
 	unsigned long vpmem_num_blocks;
+	struct list_head vpmem_lru_list;
+	struct list_head vpmem_wb_list;
+	struct list_head vpmem_evict_list;
 
 	/* Block device buffer */
 	char *bdev_buffer;
@@ -196,6 +199,7 @@ struct nova_sb_info {
 	/* Free block list for block devices */
 	struct bdev_free_list *bdev_free_list;
 
+	/* LRU list of the profiler */
 	struct mutex *il_mutex;
 	struct list_head *inode_lru_lists;
 
