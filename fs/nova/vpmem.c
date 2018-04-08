@@ -30,7 +30,6 @@
 #endif
 
 #define WB_THREAD_SLEEP_TIME 1000
-#define KERNEL_SHENGAN
 
 #define VPMEM_SIZE_TB     _AC(16, UL)
 #define VPMEM_START       (VMALLOC_START + _AC(16UL << 40, UL))
@@ -929,12 +928,9 @@ int vpmem_get(struct nova_sb_info *sbi, unsigned long offset)
     flush_tlb_all();
     vpmem_start = VPMEM_START + (offset << 30);
 
-    #ifdef KERNEL_SHENGAN
-        install_vpmem_fault(vpmem_do_page_fault);
-    #else    
-        vpmem_operations.do_page_fault = vpmem_do_page_fault;
-        vpmem_operations.do_checkout = vpmem_checkout;
-    #endif
+    vpmem_operations.do_page_fault = vpmem_do_page_fault;
+    vpmem_operations.do_checkout = vpmem_checkout;
+
 
     sbi->vpmem = (char *)vpmem_start;
 
@@ -993,12 +989,8 @@ void vpmem_put(void)
         printk(KERN_INFO "vpmem: evict_list is not empty.\n");
     pgcache_flush_all();
 
-    #ifdef KERNEL_SHENGAN
-        install_vpmem_fault(0);
-    #else
-        vpmem_operations.do_page_fault = 0;
-        vpmem_operations.do_checkout = 0;
-    #endif
+    vpmem_operations.do_page_fault = 0;
+    vpmem_operations.do_checkout = 0;
 
     flush_tlb_all();
     printk(KERN_INFO "vpmem: faults = %lu reads = %lu writes = %lu pte_not_present=%lu pte_not_found=%lu pgcache_full=%lu\n",

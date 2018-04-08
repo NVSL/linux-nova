@@ -275,7 +275,7 @@ void flush_tlb_mm_range(struct mm_struct *mm, unsigned long start,
 		flush_tlb_others(mm_cpumask(mm), &info);
 	put_cpu();
 }
-
+EXPORT_SYMBOL(flush_tlb_mm_range);
 
 static void do_flush_tlb_all(void *info)
 {
