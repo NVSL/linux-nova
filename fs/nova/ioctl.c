@@ -66,7 +66,6 @@ long nova_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		if ((flags ^ oldflags) &
 		    (FS_APPEND_FL | FS_IMMUTABLE_FL)) {
 			if (!capable(CAP_LINUX_IMMUTABLE)) {
-				inode_unlock(inode);
 				ret = -EPERM;
 				goto flags_out_unlock;
 			}
