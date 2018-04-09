@@ -1168,6 +1168,8 @@ static void nova_put_super(struct super_block *sb)
 
 	stop_bm_thread(sbi);
 	
+	vpmem_put();
+	
 	/* It's unmount time, so unmap the nova memory */
 //	nova_print_free_lists(sb);
 	if (sbi->virt_addr) {
@@ -1203,7 +1205,6 @@ static void nova_put_super(struct super_block *sb)
 	kfree(sbi->inode_maps);
 
 	nova_sysfs_exit(sb);
-	vpmem_put();
 
 	kfree(sbi->nova_sb);
 	kfree(sbi);

@@ -163,6 +163,7 @@ struct nova_sb_info {
 	/* VPMEM */
 	void *vpmem;
 	unsigned long vpmem_num_blocks;
+	unsigned long pgcache_size;
 	struct list_head vpmem_lru_list;
 	struct list_head vpmem_wb_list;
 	struct list_head vpmem_evict_list;

@@ -434,6 +434,7 @@ int migrate_entry_blocks(struct nova_sb_info *sbi, int to, struct nova_inode_inf
     /* Step 3. Copy */
 
     // Invalidate the page
+    if (is_tier_bdev(to)) clear_dram_buffer_range(nentry.block >> PAGE_SHIFT, le32_to_cpu(nentry.num_pages));
     if (is_tier_bdev(to)) clear_dram_buffer_range(blocknr, le32_to_cpu(nentry.num_pages));
 
     ret = migrate_blocks(sbi, nentry.block >> PAGE_SHIFT, le32_to_cpu(nentry.num_pages), from, to, blocknr);

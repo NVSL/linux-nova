@@ -243,15 +243,15 @@ static int nova_seq_ts_show(struct seq_file *seq, void *v)
 		sbi->stat->write >> 12, sbi->stat->write_dram  >> 12, sbi->stat->mig_group, 
             sbi->stat->mig_interrupt);
 	
-	seq_printf(seq, "-----------------------------------\n");
+	seq_printf(seq, "---------------------------------------------------------\n");
 	used = nova_pmem_used(sbi);
 	sumu += used;
 	total = nova_pmem_total(sbi);
 	sumt += total;
-	seq_printf(seq, "|Tier|  Used  |Perc|Targ|  Total  |\n");
-	seq_printf(seq, "-----------------------------------\n");
-    seq_printf(seq, "|%4d|%8lu|%3lu%%|%3u%%|%9lu|\n",
-        0, used, used * 100 / total, MIGRATION_DOWN_PMEM_PERC, total);
+	seq_printf(seq, "|Tier|  Used  | (Block) |Curr%%|Targ%%|  Total  | (Block) |\n");
+	seq_printf(seq, "---------------------------------------------------------\n");
+    seq_printf(seq, "|%4d|%6luMB|%9lu|%4lu%%|%4u%%|%7luMB|%9lu|\n",
+        0, used>>8, used, used * 100 / total, MIGRATION_DOWN_PMEM_PERC, total>>8, total);
             
     for (i=TIER_BDEV_LOW;i<=TIER_BDEV_HIGH;++i) {
     	used = nova_bdev_used(sbi, i);
@@ -259,15 +259,18 @@ static int nova_seq_ts_show(struct seq_file *seq, void *v)
     	total = nova_bdev_total(sbi, i);
 		sumt += total;
 		if (i!=TIER_BDEV_HIGH)
-    	seq_printf(seq, "|%4d|%8lu|%3lu%%|%3u%%|%9lu|\n",
-        	i, used, used * 100 / total, MIGRATION_DOWN_BDEV_PERC, total);
+    	seq_printf(seq, "|%4d|%6luMB|%9lu|%4lu%%|%4u%%|%7luMB|%9lu|\n",
+        	i, used>>8, used, used * 100 / total, MIGRATION_DOWN_BDEV_PERC, total>>8, total);
 		else
-    	seq_printf(seq, "|%4d|%8lu|%3lu%%| N/A|%9lu|\n",
-        	i, used, used * 100 / total, total);
+    	seq_printf(seq, "|%4d|%6luMB|%9lu|%4lu%%|  N/A|%7luMB|%9lu|\n",
+        	i, used>>8, used, used * 100 / total, total>>8, total);
     }
-	seq_printf(seq, "-----------------------------------\n");
-	seq_printf(seq, "|NOVA|%8lu|%3lu%%| N/A|%9lu|\n", sumu, sumu * 100 / sumt, sumt);
-	seq_printf(seq, "-----------------------------------\n");
+	seq_printf(seq, "---------------------------------------------------------\n");
+	seq_printf(seq, "|DRAM|%6luMB|%9lu|%4lu%%|  N/A|%7uMB|%9u|\n", 
+		sbi->pgcache_size>>8, sbi->pgcache_size, sbi->pgcache_size * 100 / VPMEM_MAX_PAGES, VPMEM_MAX_PAGES>>8, VPMEM_MAX_PAGES);
+	seq_printf(seq, "|NOVA|%6luMB|%9lu|%4lu%%|  N/A|%7luMB|%9lu|\n", sumu>>8, sumu, sumu * 100 / sumt, sumt>>8, sumt);
+	
+	seq_printf(seq, "---------------------------------------------------------\n");
 	return 0;
 }
 

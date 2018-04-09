@@ -35,7 +35,6 @@
 #define VPMEM_START       (VMALLOC_START + _AC(16UL << 40, UL))
 #define VPMEM_END         (VPMEM_START + _AC((VPMEM_SIZE_TB << 40) - 1, UL))
 
-#define MAX_PAGES           32768  // 128MB  32768*4
 #define SPM_META_SIZE_MB    _AC(1, UL)
 #define SPM_META_SIZE       _AC(SPM_META_SIZE_MB << 20, UL)
 #define SPM_PGCACHE_SIZE_MB _AC(50, UL)
@@ -182,15 +181,14 @@ struct pgcache_node {
 };
 
 pte_t *pte_lookup(pgd_t *pgd, unsigned long address);
-inline bool writeback(void);
+inline bool vpmem_writeback(void);
 inline void pop_from_evict_list(void);
 inline void push_to_evict_list(struct pgcache_node *pg);
 inline void push_to_wb_list(struct pgcache_node *pg);
-inline void push_victim_to_wb_list(unsigned int i);
+inline void push_victim_to_wb_list(bool all);
 bool vpmem_load_block(unsigned long address, struct page *p);
 
 static struct rb_root pgcache = RB_ROOT;
-static unsigned int pgcache_size=0;
 static DEFINE_MUTEX(lru_lock);
 static DEFINE_MUTEX(wb_lock);
 static DEFINE_MUTEX(evict_lock);
@@ -236,7 +234,7 @@ void pgcache_lru_refer(struct pgcache_node *pg)
 {
     lru_refers++;
     LOCK(lru_lock);    
-    list_move_tail(&vsbi->vpmem_lru_list, &pg->lru_node);
+    list_move_tail(&pg->lru_node, &vsbi->vpmem_lru_list);
     UNLOCK(lru_lock);
 }
 
@@ -286,7 +284,7 @@ struct pgcache_node *__pgcache_insert(unsigned long address, struct mm_struct *m
     pgcache_lru_refer(newp);
      
     if (new) *new=true;
-    pgcache_size++;
+    vsbi->pgcache_size++;
     /* Put the new node there */
     rb_link_node(&newp->rb_node, parent, link);
     rb_insert_color(&newp->rb_node, &pgcache);
@@ -306,8 +304,8 @@ struct pgcache_node *pgcache_insert(unsigned long address, struct mm_struct *mm,
 void __pgcache_erase(struct pgcache_node *victim)
 {
     rb_erase(&victim->rb_node, &pgcache);
-    if (pgcache_size==0) printk("PROBLEM\n");
-    pgcache_size--;
+    if (vsbi->pgcache_size==0) printk("ERROR in pgcache_size\n");
+    vsbi->pgcache_size--;
 }
 
 void pgcache_remove(struct pgcache_node *victim)
@@ -326,9 +324,9 @@ void pgcache_flush_all(void)
 {
 #ifdef ENABLE_WRITEBACK
     pop_from_evict_list();
-    push_victim_to_wb_list(pgcache_size);
+    push_victim_to_wb_list(true);
     // LOCK(pgcache_lock);
-    while(writeback()) ;
+    while(vpmem_writeback());
     // UNLOCK(pgcache_lock);
     pop_from_evict_list();
 #endif
@@ -430,33 +428,25 @@ void flush_tlb_all(void)
 }
 
 /******************* TLB Flusher *******************/
-struct task_struct *wb_thread=0;
+struct task_struct *wb_thread = NULL;
 
-inline bool writeback(void)
+inline bool vpmem_writeback(void)
 {
     struct page *p = NULL;
     struct pgcache_node *pg;
     unsigned long address = 0;
-    bool ret = false;
-    
+
     if (list_empty(&vsbi->vpmem_wb_list)) return false;
+    LOCK(wb_lock);
     pg = container_of(vsbi->vpmem_wb_list.next, struct pgcache_node, wb_node);
     if (pg) {
         LOCK(pg->lock);
-        if (!list_empty(&pg->wb_node)) {
-            LOCK(wb_lock);
-            list_del_init(&pg->wb_node);
-            UNLOCK(wb_lock);
-        }
-        else {
-            UNLOCK(pg->lock);
-            return true;
-        }
+        list_del_init(&pg->wb_node);
 
         p = pg->page; // pfn_to_page(pg->pfn);
         address = pg->address;
-        ret = true;
     }    
+    UNLOCK(wb_lock);
 
     if(p) {
         // if(PageDirty(p)) {
@@ -480,7 +470,7 @@ inline bool writeback(void)
         push_to_evict_list(pg);
         UNLOCK(pg->lock);
     }
-    return ret;
+    return true;
 }
 
 int wb_thread_worker(void *arg)
@@ -489,11 +479,11 @@ int wb_thread_worker(void *arg)
     printk(KERN_INFO "vpmem: Start Write-Back thread.\n");
     do {
 		schedule_timeout_interruptible(msecs_to_jiffies(WB_THREAD_SLEEP_TIME));
-        if(pgcache_size >= MAX_PAGES) {
-            // printk("vpmem: REACHED THE MAX SIZE. Evicting %u pages\n", pgcache_size-MAX_PAGES+32);
-            push_victim_to_wb_list(pgcache_size-MAX_PAGES+32);
+        if(vsbi->pgcache_size >= VPMEM_MAX_PAGES) {
+            // printk("vpmem: REACHED THE MAX SIZE. Evicting %u pages\n", vsbi->pgcache_size-VPMEM_MAX_PAGES+32);
+            push_victim_to_wb_list(false);
         }
-        while(writeback()) schedule();
+        while(vpmem_writeback()) schedule();
         pop_from_evict_list();
     } while(!kthread_should_stop());  
 
@@ -529,7 +519,7 @@ void wb_thread_cleanup(void) {
 pte_t newpage(unsigned long address, struct mm_struct *mm, struct page **pout) {
     struct pgcache_node *p = 0;
     pte_t pte;
-    bool new=false;
+    bool new = false;
 
     p = pgcache_insert(address, mm, &new);
     pte = mk_pte(p->page, PAGE_KERNEL);
@@ -664,7 +654,7 @@ int vpmem_flush_pages(unsigned long address, unsigned long count)
             address += PAGE_SIZE;
         }
     }
-    while(writeback()) ;
+    while(vpmem_writeback());
     pop_from_evict_list();
     return 0;
 }
@@ -822,7 +812,7 @@ inline void push_to_evict_list(struct pgcache_node *pg)
 {
     if (list_empty(&pg->evict_node)) {
         LOCK(evict_lock);
-        list_add_tail(&vsbi->vpmem_evict_list, &pg->evict_node);
+        list_add_tail(&pg->evict_node, &vsbi->vpmem_evict_list);
         UNLOCK(evict_lock);
     }
 }
@@ -831,26 +821,28 @@ inline void push_to_wb_list(struct pgcache_node *pg)
 {
     if (list_empty(&pg->wb_node)) {
         LOCK(wb_lock);
-        list_add_tail(&vsbi->vpmem_wb_list, &pg->wb_node);
+        list_add_tail(&pg->wb_node, &vsbi->vpmem_wb_list);
         UNLOCK(wb_lock);
     }
 }
 
-inline void push_victim_to_wb_list(unsigned int i)
+inline void push_victim_to_wb_list(bool all)
 {
     struct pgcache_node *pg, *tmp_pg;
+    int i = vsbi->pgcache_size - VPMEM_MAX_PAGES + 32;
+    LOCK(lru_lock);
     list_for_each_entry_safe(pg, tmp_pg, &vsbi->vpmem_lru_list, lru_node) {
+        dif_mm3++;
         if(pg) {
             LOCK(pg->lock);
-            LOCK(lru_lock);
             list_del_init(&pg->lru_node);
-            UNLOCK(lru_lock);
             push_to_wb_list(pg);
             UNLOCK(pg->lock);
-            if (--i<=0) break;
+            if (!all && --i<=0) break;
         } 
         else break;
     }
+    UNLOCK(lru_lock);
 }
 
 bool vpmem_do_page_fault(struct pt_regs *regs, unsigned long error_code, unsigned long address)
@@ -865,10 +857,8 @@ bool vpmem_do_page_fault(struct pt_regs *regs, unsigned long error_code, unsigne
 #ifdef ENABLE_WRITEBACK
             // 1. Evicting pages from the page cache which are already written-back
             // pop_from_evict_list();
-            // if(pgcache_size >= MAX_PAGES) leaked++;
-
+            // if(vsbi->pgcache_size >= VPMEM_MAX_PAGES) leaked++;
 #endif
-
             // 2. Handling the page fault
             if(insert_tlb(newpage(address, current_mm, &p), address)) {
                 if(p) {
@@ -881,8 +871,8 @@ bool vpmem_do_page_fault(struct pt_regs *regs, unsigned long error_code, unsigne
 check_cache:
 #ifdef ENABLE_WRITEBACK
             // 3. Checking if the page cache is full and push the lru_victim to the wb_list
-            // if(pgcache_size >= MAX_PAGES) {
-            //     push_victim_to_wb_list(pgcache_size-MAX_PAGES+2);
+            // if(vsbi->pgcache_size >= VPMEM_MAX_PAGES) {
+            //     push_victim_to_wb_list(vsbi->pgcache_size-VPMEM_MAX_PAGES+2);
             // }
 #endif
             return true;
@@ -931,7 +921,6 @@ int vpmem_get(struct nova_sb_info *sbi, unsigned long offset)
     vpmem_operations.do_page_fault = vpmem_do_page_fault;
     vpmem_operations.do_checkout = vpmem_checkout;
 
-
     sbi->vpmem = (char *)vpmem_start;
 
     /// for(i=0; i<bdev_count; i++) {
@@ -949,8 +938,11 @@ int vpmem_get(struct nova_sb_info *sbi, unsigned long offset)
         size >> 18);
         
     sbi->vpmem_num_blocks = size;
+    sbi->pgcache_size = 0;
     size <<= PAGE_SHIFT;
     vpmem_end = vpmem_start + size;
+
+    // flush_cache_vunmap((void *)vpmem_start, (void *)vpmem_end);
 
     pmem.phys_addr = sbi->phys_addr;
     pmem.virt_addr = sbi->virt_addr;
@@ -978,12 +970,16 @@ int vpmem_get(struct nova_sb_info *sbi, unsigned long offset)
 void vpmem_put(void)
 {
     wb_thread_cleanup();
-    printk(KERN_INFO "vpmem: pgcache_size = %u\n", pgcache_size);
+    printk(KERN_INFO "vpmem: pgcache_size = %lu\n", vsbi->pgcache_size);
+    if (list_empty(&vsbi->vpmem_lru_list))
+        printk(KERN_INFO "vpmem: lru_list is empty.\n");
+    else
+        printk(KERN_INFO "vpmem: lru_list is not empty.\n");
     if (list_empty(&vsbi->vpmem_wb_list))
         printk(KERN_INFO "vpmem: wb_list is empty.\n");
     else
         printk(KERN_INFO "vpmem: wb_list is not empty.\n");
-    if (list_empty(&vsbi->vpmem_wb_list))
+    if (list_empty(&vsbi->vpmem_evict_list))
         printk(KERN_INFO "vpmem: evict_list is empty.\n");
     else
         printk(KERN_INFO "vpmem: evict_list is not empty.\n");
@@ -993,6 +989,20 @@ void vpmem_put(void)
     vpmem_operations.do_checkout = 0;
 
     flush_tlb_all();
+
+    if (list_empty(&vsbi->vpmem_lru_list))
+        printk(KERN_INFO "vpmem: lru_list is empty.\n");
+    else
+        printk(KERN_INFO "vpmem: lru_list is not empty.\n");
+    if (list_empty(&vsbi->vpmem_wb_list))
+        printk(KERN_INFO "vpmem: wb_list is empty.\n");
+    else
+        printk(KERN_INFO "vpmem: wb_list is not empty.\n");
+    if (list_empty(&vsbi->vpmem_evict_list))
+        printk(KERN_INFO "vpmem: evict_list is empty.\n");
+    else
+        printk(KERN_INFO "vpmem: evict_list is not empty.\n");
+        
     printk(KERN_INFO "vpmem: faults = %lu reads = %lu writes = %lu pte_not_present=%lu pte_not_found=%lu pgcache_full=%lu\n",
                 faults, bdev_read, bdev_write, pte_not_present, pte_not_found, pgcache_full);
     printk(KERN_INFO "vpmem: lru_refers = %lu evicts = %lu dif_mm = %lu already_cached = %lu dif_mm2 = %lu leaked = %lu\n",
@@ -1010,13 +1020,9 @@ void vpmem_put(void)
 void vpmem_reset(void)
 {
     int i;
-    // bdev_count = 0;
-    // nova_total_size = 0;
     vpmem_end = 0;
-    // for(i=0; i<MAX_TIERS; i++) {
     for(i=0; i<BDEV_COUNT_MAX; i++) {
         map_valid[i] = false;
         map_page[i] = 0;
-        // bdev_paths[i] = NULL;
     }
 }
