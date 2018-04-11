@@ -384,10 +384,7 @@ int nova_free_blocks(struct super_block *sb, unsigned long blocknr,
 		blockoff = virt_to_blockoff((unsigned long)dax_mem);
 		num_blocks = nova_get_numblocks(btype) * num;
 
-		clear_dram_buffer_range(blockoff, num_blocks);
-
 		ret = nova_free_blocks_tier(sbi, blocknr, num_blocks);
-		// ret = nova_free_blocks_tier(sbi, blockoff, num_blocks);
 
 		NOVA_END_TIMING(free_blocks_t, free_time);
 		return ret;

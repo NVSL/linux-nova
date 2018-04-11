@@ -292,13 +292,13 @@ struct pgcache_node *__pgcache_insert(unsigned long address, struct mm_struct *m
     lock_page(newp->page);
     mutex_init(&newp->lock);
     pgcache_lru_refer(newp);
-     
+
     if (new) *new=true;
     vsbi->pgcache_size++;
     /* Put the new node there */
     rb_link_node(&newp->rb_node, parent, link);
     rb_insert_color(&newp->rb_node, &pgcache);
-
+    
     set_pgn_clean(newp);
 
     return newp;
@@ -330,18 +330,6 @@ void pgcache_remove(struct pgcache_node *victim)
         __pgcache_erase(victim);
         UNLOCK(pgcache_lock);
     }
-}
-
-void pgcache_flush_all(void)
-{
-#ifdef ENABLE_WRITEBACK
-    pop_from_evict_list();
-    push_victim_to_wb_list(true);
-    // LOCK(pgcache_lock);
-    while(vpmem_writeback());
-    // UNLOCK(pgcache_lock);
-    pop_from_evict_list();
-#endif
 }
 
 void *vpmem_lru_refer(unsigned long address)
@@ -736,6 +724,8 @@ int vpmem_flush_pages(unsigned long address, unsigned long count) {
     return 0;
 }
 
+// Currently, only pages which are freed/migrated will be invalidated.
+// Allocateing new data blocks will not call this function.
 int vpmem_invalidate_pages(unsigned long address, unsigned long count) {
     struct pgcache_node *pg;
     address &= PAGE_MASK;
@@ -750,7 +740,7 @@ int vpmem_invalidate_pages(unsigned long address, unsigned long count) {
         }
         address += PAGE_SIZE;
     }
-    pop_from_evict_list();
+    // pop_from_evict_list();
     return 0;
 }
 
@@ -818,6 +808,7 @@ inline void pop_from_evict_list(void)
 {
     struct pgcache_node *pg, *tmp_pg;
     struct page *p;
+    pte_t *ptep = NULL;
     LOCK(evict_lock);
     list_for_each_entry_safe(pg, tmp_pg, &vsbi->vpmem_evict_list, evict_node) {
         LOCK(pg->lock);        
@@ -825,28 +816,16 @@ inline void pop_from_evict_list(void)
         pgcache_remove(pg);
         nl_send("ev %20lu %16lu %2d", pg->address, 0, 0);
 
-        p = pg->page;// pfn_to_page(pg->pfn); 
+        p = pg->page;
         if(p) unlock_page(p);
         {
-            // pte_t *ptep = pte_lookup(pgd_offset(current_mm, pg->address), pg->address);
-            // if(ptep) {
-            //     pte_clear(current_mm, pg->address, ptep);
-            // }
+            __free_page(p);
+            ptep = pte_lookup(pgd_offset_k(pg->address), pg->address);
+            if(ptep) {
+                pte_clear(current_mm, pg->address, ptep);
+            }
         }
-        // pte = pte_lookup(pgd_offset(current_mm, pg->address), pg->address);
-        // if(pte) {
-        //     pte_clear(current_mm, pg->address, pte);
-        // }
 
-        // if(current->mm != pg->mm) {
-        //     if(pg->mm) {
-        //         if(atomic_read(&pg->mm->mm_count)) {
-        //             pte_t *ptep;
-        //             ptep = pte_lookup(pgd_offset(pg->mm, pg->address), pg->address);
-        //             if(ptep) pte_clear(pg->mm, pg->address, ptep);
-        //         }
-        //     }
-        // }
         evicts++;
         __flush_tlb_one(pg->address);
 
@@ -894,6 +873,7 @@ inline void push_victim_to_wb_list(bool all)
     UNLOCK(lru_lock);
 }
 
+// How can there be page fault when the page is writing back?
 bool vpmem_do_page_fault(struct pt_regs *regs, unsigned long error_code, unsigned long address)
 {
     if (address >= TASK_SIZE_MAX) {
@@ -991,8 +971,6 @@ int vpmem_get(struct nova_sb_info *sbi, unsigned long offset)
     size <<= PAGE_SHIFT;
     vpmem_end = vpmem_start + size;
 
-    // flush_cache_vunmap((void *)vpmem_start, (void *)vpmem_end);
-
     pmem.phys_addr = sbi->phys_addr;
     pmem.virt_addr = sbi->virt_addr;
     pmem.size = sbi->initsize;
@@ -1032,6 +1010,18 @@ void vpmem_print_status(void) {
     else
         printk(KERN_INFO "|evict_list|\e[0;31mNotEmpty\e[0m|\n");
     printk(KERN_INFO "---------------------\n");
+}
+
+void pgcache_flush_all(void)
+{
+#ifdef ENABLE_WRITEBACK
+    pop_from_evict_list();
+    push_victim_to_wb_list(true);
+    vpmem_print_status();
+    while(vpmem_writeback());
+    vpmem_print_status();
+#endif
+    pop_from_evict_list();
 }
 
 void vpmem_put(void)
