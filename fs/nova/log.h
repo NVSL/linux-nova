@@ -80,7 +80,7 @@ struct nova_file_write_entry {
 	__le32	invalid_pages;	/* For GC */
 	/* For both ctime and mtime */
 	__le32	mtime;
-	__le64	size;           /* Write size for non-aligned writes */
+	__le64	size;           /* File size after this write */
 	__le64	epoch_id;
 	__le64	trans_id;
 	__le32	csumpadding;
