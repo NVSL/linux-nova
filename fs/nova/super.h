@@ -166,7 +166,6 @@ struct nova_sb_info {
 	unsigned long pgcache_size;
 	struct list_head vpmem_lru_list;
 	struct list_head vpmem_wb_list;
-	struct list_head vpmem_wbe_list;
 	struct list_head vpmem_evict_list;
 
 	/* Block device buffer */

@@ -31,7 +31,7 @@
 #define DEBUG_KTHREAD 0
 
 #define DEBUG_FORE_ALLOC 0
-#define DEBUG_FORE_FILE 0
+#define DEBUG_FORE_FILE 1
 
 #define DEBUG_PROF_SYNC 0
 #define DEBUG_PROF_SEQ 0

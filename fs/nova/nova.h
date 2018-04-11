@@ -1232,6 +1232,7 @@ int migrate_a_file_to_pmem(struct inode *inode);
 int do_migrate_a_file_rotate(struct inode *inode);
 int do_migrate_a_file_downward(struct super_block *sb);
 int get_available_tier(struct super_block *sb, int tier);
+unsigned int valid_index_range(struct super_block *sb, struct nova_inode_info_header *sih, pgoff_t index);
 
 unsigned long nova_pmem_used(struct nova_sb_info *sbi);
 unsigned long nova_pmem_total(struct nova_sb_info *sbi);

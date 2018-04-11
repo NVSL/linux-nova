@@ -238,6 +238,16 @@ void pgcache_lru_refer(struct pgcache_node *pg)
     UNLOCK(lru_lock);
 }
 
+// TODO: Implement this
+bool is_pgn_dirty(struct pgcache_node *pgn) {
+    return true;
+}
+
+// TODO: Implement this
+int set_pgn_clean(struct pgcache_node *pgn) {
+    return 0;
+}
+
 struct pgcache_node *__pgcache_insert(unsigned long address, struct mm_struct *mm, bool *new)
 {
     struct pgcache_node *p, *newp;
@@ -289,6 +299,8 @@ struct pgcache_node *__pgcache_insert(unsigned long address, struct mm_struct *m
     rb_link_node(&newp->rb_node, parent, link);
     rb_insert_color(&newp->rb_node, &pgcache);
 
+    set_pgn_clean(newp);
+
     return newp;
 }
 
@@ -318,11 +330,6 @@ void pgcache_remove(struct pgcache_node *victim)
         __pgcache_erase(victim);
         UNLOCK(pgcache_lock);
     }
-}
-
-// TODO: Implement this
-bool is_pgn_dirty(struct pgcache_node *pgn) {
-    return true;
 }
 
 void pgcache_flush_all(void)
@@ -496,6 +503,7 @@ inline bool vpmem_writeback(void)
         } else {
             bdev_write++;
         }
+        set_pgn_clean(pg);
     } 
 
     if(list_empty(&pg->lru_node)) {
@@ -651,7 +659,7 @@ int vpmem_cache_pages(unsigned long address, unsigned long count)
     return 0;
 }
 
-int vpmem_write_behind_pages(unsigned long address, unsigned long count, void *dax_mem) {    
+int vpmem_write_to_bdev(unsigned long address, unsigned long count, struct page *page) {   
     unsigned long blockoff, raw_blockto;
     int tier;
     address &= PAGE_MASK;
@@ -659,10 +667,34 @@ int vpmem_write_behind_pages(unsigned long address, unsigned long count, void *d
     tier = get_tier(vsbi, blockoff);
     raw_blockto = get_raw_from_blocknr(vsbi, blockoff);
     return nova_bdev_write_block(vsbi, get_bdev_raw(vsbi, tier), raw_blockto, count,
-        address_to_page(dax_mem), BIO_SYNC);
+        page, BIO_SYNC);
+}
+
+inline int vpmem_write_behind_pages(unsigned long address, unsigned long count, void *dax_mem) {    
+    return vpmem_write_to_bdev(address, count, address_to_page(dax_mem));
+}
+
+// This is sync flush
+int vpmem_flush_pages_sync(unsigned long address, unsigned long count) {
+    struct pgcache_node *pg;
+    unsigned long ret = 0;
+    address &= PAGE_MASK;
+    while(count-- > 0) {
+        pg = pgcache_lookup(address);
+        if(pg) {                
+            if(is_pgn_dirty(pg)) {
+                vpmem_write_to_bdev(address, 1, pg->page);
+                ret++;
+                set_pgn_clean(pg);
+            }
+        }
+        address += PAGE_SIZE;
+    }
+    return ret;
 }
 
 /*
+ * TODO: Range
  * APIs for VPMEM writeback
  * |             | Has writeback |  Valid after  |
  * | Write_back  |      Yes      |      Yes      | 
@@ -699,8 +731,8 @@ int vpmem_flush_pages(unsigned long address, unsigned long count) {
         }
         address += PAGE_SIZE;
     }
-    while(vpmem_writeback());
-    pop_from_evict_list();
+    // while(vpmem_writeback());
+    // pop_from_evict_list();
     return 0;
 }
 
@@ -928,7 +960,6 @@ int vpmem_get(struct nova_sb_info *sbi, unsigned long offset)
 
 	INIT_LIST_HEAD(&sbi->vpmem_lru_list);
 	INIT_LIST_HEAD(&sbi->vpmem_wb_list);
-	INIT_LIST_HEAD(&sbi->vpmem_wbe_list);
 	INIT_LIST_HEAD(&sbi->vpmem_evict_list);
 
     vsbi = sbi;
@@ -996,10 +1027,6 @@ void vpmem_print_status(void) {
         printk(KERN_INFO "|   wb_list|\e[0;32m   Empty\e[0m|\n");
     else
         printk(KERN_INFO "|   wb_list|\e[0;31mNotEmpty\e[0m|\n");
-    if (list_empty(&vsbi->vpmem_wbe_list))
-        printk(KERN_INFO "|  wbe_list|\e[0;32m   Empty\e[0m|\n");
-    else
-        printk(KERN_INFO "|  wbe_list|\e[0;31mNotEmpty\e[0m|\n");
     if (list_empty(&vsbi->vpmem_evict_list))
         printk(KERN_INFO "|evict_list|\e[0;32m   Empty\e[0m|\n");
     else

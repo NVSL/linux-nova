@@ -112,6 +112,54 @@ static loff_t nova_llseek(struct file *file, loff_t offset, int origin)
 	return offset;
 }
 
+inline int nova_sync_entry_blocks(struct nova_file_write_entry *entry) {
+	return vpmem_flush_pages_sync(blockoff_to_virt(entry->block >> PAGE_SHIFT), entry->num_pages);
+}
+
+int nova_fsync_range(struct inode *inode, unsigned long start_pgoff, unsigned long end_pgoff) {
+	struct super_block *sb = inode->i_sb;
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	struct nova_inode_info *si = NOVA_I(inode);
+	struct nova_inode_info_header *sih = &si->header;
+    unsigned long index = start_pgoff;
+	int ret = 0;
+    unsigned int num_pages;
+    unsigned long pgoff, isize;
+	struct nova_file_write_entry *entry, *last_entry = NULL;
+	
+	isize = i_size_read(inode);
+	if (end_pgoff > (isize) >> PAGE_SHIFT) end_pgoff = (isize) >> PAGE_SHIFT;
+	
+    do {
+        entry = nova_find_next_entry(sb, sih, index);
+		nova_info("index %lu %lu %lu\n", index, start_pgoff, end_pgoff);
+        if (entry) {            
+            if (entry == last_entry) {
+                index++;
+                continue;
+            }
+            if (entry->reassigned) {
+                pgoff = index;
+                num_pages = valid_index_range(sb, sih, index);
+            }
+            else {
+                pgoff = le64_to_cpu(entry->pgoff);
+                num_pages = le32_to_cpu(entry->num_pages);
+            }      
+			if (entry->block >> PAGE_SHIFT >= sbi->num_blocks)     
+				ret += nova_sync_entry_blocks(entry);
+			
+            index = (pgoff + num_pages) > index+1 ? pgoff + num_pages : index+1;
+        }
+        else {
+            index++;
+        }
+        last_entry = entry;
+    } while (index <= end_pgoff);
+	nova_info("fsync %d pages\n", ret);
+	return ret;
+}
+
 /* This function is called by both msync() and fsync().
  * TODO: Check if we can avoid calling nova_flush_buffer() for fsync. We use
  * movnti to write data to files, so we may want to avoid doing unnecessary
@@ -132,14 +180,16 @@ static int nova_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 	if (datasync)
 		NOVA_STATS_ADD(fdatasync, 1);
 
-	/* No need to flush if the file is not mmaped */
-	if (!mapping_mapped(mapping))
-		goto persist;
-
 	start_pgoff = start >> PAGE_SHIFT;
 	end_pgoff = (end + 1) >> PAGE_SHIFT;
 	nova_dbgv("%s: msync pgoff range %lu to %lu\n",
 			__func__, start_pgoff, end_pgoff);
+
+	nova_fsync_range(file_inode(file), start_pgoff, end_pgoff);
+	
+	/* No need to flush if the file is not mmaped */
+	if (!mapping_mapped(mapping))
+		goto persist;
 
 	/*
 	 * Set csum and parity.
