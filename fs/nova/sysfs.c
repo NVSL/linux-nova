@@ -22,6 +22,11 @@
 #include "bdev.h"
 #include "inode.h"
 
+extern unsigned long faults;
+extern unsigned long evicts;
+extern unsigned long bdev_read;
+extern unsigned long bdev_write;
+
 const char *proc_dirname = "fs/NOVA";
 struct proc_dir_entry *nova_proc_root;
 
@@ -238,11 +243,15 @@ static int nova_seq_ts_show(struct seq_file *seq, void *v)
 	}
 	seq_printf(seq, "-----------------------------------------------------------------------------\n");
 
-	seq_printf(seq, "|  Write  |  Write-C  | Group Mig | Interrupt |\n");
-    seq_printf(seq, "|%9lu|%11lu|%11lu|%11lu|\n",
+	seq_printf(seq, "|[Migration]|  Writes  | Writes-C |Group Migs|Interrupts|\n");
+    seq_printf(seq, "|           |%10lu|%10lu|%10lu|%10lu|\n",
 		sbi->stat->write >> 12, sbi->stat->write_dram  >> 12, sbi->stat->mig_group, 
             sbi->stat->mig_interrupt);
 	
+	seq_printf(seq, "---------------------------------------------------------\n");
+	seq_printf(seq, "|  [VPMEM]  |  Faults  | BDV_Read | BDV_Writ |  Evicts  |\n");
+    seq_printf(seq, "|           |%10lu|%10lu|%10lu|%10lu|\n",
+		faults, bdev_read, bdev_write, evicts);
 	seq_printf(seq, "---------------------------------------------------------\n");
 	used = nova_pmem_used(sbi);
 	sumu += used;

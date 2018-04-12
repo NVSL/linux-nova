@@ -30,6 +30,7 @@
 #endif
 
 #define WB_THREAD_SLEEP_TIME 1000
+#define WB_THRESHOLD 5
 
 #define VPMEM_SIZE_TB     _AC(16, UL)
 #define VPMEM_START       (VMALLOC_START + _AC(16UL << 40, UL))
@@ -69,6 +70,7 @@
 
 unsigned long vpmem_start=0;
 unsigned long vpmem_end=0;
+int wb_empty = 0;
 // unsigned long map_page[MAX_TIERS]={0};
 // bool map_valid[MAX_TIERS]={0};
 unsigned long map_page[BDEV_COUNT_MAX]={0};
@@ -185,7 +187,7 @@ inline bool vpmem_writeback(void);
 inline void pop_from_evict_list(void);
 inline void push_to_evict_list(struct pgcache_node *pg);
 inline void push_to_wb_list(struct pgcache_node *pg);
-inline void push_victim_to_wb_list(bool all);
+inline void push_victim_to_wb_list(bool all, bool del_lru);
 bool vpmem_load_block(unsigned long address, struct page *p);
 
 static struct rb_root pgcache = RB_ROOT;
@@ -462,7 +464,18 @@ inline bool vpmem_writeback(void)
     struct pgcache_node *pg;
     unsigned long address = 0;
 
-    if (list_empty(&vsbi->vpmem_wb_list)) return false;
+    if (list_empty(&vsbi->vpmem_wb_list)) {
+        wb_empty++;
+        if (wb_empty < WB_THRESHOLD) return false;
+        push_victim_to_wb_list(true, false);
+    }
+    
+again:
+    if (unlikely(list_empty(&vsbi->vpmem_wb_list))) {
+        wb_empty = 0;
+        return false;
+    }
+
     LOCK(wb_lock);
     pg = container_of(vsbi->vpmem_wb_list.next, struct pgcache_node, wb_node);
     if (unlikely(!pg)) {
@@ -477,7 +490,7 @@ inline bool vpmem_writeback(void)
     address = pg->address;
     UNLOCK(wb_lock);
 
-    if(is_pgn_dirty(pg)) {
+    if (is_pgn_dirty(pg)) {
         unsigned long block_offset = virt_to_phys_block(address);
         int bdev_idx = get_bdev(block_offset), i;
         for(i=bdev_idx-1; i>-1; i--) {
@@ -494,10 +507,14 @@ inline bool vpmem_writeback(void)
         set_pgn_clean(pg);
     } 
 
-    if(list_empty(&pg->lru_node)) {
+    if (list_empty(&pg->lru_node)) {
         push_to_evict_list(pg);
     }
     UNLOCK(pg->lock);
+    
+    schedule();
+    goto again;
+
     return true;
 }
 
@@ -508,9 +525,9 @@ int wb_thread_worker(void *arg)
     do {
 		schedule_timeout_interruptible(msecs_to_jiffies(WB_THREAD_SLEEP_TIME));
         if(vsbi->pgcache_size >= VPMEM_MAX_PAGES) {
-            push_victim_to_wb_list(false);
+            push_victim_to_wb_list(false, true);
         }
-        while(vpmem_writeback()) schedule();
+        vpmem_writeback();
         pop_from_evict_list();
     } while(!kthread_should_stop());  
 
@@ -714,7 +731,7 @@ int vpmem_flush_pages(unsigned long address, unsigned long count) {
             LOCK(lru_lock);
             list_del_init(&pg->lru_node);
             UNLOCK(lru_lock);
-            if(is_pgn_dirty(pg)) push_to_wb_list(pg);
+            if (is_pgn_dirty(pg)) push_to_wb_list(pg);
             else push_to_evict_list(pg);
         }
         address += PAGE_SIZE;
@@ -854,17 +871,18 @@ inline void push_to_wb_list(struct pgcache_node *pg)
     }
 }
 
-inline void push_victim_to_wb_list(bool all)
+inline void push_victim_to_wb_list(bool all, bool del_lru)
 {
     struct pgcache_node *pg, *tmp_pg;
     int i = vsbi->pgcache_size - VPMEM_MAX_PAGES + VPMEM_RES_PAGES;
     LOCK(lru_lock);
     list_for_each_entry_safe(pg, tmp_pg, &vsbi->vpmem_lru_list, lru_node) {
         dif_mm3++;
-        if(pg) {
+        if (pg) {
             LOCK(pg->lock);
-            list_del_init(&pg->lru_node);
-            push_to_wb_list(pg);
+            if (del_lru) list_del_init(&pg->lru_node);
+            if (is_pgn_dirty(pg)) push_to_wb_list(pg);
+            else push_to_evict_list(pg);
             UNLOCK(pg->lock);
             if (!all && --i<=0) break;
         } 
@@ -970,7 +988,7 @@ int vpmem_get(struct nova_sb_info *sbi, unsigned long offset)
     sbi->pgcache_size = 0;
     size <<= PAGE_SHIFT;
     vpmem_end = vpmem_start + size;
-
+    
     pmem.phys_addr = sbi->phys_addr;
     pmem.virt_addr = sbi->virt_addr;
     pmem.size = sbi->initsize;
@@ -1016,9 +1034,10 @@ void pgcache_flush_all(void)
 {
 #ifdef ENABLE_WRITEBACK
     pop_from_evict_list();
-    push_victim_to_wb_list(true);
+    push_victim_to_wb_list(true, true);
     vpmem_print_status();
-    while(vpmem_writeback());
+    wb_empty = 0;
+    vpmem_writeback();
     vpmem_print_status();
 #endif
     pop_from_evict_list();
