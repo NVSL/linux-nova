@@ -91,7 +91,7 @@ inline void set_bm(unsigned long bit, struct scan_bitmap *bm,
 	}
 }
 
-static inline int get_cpuid(struct nova_sb_info *sbi, unsigned long blocknr)
+inline int get_cpuid(struct nova_sb_info *sbi, unsigned long blocknr)
 {
 	return blocknr / sbi->per_list_blocks;
 }

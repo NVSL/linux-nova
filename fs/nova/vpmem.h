@@ -5,8 +5,8 @@
 #include "super.h"
 #include <linux/types.h>
 
-#define VPMEM_MAX_PAGES           32768 // 128MB  32768*4
-#define VPMEM_RES_PAGES           32    // 128KB  32*4
+#define VPMEM_MAX_PAGES           8192  // 32MB per-cpu
+#define VPMEM_RES_PAGES           8     // 32KB per-cpu
 
 extern unsigned long vpmem_start;
 extern unsigned long vpmem_end;
@@ -14,6 +14,8 @@ extern unsigned long vpmem_end;
 int vpmem_init(void);
 // int vpmem_setup(struct nova_sb_info *sbi, unsigned long);
 // void vpmem_cleanup(void);
+
+inline unsigned long pgc_total_size(void);
 
 int vpmem_get(struct nova_sb_info *sbi, unsigned long offset);
 void vpmem_put(void);

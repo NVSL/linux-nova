@@ -795,6 +795,24 @@ inline unsigned long get_blocknr_from_raw(struct nova_sb_info *sbi, int tier,
 }
 
 // blocknr: global block number
+int get_tier_cpu(struct nova_sb_info *sbi, unsigned long blocknr) {
+	int tier = get_tier(sbi, blocknr);
+	struct bdev_free_list *bfl = NULL;
+	unsigned long raw = 0;
+	int i;
+	if (tier==TIER_PMEM) return get_cpuid(sbi, blocknr);
+	raw = get_raw_from_blocknr(sbi, blocknr);
+	for (i = 0; i < sbi->cpus; i++) {
+		bfl = nova_get_bdev_free_list(sbi, tier, i);
+		if (bfl->num_total_blocks > raw) {
+			return i;
+		}
+		raw -= bfl->num_total_blocks;
+	}
+	return -1;
+}
+
+// blocknr: global block number
 int get_tier(struct nova_sb_info *sbi, unsigned long blocknr) {
 	int i;
 	unsigned long this = sbi->num_blocks;

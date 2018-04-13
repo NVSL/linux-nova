@@ -213,6 +213,7 @@ static int nova_seq_ts_show(struct seq_file *seq, void *v)
     unsigned long used, total;
     unsigned long sumu = 0;
 	unsigned long sumt = 0;
+	unsigned long pgc_size = pgc_total_size();
 
 	nova_get_timing_stats();
 	nova_get_IO_stats();
@@ -276,7 +277,8 @@ static int nova_seq_ts_show(struct seq_file *seq, void *v)
     }
 	seq_printf(seq, "---------------------------------------------------------\n");
 	seq_printf(seq, "|DRAM|%6luMB|%9lu|%4lu%%|  N/A|%7uMB|%9u|\n", 
-		sbi->pgcache_size>>8, sbi->pgcache_size, sbi->pgcache_size * 100 / VPMEM_MAX_PAGES, VPMEM_MAX_PAGES>>8, VPMEM_MAX_PAGES);
+		pgc_size>>8, pgc_size, pgc_size * 100 / (VPMEM_MAX_PAGES*sbi->cpus), 
+		(VPMEM_MAX_PAGES*sbi->cpus)>>8, VPMEM_MAX_PAGES*sbi->cpus);
 	seq_printf(seq, "|NOVA|%6luMB|%9lu|%4lu%%|  N/A|%7luMB|%9lu|\n", sumu>>8, sumu, sumu * 100 / sumt, sumt>>8, sumt);
 	
 	seq_printf(seq, "---------------------------------------------------------\n");

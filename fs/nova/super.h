@@ -163,10 +163,14 @@ struct nova_sb_info {
 	/* VPMEM */
 	void *vpmem;
 	unsigned long vpmem_num_blocks;
-	unsigned long pgcache_size;
-	struct list_head vpmem_lru_list;
-	struct list_head vpmem_wb_list;
-	struct list_head vpmem_evict_list;
+	unsigned long *pgcache_size;
+	struct mutex *vpmem_lru_mutex;
+	struct mutex *vpmem_wb_mutex;
+	struct mutex *vpmem_evict_mutex;
+	struct list_head *vpmem_lru_list;
+	struct list_head *vpmem_wb_list;
+	struct list_head *vpmem_evict_list;
+	struct nova_kthread *wb_thread;
 
 	/* Block device buffer */
 	char *bdev_buffer;

@@ -1066,6 +1066,7 @@ int nova_new_blocks(struct super_block *sb, unsigned long *blocknr,
 /* bbuild.c */
 inline void set_bm(unsigned long bit, struct scan_bitmap *bm,
 	enum bm_type type);
+inline int get_cpuid(struct nova_sb_info *sbi, unsigned long blocknr);
 void nova_save_blocknode_mappings_to_log(struct super_block *sb);
 void nova_save_inode_list_to_log(struct super_block *sb);
 void nova_init_header(struct super_block *sb,
@@ -1081,6 +1082,7 @@ int nova_alloc_bdev_block_free_lists(struct super_block *sb);
 void nova_init_bdev_blockmap(struct super_block *sb, int recovery);
 unsigned long get_offset_of_tier(struct nova_sb_info *sbi, int tier);
 int get_bfl_index(struct nova_sb_info *sbi, unsigned long blocknr);
+int get_tier_cpu(struct nova_sb_info *sbi, unsigned long blocknr);
 inline int get_tier_range_node(struct nova_sb_info *sbi, 
 	struct nova_range_node* nrn);
 int get_suitable_tier(struct super_block *sb, unsigned long num_blocks);
