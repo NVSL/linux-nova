@@ -834,13 +834,13 @@ inline void pop_from_evict_list(void)
         nl_send("ev %20lu %16lu %2d", pg->address, 0, 0);
 
         p = pg->page;
-        pte = pte_lookup(pgd_offset_k(pg->address), pg->address);
-        if(pte) {
-            pte_clear(current_mm, pg->address, pte);
-        }
         if(p) {
             unlock_page(p);
             __free_page(p);
+        }
+        pte = pte_lookup(pgd_offset_k(pg->address), pg->address);
+        if(pte) {
+            pte_clear(current_mm, pg->address, pte);
         }
 
         evicts++;
