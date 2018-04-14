@@ -831,7 +831,7 @@ int vpmem_flush_pages(unsigned long address, unsigned long count) {
         if(pgn) {             
             mutex_lock(&vsbi->vpmem_lru_mutex[cpu]);
             list_del_init(&pgn->lru_node);
-            mutex_lock(&vsbi->vpmem_lru_mutex[cpu]);
+            mutex_unlock(&vsbi->vpmem_lru_mutex[cpu]);
             if (is_pgn_dirty(pgn)) push_to_wb_list(pgn, cpu);
             else push_to_evict_list(pgn, cpu);
         }
