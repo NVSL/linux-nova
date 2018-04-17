@@ -941,7 +941,7 @@ iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 	struct blk_plug plug;
 	struct iomap_dio *dio;
 
-	lockdep_assert_held(&inode->i_rwsem);
+	lockdep_assert_held(&inode->i_rwsem_cst);
 
 	if (!count)
 		return 0;

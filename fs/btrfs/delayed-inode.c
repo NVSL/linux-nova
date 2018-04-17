@@ -1648,7 +1648,7 @@ void btrfs_readdir_put_delayed_items(struct inode *inode,
 	 * The VFS is going to do up_read(), so we need to downgrade back to a
 	 * read lock.
 	 */
-	downgrade_write(&inode->i_rwsem);
+	downgrade_write_cst(&inode->i_rwsem_cst);
 }
 
 int btrfs_should_delete_dir_index(struct list_head *del_list,

@@ -193,10 +193,10 @@ xfs_ilock(
 	ASSERT((lock_flags & ~(XFS_LOCK_MASK | XFS_LOCK_SUBCLASS_MASK)) == 0);
 
 	if (lock_flags & XFS_IOLOCK_EXCL) {
-		down_write_nested(&VFS_I(ip)->i_rwsem,
+		down_write_cst_nested(&VFS_I(ip)->i_rwsem_cst,
 				  XFS_IOLOCK_DEP(lock_flags));
 	} else if (lock_flags & XFS_IOLOCK_SHARED) {
-		down_read_nested(&VFS_I(ip)->i_rwsem,
+		down_read_cst_nested(&VFS_I(ip)->i_rwsem_cst,
 				 XFS_IOLOCK_DEP(lock_flags));
 	}
 
@@ -244,10 +244,10 @@ xfs_ilock_nowait(
 	ASSERT((lock_flags & ~(XFS_LOCK_MASK | XFS_LOCK_SUBCLASS_MASK)) == 0);
 
 	if (lock_flags & XFS_IOLOCK_EXCL) {
-		if (!down_write_trylock(&VFS_I(ip)->i_rwsem))
+		if (!down_write_cst_trylock(&VFS_I(ip)->i_rwsem_cst))
 			goto out;
 	} else if (lock_flags & XFS_IOLOCK_SHARED) {
-		if (!down_read_trylock(&VFS_I(ip)->i_rwsem))
+		if (!down_read_cst_trylock(&VFS_I(ip)->i_rwsem_cst))
 			goto out;
 	}
 
@@ -275,9 +275,9 @@ out_undo_mmaplock:
 		mrunlock_shared(&ip->i_mmaplock);
 out_undo_iolock:
 	if (lock_flags & XFS_IOLOCK_EXCL)
-		up_write(&VFS_I(ip)->i_rwsem);
+		up_write_cst(&VFS_I(ip)->i_rwsem_cst);
 	else if (lock_flags & XFS_IOLOCK_SHARED)
-		up_read(&VFS_I(ip)->i_rwsem);
+		up_read_cst(&VFS_I(ip)->i_rwsem_cst);
 out:
 	return 0;
 }
@@ -314,9 +314,9 @@ xfs_iunlock(
 	ASSERT(lock_flags != 0);
 
 	if (lock_flags & XFS_IOLOCK_EXCL)
-		up_write(&VFS_I(ip)->i_rwsem);
+		up_write_cst(&VFS_I(ip)->i_rwsem_cst);
 	else if (lock_flags & XFS_IOLOCK_SHARED)
-		up_read(&VFS_I(ip)->i_rwsem);
+		up_read_cst(&VFS_I(ip)->i_rwsem_cst);
 
 	if (lock_flags & XFS_MMAPLOCK_EXCL)
 		mrunlock_excl(&ip->i_mmaplock);
@@ -349,7 +349,7 @@ xfs_ilock_demote(
 	if (lock_flags & XFS_MMAPLOCK_EXCL)
 		mrdemote(&ip->i_mmaplock);
 	if (lock_flags & XFS_IOLOCK_EXCL)
-		downgrade_write(&VFS_I(ip)->i_rwsem);
+		downgrade_write_cst(&VFS_I(ip)->i_rwsem_cst);
 
 	trace_xfs_ilock_demote(ip, lock_flags, _RET_IP_);
 }
@@ -375,8 +375,8 @@ xfs_isilocked(
 	if (lock_flags & (XFS_IOLOCK_EXCL|XFS_IOLOCK_SHARED)) {
 		if (!(lock_flags & XFS_IOLOCK_SHARED))
 			return !debug_locks ||
-				lockdep_is_held_type(&VFS_I(ip)->i_rwsem, 0);
-		return rwsem_is_locked(&VFS_I(ip)->i_rwsem);
+				lockdep_is_held_type(&VFS_I(ip)->i_rwsem_cst, 0);
+		return rwsem_cst_is_locked(&VFS_I(ip)->i_rwsem_cst);
 	}
 
 	ASSERT(0);

@@ -18,6 +18,7 @@
 #include <linux/bug.h>
 #include <linux/mutex.h>
 #include <linux/rwsem.h>
+#include <linux/rwsem_cst.h>
 #include <linux/mm_types.h>
 #include <linux/capability.h>
 #include <linux/semaphore.h>
@@ -613,7 +614,7 @@ struct inode {
 
 	/* Misc */
 	unsigned long		i_state;
-	struct rw_semaphore	i_rwsem;
+	struct rwcst_semaphore	i_rwsem_cst;
 
 	unsigned long		dirtied_when;	/* jiffies of first dirtying */
 	unsigned long		dirtied_time_when;
@@ -706,42 +707,42 @@ enum inode_i_mutex_lock_class
 
 static inline void inode_lock(struct inode *inode)
 {
-	down_write(&inode->i_rwsem);
+	down_write_cst(&inode->i_rwsem_cst);
 }
 
 static inline void inode_unlock(struct inode *inode)
 {
-	up_write(&inode->i_rwsem);
+	up_write_cst(&inode->i_rwsem_cst);
 }
 
 static inline void inode_lock_shared(struct inode *inode)
 {
-	down_read(&inode->i_rwsem);
+	down_read_cst(&inode->i_rwsem_cst);
 }
 
 static inline void inode_unlock_shared(struct inode *inode)
 {
-	up_read(&inode->i_rwsem);
+	up_read_cst(&inode->i_rwsem_cst);
 }
 
 static inline int inode_trylock(struct inode *inode)
 {
-	return down_write_trylock(&inode->i_rwsem);
+	return down_write_cst_trylock(&inode->i_rwsem_cst);
 }
 
 static inline int inode_trylock_shared(struct inode *inode)
 {
-	return down_read_trylock(&inode->i_rwsem);
+	return down_read_cst_trylock(&inode->i_rwsem_cst);
 }
 
 static inline int inode_is_locked(struct inode *inode)
 {
-	return rwsem_is_locked(&inode->i_rwsem);
+	return rwsem_cst_is_locked(&inode->i_rwsem_cst);
 }
 
 static inline void inode_lock_nested(struct inode *inode, unsigned subclass)
 {
-	down_write_nested(&inode->i_rwsem, subclass);
+	down_write_cst_nested(&inode->i_rwsem_cst, subclass);
 }
 
 void lock_two_nondirectories(struct inode *, struct inode*);

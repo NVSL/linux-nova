@@ -842,7 +842,7 @@ static noinline int btrfs_mksubvol(const struct path *parent,
 	struct dentry *dentry;
 	int error;
 
-	error = down_write_killable_nested(&dir->i_rwsem, I_MUTEX_PARENT);
+	error = down_write_cst_killable_nested(&dir->i_rwsem_cst, I_MUTEX_PARENT);
 	if (error == -EINTR)
 		return error;
 
@@ -2391,7 +2391,7 @@ static noinline int btrfs_ioctl_snap_destroy(struct file *file,
 		goto out;
 
 
-	err = down_write_killable_nested(&dir->i_rwsem, I_MUTEX_PARENT);
+	err = down_write_cst_killable_nested(&dir->i_rwsem_cst, I_MUTEX_PARENT);
 	if (err == -EINTR)
 		goto out_drop_write;
 	dentry = lookup_one_len(vol_args->name, parent, namelen);

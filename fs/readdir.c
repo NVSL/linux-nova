@@ -39,7 +39,7 @@ int iterate_dir(struct file *file, struct dir_context *ctx)
 	if (shared) {
 		inode_lock_shared(inode);
 	} else {
-		res = down_write_killable(&inode->i_rwsem);
+		res = down_write_cst_killable(&inode->i_rwsem_cst);
 		if (res)
 			goto out;
 	}
