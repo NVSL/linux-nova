@@ -943,6 +943,7 @@ inline void pop_from_evict_list(void)
     mutex_lock(&vsbi->vpmem_evict_mutex[cpu]);
     list_for_each_entry_safe(pgn, tmp_pgn, &vsbi->vpmem_evict_list[cpu], evict_node) {
         pte_t *pte = NULL;
+        if (!pgn) break;
         LOCK(pgn->lock);        
         list_del_init(&pgn->evict_node);
         pgcache_remove(pgn, cpu);
@@ -995,20 +996,18 @@ void push_victim_to_wb_list(int cpu, bool all, bool del_lru)
     list_for_each_entry_safe(pgn, tmp_pgn, &vsbi->vpmem_lru_list[cpu], lru_node) {
         counter++;
         dif_mm3++;
-        if (pgn) {
-            if (is_pgn_young_reset(pgn) && likely(counter<(VPMEM_MAX_PAGES<<8))) {
-                // This pgn is spared for now
-                list_move_tail(&pgn->lru_node, &vsbi->vpmem_lru_list[cpu]);
-                continue;
-            }
-            LOCK(pgn->lock);
-            if (del_lru) list_del_init(&pgn->lru_node);
-            if (is_pgn_dirty(pgn)) push_to_wb_list(pgn, cpu);
-            else if (del_lru) push_to_evict_list(pgn, cpu);
-            UNLOCK(pgn->lock);
-            if (!all && --i<=0) break;
-        } 
-        else break;
+        if (!pgn) break;
+        if (is_pgn_young_reset(pgn) && likely(counter<(VPMEM_MAX_PAGES<<8))) {
+            // This pgn is spared for now
+            list_move_tail(&pgn->lru_node, &vsbi->vpmem_lru_list[cpu]);
+            continue;
+        }
+        LOCK(pgn->lock);
+        if (del_lru) list_del_init(&pgn->lru_node);
+        if (is_pgn_dirty(pgn)) push_to_wb_list(pgn, cpu);
+        else if (del_lru) push_to_evict_list(pgn, cpu);
+        UNLOCK(pgn->lock);
+        if (!all && --i<=0) break;
     }
     mutex_unlock(&vsbi->vpmem_lru_mutex[cpu]);
 }

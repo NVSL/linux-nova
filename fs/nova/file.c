@@ -132,7 +132,7 @@ int nova_fsync_range(struct inode *inode, unsigned long start_pgoff, unsigned lo
 	
     do {
         entry = nova_find_next_entry(sb, sih, index);
-		nova_info("index %lu %lu %lu\n", index, start_pgoff, end_pgoff);
+		// nova_info("index %lu %lu %lu\n", index, start_pgoff, end_pgoff);
         if (entry) {            
             if (entry == last_entry) {
                 index++;
@@ -156,7 +156,7 @@ int nova_fsync_range(struct inode *inode, unsigned long start_pgoff, unsigned lo
         }
         last_entry = entry;
     } while (index <= end_pgoff);
-	nova_info("fsync %d pages\n", ret);
+	// nova_info("fsync %d pages\n", ret);
 	return ret;
 }
 
