@@ -759,14 +759,14 @@ bool insert_tlb(pte_t ptein, unsigned long address) {
     return true;
 }
 
-int vpmem_cache_pages(unsigned long address, unsigned long count)
+int vpmem_cache_pages(unsigned long address, unsigned long count, bool load)
 {
     if(likely(count != 0)) {
         address &= PAGE_MASK;
         while(count-- > 0) {
             struct page *p=0;
             if(insert_tlb(newpage(address, current_mm, &p), address)) {
-                if(p) {
+                if(p && load) {
                     vpmem_load_block(address, p);
                 }
             } else {

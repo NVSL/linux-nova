@@ -24,7 +24,7 @@ void vpmem_reset(void);
 
 // int vpmem_pin(unsigned long vaddr, int count);            
 // int vpmem_unpin(unsigned long vaddr, int count);
-int vpmem_cache_pages(unsigned long vaddr, unsigned long count);   // To cache a particular page
+int vpmem_cache_pages(unsigned long vaddr, unsigned long count, bool load);   // To cache a particular page
 // int vpmem_cache_pages_safe(unsigned long vaddr, unsigned long count);
 int vpmem_flush_pages(unsigned long vaddr, unsigned long count);   // To free a cached page if it was presented
 int vpmem_flush_pages_sync(unsigned long address, unsigned long count);
