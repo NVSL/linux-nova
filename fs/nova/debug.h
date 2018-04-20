@@ -10,7 +10,7 @@
 #define MODE_USE_GROUP 1
 #define MODE_KEEP_STAT 1
 
-#define MODE_FORE_ALLOC 1
+#define MODE_FORE_ALLOC 0
 #define MODE_BACK_MIG 1
 
 /* Configure */

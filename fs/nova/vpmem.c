@@ -71,8 +71,7 @@
 unsigned long vpmem_start=0;
 unsigned long vpmem_end=0;
 int *wb_empty;
-// unsigned long map_page[MAX_TIERS]={0};
-// bool map_valid[MAX_TIERS]={0};
+
 unsigned long map_page[BDEV_COUNT_MAX]={0};
 bool map_valid[BDEV_COUNT_MAX]={0};
 
@@ -189,7 +188,7 @@ inline void pop_from_evict_list(void);
 void push_to_evict_list(struct pgcache_node *pgn, int cpu);
 void push_to_wb_list(struct pgcache_node *pgn, int cpu);
 void push_victim_to_wb_list(int cpu, bool all, bool del_lru);
-bool vpmem_load_block(unsigned long address, struct page *p);
+bool vpmem_load_block(unsigned long address, struct page *p, int count);
 
 static struct rb_root pgcache = RB_ROOT;
 static DEFINE_MUTEX(pgcache_lock);
@@ -219,10 +218,6 @@ inline bool is_pgcache_small(int cpu) {
     return vsbi->pgcache_size[cpu] <= VPMEM_MAX_PAGES;
 }
 
-inline unsigned long virt_to_phys_block(unsigned long address) {
-    return ( address - vpmem_start ) >> PAGE_SHIFT;
-}
-
 inline unsigned long virt_to_block(unsigned long address) {
 	struct super_block *sb = vsbi->sb;
 	struct nova_super_block *ps = nova_get_super(sb);
@@ -236,13 +231,15 @@ inline unsigned long block_to_virt(unsigned long block) {
 
 // Virtual address to global block offset
 inline unsigned long virt_to_blockoff(unsigned long address) {
-    // return (address-vpmem_start + vsbi->initsize) >> PAGE_SHIFT;
-    return (address-vpmem_start + (vsbi->num_blocks << PAGE_SHIFT)) >> PAGE_SHIFT;
+    address &= PAGE_MASK;
+    if (unlikely(address<vpmem_start)) nova_info("Error in virt_to_blockoff\n");
+    return ((address - vpmem_start) >> PAGE_SHIFT) + vsbi->num_blocks;
 }
 
 // Global block offset to virtual address
 inline unsigned long blockoff_to_virt(unsigned long blockoff) {
-    return vpmem_start - (vsbi->num_blocks << PAGE_SHIFT) + ( blockoff << PAGE_SHIFT);
+    if (unlikely(blockoff<vsbi->num_blocks)) nova_info("Error in blockoff_to_virt\n");
+    return vpmem_start + ((blockoff - vsbi->num_blocks) << PAGE_SHIFT);
 }
 
 /* 
@@ -250,7 +247,7 @@ inline unsigned long blockoff_to_virt(unsigned long blockoff) {
  * An alternate implementation can be added to this.
  * But please do NOT modify this one.
  */
-// TODO: Change virtual address layout
+// TODO: Change virtual address layout for hotplug
 inline int vpmem_get_cpuid(unsigned long address) {
     return get_tier_cpu(vsbi, virt_to_blockoff(address));
 }
@@ -407,10 +404,10 @@ void __pgcache_erase(struct pgcache_node *victim)
 void pgcache_remove(struct pgcache_node *victim, int cpu)
 {
     if (victim) {
-        LOCK(pgcache_lock);
         mutex_lock(&vsbi->vpmem_lru_mutex[cpu]);
         list_del_init(&victim->lru_node);
         mutex_unlock(&vsbi->vpmem_lru_mutex[cpu]);
+        LOCK(pgcache_lock);
         __pgcache_erase(victim);
         UNLOCK(pgcache_lock);
     }
@@ -422,8 +419,8 @@ void *vpmem_lru_refer(unsigned long address)
         struct pgcache_node *target;
         LOCK(pgcache_lock);
         target = __pgcache_lookup(address & PAGE_MASK);
-        if (target) pgcache_lru_refer(target);
         UNLOCK(pgcache_lock);
+        if (target) pgcache_lru_refer(target);
     }
     return (void*) address;
 }
@@ -490,16 +487,6 @@ inline pte_t *fill_pte(struct mm_struct *mm, pmd_t *pmd, unsigned long address)
     return pte_offset_kernel(pmd, address);
 }
 
-inline int get_bdev(unsigned long pgidx) {
-    int i;
-    // for(i=0; i<bdev_count; i++) {
-    for(i=0; i<TIER_BDEV_HIGH; i++) {
-        if(map_valid[i] && pgidx < map_page[i])
-            return i;
-    }
-    return -EINVAL;
-}
-
 pte_t *pte_lookup(pgd_t *, unsigned long);
 
 void flush_tlb_all(void)
@@ -528,6 +515,28 @@ void vpmem_print_status(void) {
             printk(KERN_INFO "|%3d |%s\n", i, stmp);
     }
     printk(KERN_INFO "---------------------------------\n");
+}
+
+int vpmem_write_to_bdev(unsigned long address, unsigned long count, struct page *page) {   
+    unsigned long blockoff, raw_blockto;
+    int tier;
+    address &= PAGE_MASK;
+    blockoff = virt_to_blockoff(address);
+    tier = get_tier(vsbi, blockoff);
+    raw_blockto = get_raw_from_blocknr(vsbi, blockoff);
+    return nova_bdev_write_block(vsbi, get_bdev_raw(vsbi, tier), raw_blockto, count,
+        page, BIO_SYNC);
+}
+
+int vpmem_read_from_bdev(unsigned long address, unsigned long count, struct page *page) {   
+    unsigned long blockoff, raw_blockto;
+    int tier;
+    address &= PAGE_MASK;
+    blockoff = virt_to_blockoff(address);
+    tier = get_tier(vsbi, blockoff);
+    raw_blockto = get_raw_from_blocknr(vsbi, blockoff);
+    return nova_bdev_read_block(vsbi, get_bdev_raw(vsbi, tier), raw_blockto, count,
+        page, BIO_SYNC);
 }
 
 /******************* TLB Flusher *******************/
@@ -577,21 +586,15 @@ again:
     mutex_unlock(&vsbi->vpmem_wb_mutex[cpu]);
 
     if (is_pgn_dirty(pg)) {
-        unsigned long block_offset = virt_to_phys_block(address);
-        int bdev_idx = get_bdev(block_offset), i;
-        for(i=bdev_idx-1; i>-1; i--) {
-            // block_offset -= bdev_list[i].capacity_page;
-            block_offset -= vsbi->bdev_list[i].capacity_page;
-        }
-
-        nl_send("wb %20lu %16lu %2d", address, block_offset, bdev_idx);
-        if((i=nova_bdev_write_block(vsbi, vsbi->bdev_list[bdev_idx].bdev_raw, block_offset, 1, p, BIO_SYNC))) {
-            printk("vpmem:\033[1;32m could not write to bdev (%d) %lu\033[0m\n", i, ++dif_mm2);
+        int ret = vpmem_write_to_bdev(address, 1, p);
+        // nl_send("wb %20lu %16lu %2d", address, block_offset, tier);
+        if(unlikely(ret)) {
+            printk("vpmem:\033[1;32m could not write to bdev %lu\033[0m\n", ++dif_mm2);
         } else {
             bdev_write++;
         }
         set_pgn_clean(pg);
-    } 
+    }
 
     if (list_empty(&pg->lru_node)) {
         push_to_evict_list(pg, cpu);
@@ -764,33 +767,26 @@ bool insert_tlb(pte_t ptein, unsigned long address) {
 
 int vpmem_cache_pages(unsigned long address, unsigned long count, bool load)
 {
-    if(likely(count != 0)) {
-        address &= PAGE_MASK;
-        while(count-- > 0) {
-            struct page *p=0;
-            if(insert_tlb(newpage(address, current_mm, &p), address)) {
-                if(p && load) {
-                    vpmem_load_block(address, p);
-                }
-            } else {
-                return 1;
-            }
-            address += PAGE_SIZE;
+    int new_count = 0;
+    address &= PAGE_MASK;
+    while(count-- > 0) {
+        struct page *p=0;
+        if(insert_tlb(newpage(address, current_mm, &p), address)) {
+            if(p) new_count++;
+        } else {
+            return 1;
         }
+        address += PAGE_SIZE;
+    }
+    if (load) {
+        if (likely(new_count == count))
+            vpmem_load_block(address, address_to_page((void *)address), count);
+        else
+            nova_info("Error in vpmem_cache_pages\n");
     }
     return 0;
 }
 
-int vpmem_write_to_bdev(unsigned long address, unsigned long count, struct page *page) {   
-    unsigned long blockoff, raw_blockto;
-    int tier;
-    address &= PAGE_MASK;
-    blockoff = virt_to_blockoff(address);
-    tier = get_tier(vsbi, blockoff);
-    raw_blockto = get_raw_from_blocknr(vsbi, blockoff);
-    return nova_bdev_write_block(vsbi, get_bdev_raw(vsbi, tier), raw_blockto, count,
-        page, BIO_SYNC);
-}
 
 inline int vpmem_write_behind_pages(unsigned long address, unsigned long count, void *dax_mem) {    
     return vpmem_write_to_bdev(address, count, address_to_page(dax_mem));
@@ -915,21 +911,12 @@ struct fpage {
 struct fpage pgs[8];
 int pgsh=0,pgst=0;
 
-bool vpmem_load_block(unsigned long address, struct page *p)
+bool vpmem_load_block(unsigned long address, struct page *p, int count)
 {
-    unsigned long block_offset = virt_to_phys_block(address);
-    int bdev_idx = get_bdev(block_offset), i;
+    int ret = vpmem_read_from_bdev(address, count, p);
 
-    if (pgsh!=pgst) {
-        printk("vpmem: if(pgsh!=pgst) h=%d t=%d\n", pgsh, pgst);
-    }
-
-    for (i=bdev_idx-1; i>-1; i--) {
-        block_offset -= vsbi->bdev_list[i].capacity_page;
-    }
-    native_irq_enable();
-    if ((i=nova_bdev_read_block(vsbi, vsbi->bdev_list[bdev_idx].bdev_raw, block_offset, 1, p, BIO_SYNC))) {
-        printk("vpmem:\033[1;33m could not read from bdev (%d) %lu\033[0m\n", i, ++dif_mm2);
+    if (unlikely(ret)) {
+        printk("vpmem:\033[1;33m could not read from bdev %lu\033[0m\n", ++dif_mm2);
         return false;
     } else {
         bdev_read++;
@@ -1033,8 +1020,8 @@ bool vpmem_do_page_fault(struct pt_regs *regs, unsigned long error_code, unsigne
             // 2. Handling the page fault
             if(insert_tlb(newpage(address, current_mm, &p), address)) {
                 if(p) {
-                    // TODO: Some kind of page fault do not need to load the block from bdev
-                    vpmem_load_block(address, p);
+                    // TODO: We can pre-load more pages
+                    vpmem_load_block(address, p, 1);
                 }
                 goto check_cache;
             }
@@ -1061,7 +1048,7 @@ bool vpmem_checkout(unsigned long address)
     LOCK(checkout_lock);
     if(pgsh!=pgst) {
         struct fpage *p=&pgs[(pgsh++)%8];
-        vpmem_load_block(p->address, p->p);
+        vpmem_load_block(p->address, p->p, 1);
     }
     UNLOCK(checkout_lock);
     return true;
