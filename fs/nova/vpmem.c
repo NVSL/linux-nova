@@ -257,8 +257,8 @@ inline int vpmem_get_cpuid(unsigned long address) {
 
 inline int vpmem_get_range_cpuid(unsigned long address, unsigned long count) {
     int cpu = vpmem_get_cpuid(address);
-    if (unlikely(cpu != vpmem_get_cpuid(address + (count << PAGE_SHIFT))))
-        nova_info("Error in vpmem_get_range_cpuid\n");
+    if (unlikely(cpu != vpmem_get_cpuid(address + ((count-1) << PAGE_SHIFT))))
+        nova_info("Error in vpmem_get_range_cpuid cpu %d v %lx, %lu \n", cpu, address, count-1);
     return cpu;
 }
 
@@ -309,7 +309,10 @@ void pgcache_lru_refer(struct pgcache_node *pgn)
 }
 
 bool is_pgn_dirty(struct pgcache_node *pgn) {
-    pte_t *ptep = vpmem_get_pte(pgn);    
+    pte_t *ptep;
+    if (pgn == NULL) return false;
+    ptep = vpmem_get_pte(pgn);    
+    if (ptep == NULL) return false;
     return pte_dirty(*ptep) != 0;
 }
 
@@ -994,10 +997,10 @@ void push_victim_to_wb_list(int cpu, bool all, bool del_lru)
     if (list_empty(&vsbi->vpmem_lru_list[cpu])) return;
     mutex_lock(&vsbi->vpmem_lru_mutex[cpu]);
     list_for_each_entry_safe(pgn, tmp_pgn, &vsbi->vpmem_lru_list[cpu], lru_node) {
-        counter++;
         dif_mm3++;
         if (!pgn) break;
-        if (is_pgn_young_reset(pgn) && likely(counter<(VPMEM_MAX_PAGES<<8))) {
+        if (is_pgn_young_reset(pgn) && counter<VPMEM_MAX_PAGES) {
+            counter++;
             // This pgn is spared for now
             list_move_tail(&pgn->lru_node, &vsbi->vpmem_lru_list[cpu]);
             continue;
