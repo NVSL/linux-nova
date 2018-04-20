@@ -665,6 +665,7 @@ struct inode {
 	struct fscrypt_info	*i_crypt_info;
 #endif
 
+	int cpu;
 	void			*i_private; /* fs or device private pointer */
 } __randomize_layout;
 
@@ -1407,9 +1408,12 @@ struct super_block {
 	 */
 	int s_stack_depth;
 
+	int cpus;
 	/* s_inode_list_lock protects s_inodes */
-	spinlock_t		s_inode_list_lock ____cacheline_aligned_in_smp;
-	struct list_head	s_inodes;	/* all inodes */
+//	spinlock_t		s_inode_list_lock ____cacheline_aligned_in_smp;
+	void			*lock_mem;
+	spinlock_t		**s_inode_list_locks;
+	struct list_head	*s_inodes;	/* all inodes */
 
 	spinlock_t		s_inode_wblist_lock;
 	struct list_head	s_inodes_wb;	/* writeback inodes */

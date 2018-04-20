@@ -16,9 +16,13 @@ int sysctl_drop_caches;
 static void drop_pagecache_sb(struct super_block *sb, void *unused)
 {
 	struct inode *inode, *toput_inode = NULL;
+	int i;
 
-	spin_lock(&sb->s_inode_list_lock);
-	list_for_each_entry(inode, &sb->s_inodes, i_sb_list) {
+	for (i = 0; i < sb->cpus; i++) {
+		toput_inode = NULL;
+
+	spin_lock(sb->s_inode_list_locks[i]);
+	list_for_each_entry(inode, &sb->s_inodes[i], i_sb_list) {
 		spin_lock(&inode->i_lock);
 		if ((inode->i_state & (I_FREEING|I_WILL_FREE|I_NEW)) ||
 		    (inode->i_mapping->nrpages == 0)) {
@@ -27,16 +31,18 @@ static void drop_pagecache_sb(struct super_block *sb, void *unused)
 		}
 		__iget(inode);
 		spin_unlock(&inode->i_lock);
-		spin_unlock(&sb->s_inode_list_lock);
+		spin_unlock(sb->s_inode_list_locks[i]);
 
 		invalidate_mapping_pages(inode->i_mapping, 0, -1);
 		iput(toput_inode);
 		toput_inode = inode;
 
-		spin_lock(&sb->s_inode_list_lock);
+		spin_lock(sb->s_inode_list_locks[i]);
 	}
-	spin_unlock(&sb->s_inode_list_lock);
+	spin_unlock(sb->s_inode_list_locks[i]);
 	iput(toput_inode);
+
+	}
 }
 
 int drop_caches_sysctl_handler(struct ctl_table *table, int write,

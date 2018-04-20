@@ -434,18 +434,25 @@ static void inode_lru_list_del(struct inode *inode)
  */
 void inode_sb_list_add(struct inode *inode)
 {
-	spin_lock(&inode->i_sb->s_inode_list_lock);
-	list_add(&inode->i_sb_list, &inode->i_sb->s_inodes);
-	spin_unlock(&inode->i_sb->s_inode_list_lock);
+	struct super_block *sb = inode->i_sb;
+	int cpu = smp_processor_id() % sb->cpus;
+
+	spin_lock(inode->i_sb->s_inode_list_locks[cpu]);
+	inode->cpu = cpu;
+	list_add(&inode->i_sb_list, &inode->i_sb->s_inodes[cpu]);
+	spin_unlock(inode->i_sb->s_inode_list_locks[cpu]);
 }
 EXPORT_SYMBOL_GPL(inode_sb_list_add);
 
 static inline void inode_sb_list_del(struct inode *inode)
 {
+	int cpu;
+
 	if (!list_empty(&inode->i_sb_list)) {
-		spin_lock(&inode->i_sb->s_inode_list_lock);
+		cpu = inode->cpu;
+		spin_lock(inode->i_sb->s_inode_list_locks[cpu]);
 		list_del_init(&inode->i_sb_list);
-		spin_unlock(&inode->i_sb->s_inode_list_lock);
+		spin_unlock(inode->i_sb->s_inode_list_locks[cpu]);
 	}
 }
 
@@ -603,10 +610,13 @@ void evict_inodes(struct super_block *sb)
 {
 	struct inode *inode, *next;
 	LIST_HEAD(dispose);
+	int i;
 
+	for (i = 0; i < sb->cpus; i++) {
+		INIT_LIST_HEAD(&dispose);
 again:
-	spin_lock(&sb->s_inode_list_lock);
-	list_for_each_entry_safe(inode, next, &sb->s_inodes, i_sb_list) {
+	spin_lock(sb->s_inode_list_locks[i]);
+	list_for_each_entry_safe(inode, next, &sb->s_inodes[i], i_sb_list) {
 		if (atomic_read(&inode->i_count))
 			continue;
 
@@ -627,15 +637,16 @@ again:
 		 * bit so we don't livelock.
 		 */
 		if (need_resched()) {
-			spin_unlock(&sb->s_inode_list_lock);
+			spin_unlock(sb->s_inode_list_locks[i]);
 			cond_resched();
 			dispose_list(&dispose);
 			goto again;
 		}
 	}
-	spin_unlock(&sb->s_inode_list_lock);
+	spin_unlock(sb->s_inode_list_locks[i]);
 
 	dispose_list(&dispose);
+	}
 }
 
 /**
@@ -653,9 +664,13 @@ int invalidate_inodes(struct super_block *sb, bool kill_dirty)
 	int busy = 0;
 	struct inode *inode, *next;
 	LIST_HEAD(dispose);
+	int i;
 
-	spin_lock(&sb->s_inode_list_lock);
-	list_for_each_entry_safe(inode, next, &sb->s_inodes, i_sb_list) {
+	for (i = 0; i < sb->cpus; i++) {
+		INIT_LIST_HEAD(&dispose);
+
+	spin_lock(sb->s_inode_list_locks[i]);
+	list_for_each_entry_safe(inode, next, &sb->s_inodes[i], i_sb_list) {
 		spin_lock(&inode->i_lock);
 		if (inode->i_state & (I_NEW | I_FREEING | I_WILL_FREE)) {
 			spin_unlock(&inode->i_lock);
@@ -677,9 +692,10 @@ int invalidate_inodes(struct super_block *sb, bool kill_dirty)
 		spin_unlock(&inode->i_lock);
 		list_add(&inode->i_lru, &dispose);
 	}
-	spin_unlock(&sb->s_inode_list_lock);
+	spin_unlock(sb->s_inode_list_locks[i]);
 
 	dispose_list(&dispose);
+	}
 
 	return busy;
 }
@@ -913,7 +929,7 @@ struct inode *new_inode(struct super_block *sb)
 {
 	struct inode *inode;
 
-	spin_lock_prefetch(&sb->s_inode_list_lock);
+//	spin_lock_prefetch(&sb->s_inode_list_lock);
 
 	inode = new_inode_pseudo(sb);
 	if (inode)

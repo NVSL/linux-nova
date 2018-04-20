@@ -2119,9 +2119,13 @@ EXPORT_SYMBOL(__invalidate_device);
 void iterate_bdevs(void (*func)(struct block_device *, void *), void *arg)
 {
 	struct inode *inode, *old_inode = NULL;
+	int i;
 
-	spin_lock(&blockdev_superblock->s_inode_list_lock);
-	list_for_each_entry(inode, &blockdev_superblock->s_inodes, i_sb_list) {
+	for (i = 0; i < blockdev_superblock->cpus; i++) {
+	old_inode = NULL;
+
+	spin_lock(blockdev_superblock->s_inode_list_locks[i]);
+	list_for_each_entry(inode, &blockdev_superblock->s_inodes[i], i_sb_list) {
 		struct address_space *mapping = inode->i_mapping;
 		struct block_device *bdev;
 
@@ -2133,7 +2137,7 @@ void iterate_bdevs(void (*func)(struct block_device *, void *), void *arg)
 		}
 		__iget(inode);
 		spin_unlock(&inode->i_lock);
-		spin_unlock(&blockdev_superblock->s_inode_list_lock);
+		spin_unlock(blockdev_superblock->s_inode_list_locks[i]);
 		/*
 		 * We hold a reference to 'inode' so it couldn't have been
 		 * removed from s_inodes list while we dropped the
@@ -2151,8 +2155,9 @@ void iterate_bdevs(void (*func)(struct block_device *, void *), void *arg)
 			func(bdev, arg);
 		mutex_unlock(&bdev->bd_mutex);
 
-		spin_lock(&blockdev_superblock->s_inode_list_lock);
+		spin_lock(blockdev_superblock->s_inode_list_locks[i]);
 	}
-	spin_unlock(&blockdev_superblock->s_inode_list_lock);
+	spin_unlock(blockdev_superblock->s_inode_list_locks[i]);
 	iput(old_inode);
+	}
 }

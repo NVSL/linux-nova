@@ -937,12 +937,16 @@ static int dqinit_needed(struct inode *inode, int type)
 static void add_dquot_ref(struct super_block *sb, int type)
 {
 	struct inode *inode, *old_inode = NULL;
+	int i;
 #ifdef CONFIG_QUOTA_DEBUG
 	int reserved = 0;
 #endif
 
-	spin_lock(&sb->s_inode_list_lock);
-	list_for_each_entry(inode, &sb->s_inodes, i_sb_list) {
+	for (i = 0; i < sb->cpus; i++) {
+		old_inode = NULL;
+
+	spin_lock(sb->s_inode_list_locks[i]);
+	list_for_each_entry(inode, &sb->s_inodes[i], i_sb_list) {
 		spin_lock(&inode->i_lock);
 		if ((inode->i_state & (I_FREEING|I_WILL_FREE|I_NEW)) ||
 		    !atomic_read(&inode->i_writecount) ||
@@ -952,7 +956,7 @@ static void add_dquot_ref(struct super_block *sb, int type)
 		}
 		__iget(inode);
 		spin_unlock(&inode->i_lock);
-		spin_unlock(&sb->s_inode_list_lock);
+		spin_unlock(sb->s_inode_list_locks[i]);
 
 #ifdef CONFIG_QUOTA_DEBUG
 		if (unlikely(inode_get_rsv_space(inode) > 0))
@@ -970,11 +974,11 @@ static void add_dquot_ref(struct super_block *sb, int type)
 		 * later.
 		 */
 		old_inode = inode;
-		spin_lock(&sb->s_inode_list_lock);
+		spin_lock(sb->s_inode_list_locks[i]);
 	}
-	spin_unlock(&sb->s_inode_list_lock);
+	spin_unlock(sb->s_inode_list_locks[i]);
 	iput(old_inode);
-
+	}
 #ifdef CONFIG_QUOTA_DEBUG
 	if (reserved) {
 		quota_error(sb, "Writes happened before quota was turned on "
@@ -1040,9 +1044,12 @@ static void remove_dquot_ref(struct super_block *sb, int type,
 {
 	struct inode *inode;
 	int reserved = 0;
+	int i;
 
-	spin_lock(&sb->s_inode_list_lock);
-	list_for_each_entry(inode, &sb->s_inodes, i_sb_list) {
+	for (i = 0; i < sb->cpus; i++) {
+
+	spin_lock(sb->s_inode_list_locks[i]);
+	list_for_each_entry(inode, &sb->s_inodes[i], i_sb_list) {
 		/*
 		 *  We have to scan also I_NEW inodes because they can already
 		 *  have quota pointer initialized. Luckily, we need to touch
@@ -1057,7 +1064,8 @@ static void remove_dquot_ref(struct super_block *sb, int type,
 		}
 		spin_unlock(&dq_data_lock);
 	}
-	spin_unlock(&sb->s_inode_list_lock);
+	spin_unlock(sb->s_inode_list_locks[i]);
+	}
 #ifdef CONFIG_QUOTA_DEBUG
 	if (reserved) {
 		printk(KERN_WARNING "VFS (%s): Writes happened after quota"

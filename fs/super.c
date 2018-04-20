@@ -168,6 +168,9 @@ static void destroy_super(struct super_block *s)
 	WARN_ON(!list_empty(&s->s_mounts));
 	put_user_ns(s->s_user_ns);
 	kfree(s->s_subtype);
+	kfree(s->s_inodes);
+	kfree(s->s_inode_list_locks);
+	kfree(s->lock_mem);
 	call_rcu(&s->rcu, destroy_super_rcu);
 }
 
@@ -210,8 +213,17 @@ static struct super_block *alloc_super(struct file_system_type *type, int flags,
 	INIT_HLIST_NODE(&s->s_instances);
 	INIT_HLIST_BL_HEAD(&s->s_anon);
 	mutex_init(&s->s_sync_lock);
-	INIT_LIST_HEAD(&s->s_inodes);
-	spin_lock_init(&s->s_inode_list_lock);
+
+	s->cpus = num_online_cpus();
+	s->lock_mem = kzalloc(s->cpus * 128, GFP_KERNEL);
+	s->s_inodes = kzalloc(s->cpus * sizeof(struct list_head), GFP_KERNEL);
+	s->s_inode_list_locks = kzalloc(s->cpus * sizeof(spinlock_t *), GFP_KERNEL);
+	for (i = 0; i < s->cpus; i++) {
+		INIT_LIST_HEAD(&s->s_inodes[i]);
+		s->s_inode_list_locks[i] = s->lock_mem + 128 * i;
+		spin_lock_init(s->s_inode_list_locks[i]);
+	}
+
 	INIT_LIST_HEAD(&s->s_inodes_wb);
 	spin_lock_init(&s->s_inode_wblist_lock);
 
@@ -434,7 +446,7 @@ void generic_shutdown_super(struct super_block *sb)
 		if (sop->put_super)
 			sop->put_super(sb);
 
-		if (!list_empty(&sb->s_inodes)) {
+		if (!list_empty(&sb->s_inodes[0])) {
 			printk("VFS: Busy inodes after unmount of %s. "
 			   "Self-destruct in 5 seconds.  Have a nice day...\n",
 			   sb->s_id);
