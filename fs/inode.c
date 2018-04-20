@@ -55,7 +55,9 @@
 static unsigned int i_hash_mask __read_mostly;
 static unsigned int i_hash_shift __read_mostly;
 static struct hlist_head *inode_hashtable __read_mostly;
-static __cacheline_aligned_in_smp DEFINE_SPINLOCK(inode_hash_lock);
+//static __cacheline_aligned_in_smp DEFINE_SPINLOCK(inode_hash_lock);
+void *lock_mem;
+spinlock_t **inode_hash_locks;
 
 /*
  * Empty aops. Can be used for the cases where the user does not
@@ -477,12 +479,13 @@ static unsigned long hash(struct super_block *sb, unsigned long hashval)
 void __insert_inode_hash(struct inode *inode, unsigned long hashval)
 {
 	struct hlist_head *b = inode_hashtable + hash(inode->i_sb, hashval);
+	int id = hash(inode->i_sb, hashval) % 1024;
 
-	spin_lock(&inode_hash_lock);
+	spin_lock(inode_hash_locks[id]);
 	spin_lock(&inode->i_lock);
 	hlist_add_head(&inode->i_hash, b);
 	spin_unlock(&inode->i_lock);
-	spin_unlock(&inode_hash_lock);
+	spin_unlock(inode_hash_locks[id]);
 }
 EXPORT_SYMBOL(__insert_inode_hash);
 
@@ -494,11 +497,13 @@ EXPORT_SYMBOL(__insert_inode_hash);
  */
 void __remove_inode_hash(struct inode *inode)
 {
-	spin_lock(&inode_hash_lock);
+	int id = hash(inode->i_sb, inode->hashval) % 1024;
+
+	spin_lock(inode_hash_locks[id]);
 	spin_lock(&inode->i_lock);
 	hlist_del_init(&inode->i_hash);
 	spin_unlock(&inode->i_lock);
-	spin_unlock(&inode_hash_lock);
+	spin_unlock(inode_hash_locks[id]);
 }
 EXPORT_SYMBOL(__remove_inode_hash);
 
@@ -792,14 +797,14 @@ long prune_icache_sb(struct super_block *sb, struct shrink_control *sc)
 	return freed;
 }
 
-static void __wait_on_freeing_inode(struct inode *inode);
+static void __wait_on_freeing_inode(struct inode *inode, int id);
 /*
  * Called with the inode lock held.
  */
 static struct inode *find_inode(struct super_block *sb,
 				struct hlist_head *head,
 				int (*test)(struct inode *, void *),
-				void *data)
+				void *data, int id)
 {
 	struct inode *inode = NULL;
 
@@ -811,7 +816,7 @@ repeat:
 			continue;
 		spin_lock(&inode->i_lock);
 		if (inode->i_state & (I_FREEING|I_WILL_FREE)) {
-			__wait_on_freeing_inode(inode);
+			__wait_on_freeing_inode(inode, id);
 			goto repeat;
 		}
 		__iget(inode);
@@ -826,7 +831,7 @@ repeat:
  * iget_locked for details.
  */
 static struct inode *find_inode_fast(struct super_block *sb,
-				struct hlist_head *head, unsigned long ino)
+				struct hlist_head *head, unsigned long ino, int id)
 {
 	struct inode *inode = NULL;
 
@@ -838,7 +843,7 @@ repeat:
 			continue;
 		spin_lock(&inode->i_lock);
 		if (inode->i_state & (I_FREEING|I_WILL_FREE)) {
-			__wait_on_freeing_inode(inode);
+			__wait_on_freeing_inode(inode, id);
 			goto repeat;
 		}
 		__iget(inode);
@@ -1039,10 +1044,11 @@ struct inode *iget5_locked(struct super_block *sb, unsigned long hashval,
 {
 	struct hlist_head *head = inode_hashtable + hash(sb, hashval);
 	struct inode *inode;
+	int id = hash(sb, hashval) % 1024;
 again:
-	spin_lock(&inode_hash_lock);
-	inode = find_inode(sb, head, test, data);
-	spin_unlock(&inode_hash_lock);
+	spin_lock(inode_hash_locks[id]);
+	inode = find_inode(sb, head, test, data, id);
+	spin_unlock(inode_hash_locks[id]);
 
 	if (inode) {
 		wait_on_inode(inode);
@@ -1057,9 +1063,10 @@ again:
 	if (inode) {
 		struct inode *old;
 
-		spin_lock(&inode_hash_lock);
+		inode->hashval = hashval;
+		spin_lock(inode_hash_locks[id]);
 		/* We released the lock, so.. */
-		old = find_inode(sb, head, test, data);
+		old = find_inode(sb, head, test, data, id);
 		if (!old) {
 			if (set(inode, data))
 				goto set_failed;
@@ -1069,7 +1076,7 @@ again:
 			hlist_add_head(&inode->i_hash, head);
 			spin_unlock(&inode->i_lock);
 			inode_sb_list_add(inode);
-			spin_unlock(&inode_hash_lock);
+			spin_unlock(inode_hash_locks[id]);
 
 			/* Return the locked inode with I_NEW set, the
 			 * caller is responsible for filling in the contents
@@ -1082,7 +1089,7 @@ again:
 		 * us. Use the old inode instead of the one we just
 		 * allocated.
 		 */
-		spin_unlock(&inode_hash_lock);
+		spin_unlock(inode_hash_locks[id]);
 		destroy_inode(inode);
 		inode = old;
 		wait_on_inode(inode);
@@ -1094,7 +1101,7 @@ again:
 	return inode;
 
 set_failed:
-	spin_unlock(&inode_hash_lock);
+	spin_unlock(inode_hash_locks[id]);
 	destroy_inode(inode);
 	return NULL;
 }
@@ -1117,10 +1124,11 @@ struct inode *iget_locked(struct super_block *sb, unsigned long ino)
 {
 	struct hlist_head *head = inode_hashtable + hash(sb, ino);
 	struct inode *inode;
+	int id = hash(sb, ino) % 1024;
 again:
-	spin_lock(&inode_hash_lock);
-	inode = find_inode_fast(sb, head, ino);
-	spin_unlock(&inode_hash_lock);
+	spin_lock(inode_hash_locks[id]);
+	inode = find_inode_fast(sb, head, ino, id);
+	spin_unlock(inode_hash_locks[id]);
 	if (inode) {
 		wait_on_inode(inode);
 		if (unlikely(inode_unhashed(inode))) {
@@ -1134,9 +1142,10 @@ again:
 	if (inode) {
 		struct inode *old;
 
-		spin_lock(&inode_hash_lock);
+		inode->hashval = ino;
+		spin_lock(inode_hash_locks[id]);
 		/* We released the lock, so.. */
-		old = find_inode_fast(sb, head, ino);
+		old = find_inode_fast(sb, head, ino, id);
 		if (!old) {
 			inode->i_ino = ino;
 			spin_lock(&inode->i_lock);
@@ -1144,7 +1153,7 @@ again:
 			hlist_add_head(&inode->i_hash, head);
 			spin_unlock(&inode->i_lock);
 			inode_sb_list_add(inode);
-			spin_unlock(&inode_hash_lock);
+			spin_unlock(inode_hash_locks[id]);
 
 			/* Return the locked inode with I_NEW set, the
 			 * caller is responsible for filling in the contents
@@ -1157,7 +1166,7 @@ again:
 		 * us. Use the old inode instead of the one we just
 		 * allocated.
 		 */
-		spin_unlock(&inode_hash_lock);
+		spin_unlock(inode_hash_locks[id]);
 		destroy_inode(inode);
 		inode = old;
 		wait_on_inode(inode);
@@ -1181,15 +1190,16 @@ static int test_inode_iunique(struct super_block *sb, unsigned long ino)
 {
 	struct hlist_head *b = inode_hashtable + hash(sb, ino);
 	struct inode *inode;
+	int id = hash(sb, ino) % 1024;
 
-	spin_lock(&inode_hash_lock);
+	spin_lock(inode_hash_locks[id]);
 	hlist_for_each_entry(inode, b, i_hash) {
 		if (inode->i_ino == ino && inode->i_sb == sb) {
-			spin_unlock(&inode_hash_lock);
+			spin_unlock(inode_hash_locks[id]);
 			return 0;
 		}
 	}
-	spin_unlock(&inode_hash_lock);
+	spin_unlock(inode_hash_locks[id]);
 
 	return 1;
 }
@@ -1271,10 +1281,11 @@ struct inode *ilookup5_nowait(struct super_block *sb, unsigned long hashval,
 {
 	struct hlist_head *head = inode_hashtable + hash(sb, hashval);
 	struct inode *inode;
+	int id = hash(sb, hashval) % 1024;
 
-	spin_lock(&inode_hash_lock);
-	inode = find_inode(sb, head, test, data);
-	spin_unlock(&inode_hash_lock);
+	spin_lock(inode_hash_locks[id]);
+	inode = find_inode(sb, head, test, data, id);
+	spin_unlock(inode_hash_locks[id]);
 
 	return inode;
 }
@@ -1326,10 +1337,11 @@ struct inode *ilookup(struct super_block *sb, unsigned long ino)
 {
 	struct hlist_head *head = inode_hashtable + hash(sb, ino);
 	struct inode *inode;
+	int id = hash(sb, ino) % 1024;
 again:
-	spin_lock(&inode_hash_lock);
-	inode = find_inode_fast(sb, head, ino);
-	spin_unlock(&inode_hash_lock);
+	spin_lock(inode_hash_locks[id]);
+	inode = find_inode_fast(sb, head, ino, id);
+	spin_unlock(inode_hash_locks[id]);
 
 	if (inode) {
 		wait_on_inode(inode);
@@ -1374,8 +1386,9 @@ struct inode *find_inode_nowait(struct super_block *sb,
 	struct hlist_head *head = inode_hashtable + hash(sb, hashval);
 	struct inode *inode, *ret_inode = NULL;
 	int mval;
+	int id = hash(sb, hashval) % 1024;
 
-	spin_lock(&inode_hash_lock);
+	spin_lock(inode_hash_locks[id]);
 	hlist_for_each_entry(inode, head, i_hash) {
 		if (inode->i_sb != sb)
 			continue;
@@ -1387,7 +1400,7 @@ struct inode *find_inode_nowait(struct super_block *sb,
 		goto out;
 	}
 out:
-	spin_unlock(&inode_hash_lock);
+	spin_unlock(inode_hash_locks[id]);
 	return ret_inode;
 }
 EXPORT_SYMBOL(find_inode_nowait);
@@ -1397,10 +1410,11 @@ int insert_inode_locked(struct inode *inode)
 	struct super_block *sb = inode->i_sb;
 	ino_t ino = inode->i_ino;
 	struct hlist_head *head = inode_hashtable + hash(sb, ino);
+	int id = hash(sb, ino) % 1024;
 
 	while (1) {
 		struct inode *old = NULL;
-		spin_lock(&inode_hash_lock);
+		spin_lock(inode_hash_locks[id]);
 		hlist_for_each_entry(old, head, i_hash) {
 			if (old->i_ino != ino)
 				continue;
@@ -1418,12 +1432,12 @@ int insert_inode_locked(struct inode *inode)
 			inode->i_state |= I_NEW;
 			hlist_add_head(&inode->i_hash, head);
 			spin_unlock(&inode->i_lock);
-			spin_unlock(&inode_hash_lock);
+			spin_unlock(inode_hash_locks[id]);
 			return 0;
 		}
 		__iget(old);
 		spin_unlock(&old->i_lock);
-		spin_unlock(&inode_hash_lock);
+		spin_unlock(inode_hash_locks[id]);
 		wait_on_inode(old);
 		if (unlikely(!inode_unhashed(old))) {
 			iput(old);
@@ -1439,11 +1453,12 @@ int insert_inode_locked4(struct inode *inode, unsigned long hashval,
 {
 	struct super_block *sb = inode->i_sb;
 	struct hlist_head *head = inode_hashtable + hash(sb, hashval);
+	int id = hash(sb, hashval) % 1024;
 
 	while (1) {
 		struct inode *old = NULL;
 
-		spin_lock(&inode_hash_lock);
+		spin_lock(inode_hash_locks[id]);
 		hlist_for_each_entry(old, head, i_hash) {
 			if (old->i_sb != sb)
 				continue;
@@ -1461,12 +1476,12 @@ int insert_inode_locked4(struct inode *inode, unsigned long hashval,
 			inode->i_state |= I_NEW;
 			hlist_add_head(&inode->i_hash, head);
 			spin_unlock(&inode->i_lock);
-			spin_unlock(&inode_hash_lock);
+			spin_unlock(inode_hash_locks[id]);
 			return 0;
 		}
 		__iget(old);
 		spin_unlock(&old->i_lock);
-		spin_unlock(&inode_hash_lock);
+		spin_unlock(inode_hash_locks[id]);
 		wait_on_inode(old);
 		if (unlikely(!inode_unhashed(old))) {
 			iput(old);
@@ -1903,17 +1918,17 @@ EXPORT_SYMBOL(inode_needs_sync);
  * wake_up_bit(&inode->i_state, __I_NEW) after removing from the hash list
  * will DTRT.
  */
-static void __wait_on_freeing_inode(struct inode *inode)
+static void __wait_on_freeing_inode(struct inode *inode, int id)
 {
 	wait_queue_head_t *wq;
 	DEFINE_WAIT_BIT(wait, &inode->i_state, __I_NEW);
 	wq = bit_waitqueue(&inode->i_state, __I_NEW);
 	prepare_to_wait(wq, &wait.wq_entry, TASK_UNINTERRUPTIBLE);
 	spin_unlock(&inode->i_lock);
-	spin_unlock(&inode_hash_lock);
+	spin_unlock(inode_hash_locks[id]);
 	schedule();
 	finish_wait(wq, &wait.wq_entry);
-	spin_lock(&inode_hash_lock);
+	spin_lock(inode_hash_locks[id]);
 }
 
 static __initdata unsigned long ihash_entries;
@@ -1951,6 +1966,7 @@ void __init inode_init_early(void)
 
 void __init inode_init(void)
 {
+	int i;
 	/* inode slab cache */
 	inode_cachep = kmem_cache_create("inode_cache",
 					 sizeof(struct inode),
@@ -1973,6 +1989,16 @@ void __init inode_init(void)
 					&i_hash_mask,
 					0,
 					0);
+
+	lock_mem = kzalloc(1024 * 128, GFP_KERNEL);
+	inode_hash_locks = kzalloc(1024 * sizeof(spinlock_t *), GFP_KERNEL);
+	for (i = 0; i < 1024; i++) {
+		inode_hash_locks[i] = lock_mem + 128 * i;
+		spin_lock_init(inode_hash_locks[i]);
+	}
+
+	printk("%s: hash shift %u, hash mask 0x%x\n", __func__,
+			i_hash_shift, i_hash_mask);
 }
 
 void init_special_inode(struct inode *inode, umode_t mode, dev_t rdev)

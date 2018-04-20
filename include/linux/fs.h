@@ -666,6 +666,7 @@ struct inode {
 #endif
 
 	int cpu;
+	unsigned long hashval;
 	void			*i_private; /* fs or device private pointer */
 } __randomize_layout;
 
