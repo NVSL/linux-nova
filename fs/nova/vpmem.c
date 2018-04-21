@@ -87,6 +87,9 @@ unsigned long dif_mm=0;
 unsigned long dif_mm2=0;
 unsigned long dif_mm3=0;
 unsigned long dif_mm4=0;
+unsigned long hit=0;
+unsigned long miss1=0;
+unsigned long miss2=0;
 unsigned long already_cached=0;
 unsigned long leaked=0;
 
@@ -173,8 +176,9 @@ struct pgcache_node {
     struct list_head lru_node;
     struct list_head evict_node;
     struct list_head wb_node;
-    bool pinned;
+    // The lock for variables below
     struct mutex lock;
+    bool pinned;
 #endif
     struct mm_struct *mm;
     unsigned long address;
@@ -191,6 +195,7 @@ void push_victim_to_wb_list(int cpu, bool all, bool del_lru);
 bool vpmem_load_block(unsigned long address, struct page *p, int count);
 
 static struct rb_root pgcache = RB_ROOT;
+// The lock for RB tree
 static DEFINE_MUTEX(pgcache_lock);
 
 #ifdef USE_LOCK
@@ -286,8 +291,15 @@ struct pgcache_node *__pgcache_lookup(unsigned long address)
     return NULL;
 }
 
-struct pgcache_node *pgcache_lookup(unsigned long address)
-{
+struct pgcache_node *pgcache_get_hint(struct pgcache_node *prev) {
+    struct rb_node *n;
+    if (prev == NULL) return NULL;
+    n = rb_next(&prev->rb_node);
+    if (!n) return NULL;
+    return container_of(n ,struct pgcache_node, rb_node);
+}
+
+struct pgcache_node *pgcache_lookup(unsigned long address) {
     struct pgcache_node *r;
     LOCK(pgcache_lock);
     r = __pgcache_lookup(address);
@@ -296,8 +308,7 @@ struct pgcache_node *pgcache_lookup(unsigned long address)
 }
 
 // TODO: Range
-void pgcache_lru_refer(struct pgcache_node *pgn)
-{
+void pgcache_lru_refer(struct pgcache_node *pgn) {
     int cpu = vpmem_get_pgn_cpuid(pgn);
     lru_refers++;
     mutex_lock(&vsbi->vpmem_lru_mutex[cpu]);
@@ -348,11 +359,9 @@ struct pgcache_node *__pgcache_insert(unsigned long address, struct mm_struct *m
         else if(p->address < address)
             link = &(*link)->rb_right;
         else {
-            LOCK(p->lock);
             already_cached++;
             pgcache_lru_refer(p);
             p->mm = mm;
-            UNLOCK(p->lock);
             return p;
         }
     }
@@ -579,12 +588,12 @@ again:
         return false;
     }
 
-    LOCK(pg->lock);
     list_del_init(&pg->wb_node);
     p = pg->page; // pfn_to_page(pg->pfn);
     address = pg->address;
     mutex_unlock(&vsbi->vpmem_wb_mutex[cpu]);
 
+    LOCK(pg->lock);
     if (is_pgn_dirty(pg)) {
         int ret = vpmem_write_to_bdev(address, 1, p);
         // nl_send("wb %20lu %16lu %2d", address, block_offset, tier);
@@ -595,11 +604,11 @@ again:
         }
         set_pgn_clean(pg);
     }
+    UNLOCK(pg->lock);
 
     if (list_empty(&pg->lru_node)) {
         push_to_evict_list(pg, cpu);
     }
-    UNLOCK(pg->lock);
     
     schedule();
     goto again;
@@ -769,7 +778,7 @@ int vpmem_cache_pages(unsigned long address, unsigned long count, bool load)
 {
     int new_count = 0;
     address &= PAGE_MASK;
-    while(count-- > 0) {
+    while (count-- > 0) {
         struct page *p=0;
         if(insert_tlb(newpage(address, current_mm, &p), address)) {
             if(p) new_count++;
@@ -794,16 +803,19 @@ inline int vpmem_write_behind_pages(unsigned long address, unsigned long count, 
 
 // This is sync flush
 int vpmem_flush_pages_sync(unsigned long address, unsigned long count) {
-    struct pgcache_node *pg;
+    struct pgcache_node *pgn = NULL;
+    struct pgcache_node *pgn_hint = NULL;
     unsigned long ret = 0;
     address &= PAGE_MASK;
-    while(count-- > 0) {
-        pg = pgcache_lookup(address);
-        if(pg) {                
-            if(is_pgn_dirty(pg)) {
-                vpmem_write_to_bdev(address, 1, pg->page);
+    while (count-- > 0) {
+        if (pgn_hint && pgn_hint->address == address) pgn = pgn_hint;
+        else pgn = pgcache_lookup(address);
+        pgn_hint = pgcache_get_hint(pgn);
+        if(pgn) {                
+            if(is_pgn_dirty(pgn)) {
+                vpmem_write_to_bdev(address, 1, pgn->page);
                 ret++;
-                set_pgn_clean(pg);
+                set_pgn_clean(pgn);
             }
         }
         address += PAGE_SIZE;
@@ -821,27 +833,34 @@ int vpmem_flush_pages_sync(unsigned long address, unsigned long count) {
  * Valid after: If the page is still in lru list, then it is considered as valid.
  */
 int vpmem_write_back_pages(unsigned long address, unsigned long count) {
-    struct pgcache_node *pgn = pgcache_lookup((address &= PAGE_MASK));
-    unsigned long last = address + (count << PAGE_SHIFT);
-    int cpu = vpmem_get_range_cpuid(address, count);
-    while (address < last) {
+    struct pgcache_node *pgn = NULL;
+    struct pgcache_node *pgn_hint = NULL;
+    int cpu;
+    address &= PAGE_MASK;
+    cpu = vpmem_get_range_cpuid(address, count);
+    while (count-- > 0) {
+        if (pgn_hint && pgn_hint->address == address) pgn = pgn_hint;
+        else pgn = pgcache_lookup(address);
+        pgn_hint = pgcache_get_hint(pgn);
         if (pgn) {
             push_to_wb_list(pgn, cpu);
         }
         address += PAGE_SIZE;
-        pgn = pgcache_lookup(address);
     }
     return 0;
 }
 
 // This is async flush
 int vpmem_flush_pages(unsigned long address, unsigned long count) {
-    struct pgcache_node *pgn;
+    struct pgcache_node *pgn = NULL;
+    struct pgcache_node *pgn_hint = NULL;
     int cpu = vpmem_get_range_cpuid(address, count);
     address &= PAGE_MASK;
-    while(count-- > 0) {
-        pgn = pgcache_lookup(address);
-        if(pgn) {             
+    while (count-- > 0) {
+        if (pgn_hint && pgn_hint->address == address) pgn = pgn_hint;
+        else pgn = pgcache_lookup(address);
+        pgn_hint = pgcache_get_hint(pgn);
+        if (pgn) {             
             mutex_lock(&vsbi->vpmem_lru_mutex[cpu]);
             list_del_init(&pgn->lru_node);
             mutex_unlock(&vsbi->vpmem_lru_mutex[cpu]);
@@ -856,13 +875,16 @@ int vpmem_flush_pages(unsigned long address, unsigned long count) {
 // Currently, only pages which are freed/migrated will be invalidated.
 // Allocateing new data blocks will not call this function.
 int vpmem_invalidate_pages(unsigned long address, unsigned long count) {
-    struct pgcache_node *pgn;
+    struct pgcache_node *pgn = NULL;
+    struct pgcache_node *pgn_hint = NULL;
     int cpu = vpmem_get_range_cpuid(address, count);
     address &= PAGE_MASK;
-    while(count-- > 0) {
+    while (count-- > 0) {
         dif_mm4++;
-        pgn = pgcache_lookup(address);
-        if(pgn) {
+        if (pgn_hint && pgn_hint->address == address) pgn = pgn_hint;
+        else pgn = pgcache_lookup(address);
+        pgn_hint = pgcache_get_hint(pgn);
+        if (pgn) {
             mutex_lock(&vsbi->vpmem_lru_mutex[cpu]);
             list_del_init(&pgn->lru_node);
             mutex_unlock(&vsbi->vpmem_lru_mutex[cpu]);
@@ -875,31 +897,29 @@ int vpmem_invalidate_pages(unsigned long address, unsigned long count) {
 
 unsigned long vpmem_cached(unsigned long address, unsigned long count) {
     unsigned long cnt=0;
-    struct pgcache_node *pg;
-    if (likely(count != 0)) {
-        address &= PAGE_MASK;
-        while(count-- > 0) {
-            pg = pgcache_lookup(address);
-            if(pg) {
-                cnt++;
-            }
-            address += PAGE_SIZE;
-        }
+    struct pgcache_node *pgn = NULL;
+    struct pgcache_node *pgn_hint = NULL;
+    address &= PAGE_MASK;
+    while (count-- > 0) {
+        if (pgn_hint && pgn_hint->address == address) pgn = pgn_hint;
+        else pgn = pgcache_lookup(address);
+        pgn_hint = pgcache_get_hint(pgn);
+        if (pgn) cnt++;
+        address += PAGE_SIZE;
     }
     return cnt;
 }
 
 int vpmem_pin_pages(unsigned long address, unsigned long count) {
-    struct pgcache_node *pg = pgcache_lookup((address &= PAGE_MASK));
-    unsigned long last = address + (count << PAGE_SHIFT);
-    while (address < last) {
-        if (pg) {
-            LOCK(pg->lock);
-            pg->pinned = true;
-            UNLOCK(pg->lock);
-        }
+    struct pgcache_node *pgn = NULL;
+    struct pgcache_node *pgn_hint = NULL;
+    address &= PAGE_MASK;
+    while (count-- > 0) {
+        if (pgn_hint && pgn_hint->address == address) pgn = pgn_hint;
+        else pgn = pgcache_lookup(address);
+        pgn_hint = pgcache_get_hint(pgn);
+        if (pgn) pgn->pinned = true;
         address += PAGE_SIZE;
-        pg = pgcache_lookup(address);
     }
     return 0;
 }
@@ -992,11 +1012,9 @@ void push_victim_to_wb_list(int cpu, bool all, bool del_lru)
             list_move_tail(&pgn->lru_node, &vsbi->vpmem_lru_list[cpu]);
             continue;
         }
-        LOCK(pgn->lock);
         if (del_lru) list_del_init(&pgn->lru_node);
         if (is_pgn_dirty(pgn)) push_to_wb_list(pgn, cpu);
         else if (del_lru) push_to_evict_list(pgn, cpu);
-        UNLOCK(pgn->lock);
         if (!all && --i<=0) break;
     }
     mutex_unlock(&vsbi->vpmem_lru_mutex[cpu]);
@@ -1181,6 +1199,8 @@ void vpmem_put(void)
                 lru_refers, evicts, dif_mm, already_cached, dif_mm2, leaked);
     printk(KERN_INFO "vpmem: dif_mm3 = %lu dif_mm4 = %lu\n",
                 dif_mm3, dif_mm4);
+    printk(KERN_INFO "vpmem: hit = %lu miss1 = %lu miss2 = %lu\n",
+                hit, miss1, miss2);
 #ifdef ENABLE_NETLINK
     vmpem_nl_cleanup();
 #endif
