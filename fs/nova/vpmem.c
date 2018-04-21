@@ -359,9 +359,11 @@ struct pgcache_node *__pgcache_insert(unsigned long address, struct mm_struct *m
         else if(p->address < address)
             link = &(*link)->rb_right;
         else {
+            LOCK(p->lock);
             already_cached++;
             pgcache_lru_refer(p);
             p->mm = mm;
+            UNLOCK(p->lock);
             return p;
         }
     }
@@ -575,12 +577,13 @@ inline bool vpmem_writeback(bool clear)
     }
 
 again:
+    mutex_lock(&vsbi->vpmem_wb_mutex[cpu]);
     if (unlikely(list_empty(&vsbi->vpmem_wb_list[cpu]))) {
         wb_empty[cpu] = 0;
+        mutex_unlock(&vsbi->vpmem_wb_mutex[cpu]);
         return false;
     }
 
-    mutex_lock(&vsbi->vpmem_wb_mutex[cpu]);
     pg = container_of(vsbi->vpmem_wb_list[cpu].next, struct pgcache_node, wb_node);
     if (unlikely(!pg)) {
         printk(KERN_INFO "vpmem: pgcache_node error in vpmem_writeback().\n");
@@ -588,12 +591,12 @@ again:
         return false;
     }
 
+    LOCK(pg->lock);
     list_del_init(&pg->wb_node);
     p = pg->page; // pfn_to_page(pg->pfn);
     address = pg->address;
     mutex_unlock(&vsbi->vpmem_wb_mutex[cpu]);
 
-    LOCK(pg->lock);
     if (is_pgn_dirty(pg)) {
         int ret = vpmem_write_to_bdev(address, 1, p);
         // nl_send("wb %20lu %16lu %2d", address, block_offset, tier);
@@ -604,11 +607,11 @@ again:
         }
         set_pgn_clean(pg);
     }
-    UNLOCK(pg->lock);
 
     if (list_empty(&pg->lru_node)) {
         push_to_evict_list(pg, cpu);
     }
+    UNLOCK(pg->lock);
     
     schedule();
     goto again;
@@ -1006,15 +1009,18 @@ void push_victim_to_wb_list(int cpu, bool all, bool del_lru)
     list_for_each_entry_safe(pgn, tmp_pgn, &vsbi->vpmem_lru_list[cpu], lru_node) {
         dif_mm3++;
         if (!pgn) break;
+        LOCK(pgn->lock);
         if (is_pgn_young_reset(pgn) && counter<VPMEM_MAX_PAGES) {
             counter++;
             // This pgn is spared for now
             list_move_tail(&pgn->lru_node, &vsbi->vpmem_lru_list[cpu]);
+            UNLOCK(pgn->lock);
             continue;
         }
         if (del_lru) list_del_init(&pgn->lru_node);
         if (is_pgn_dirty(pgn)) push_to_wb_list(pgn, cpu);
         else if (del_lru) push_to_evict_list(pgn, cpu);
+        UNLOCK(pgn->lock);
         if (!all && --i<=0) break;
     }
     mutex_unlock(&vsbi->vpmem_lru_mutex[cpu]);
