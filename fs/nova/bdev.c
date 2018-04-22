@@ -589,7 +589,7 @@ static int not_enough_blocks_bfl(struct bdev_free_list *bfl, unsigned long num_b
 	struct nova_range_node *first = bfl->first_node;
 	struct nova_range_node *last = bfl->last_node;
 
-	if (bfl->num_free_blocks < num_blocks || !first || !last) return 1;
+	if (bfl->num_free_blocks < num_blocks + (1<<BDEV_OPT_SIZE_BIT) || !first || !last) return 1;
 	else return 0;
 }
 
@@ -799,31 +799,18 @@ inline unsigned long get_blocknr_from_raw(struct nova_sb_info *sbi, int tier,
 
 // blocknr: global block number
 int get_tier_cpu(struct nova_sb_info *sbi, unsigned long blocknr) {
-	int tier = get_tier(sbi, blocknr);
-	struct bdev_free_list *bfl = NULL;
-	unsigned long raw = 0;
-	int i;
-	if (tier==TIER_PMEM) return get_cpuid(sbi, blocknr);
-	raw = get_raw_from_blocknr(sbi, blocknr);
-	for (i = 0; i < sbi->cpus; i++) {
-		bfl = nova_get_bdev_free_list(sbi, tier, i);
-		if (bfl->num_total_blocks > raw) {
-			return i;
-		}
-		raw -= bfl->num_total_blocks;
-	}
-	return -1;
+	int index;
+	if (blocknr < sbi->num_blocks) return get_cpuid(sbi, blocknr);
+	index = get_bfl_index(sbi, blocknr);
+	return bfl_index_to_cpu(sbi, index);
 }
 
 // blocknr: global block number
 int get_tier(struct nova_sb_info *sbi, unsigned long blocknr) {
-	int i;
-	unsigned long this = sbi->num_blocks;
-	for (i=TIER_PMEM;i<=TIER_BDEV_HIGH;++i) {
-		if (blocknr < this) break;
-		this += sbi->bdev_list[i].capacity_page;
-	}
-	return i;
+	int index;
+	if (blocknr < sbi->num_blocks) return TIER_PMEM;
+	index = get_bfl_index(sbi, blocknr);
+	return bfl_index_to_tier(sbi, index);
 }
 
 // blocknr: global block number

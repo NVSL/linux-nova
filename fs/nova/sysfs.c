@@ -26,6 +26,7 @@ extern unsigned long faults;
 extern unsigned long evicts;
 extern unsigned long bdev_read;
 extern unsigned long bdev_write;
+extern struct kmem_cache *nova_vpmem_pgnp;
 
 const char *proc_dirname = "fs/NOVA";
 struct proc_dir_entry *nova_proc_root;

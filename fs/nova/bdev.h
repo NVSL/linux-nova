@@ -66,6 +66,16 @@ struct nova_bdev_range_node {
 	unsigned long end_blk;
 };
 
+static inline int bfl_index_to_cpu(struct nova_sb_info *sbi, int index)
+{
+	return index%(sbi->cpus);
+}
+
+static inline int bfl_index_to_tier(struct nova_sb_info *sbi, int index)
+{
+	return index/(sbi->cpus) + TIER_BDEV_LOW;
+}
+
 static inline
 struct bdev_free_list *nova_get_bdev_free_list(struct nova_sb_info *sbi, int tier, int cpu)
 {

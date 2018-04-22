@@ -167,9 +167,11 @@ struct nova_sb_info {
 	struct mutex *vpmem_lru_mutex;
 	struct mutex *vpmem_wb_mutex;
 	struct mutex *vpmem_evict_mutex;
+	struct mutex *vpmem_rb_mutex;
 	struct list_head *vpmem_lru_list;
 	struct list_head *vpmem_wb_list;
 	struct list_head *vpmem_evict_list;
+	struct rb_root *vpmem_rb_tree;
 	struct nova_kthread *wb_thread;
 
 	/* Block device buffer */
