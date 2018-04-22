@@ -865,13 +865,17 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 
 	epoch_id = nova_get_epoch_id(sb);
 
-	write_tier = TIER_BDEV_LOW;
+	if (MODE_FORE_PMEM) write_tier = TIER_PMEM;
+	else write_tier = TIER_BDEV_LOW;
+
+	if (MODE_FORE_BAL) {
+		write_tier = get_lowest_tier(sb);
+	}	
 
 	if (MODE_FORE_ALLOC) {	
 
 		write_tier = TIER_PMEM;		
 		
-		if (MODE_KEEP_STAT) sbi->stat->write += len;
 
 		/* Profiler */
 		nova_sih_increase_wcount(sb, sih, len);
@@ -888,10 +892,12 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 		}
 		
 		write_tier = get_available_tier(sb, write_tier);
-
-		if (MODE_KEEP_STAT && write_tier!=TIER_PMEM) sbi->stat->write_dram += len;
+		
 	}
-	
+
+	if (MODE_KEEP_STAT) sbi->stat->write += len;
+	if (MODE_KEEP_STAT && write_tier!=TIER_PMEM) sbi->stat->write_dram += len;
+
 	// nova_info("[Write] %lu blocks in [tier #%d] -> [seq %u tier #%d].\n", 
 	// 	num_blocks, old_write_tier, seq_count, write_tier);
 

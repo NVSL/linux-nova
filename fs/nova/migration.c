@@ -1054,6 +1054,25 @@ inline bool is_tier_usage_really_high(struct nova_sb_info *sbi, int tier) {
     else return is_bdev_usage_really_high(sbi, tier);
 }
 
+int get_lowest_tier(struct super_block *sb) {
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+    unsigned long used = nova_pmem_used(sbi);
+    unsigned long total = nova_pmem_total(sbi);
+    unsigned long low = (used << 7) / total;
+    unsigned long this;
+    int i, tier = TIER_PMEM;
+    for (i=TIER_BDEV_LOW;i<=TIER_BDEV_HIGH;++i) {
+        used = nova_bdev_used(sbi, i);
+        total = nova_bdev_total(sbi, i);
+        this = (used << 7) / total;
+        if (this<low) {
+            tier = i;
+            low = this;
+        }
+    }
+    return tier;
+}
+
 int get_available_tier(struct super_block *sb, int tier) {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
     int i;

@@ -11,7 +11,9 @@
 #define MODE_KEEP_STAT 1
 
 #define MODE_FORE_ALLOC 0
-#define MODE_BACK_MIG 1
+#define MODE_FORE_PMEM 0
+#define MODE_FORE_BAL 1
+#define MODE_BACK_MIG 0
 
 /* Configure */
 #define BDEV_OPT_SIZE_BIT 6
