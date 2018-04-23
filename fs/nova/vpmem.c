@@ -690,7 +690,10 @@ void wb_thread_cleanup(void) {
 #ifdef ENABLE_WRITEBACK
     int i;
 	if (vsbi->wb_thread) {		
-	    for (i=0; i<vsbi->cpus; ++i) kthread_stop(vsbi->wb_thread[i].nova_task);
+	    for (i=0; i<vsbi->cpus; ++i) {
+            kthread_stop(vsbi->wb_thread[i].nova_task);
+            nova_info("kthread %d stopped\n", i);
+        }
 		kfree(vsbi->wb_thread);
 		vsbi->wb_thread = NULL;
 	}
@@ -1254,6 +1257,7 @@ void vpmem_put(void)
 {
     vpmem_print_status();
     wb_thread_cleanup();
+    smp_wmb();
     printk(KERN_INFO "vpmem: pgcache_size = %lu\n", pgc_total_size());
     vpmem_print_status();
     
