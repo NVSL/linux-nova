@@ -558,7 +558,7 @@ void vpmem_print_status(void) {
     printk(KERN_INFO "|#CPU| rb_tree|lru_list| wb_list|evt_list|\n");
     for (i=0;i<vsbi->cpus;++i) {
         stmp[0] = '\0';
-        if (!vsbi->vpmem_rb_tree->rb_node) strncat(stmp, empty, 20);
+        if (!vsbi->vpmem_rb_tree[i].rb_node) strncat(stmp, empty, 20);
         else strncat(stmp, nopty, 20);
         if (list_empty(&vsbi->vpmem_lru_list[i])) strncat(stmp, empty, 20);
         else strncat(stmp, nopty, 20);
@@ -679,6 +679,7 @@ int wb_thread_worker(void *arg) {
     vpmem_writeback(true);
     vpmem_print_status();
     clear_evict_list();
+    vpmem_print_status();
 #endif
 
     return 0;
@@ -1226,7 +1227,7 @@ void vpmem_free_cache(void) {
     int i, count = 0;
     for (i=0; i<vsbi->cpus; ++i) {
         count = 0;
-        rbn = vsbi->vpmem_rb_tree->rb_node;
+        rbn = vsbi->vpmem_rb_tree[i].rb_node;
         while (rbn) {
             pgn = container_of(rbn, struct pgcache_node, rb_node);
 	        kmem_cache_free(nova_vpmem_pgnp, pgn);
