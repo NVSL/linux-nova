@@ -873,10 +873,8 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	}	
 
 	if (MODE_FORE_ALLOC) {	
-
-		write_tier = TIER_PMEM;		
+		write_tier = TIER_PMEM;
 		
-
 		/* Profiler */
 		nova_sih_increase_wcount(sb, sih, len);
 
