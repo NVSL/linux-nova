@@ -585,8 +585,8 @@ void vpmem_print_status(void) {
     char *empty = "\e[0;32m   Empty\e[0m|";
     char *nopty = "\e[0;31mNotEmpty\e[0m|";
     char stmp[100] = {0};
-    printk(KERN_INFO "------------------------------------------\n");
-    printk(KERN_INFO "|Tier|#CPU| rb_tree|lru_list| wb_list|evt_list|\n");
+    printk(KERN_INFO "--------------------------------------------------------\n");
+    printk(KERN_INFO "|Tier|#CPU|    size| rb_tree|lru_list| wb_list|evt_list|\n");
     for (i=0;i<TIER_BDEV_HIGH*vsbi->cpus;++i) {
         stmp[0] = '\0';
         if (!vsbi->vpmem_rb_tree[i].rb_node) strncat(stmp, empty, 20);
@@ -598,11 +598,11 @@ void vpmem_print_status(void) {
         if (list_empty(&vsbi->vpmem_evict_list[i])) strncat(stmp, empty, 20);
         else strncat(stmp, nopty, 20);
         if (i%vsbi->cpus==smp_processor_id())
-            printk(KERN_INFO "|%3d |\e[1;34m%3d\e[0m |%s\n", i/vsbi->cpus, i%vsbi->cpus, stmp);
+            printk(KERN_INFO "|%3d |\e[1;34m%3d\e[0m |%8lu|%s\n", i/vsbi->cpus, i%vsbi->cpus, vsbi->pgcache_size[i], stmp);
         else
-            printk(KERN_INFO "|%3d |%3d |%s\n", i/vsbi->cpus, i%vsbi->cpus, stmp);
+            printk(KERN_INFO "|%3d |%3d |%8lu|%s\n", i/vsbi->cpus, i%vsbi->cpus, vsbi->pgcache_size[i], stmp);
     }
-    printk(KERN_INFO "------------------------------------------\n");
+    printk(KERN_INFO "--------------------------------------------------------\n");
 }
 
 int vpmem_write_to_bdev(unsigned long address, unsigned long count, struct page *page) {   
@@ -612,6 +612,9 @@ int vpmem_write_to_bdev(unsigned long address, unsigned long count, struct page 
     blockoff = virt_to_blockoff(address);
     tier = get_tier(vsbi, blockoff);
     raw_blockto = get_raw_from_blocknr(vsbi, blockoff);
+    if (unlikely(address<vpmem_start)) 
+        nova_info("Error write address %lx count %lu blockoff %lu tier %d raw_blockto %lu\n", 
+        address, count, blockoff, tier, raw_blockto);
     return nova_bdev_write_block(vsbi, get_bdev_raw(vsbi, tier), raw_blockto, count,
         page, BIO_SYNC);
 }
@@ -623,6 +626,9 @@ int vpmem_read_from_bdev(unsigned long address, unsigned long count, struct page
     blockoff = virt_to_blockoff(address);
     tier = get_tier(vsbi, blockoff);
     raw_blockto = get_raw_from_blocknr(vsbi, blockoff);
+    if (unlikely(address<vpmem_start)) 
+        nova_info("Error read address %lx count %lu blockoff %lu tier %d raw_blockto %lu\n", 
+        address, count, blockoff, tier, raw_blockto);
     return nova_bdev_read_block(vsbi, get_bdev_raw(vsbi, tier), raw_blockto, count,
         page, BIO_SYNC);
 }
@@ -639,7 +645,6 @@ inline bool vpmem_writeback(int index, bool clear) {
 
     if (unlikely(clear)) {
         push_victim_to_wb_list(index, true, true);
-        vpmem_print_status();
     }
     else {
         if (!is_pgcache_small(index)) {
@@ -675,8 +680,8 @@ again:
     p = pgn->page; // pfn_to_page(pgn->pfn);
     address = pgn->address;
 
-    if (unlikely(address<vpmem_start)) 
-        nova_info("Error in vpmem_writeback address %lx\n", address);
+    if (unlikely(address<vpmem_start))
+        nova_info("Error in vpmem_writeback address %lx p %p\n", address, page_address(p));
 
     if (is_pgn_dirty(pgn)) {
         int ret = vpmem_write_to_bdev(address, 1, p);
@@ -1119,7 +1124,7 @@ again:
             mutex_unlock(&vsbi->vpmem_lru_mutex[index]);
             return false;
         }
-        pgn = container_of(tmp_lru->next, struct pgcache_node, lru_node);
+        pgn = container_of(tmp_lru, struct pgcache_node, lru_node);
     }
     if (unlikely(!pgn)) {
         printk(KERN_INFO "vpmem: pgcache_node error in push_victim_to_wb_list().\n");
@@ -1362,9 +1367,10 @@ int vpmem_get(struct nova_sb_info *sbi, unsigned long offset)
 void vpmem_put(void)
 {
     vpmem_print_status();
+    printk(KERN_INFO "vpmem: [Before cleanup] pgcache_size = %lu\n", pgc_total_size());
     wb_thread_cleanup();
     smp_wmb();
-    printk(KERN_INFO "vpmem: pgcache_size = %lu\n", pgc_total_size());
+    printk(KERN_INFO "vpmem: [After cleanup] pgcache_size = %lu\n", pgc_total_size());
     vpmem_print_status();
     
     vpmem_operations.do_page_fault = 0;

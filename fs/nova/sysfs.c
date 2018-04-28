@@ -276,7 +276,7 @@ static int nova_seq_ts_show(struct seq_file *seq, void *v)
 	seq_printf(seq, "---------------------------------------------------------\n");
 	seq_printf(seq, "|DRAM|%6luMB|%9lu|%4lu%%|  N/A|%7uMB|%9u|\n", 
 		pgc_size>>8, pgc_size, pgc_size * 100 / (VPMEM_MAX_PAGES*sbi->cpus), 
-		(VPMEM_MAX_PAGES*sbi->cpus)>>8, VPMEM_MAX_PAGES*sbi->cpus);
+		(VPMEM_MAX_PAGES*sbi->cpus)>>8, VPMEM_MAX_PAGES*TIER_BDEV_HIGH*sbi->cpus);
 	seq_printf(seq, "|NOVA|%6luMB|%9lu|%4lu%%|  N/A|%7luMB|%9lu|\n", sumu>>8, sumu, sumu * 100 / sumt, sumt>>8, sumt);
 	
 	seq_printf(seq, "---------------------------------------------------------\n");
