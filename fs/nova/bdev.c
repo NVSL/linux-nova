@@ -658,6 +658,7 @@ alloc:
 
 	if (ret_blocks < 0) {
 		nova_err(sb, "%s failed.\n", __func__);
+		nova_info("cpuid %d\n", cpuid);
 		// bfl->num_free_blocks -= ret_blocks;
 	}
 

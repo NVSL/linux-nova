@@ -12,7 +12,7 @@
 
 #define MODE_FORE_ALLOC 0
 #define MODE_FORE_PMEM 0
-#define MODE_FORE_BAL 0
+#define MODE_FORE_BAL 1
 #define MODE_BACK_MIG 0
 
 /* Configure */

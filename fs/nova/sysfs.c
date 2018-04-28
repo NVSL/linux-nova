@@ -221,29 +221,26 @@ static int nova_seq_ts_show(struct seq_file *seq, void *v)
 
 	seq_puts(seq, "TNOVA status\n");
 
-	seq_printf(seq, "-----------------------------------------------------------------------------\n");
-	seq_printf(seq, "                            [PMEM free lists]\n");
-	seq_printf(seq, "|Tier|CPU|  Start  |   End   |  Used  |L-Thres|H-Thres|  Free  | Total |Node|\n");
+	seq_printf(seq, "----------------------------------------------------------------------\n");
+	seq_printf(seq, "                          [PMEM free lists]\n");
+	seq_printf(seq, "|Tier|CPU|  Start  |   End   |  Used  | Cached |  Free  | Total |Node|\n");
 	for (i=0;i<sbi->cpus;++i) {
 		fl = nova_get_free_list(sb, i);
-		seq_printf(seq, "|%4d|%3d|%9lu|%9lu|%8lu|%7lu|%7lu|%8lu|%7lu|%4lu|\n",
+		seq_printf(seq, "|%4d|%3d|%9lu|%9lu|%8lu|%8d|%8lu|%7lu|%4lu|\n",
 		0, fl->index, fl->block_start, fl->block_end, fl->block_end - fl->block_start + 1 - fl->num_free_blocks,
-		(fl->block_end - fl->block_start + 1)*MIGRATION_DOWN_PMEM_PERC/100, 
-		(fl->block_end - fl->block_start + 1)*MIGRATION_FORCE_PERC/100,
-		fl->num_free_blocks, fl->block_end - fl->block_start + 1, fl->num_blocknode);
+		0, fl->num_free_blocks, fl->block_end - fl->block_start + 1, fl->num_blocknode);
 	}
 
-	seq_printf(seq, "-----------------------------------------------------------------------------\n");
-	seq_printf(seq, "                            [BDEV free lists]\n");
-	seq_printf(seq, "|Tier|CPU|  Start  |   End   |  Used  |L-Thres|H-Thres|  Free  | Total |Node|\n");
+	seq_printf(seq, "----------------------------------------------------------------------\n");
+	seq_printf(seq, "                          [BDEV free lists]\n");
+	seq_printf(seq, "|Tier|CPU|  Start  |   End   |  Used  | Cached |  Free  | Total |Node|\n");
 	for (i=0;i<TIER_BDEV_HIGH*sbi->cpus;++i) {
 		bfl = nova_get_bdev_free_list_flat(sbi,i);
-		seq_printf(seq, "|%4d|%3d|%9lu|%9lu|%8lu|%7lu|%7lu|%8lu|%7lu|%4lu|\n",
+		seq_printf(seq, "|%4d|%3d|%9lu|%9lu|%8lu|%8lu|%8lu|%7lu|%4lu|\n",
 		bfl->tier, bfl->cpu, bfl->block_start, bfl->block_end, bfl->num_total_blocks - bfl->num_free_blocks,
-		bfl->num_total_blocks*MIGRATION_DOWN_BDEV_PERC/100, bfl->num_total_blocks*MIGRATION_FORCE_PERC/100,
-		bfl->num_free_blocks, bfl->num_total_blocks, bfl->num_blocknode);
+		sbi->pgcache_size[i], bfl->num_free_blocks, bfl->num_total_blocks, bfl->num_blocknode);
 	}
-	seq_printf(seq, "-----------------------------------------------------------------------------\n");
+	seq_printf(seq, "----------------------------------------------------------------------\n");
 
 	seq_printf(seq, "|[Migration]|  Writes  | Writes-C |Group Migs|Interrupts|\n");
     seq_printf(seq, "|           |%10lu|%10lu|%10lu|%10lu|\n",

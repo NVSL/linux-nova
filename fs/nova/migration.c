@@ -1307,6 +1307,7 @@ int start_bm_thread(struct nova_sb_info *sbi) {
 	struct nova_kthread *bm_thread = NULL;
 	int i, err = 0;
     int cpus = sbi->cpus;
+    char stmp[100] = {0};
 
 	sbi->bm_thread = NULL;
 	/* Initialize background migration kthread */
@@ -1317,7 +1318,9 @@ int start_bm_thread(struct nova_sb_info *sbi) {
 
 	for (i=0; i<cpus; ++i) {
         init_waitqueue_head(&(bm_thread[i].wait_queue_head));
-        bm_thread[i].nova_task = kthread_create(bm_thread_func, sbi, "NOVA_BM");
+        bm_thread[i].index = i;
+        sprintf(&stmp[0], "NOVA_BM_C%d",i);
+        bm_thread[i].nova_task = kthread_create(bm_thread_func, sbi, stmp);
 		kthread_bind(bm_thread[i].nova_task, i);
 
         if (IS_ERR(bm_thread[i].nova_task)) {
