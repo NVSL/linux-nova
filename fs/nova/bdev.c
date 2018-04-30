@@ -325,11 +325,11 @@ int nova_bdev_read_byte(struct nova_sb_info *sbi, struct block_device *device, u
 	struct bio_vec *bv = kzalloc(sizeof(struct bio_vec), GFP_KERNEL);
 	struct submit_bio_ret *bio_ret;
 	if (unlikely(!bio)) {
-		nova_info("[Bdev Write] Cannot allocate bio.\n");
+		nova_info("[Bdev Read] Cannot allocate bio.\n");
 		return -3;
 	}
 	if (unlikely(!bv)) {
-		nova_info("[Bdev Write] Cannot allocate bio_vec.\n");
+		nova_info("[Bdev Read] Cannot allocate bio_vec.\n");
 		return -4;
 	}
 	// bio is about block and bv is about page
@@ -373,6 +373,109 @@ int nova_bdev_read_blockoff(struct nova_sb_info *sbi, unsigned long blockoff,
 	struct block_device *device = get_bdev_raw(sbi, tier);
 	unsigned long blk_off = get_raw_from_blocknr(sbi, blockoff);
 	return nova_bdev_read_block(sbi, device, blk_off, size, page, sync);
+}
+
+// Return 0 on success
+int nova_bdev_write_byte_range(struct nova_sb_info *sbi, struct block_device *device, unsigned long offset,
+	int count, struct page **page, unsigned long page_offset, bool sync) {
+	int i, ret = 0;
+	struct bio *bio = bio_alloc(GFP_NOIO, 1);
+	struct bio_vec *bv = kcalloc(count, sizeof(struct bio_vec), GFP_KERNEL);
+	struct submit_bio_ret *bio_ret;
+	if (unlikely(!bio)) {
+		nova_info("[Bdev Write] Cannot allocate bio.\n");
+		return -3;
+	}
+	if (unlikely(!bv)) {
+		nova_info("[Bdev Write] Cannot allocate bio_vec.\n");
+		return -4;
+	}
+	if (DEBUG_BDEV_RW) nova_info("[Bdev Write] Offset %7lu -> Page %p (count: %d)\n",offset>>12,
+		page_address(page[0])+page_offset, count);
+	bio->bi_bdev = device;
+	bio->bi_iter.bi_sector = offset >> 9;
+	bio->bi_iter.bi_size = PAGE_SIZE*count;
+	bio->bi_vcnt = (unsigned short)count;
+	for (i=0; i<count; ++i) {
+		bv[i].bv_page = page[i];
+		bv[i].bv_len = PAGE_SIZE;
+		bv[i].bv_offset = page_offset;
+	}
+	bio->bi_io_vec = bv;
+	bio_set_op_attrs(bio, REQ_OP_WRITE, 0);
+	if (sync) {
+		ret = submit_bio_wait(bio);
+		bio_put(bio);
+	}
+	else {		
+		bio_ret = kmem_cache_alloc(nova_submit_bio_ret_cache, GFP_KERNEL);
+		init_completion(&bio_ret->event);
+		bio->bi_private = bio_ret;
+		bio->bi_end_io = nova_submit_bio_wait_endio;
+		bio->bi_opf |= REQ_SYNC;
+		submit_bio(bio);
+		ret = add_bal_entry(sbi, bio, bio_ret);
+	}
+	return ret;
+}
+
+// Return 0 on success
+inline int nova_bdev_write_block_range(struct nova_sb_info *sbi, struct block_device *device, unsigned long offset,
+	int count, struct page **page, bool sync) {
+	return nova_bdev_write_byte_range(sbi, device, offset<<IO_BLOCK_SIZE_BIT,
+		count, page, 0, sync);
+}
+
+// Read n pages, the size of each page is PAGE_SIZE
+int nova_bdev_read_byte_range(struct nova_sb_info *sbi, struct block_device *device, unsigned long offset,
+	int count, struct page **page, unsigned long page_offset, bool sync) {
+	int i, ret = 0;
+	struct bio *bio = bio_alloc(GFP_NOIO, 1);
+	struct bio_vec *bv = kcalloc(count, sizeof(struct bio_vec), GFP_KERNEL);
+	struct submit_bio_ret *bio_ret;
+	if (unlikely(!bio)) {
+		nova_info("[Bdev Read] Cannot allocate bio.\n");
+		return -3;
+	}
+	if (unlikely(!bv)) {
+		nova_info("[Bdev Read] Cannot allocate bio_vec.\n");
+		return -4;
+	}
+	// bio is about block and bv is about page
+	if (DEBUG_BDEV_RW) nova_info("[Bdev Read] Offset %7lu -> Page %p (count: %d)\n",offset>>12,
+		page_address(page[0])+page_offset, count);
+	bio->bi_bdev = device;
+	bio->bi_iter.bi_sector = offset >> 9;
+	bio->bi_iter.bi_size = PAGE_SIZE*count;
+	bio->bi_vcnt = (unsigned short)count;
+	for (i=0; i<count; ++i) {
+		bv[i].bv_page = page[i];
+		bv[i].bv_len = PAGE_SIZE;
+		bv[i].bv_offset = page_offset;
+	}
+	bio->bi_io_vec = bv;
+	bio_set_op_attrs(bio, REQ_OP_READ, 0);
+	if (sync) {
+		ret = submit_bio_wait(bio);
+		bio_put(bio);
+	}
+	else {
+		bio_ret = kmem_cache_alloc(nova_submit_bio_ret_cache, GFP_KERNEL);
+		init_completion(&bio_ret->event);
+		bio->bi_private = bio_ret;
+		bio->bi_end_io = nova_submit_bio_wait_endio;
+		bio->bi_opf |= REQ_SYNC;
+		submit_bio(bio);
+		ret = add_bal_entry(sbi, bio, bio_ret);
+	}
+	return ret;
+}
+
+// Return 0 on success
+inline int nova_bdev_read_block_range(struct nova_sb_info *sbi, struct block_device *device, unsigned long offset,
+	int count, struct page **page, bool sync) {
+	return nova_bdev_read_byte_range(sbi, device, offset<<IO_BLOCK_SIZE_BIT,
+		count, page, 0, sync);
 }
 
 inline unsigned long nova_get_bdev_block_start(struct nova_sb_info *sbi, int tier)
@@ -1081,6 +1184,7 @@ void bdev_test(struct nova_sb_info *sbi) {
 	
 	struct page *pg;
 	struct page *pg2;
+	struct page **pga = kcalloc(2, sizeof(struct page *), GFP_KERNEL);
 	void *pg_vir_addr = NULL;
 	void *pg_vir_addr2 = NULL;
 	int ret=0;
@@ -1092,17 +1196,22 @@ void bdev_test(struct nova_sb_info *sbi) {
 
 	char *bdev_name = sbi->bdev_list[0].bdev_path;
 
-	unsigned long capacity_page = sbi->bdev_list[0].capacity_page;
+	// unsigned long capacity_page = sbi->bdev_list[0].capacity_page;
 
     nova_info("Block device test IN.\n");
     
 	pg = alloc_page(GFP_KERNEL|__GFP_ZERO);
 	pg2 = alloc_page(GFP_KERNEL|__GFP_ZERO);
+
+	pga[0] = alloc_page(GFP_KERNEL|__GFP_ZERO);
+	pga[1] = alloc_page(GFP_KERNEL|__GFP_ZERO);
+
 	pg_vir_addr = page_address(pg);
 	pg_vir_addr2 = page_address(pg2);
 	
 	// print_a_page(pg_vir_addr);
-	modify_a_page(pg_vir_addr,'X');
+	modify_a_page(pg_vir_addr,'D');
+	modify_a_page(pg_vir_addr2,'F');
 	// print_a_page(pg_vir_addr);
 	// print_a_page(pg_vir_addr2);
 
@@ -1118,8 +1227,12 @@ void bdev_test(struct nova_sb_info *sbi) {
 
 	// Page write
 	ret = nova_bdev_write_block(sbi, bdev_raw, 1, 1, pg, BIO_SYNC);
-	ret = nova_bdev_write_block(sbi, bdev_raw, capacity_page-1, 1, pg, BIO_SYNC);
+	ret = nova_bdev_write_block(sbi, bdev_raw, 2, 1, pg2, BIO_SYNC);
 	// Page read
+	nova_bdev_read_block_range(sbi, bdev_raw, 1,
+		2, pga, BIO_SYNC);
+	// print_a_page(page_address(pga[0]));
+	// print_a_page(page_address(pga[1]));
 	/*
 	for (i=0;i<20;i+=1) {
 		// modify_a_page(pg_vir_addr,'C'+i%20);

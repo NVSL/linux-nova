@@ -633,6 +633,34 @@ int vpmem_read_from_bdev(unsigned long address, unsigned long count, struct page
         page, BIO_SYNC);
 }
 
+int vpmem_write_to_bdev_range(unsigned long address, unsigned long count, struct page **page) {   
+    unsigned long blockoff, raw_blockto;
+    int tier;
+    address &= PAGE_MASK;
+    blockoff = virt_to_blockoff(address);
+    tier = get_tier(vsbi, blockoff);
+    raw_blockto = get_raw_from_blocknr(vsbi, blockoff);
+    if (unlikely(address<vpmem_start)) 
+        nova_info("Error write address %lx count %lu blockoff %lu tier %d raw_blockto %lu\n", 
+        address, count, blockoff, tier, raw_blockto);
+    return nova_bdev_write_block_range(vsbi, get_bdev_raw(vsbi, tier), raw_blockto, count,
+        page, BIO_SYNC);
+}
+
+int vpmem_read_from_bdev_range(unsigned long address, unsigned long count, struct page **page) {   
+    unsigned long blockoff, raw_blockto;
+    int tier;
+    address &= PAGE_MASK;
+    blockoff = virt_to_blockoff(address);
+    tier = get_tier(vsbi, blockoff);
+    raw_blockto = get_raw_from_blocknr(vsbi, blockoff);
+    if (unlikely(address<vpmem_start)) 
+        nova_info("Error read address %lx count %lu blockoff %lu tier %d raw_blockto %lu\n", 
+        address, count, blockoff, tier, raw_blockto);
+    return nova_bdev_read_block_range(vsbi, get_bdev_raw(vsbi, tier), raw_blockto, count,
+        page, BIO_SYNC);
+}
+
 /******************* TLB Flusher *******************/
 struct task_struct *wb_thread = NULL;
 
@@ -784,7 +812,7 @@ void wb_thread_cleanup(void) {
 #endif
 }
 
-pte_t newpage(unsigned long address, struct mm_struct *mm, struct page **pout) {
+pte_t newpage(unsigned long address, struct mm_struct *mm, struct page **pout, struct pgcache_node **pgn) {
     struct pgcache_node *p = 0;
     pte_t pte;
     bool new = false;
@@ -793,6 +821,7 @@ pte_t newpage(unsigned long address, struct mm_struct *mm, struct page **pout) {
     pte = mk_pte(p->page, PAGE_KERNEL);
     if(new) {
         *pout = p->page;
+        *pgn = p;
     } else {
         *pout = 0;
     }
@@ -873,6 +902,28 @@ bool insert_tlb(pte_t ptein, unsigned long address) {
     return true;
 }
 
+bool insert_tlb_lock_free(pte_t ptein, unsigned long address) {
+    pgd_t *pgd;
+    p4d_t *p4d;
+    pud_t *pud;
+    pmd_t *pmd;
+    pte_t *pte;
+    struct mm_struct *mm = current_mm;
+
+    // pgd = __va(read_cr3_pa()) + pgd_index(address); // pgd_offset(current->mm, address);
+    pgd = pgd_offset(mm, address);
+    p4d = fill_p4d(mm, pgd, address); // p4d_alloc(mm, pgd, address); 
+    pud = fill_pud(mm, p4d, address); // pud_alloc(mm, p4d, address); 
+    pmd = fill_pmd(mm, pud, address); // pmd_alloc(mm, pud, address); 
+    pte = fill_pte(mm, pmd, address);
+	
+    *pte = pte_mkclean(*pte);
+    set_pte(pte, ptein);
+
+    __flush_tlb_one(address);
+    return true;
+}
+
 int vpmem_cache_pages(unsigned long address, unsigned long count, bool load)
 {
     int new_count = 0;
@@ -885,7 +936,7 @@ int vpmem_cache_pages(unsigned long address, unsigned long count, bool load)
             address += PAGE_SIZE;
             continue;
         }        
-        if(insert_tlb(newpage(address, current_mm, &p), address)) {
+        if(insert_tlb(newpage(address, current_mm, &p, &pgn), address)) {
             if(p) new_count++;
         } else {
             return 1;
@@ -1061,7 +1112,20 @@ bool vpmem_load_block(unsigned long address, struct page *p, int count)
     int ret = vpmem_read_from_bdev(address, count, p);
 
     if (unlikely(ret)) {
-        printk("vpmem:\033[1;33m could not read from bdev %lu\033[0m\n", ++dif_mm2);
+        printk("vpmem:\033[1;33m could not read from bdev %d %lu\033[0m\n", ret, ++dif_mm2);
+        return false;
+    } else {
+        bdev_read++;
+        return true;
+    }
+}
+
+bool vpmem_load_block_range(unsigned long address, struct page **p, int count)
+{
+    int ret = vpmem_read_from_bdev_range(address, count, p);
+
+    if (unlikely(ret)) {
+        printk("vpmem:\033[1;33m could not read from bdev %d %lu\033[0m\n", ret, ++dif_mm2);
         return false;
     } else {
         bdev_read++;
@@ -1157,41 +1221,74 @@ again:
     return true;
 }
 
+int get_fault_smart_range(struct pgcache_node *pgn) {
+    struct pgcache_node *tpgn;
+    struct rb_node *rbn= NULL;
+    unsigned long address = pgn->address;
+    unsigned long blockoff = virt_to_blockoff(address);
+    unsigned int osb = vsbi->bdev_list[get_tier(vsbi, blockoff)-TIER_BDEV_LOW].opt_size_bit + PAGE_SHIFT;
+    unsigned long begin = (address >> osb) << osb;
+    /* Count 1: address -> end */
+    unsigned long end = ((address >> osb) + 1) << osb;
+    int count1 = 0;
+    int count2 = 0;
+    /* Count 2: address -> next */
+    rbn = rb_next(&pgn->rb_node);
+    if (rbn) {
+        tpgn = container_of(rbn, struct pgcache_node, rb_node);
+        if (tpgn) {
+            if (tpgn->address < end) end = tpgn->address;
+        }
+    }
+    count1 = (end - address) >> PAGE_SHIFT;
+    
+    /* Count 3: valid <- address */
+    rbn = rb_prev(&pgn->rb_node);
+    if (!rbn) return 1;
+    tpgn = pgn;
+    while (tpgn->address >= begin) {
+        if (tpgn->address == address) count2++;
+        address -= PAGE_SIZE;
+        rbn = rb_prev(&tpgn->rb_node);
+        if (!rbn) break;
+        tpgn = container_of(rbn, struct pgcache_node, rb_node);
+        if (!tpgn) break;
+    }
+    return count1<count2?count1:count2;
+}
+
 // How can there be page fault when the page is writing back?
 bool vpmem_do_page_fault(struct pt_regs *regs, unsigned long error_code, unsigned long address)
 {
+    struct pgcache_node *pgn;
+    int i, sr;
+    bool ret;
+    struct page **page_array;
+    unsigned long curr_address;
     if (address >= TASK_SIZE_MAX) {
         /* Make sure we are in reserved area: */
         if (address >= VPMEM_START && address < vpmem_end) {
             struct page *p=0;
             faults++;
             address &= PAGE_MASK;
-
-#ifdef ENABLE_WRITEBACK
-            // 1. Evicting pages from the page cache which are already written-back
-            // clear_evict_list();
-            // if(vsbi->pgcache_size >= VPMEM_MAX_PAGES) leaked++;
-#endif
-            // 2. Handling the page fault
-            if(insert_tlb(newpage(address, current_mm, &p), address)) {
-                if(p) {
-                    // TODO: We can pre-load more pages
-                    vpmem_load_block(address, p, 1);
-                }
-                goto check_cache;
+            
+            ret = insert_tlb(newpage(address, current_mm, &p, &pgn), address);
+            if (unlikely(!ret)) nova_info("Error #1 in vpmem_do_page_fault\n");
+            if (likely(pgn)) sr = get_fault_smart_range(pgn);
+            else sr = 1;
+            if (unlikely(sr==0)) nova_info("Error #2 in vpmem_do_page_fault\n");
+            page_array = kcalloc(sr, sizeof(struct page *), GFP_KERNEL);
+            page_array[0] = p; 
+            curr_address = address;
+            for (i=1; i<sr; ++i) {
+                curr_address += PAGE_SIZE;
+                ret = insert_tlb(newpage(curr_address, current_mm, &page_array[i], &pgn), curr_address);
+                if (unlikely(!ret)) nova_info("Error #3 in vpmem_do_page_fault\n");
             }
-            return false;
+            vpmem_load_block_range(address, page_array, sr);
 
-check_cache:
-#ifdef ENABLE_WRITEBACK
-            // 3. Checking if the page cache is full and push the lru_victim to the wb_list
-            // if(vsbi->pgcache_size >= VPMEM_MAX_PAGES) {
-            //     push_victim_to_wb_list(vsbi->pgcache_size-VPMEM_MAX_PAGES+2);
-            // }
-#endif
+            kfree(page_array);
             return true;
-        } else {
-            return false;
         }
     }
     return false;

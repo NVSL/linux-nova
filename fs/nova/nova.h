@@ -90,7 +90,7 @@
 #define MIGRATION_DOWNWARD 2
 #define MIGRATION_POLICY 2
 
-#define BM_THREAD_SLEEP_TIME 10000
+#define BM_THREAD_SLEEP_TIME 1000
 
 /*
  * Debug code
@@ -1093,8 +1093,12 @@ inline unsigned long get_blocknr_from_raw(struct nova_sb_info *sbi, int tier,
 	unsigned long blocknr);
 int nova_bdev_write_block(struct nova_sb_info *sbi, struct block_device *device, 
 	unsigned long offset, unsigned long size, struct page *page, bool sync);
+inline int nova_bdev_write_block_range(struct nova_sb_info *sbi, struct block_device *device, 
+	unsigned long offset, int count, struct page **page, bool sync);
 int nova_bdev_read_block(struct nova_sb_info *sbi, struct block_device *device,
 	unsigned long offset, unsigned long size, struct page *page, bool sync);
+inline int nova_bdev_read_block_range(struct nova_sb_info *sbi, struct block_device *device, 
+	unsigned long offset, int count, struct page **page, bool sync);
 int nova_bdev_write_blockoff(struct nova_sb_info *sbi, unsigned long blockoff, 
 	unsigned long size, struct page *page, bool sync);
 int nova_bdev_read_blockoff(struct nova_sb_info *sbi, unsigned long blockoff, 
