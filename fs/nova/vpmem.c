@@ -1224,14 +1224,18 @@ again:
 int get_fault_smart_range(struct pgcache_node *pgn) {
     struct pgcache_node *tpgn;
     struct rb_node *rbn= NULL;
-    unsigned long address = pgn->address;
-    unsigned long blockoff = virt_to_blockoff(address);
-    unsigned int osb = vsbi->bdev_list[get_tier(vsbi, blockoff)-TIER_BDEV_LOW].opt_size_bit + PAGE_SHIFT;
-    unsigned long begin = (address >> osb) << osb;
-    /* Count 1: address -> end */
-    unsigned long end = ((address >> osb) + 1) << osb;
+    unsigned long address, blockoff, begin, end;
+    unsigned int osb;
     int count1 = 0;
     int count2 = 0;
+
+    if (!pgn) return 1;
+    address = pgn->address;
+    blockoff = virt_to_blockoff(address);
+    osb = vsbi->bdev_list[get_tier(vsbi, blockoff)-TIER_BDEV_LOW].opt_size_bit + PAGE_SHIFT;
+    begin = (address >> osb) << osb;
+    /* Count 1: address -> end */
+    end = ((address >> osb) + 1) << osb;
     /* Count 2: address -> next */
     rbn = rb_next(&pgn->rb_node);
     if (rbn) {
