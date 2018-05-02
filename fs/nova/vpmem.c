@@ -699,7 +699,7 @@ inline bool vpmem_writeback(int index, bool clear) {
     }
 
 again:
-    if (++counter > VPMEM_MAX_PAGES) return false;
+    if (unlikely(!clear) && ++counter > VPMEM_MAX_PAGES) return false;
 
     mutex_lock(&vsbi->vpmem_wb_mutex[index]);
 
