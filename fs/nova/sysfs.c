@@ -22,10 +22,10 @@
 #include "bdev.h"
 #include "inode.h"
 
-extern unsigned long faults;
-extern unsigned long evicts;
-extern unsigned long bdev_read;
-extern unsigned long bdev_write;
+extern atomic_t faults;
+extern atomic_t evicts;
+extern atomic_t bdev_read;
+extern atomic_t bdev_write;
 extern struct kmem_cache *nova_vpmem_pgnp;
 
 const char *proc_dirname = "fs/NOVA";
@@ -249,8 +249,8 @@ static int nova_seq_ts_show(struct seq_file *seq, void *v)
 	
 	seq_printf(seq, "---------------------------------------------------------\n");
 	seq_printf(seq, "|  [VPMEM]  |  Faults  | BDV_Read | BDV_Writ |  Evicts  |\n");
-    seq_printf(seq, "|           |%10lu|%10lu|%10lu|%10lu|\n",
-		faults, bdev_read, bdev_write, evicts);
+    seq_printf(seq, "|           |%10d|%10d|%10d|%10d|\n",
+		atomic_read(&faults), atomic_read(&bdev_read), atomic_read(&bdev_write), atomic_read(&evicts));
 	seq_printf(seq, "---------------------------------------------------------\n");
 	used = nova_pmem_used(sbi);
 	sumu += used;

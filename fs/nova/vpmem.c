@@ -49,6 +49,10 @@
 #define USE_LOCK           
 #define PAGECACHE_PREALLOC
 
+#ifdef MODE_KEEP_STAT_VPMEM
+#define VPMEM_DEBUG
+#endif
+
 #ifdef ENABLE_NETLINK
 #   define nl_send(...)  vpmem_nl_send_msg(__VA_ARGS__)
 #else
@@ -72,14 +76,14 @@ struct kmem_cache *nova_vpmem_pgnp;
 unsigned long map_page[BDEV_COUNT_MAX]={0};
 bool map_valid[BDEV_COUNT_MAX]={0};
 
-unsigned long faults=0;
-unsigned long bdev_read=0;
-unsigned long bdev_write=0;
+atomic_t faults;
+atomic_t bdev_read;
+atomic_t bdev_write;
+atomic_t evicts;
 unsigned long pte_not_present=0;
 unsigned long pte_not_found=0;
 unsigned long pgcache_full=0;
 unsigned long lru_refers=0;
-unsigned long evicts=0;
 unsigned long dif_mm=0;
 unsigned long dif_mm2=0;
 unsigned long dif_mm3=0;
@@ -186,6 +190,7 @@ struct pgcache_node {
 
 pte_t *pte_lookup(pgd_t *pgd, unsigned long address);
 inline pte_t *vpmem_get_pte(struct pgcache_node *pgn);
+inline pte_t *vpmem_get_pte_addr(unsigned long address);
 
 bool clear_evict_list(int index);
 bool push_victim_to_wb_list(int index, bool all, bool del_lru);
@@ -411,6 +416,13 @@ bool is_pgn_young_reset(struct pgcache_node *pgn) {
 
 int set_pgn_clean(struct pgcache_node *pgn) {
     pte_t *ptep = vpmem_get_pte(pgn);
+	*ptep = pte_mkclean(*ptep);
+	*ptep = pte_mkold(*ptep);
+    return 0;
+}
+
+int set_pgn_clean_addr(unsigned long address) {
+    pte_t *ptep = vpmem_get_pte_addr(address);
 	*ptep = pte_mkclean(*ptep);
 	*ptep = pte_mkold(*ptep);
     return 0;
@@ -717,7 +729,9 @@ again:
         if(unlikely(ret)) {
             printk("vpmem:\033[1;32m could not write to bdev %lu\033[0m\n", ++dif_mm2);
         } else {
-            bdev_write++;
+            #ifdef VPMEM_DEBUG
+                atomic_inc_return(&bdev_write);
+            #endif
         }
         set_pgn_clean(pgn);
     }
@@ -871,6 +885,10 @@ pte_t *pte_lookup(pgd_t *pgd, unsigned long address)
 
 inline pte_t *vpmem_get_pte(struct pgcache_node *pgn) {
     return pte_lookup(pgd_offset_k(pgn->address), pgn->address);
+}
+
+inline pte_t *vpmem_get_pte_addr(unsigned long address) {
+    return pte_lookup(pgd_offset_k(address), address);
 }
 
 bool insert_tlb(pte_t ptein, unsigned long address) {
@@ -1041,8 +1059,9 @@ void vpmem_clear_pgn(struct pgcache_node *pgn, int index) {
     if (pte) {
         pte_clear(current_mm, pgn->address, pte);
     }
-
-    evicts++;
+    #ifdef VPMEM_DEBUG
+        atomic_inc_return(&evicts);
+    #endif
     __flush_tlb_one(pgn->address);
 
     kmem_cache_free(nova_vpmem_pgnp, pgn);
@@ -1111,11 +1130,15 @@ bool vpmem_load_block(unsigned long address, struct page *p, int count)
 {
     int ret = vpmem_read_from_bdev(address, count, p);
 
+    set_pgn_clean_addr(address);
+
     if (unlikely(ret)) {
         printk("vpmem:\033[1;33m could not read from bdev %d %lu\033[0m\n", ret, ++dif_mm2);
         return false;
     } else {
-        bdev_read++;
+        #ifdef VPMEM_DEBUG
+            atomic_inc_return(&bdev_read);
+        #endif
         return true;
     }
 }
@@ -1123,12 +1146,20 @@ bool vpmem_load_block(unsigned long address, struct page *p, int count)
 bool vpmem_load_block_range(unsigned long address, struct page **p, int count)
 {
     int ret = vpmem_read_from_bdev_range(address, count, p);
+    int i;
+
+    for (i=0;i<count;++i) {
+        set_pgn_clean_addr(address);       
+        address += PAGE_SIZE;
+    }
 
     if (unlikely(ret)) {
         printk("vpmem:\033[1;33m could not read from bdev %d %lu\033[0m\n", ret, ++dif_mm2);
         return false;
     } else {
-        bdev_read++;
+        #ifdef VPMEM_DEBUG
+            atomic_add_return(count, &bdev_read);
+        #endif
         return true;
     }
 }
@@ -1168,9 +1199,8 @@ bool push_victim_to_wb_list(int index, bool all, bool del_lru)
 {
     struct pgcache_node *pgn;
     struct list_head *tmp_lru = &vsbi->vpmem_lru_list[index];
-    int i = vsbi->pgcache_size[index] - VPMEM_MAX_PAGES + VPMEM_RES_PAGES;
-    unsigned long counter = 0;
-    if (!all && i<=0) return true;
+    unsigned long counter = 0;   
+    if (!all && is_pgcache_very_small(index)) return true;
     if (!del_lru) mutex_lock(&vsbi->vpmem_lru_mutex[index]);
 again:
     // nova_info("wb %d %d \n",index,i);
@@ -1210,7 +1240,7 @@ again:
     }
     else if (del_lru) push_to_evict_list(pgn, index);
     
-    if (!all && --i<=0) {
+    if (!all && is_pgcache_very_small(index)) {
         mutex_unlock(&vsbi->vpmem_lru_mutex[index]);
         return true;
     }
@@ -1226,9 +1256,9 @@ int get_fault_smart_range(struct pgcache_node *pgn) {
     struct rb_node *rbn= NULL;
     unsigned long address, blockoff, begin, end;
     unsigned int osb;
-    int count1 = 0;
+    int count1 = 1;
     int count2 = 0;
-
+    
     if (!pgn) return 1;
     address = pgn->address;
     blockoff = virt_to_blockoff(address);
@@ -1241,16 +1271,17 @@ int get_fault_smart_range(struct pgcache_node *pgn) {
     if (rbn) {
         tpgn = container_of(rbn, struct pgcache_node, rb_node);
         if (tpgn) {
-            if (tpgn->address < end) end = tpgn->address;
+            if (tpgn->address > pgn->address && tpgn->address < end) end = tpgn->address;
         }
     }
     count1 = (end - address) >> PAGE_SHIFT;
     
     /* Count 3: valid <- address */
+    if (!pgn) return 1;
     rbn = rb_prev(&pgn->rb_node);
     if (!rbn) return 1;
     tpgn = pgn;
-    while (tpgn->address >= begin) {
+    while (tpgn->address > begin) {
         if (tpgn->address == address) count2++;
         address -= PAGE_SIZE;
         rbn = rb_prev(&tpgn->rb_node);
@@ -1258,6 +1289,7 @@ int get_fault_smart_range(struct pgcache_node *pgn) {
         tpgn = container_of(rbn, struct pgcache_node, rb_node);
         if (!tpgn) break;
     }
+    if (count2==0) return 1;
     return count1<count2?count1:count2;
 }
 
@@ -1272,22 +1304,33 @@ bool vpmem_do_page_fault(struct pt_regs *regs, unsigned long error_code, unsigne
     if (address >= TASK_SIZE_MAX) {
         /* Make sure we are in reserved area: */
         if (address >= VPMEM_START && address < vpmem_end) {
-            struct page *p=0;
-            faults++;
+            struct page *p = NULL;            
+            #ifdef VPMEM_DEBUG
+                atomic_inc_return(&faults);
+            #endif
             address &= PAGE_MASK;
             
             ret = insert_tlb(newpage(address, current_mm, &p, &pgn), address);
-            if (unlikely(!ret)) nova_info("Error #1 in vpmem_do_page_fault\n");
+
+                // if(p) {
+                //     // TODO: We can pre-load more pages
+                //     vpmem_load_block(address, p, 1);
+                // }
+            if (!p) return true;
+
+            if (unlikely(!p)) nova_info("Error #1 in vpmem_do_page_fault\n");
+            if (unlikely(!ret)) nova_info("Error #2 in vpmem_do_page_fault\n");
             if (likely(pgn)) sr = get_fault_smart_range(pgn);
             else sr = 1;
-            if (unlikely(sr==0)) nova_info("Error #2 in vpmem_do_page_fault\n");
+            // nova_info("address %lx sr %d\n", address, sr);
+            if (unlikely(sr<1||sr>32)) nova_info("Error #3 in vpmem_do_page_fault sr %d\n",sr);
             page_array = kcalloc(sr, sizeof(struct page *), GFP_KERNEL);
             page_array[0] = p; 
             curr_address = address;
             for (i=1; i<sr; ++i) {
                 curr_address += PAGE_SIZE;
                 ret = insert_tlb(newpage(curr_address, current_mm, &page_array[i], &pgn), curr_address);
-                if (unlikely(!ret)) nova_info("Error #3 in vpmem_do_page_fault\n");
+                if (unlikely(!ret)) nova_info("Error #4 in vpmem_do_page_fault\n");
             }
             vpmem_load_block_range(address, page_array, sr);
 
@@ -1319,6 +1362,12 @@ int vpmem_init(void)
     return 0;
 }
 
+void vpmem_init_counters(void) {
+	atomic_set(&bdev_write, 0);
+	atomic_set(&bdev_read, 0);
+	atomic_set(&faults, 0);
+	atomic_set(&evicts, 0);
+}
 int vpmem_init_lists(struct nova_sb_info *sbi) {
     int i;
     int count = TIER_BDEV_HIGH*sbi->cpus;
@@ -1397,7 +1446,9 @@ int vpmem_get(struct nova_sb_info *sbi, unsigned long offset)
 {
     int i, ret;
     unsigned long size=0;
-    
+
+    vpmem_init_counters();
+
     ret = vpmem_init_lists(sbi);
     if (unlikely(ret)) nova_info("Error in vpmem_init_lists\n");
 
@@ -1482,10 +1533,10 @@ void vpmem_put(void)
 	kmem_cache_destroy(nova_vpmem_pgnp); 
     vpmem_free_lists();
     
-    printk(KERN_INFO "vpmem: faults = %lu reads = %lu writes = %lu pte_not_present=%lu pte_not_found=%lu pgcache_full=%lu\n",
-                faults, bdev_read, bdev_write, pte_not_present, pte_not_found, pgcache_full);
-    printk(KERN_INFO "vpmem: lru_refers = %lu evicts = %lu dif_mm = %lu already_cached = %lu dif_mm2 = %lu leaked = %lu\n",
-                lru_refers, evicts, dif_mm, already_cached, dif_mm2, leaked);
+    printk(KERN_INFO "vpmem: faults = %d reads = %d writes = %d pte_not_present=%lu pte_not_found=%lu pgcache_full=%lu\n",
+                atomic_read(&faults), atomic_read(&bdev_read), atomic_read(&bdev_write), pte_not_present, pte_not_found, pgcache_full);
+    printk(KERN_INFO "vpmem: lru_refers = %lu evicts = %d dif_mm = %lu already_cached = %lu dif_mm2 = %lu leaked = %lu\n",
+                lru_refers, atomic_read(&evicts), dif_mm, already_cached, dif_mm2, leaked);
     printk(KERN_INFO "vpmem: dif_mm3 = %lu dif_mm4 = %lu\n",
                 dif_mm3, dif_mm4);
     printk(KERN_INFO "vpmem: hit = %lu miss1 = %lu miss2 = %lu\n",
