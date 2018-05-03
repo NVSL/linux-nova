@@ -5,8 +5,9 @@
 #include "super.h"
 #include <linux/types.h>
 
-#define VPMEM_MAX_PAGES             8192  // 32MB per-cpu
-#define VPMEM_RES_PAGES             8     // 32KB per-cpu
+#define VPMEM_MAX_PAGES             8192    // 32MB per-cpu
+#define VPMEM_LMT_PAGES             1048576 // 4GB in total
+#define VPMEM_RES_PAGES             8       // 32KB per-cpu
 
 extern unsigned long vpmem_start;
 extern unsigned long vpmem_end;

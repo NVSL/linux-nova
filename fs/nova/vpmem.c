@@ -216,6 +216,10 @@ inline int pgc_total_size(void) {
     return ret;
 }
 
+inline bool is_pgcache_large(void) {
+    return pgc_total_size() > VPMEM_MAX_PAGES*2*vsbi->cpus;
+}
+
 // Exit write back
 inline bool is_pgcache_very_small(int index) {
     return atomic_read(&vsbi->pgcache_size[index]) <= VPMEM_MAX_PAGES - VPMEM_RES_PAGES;
@@ -456,6 +460,8 @@ struct pgcache_node *pgcache_insert(unsigned long address, struct mm_struct *mm,
     struct rb_node *parent = NULL;
 
     if (new) *new = false;
+
+    while (is_pgcache_large()) schedule();
 
     mutex_lock(&vsbi->vpmem_rb_mutex[index]);
     /* Go to the bottom of the tree */
