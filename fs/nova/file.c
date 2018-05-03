@@ -601,7 +601,7 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 {
 	struct inode *inode = filp->f_mapping->host;
 	struct super_block *sb = inode->i_sb;
-	// struct nova_sb_info *sbi = NOVA_SB(sb);
+	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_inode_info *si = NOVA_I(inode);
 	struct nova_inode_info_header *sih = &si->header;
 	struct nova_file_write_entry *entry = NULL;
@@ -634,6 +634,8 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 	if (len <= 0)
 		goto out;
 
+	if (MODE_KEEP_STAT) sbi->stat->read += len;
+	
 	entryc = (metadata_csum == 0) ? entry : &entry_copy;
 
 	end_index = (isize - 1) >> PAGE_SHIFT;

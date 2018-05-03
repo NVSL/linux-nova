@@ -15,7 +15,7 @@ int vpmem_init(void);
 // int vpmem_setup(struct nova_sb_info *sbi, unsigned long);
 // void vpmem_cleanup(void);
 
-inline unsigned long pgc_total_size(void);
+inline int pgc_total_size(void);
 
 int vpmem_get(struct nova_sb_info *sbi, unsigned long offset);
 void vpmem_put(void);

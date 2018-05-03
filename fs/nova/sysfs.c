@@ -23,6 +23,7 @@
 #include "inode.h"
 
 extern atomic_t faults;
+extern atomic_t writes;
 extern atomic_t evicts;
 extern atomic_t bdev_read;
 extern atomic_t bdev_write;
@@ -214,7 +215,7 @@ static int nova_seq_ts_show(struct seq_file *seq, void *v)
     unsigned long used, total;
     unsigned long sumu = 0;
 	unsigned long sumt = 0;
-	unsigned long pgc_size = pgc_total_size();
+	int pgc_size = pgc_total_size();
 
 	nova_get_timing_stats();
 	nova_get_IO_stats();
@@ -236,22 +237,22 @@ static int nova_seq_ts_show(struct seq_file *seq, void *v)
 	seq_printf(seq, "|Tier|CPU|  Start  |   End   |  Used  | Cached |  Free  | Total |Node|\n");
 	for (i=0;i<TIER_BDEV_HIGH*sbi->cpus;++i) {
 		bfl = nova_get_bdev_free_list_flat(sbi,i);
-		seq_printf(seq, "|%4d|%3d|%9lu|%9lu|%8lu|%8lu|%8lu|%7lu|%4lu|\n",
+		seq_printf(seq, "|%4d|%3d|%9lu|%9lu|%8lu|%8d|%8lu|%7lu|%4lu|\n",
 		bfl->tier, bfl->cpu, bfl->block_start, bfl->block_end, bfl->num_total_blocks - bfl->num_free_blocks,
-		sbi->pgcache_size[i], bfl->num_free_blocks, bfl->num_total_blocks, bfl->num_blocknode);
+		atomic_read(&sbi->pgcache_size[i]), bfl->num_free_blocks, bfl->num_total_blocks, bfl->num_blocknode);
 	}
 	seq_printf(seq, "----------------------------------------------------------------------\n");
 
-	seq_printf(seq, "|[Migration]|  Writes  | Writes-C |Group Migs|Interrupts|\n");
-    seq_printf(seq, "|           |%10lu|%10lu|%10lu|%10lu|\n",
-		sbi->stat->write >> 12, sbi->stat->write_dram  >> 12, sbi->stat->mig_group, 
+	seq_printf(seq, "|[Migration]|  Writes  | Writes-C |  Reads   |Group Migs|Interrupts|\n");
+    seq_printf(seq, "|           |%10lu|%10lu|%10lu|%10lu|%10lu|\n",
+		sbi->stat->write >> 12, sbi->stat->write_dram  >> 12, sbi->stat->read >> 12,sbi->stat->mig_group, 
             sbi->stat->mig_interrupt);
 	
-	seq_printf(seq, "---------------------------------------------------------\n");
-	seq_printf(seq, "|  [VPMEM]  |  Faults  | BDV_Read | BDV_Writ |  Evicts  |\n");
-    seq_printf(seq, "|           |%10d|%10d|%10d|%10d|\n",
-		atomic_read(&faults), atomic_read(&bdev_read), atomic_read(&bdev_write), atomic_read(&evicts));
-	seq_printf(seq, "---------------------------------------------------------\n");
+	seq_printf(seq, "--------------------------------------------------------------------\n");
+	seq_printf(seq, "|  [VPMEM]  |  Faults  | BDV_Read |  Writes  | BDV_Writ |  Evicts  |\n");
+    seq_printf(seq, "|           |%10d|%10d|%10d|%10d|%10d|\n",
+		atomic_read(&faults), atomic_read(&bdev_read), atomic_read(&writes), atomic_read(&bdev_write), atomic_read(&evicts));
+	seq_printf(seq, "--------------------------------------------------------------------\n");
 	used = nova_pmem_used(sbi);
 	sumu += used;
 	total = nova_pmem_total(sbi);
@@ -274,8 +275,8 @@ static int nova_seq_ts_show(struct seq_file *seq, void *v)
         	i, used>>8, used, used * 100 / total, total>>8, total);
     }
 	seq_printf(seq, "---------------------------------------------------------\n");
-	seq_printf(seq, "|DRAM|%6luMB|%9lu|%4lu%%|  N/A|%7uMB|%9u|\n", 
-		pgc_size>>8, pgc_size, pgc_size * 100 / (VPMEM_MAX_PAGES*sbi->cpus), 
+	seq_printf(seq, "|DRAM|%6dMB|%9d|%4d%%|  N/A|%7uMB|%9u|\n", 
+		pgc_size/256, pgc_size, pgc_size * 100 / (VPMEM_MAX_PAGES*sbi->cpus), 
 		(VPMEM_MAX_PAGES*sbi->cpus)>>8, VPMEM_MAX_PAGES*TIER_BDEV_HIGH*sbi->cpus);
 	seq_printf(seq, "|NOVA|%6luMB|%9lu|%4lu%%|  N/A|%7luMB|%9lu|\n", sumu>>8, sumu, sumu * 100 / sumt, sumt>>8, sumt);
 	
