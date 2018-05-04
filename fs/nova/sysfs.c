@@ -220,7 +220,8 @@ static int nova_seq_ts_show(struct seq_file *seq, void *v)
 	nova_get_timing_stats();
 	nova_get_IO_stats();
 
-	seq_puts(seq, "TNOVA status\n");
+	seq_printf(seq, "[TNOVA] FT %d BR %d WR %d BW %d\n",
+	atomic_read(&faults), atomic_read(&bdev_read), atomic_read(&writes), atomic_read(&bdev_write));
 
 	seq_printf(seq, "----------------------------------------------------------------------\n");
 	seq_printf(seq, "                          [PMEM free lists]\n");
