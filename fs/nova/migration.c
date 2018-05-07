@@ -1076,8 +1076,10 @@ int get_lowest_tier(struct super_block *sb) {
 int get_available_tier(struct super_block *sb, int tier) {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
     int i;
-    if (!is_tier_usage_really_high(sbi, tier)) return tier;
-    for (i=TIER_PMEM;i<=TIER_BDEV_HIGH;++i) {
+    for (i=tier;i<=TIER_BDEV_HIGH;++i) {
+        if (!is_tier_usage_really_high(sbi, i)) return i;
+    }
+    for (i=TIER_PMEM;i<tier;++i) {
         if (!is_tier_usage_really_high(sbi, i)) return i;
     }
     return TIER_PMEM;

@@ -2,12 +2,11 @@
 #include "nova.h"
 
 #define SYNC_BIT        20
-#define SEQ_BIT         2
+#define SEQ_BIT         1
 #define RESET_BIT       36  /* 64 seconds */
 
 // Profiler module #1
 // Synchronize vs. Asynchronous
-
 bool is_wcount_time_out(struct super_block *sb, struct nova_inode_info_header *sih) {
     unsigned int interval = 30;  /* 30 seconds */
     struct nova_inode *pi = nova_get_block(sb, sih->pi_addr);

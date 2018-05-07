@@ -209,6 +209,29 @@ static inline int get_index_tc(int tier, int cpu) {
     return (tier-TIER_BDEV_LOW)*vsbi->cpus+cpu;
 }
 
+inline int most_sig_bit(unsigned int v) {
+    int r = 0;
+    while (v >>= 1) r++;
+    return r;
+}
+
+int pgc_tier_free_order(int tier) {
+    unsigned int used = 0;
+    unsigned int total, free;
+    int i;
+    if (tier == TIER_PMEM) {
+        used = nova_pmem_used(vsbi);
+        total = nova_pmem_total(vsbi);
+    }
+    else {
+        for (i=(tier-TIER_BDEV_LOW)*vsbi->cpus;i<(tier-TIER_BDEV_LOW+1)*vsbi->cpus;++i) 
+            used += atomic_read(&vsbi->pgcache_size[i]);
+        total = VPMEM_MAX_PAGES*2*vsbi->cpus;
+    }
+    free = total - used;
+    return most_sig_bit(total) - most_sig_bit(free);
+}
+
 inline int pgc_total_size(void) {
     int ret = 0;
     int i;
@@ -217,7 +240,7 @@ inline int pgc_total_size(void) {
 }
 
 inline bool is_pgcache_large(void) {
-    return pgc_total_size() > VPMEM_MAX_PAGES*2*vsbi->cpus;
+    return pgc_total_size() > VPMEM_MAX_PAGES*2*TIER_BDEV_HIGH*vsbi->cpus;
 }
 
 // Exit write back

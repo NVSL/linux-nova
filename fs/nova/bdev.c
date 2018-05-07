@@ -591,7 +591,10 @@ void nova_init_bdev_blockmap(struct super_block *sb, int recovery) {
 	}			
 }
 
-/* Return how many blocks allocated */
+/* 
+ * Return how many blocks allocated 
+ * Unlike original NOVA, only continuous pages are allocated.
+ */
 static long nova_alloc_blocks_in_bdev_free_list(struct super_block *sb,
 	struct bdev_free_list *bfl, unsigned long num_blocks,
 	unsigned long *new_blocknr, enum nova_alloc_direction from_tail) {
@@ -729,7 +732,6 @@ static long nova_new_blocks_from_bdev(struct super_block *sb, int tier,
 	struct bdev_free_list *bfl;
 	unsigned long new_blocknr = 0;
 	long ret_blocks = 0;
-	int retried = 0;
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 
 	if (num_blocks == 0) {
@@ -745,23 +747,22 @@ retry:
 	spin_lock(&bfl->s_lock);
 
 	if (not_enough_blocks_bfl(bfl, num_blocks)) {
-		if (retried >= 2)
-			/* Allocate anyway */
-			goto alloc;
-
 		spin_unlock(&bfl->s_lock);
+		// nova_info("noe tier %d cpuid %d free %lu\n", tier, cpuid, bfl->num_free_blocks);
+		// nova_info("used tier %lu\n", nova_bdev_used(sbi, tier));
 		cpuid = nova_get_candidate_bdev_free_list(sb, tier);
-		retried++;
 		goto retry;
 	}
 
-alloc:
 	ret_blocks = nova_alloc_blocks_in_bdev_free_list(sb, bfl, num_blocks, 
 		&new_blocknr, from_tail);
 
 	if (ret_blocks < 0) {
-		nova_err(sb, "%s failed.\n", __func__);
-		nova_info("cpuid %d\n", cpuid);
+		spin_unlock(&bfl->s_lock);
+		// nova_info("ret tier %d cpuid %d free %lu\n", tier, cpuid, bfl->num_free_blocks);
+		// nova_info("used tier %lu\n", nova_bdev_used(sbi, tier));
+		cpuid = nova_get_candidate_bdev_free_list(sb, tier);
+		goto retry;
 		// bfl->num_free_blocks -= ret_blocks;
 	}
 
@@ -939,13 +940,22 @@ inline int get_tier_range_node(struct nova_sb_info *sbi,
 }
 
 int get_suitable_tier(struct super_block *sb, unsigned long num_blocks) {
-	struct nova_sb_info *sbi = NOVA_SB(sb);
-	int i;
+	// struct nova_sb_info *sbi = NOVA_SB(sb);
+	int i, order;
+	int ret_order = pgc_tier_free_order(TIER_PMEM);
+	int ret_tier = TIER_PMEM;
+	// for (i=TIER_BDEV_LOW; i<=TIER_BDEV_HIGH; ++i) {
+	// 	if (num_blocks >> (sbi->bdev_list[i - TIER_BDEV_LOW].opt_size_bit) == 0)
+	// 		return i-1;
+	// }
 	for (i=TIER_BDEV_LOW; i<=TIER_BDEV_HIGH; ++i) {
-		if (num_blocks >> (sbi->bdev_list[i - TIER_BDEV_LOW].opt_size_bit) == 0)
-			return i-1;
+		order = pgc_tier_free_order(i);
+		if (order<ret_order) {
+			ret_order = order;
+			ret_tier = i;
+		}
 	}
-	return i-1;
+	return ret_tier;
 }
 
 // blocknr: global block number

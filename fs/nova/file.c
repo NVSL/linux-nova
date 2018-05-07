@@ -810,7 +810,6 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	u64 epoch_id;
 	u32 time;
 	int write_tier = TIER_PMEM;
-	int old_write_tier = TIER_PMEM;
 
 	if (len == 0)
 		return 0;
@@ -877,20 +876,24 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	if (MODE_FORE_ALLOC) {	
 		write_tier = TIER_PMEM;
 		
-		/* Profiler */
+		/* Profiler #1 */
 		nova_sih_increase_wcount(sb, sih, len);
-
-		write_tier = get_suitable_tier(sb, num_blocks);
-		
-		old_write_tier = write_tier;
-
-		if (write_tier != TIER_PMEM) {
-			seq_count = nova_get_prev_seq_count(sb, sih, start_blk, num_blocks);
-			if (nova_sih_judge_sync(sih) || !nova_prof_judge_seq(seq_count)){
-				write_tier = TIER_PMEM;
-			}
+		if (nova_sih_judge_sync(sih)) {
+			write_tier = TIER_PMEM;
+			goto prof;
 		}
 		
+		/* Profiler #2 */
+		seq_count = nova_get_prev_seq_count(sb, sih, start_blk, num_blocks);
+		if (!nova_prof_judge_seq(seq_count)) {
+			write_tier = TIER_PMEM;
+			goto prof;
+		}
+
+		// nova_info("p %d b %d\n",pgc_tier_free_order(0),pgc_tier_free_order(1));
+		write_tier = get_suitable_tier(sb, num_blocks);
+
+prof:
 		write_tier = get_available_tier(sb, write_tier);
 		
 	}
