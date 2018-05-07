@@ -145,11 +145,12 @@ static int nova_get_nvmm_info(struct super_block *sb,
 	sbi->s_dax_dev = dax_dev;
 
 	size = dax_direct_access(sbi->s_dax_dev, 0, LONG_MAX/PAGE_SIZE,
-				 &virt_addr, &__pfn_t) * PAGE_SIZE;
+				&virt_addr, &__pfn_t) * PAGE_SIZE;
 	if (size <= 0) {
 		nova_err(sb, "direct_access failed\n");
 		return -EINVAL;
 	}
+	if (sbi->initsize) size = sbi->initsize;
 
 	sbi->virt_addr = virt_addr;
 
@@ -159,7 +160,7 @@ static int nova_get_nvmm_info(struct super_block *sb,
 	}
 
 	sbi->phys_addr = pfn_t_to_pfn(__pfn_t) << PAGE_SHIFT;
-	sbi->initsize = size;
+	if (!sbi->initsize) sbi->initsize = size;
 	sbi->replica_reserved_inodes_addr = virt_addr + size -
 			(sbi->tail_reserved_blocks << PAGE_SHIFT);
 	sbi->replica_sb_addr = virt_addr + size - PAGE_SIZE;
@@ -297,7 +298,7 @@ static loff_t nova_max_size(int bits)
 
 enum {
 	Opt_bpi, Opt_init, Opt_snapshot, Opt_mode, Opt_uid,
-	Opt_gid, Opt_blocksize, Opt_wprotect, Opt_bdev, Opt_bsize,
+	Opt_gid, Opt_blocksize, Opt_wprotect, Opt_bdev, Opt_bsize, Opt_psize,
 	Opt_err_cont, Opt_err_panic, Opt_err_ro,
 	Opt_dbgmask, Opt_err
 };
@@ -312,6 +313,7 @@ static const match_table_t tokens = {
 	{ Opt_wprotect,	     "wprotect"		  },
 	{ Opt_bdev,	     "bdev=%s"		  },
 	{ Opt_bsize,	     "bsize=%u"		  },
+	{ Opt_psize,	     "psize=%u"		  },
 	{ Opt_err_cont,	     "errors=continue"	  },
 	{ Opt_err_panic,     "errors=panic"	  },
 	{ Opt_err_ro,	     "errors=remount-ro"  },
@@ -339,6 +341,12 @@ static int nova_parse_tiering_options(struct nova_sb_info *sbi, char *options)
 			continue;
 
 		token = match_token(p, tokens, args);
+		if(token == Opt_psize) {
+			if (match_int(&args[0], &input)){
+				return -EINVAL;
+			}
+			sbi->initsize = (unsigned long) input << 30;
+		}
 		if(token == Opt_bsize) {
 			if (match_int(&args[0], &input)){
 				return -EINVAL;
@@ -789,16 +797,8 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 		goto out;
 	}
 
-	retval = nova_get_nvmm_info(sb, sbi);
-	if (retval) {
-		nova_err(sb, "%s: Failed to get nvmm info.",
-			 __func__);
-		goto out;
-	}
-
-	sbi->num_blocks = sbi->initsize >> PAGE_SHIFT;
-	
 	TIER_BDEV_HIGH = 0;
+	sbi->initsize = 0;
 	retval = nova_parse_tiering_options(sbi, data);
 	if (retval) {
 		nova_err(sb, "%s: Failed to get block device info.",
@@ -810,6 +810,15 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 		nova_get_bdev_info(sbi);
 	}
 
+	retval = nova_get_nvmm_info(sb, sbi);
+	if (retval) {
+		nova_err(sb, "%s: Failed to get nvmm info.",
+			 __func__);
+		goto out;
+	}
+
+	sbi->num_blocks = sbi->initsize >> PAGE_SHIFT;
+	
 	print_all_bdev(sbi);
 	// nova_info("size of unsigned long:%lu\n",sizeof(unsigned long));
 		

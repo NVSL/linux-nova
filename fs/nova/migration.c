@@ -699,7 +699,7 @@ int migrate_a_file_by_entries(struct inode *inode, int to, bool force)
 	end_index = (isize) >> PAGE_SHIFT;
     
     do {
-        if (!is_inode_wait_list_empty(inode) || kthread_should_stop()) {
+        if (is_tier_usage_really_high(sbi, to) || !is_inode_wait_list_empty(inode) || kthread_should_stop()) {
             interrupted = true;
             if (MODE_KEEP_STAT) sbi->stat->mig_interrupt++;
             goto end;
@@ -822,7 +822,7 @@ int migrate_a_file(struct inode *inode, int to, bool force)
     
     for (i=0;i<=end_index>>osb;++i) {
 next:
-        if (!is_inode_wait_list_empty(inode) || kthread_should_stop()) {
+        if (is_tier_usage_really_high(sbi, to) || !is_inode_wait_list_empty(inode) || kthread_should_stop()) {
             interrupted = true;
             if (MODE_KEEP_STAT) sbi->stat->mig_interrupt++;
             goto end;
