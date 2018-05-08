@@ -990,6 +990,7 @@ const struct file_operations nova_wrap_file_operations = {
 	.read_iter		= nova_wrap_rw_iter,
 	.write_iter		= nova_wrap_rw_iter,
 	.mmap			= nova_dax_file_mmap,
+	.get_unmapped_area = thp_get_unmapped_area,
 	.open			= nova_open,
 	.fsync			= nova_fsync,
 	.flush			= nova_flush,
