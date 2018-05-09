@@ -187,6 +187,7 @@ extern int data_parity;
 extern int dram_struct_csum;
 
 extern int TIER_BDEV_HIGH;
+extern int VPMEM_MAX_PAGES;
 
 extern unsigned int blk_type_to_shift[NOVA_BLOCK_TYPE_MAX];
 extern unsigned int blk_type_to_size[NOVA_BLOCK_TYPE_MAX];

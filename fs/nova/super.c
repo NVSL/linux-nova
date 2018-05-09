@@ -298,7 +298,7 @@ static loff_t nova_max_size(int bits)
 
 enum {
 	Opt_bpi, Opt_init, Opt_snapshot, Opt_mode, Opt_uid,
-	Opt_gid, Opt_blocksize, Opt_wprotect, Opt_bdev, Opt_bsize, Opt_psize,
+	Opt_gid, Opt_blocksize, Opt_wprotect, Opt_bdev, Opt_bsize, Opt_psize, Opt_vsize,
 	Opt_err_cont, Opt_err_panic, Opt_err_ro,
 	Opt_dbgmask, Opt_err
 };
@@ -314,6 +314,7 @@ static const match_table_t tokens = {
 	{ Opt_bdev,	     "bdev=%s"		  },
 	{ Opt_bsize,	     "bsize=%u"		  },
 	{ Opt_psize,	     "psize=%u"		  },
+	{ Opt_vsize,	     "vsize=%u"		  },
 	{ Opt_err_cont,	     "errors=continue"	  },
 	{ Opt_err_panic,     "errors=panic"	  },
 	{ Opt_err_ro,	     "errors=remount-ro"  },
@@ -345,12 +346,21 @@ static int nova_parse_tiering_options(struct nova_sb_info *sbi, char *options)
 			if (match_int(&args[0], &input)){
 				return -EINVAL;
 			}
+			// psize is in GB
 			sbi->initsize = (unsigned long) input << 30;
+		}
+		if(token == Opt_vsize) {
+			if (match_int(&args[0], &input)){
+				return -EINVAL;
+			}
+			// vsize is in MB
+			VPMEM_MAX_PAGES = (int) input*128;
 		}
 		if(token == Opt_bsize) {
 			if (match_int(&args[0], &input)){
 				return -EINVAL;
 			}
+			// bsize is in GB
 			size = (unsigned long) input;
 		}
 		if(token == Opt_bdev) {

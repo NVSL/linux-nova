@@ -71,6 +71,8 @@ unsigned long vpmem_start=0;
 unsigned long vpmem_end=0;
 int *wb_empty;
 
+int VPMEM_MAX_PAGES = 0;
+
 struct kmem_cache *nova_vpmem_pgnp;
 
 unsigned long map_page[BDEV_COUNT_MAX]={0};
@@ -1537,6 +1539,7 @@ void vpmem_init_counters(void) {
 	atomic_set(&writes, 0);
 	atomic_set(&evicts, 0);
 }
+
 int vpmem_init_lists(struct nova_sb_info *sbi) {
     int i;
     int count = TIER_BDEV_HIGH*sbi->cpus;
