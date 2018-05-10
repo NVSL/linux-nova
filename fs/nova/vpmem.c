@@ -71,7 +71,7 @@ unsigned long vpmem_start=0;
 unsigned long vpmem_end=0;
 int *wb_empty;
 
-int VPMEM_MAX_PAGES = 0;
+int VPMEM_MAX_PAGES = 8192;
 
 struct kmem_cache *nova_vpmem_pgnp;
 
