@@ -212,7 +212,8 @@ static int nova_seq_ts_show(struct seq_file *seq, void *v)
 	struct free_list *fl = NULL;
 	struct bdev_free_list *bfl = NULL;
 	int i;
-    unsigned long used, total;
+    unsigned long used = 0;
+    unsigned long total = 0;
     unsigned long sumu = 0;
 	unsigned long sumt = 0;
 	int pgc_size = pgc_total_size();
@@ -220,8 +221,12 @@ static int nova_seq_ts_show(struct seq_file *seq, void *v)
 	nova_get_timing_stats();
 	nova_get_IO_stats();
 
-	seq_printf(seq, "[TNOVA] FT %d BR %d WR %d BW %d\n",
-	atomic_read(&faults), atomic_read(&bdev_read), atomic_read(&writes), atomic_read(&bdev_write));
+	for (i=TIER_BDEV_LOW;i<=TIER_BDEV_HIGH;++i) {
+    	used += nova_bdev_used(sbi, i);
+	}
+	seq_printf(seq, "[TNOVA] FT %d BR %d WR %d BW %d UP %lu UB %lu UD %d\n",
+	atomic_read(&faults), atomic_read(&bdev_read), atomic_read(&writes), atomic_read(&bdev_write),
+	nova_pmem_used(sbi), used, pgc_size);
 
 	seq_printf(seq, "----------------------------------------------------------------------\n");
 	seq_printf(seq, "                          [PMEM free lists]\n");

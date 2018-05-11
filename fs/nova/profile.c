@@ -2,7 +2,7 @@
 #include "nova.h"
 
 #define SYNC_BIT        20
-#define SEQ_BIT         1
+#define SEQ_BIT         2
 #define RESET_BIT       36  /* 64 seconds */
 
 // Profiler module #1
