@@ -878,7 +878,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 		
 		/* Profiler #1 */
 		nova_sih_increase_wcount(sb, sih, len);
-		if (nova_sih_judge_sync(sih)) {
+		if (nova_sih_is_sync(sih)) {
 			write_tier = TIER_PMEM;
 			goto prof;
 		}
