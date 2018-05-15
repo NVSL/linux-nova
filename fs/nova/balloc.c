@@ -373,13 +373,12 @@ int nova_find_free_slot(struct rb_root *tree, unsigned long range_low,
 }
 
 static int nova_free_blocks(struct super_block *sb, unsigned long blocknr,
-	int num, unsigned short btype, int log_page)
+	int num_blocks, unsigned short btype, int log_page)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct rb_root *tree;
 	unsigned long block_low;
 	unsigned long block_high;
-	unsigned long num_blocks = 0;
 	struct nova_range_node *prev = NULL;
 	struct nova_range_node *next = NULL;
 	struct nova_range_node *curr_node;
@@ -389,8 +388,8 @@ static int nova_free_blocks(struct super_block *sb, unsigned long blocknr,
 	int ret;
 	timing_t free_time;
 
-	if (num <= 0) {
-		nova_dbg("%s ERROR: free %d\n", __func__, num);
+	if (num_blocks <= 0) {
+		nova_dbg("%s ERROR: free %d\n", __func__, num_blocks);
 		return -EINVAL;
 	}
 
@@ -410,16 +409,15 @@ static int nova_free_blocks(struct super_block *sb, unsigned long blocknr,
 
 	tree = &(free_list->block_free_tree);
 
-	num_blocks = nova_get_numblocks(btype) * num;
 	block_low = blocknr;
 	block_high = blocknr + num_blocks - 1;
 
 	nova_dbgv("Free: %lu - %lu\n", block_low, block_high);
 
 	if (blocknr < free_list->block_start ||
-			blocknr + num > free_list->block_end + 1) {
+			blocknr + num_blocks > free_list->block_end + 1) {
 		nova_err(sb, "free blocks %lu to %lu, free list %d, start %lu, end %lu\n",
-				blocknr, blocknr + num - 1,
+				blocknr, blocknr + num_blocks - 1,
 				free_list->index,
 				free_list->block_start,
 				free_list->block_end);
@@ -702,18 +700,16 @@ static int nova_get_candidate_free_list(struct super_block *sb)
 }
 
 static int nova_new_blocks(struct super_block *sb, unsigned long *blocknr,
-	unsigned int num, unsigned short btype, int zero,
+	unsigned int num_blocks, unsigned short btype, int zero,
 	enum alloc_type atype, int cpuid, enum nova_alloc_direction from_tail)
 {
 	struct free_list *free_list;
 	void *bp;
-	unsigned long num_blocks = 0;
 	unsigned long new_blocknr = 0;
 	long ret_blocks = 0;
 	int retried = 0;
 	timing_t alloc_time;
 
-	num_blocks = num * nova_get_numblocks(btype);
 	if (num_blocks == 0) {
 		nova_dbg_verbose("%s: num_blocks == 0", __func__);
 		return -EINVAL;
@@ -760,7 +756,7 @@ alloc:
 
 	if (ret_blocks <= 0 || new_blocknr == 0) {
 		nova_dbg_verbose("%s: not able to allocate %d blocks.  ret_blocks=%ld; new_blocknr=%lu",
-				 __func__, num, ret_blocks, new_blocknr);
+				 __func__, num_blocks, ret_blocks, new_blocknr);
 		return -ENOSPC;
 	}
 
@@ -774,7 +770,7 @@ alloc:
 	*blocknr = new_blocknr;
 
 	nova_dbg_verbose("Alloc %lu NVMM blocks 0x%lx\n", ret_blocks, *blocknr);
-	return ret_blocks / nova_get_numblocks(btype);
+	return ret_blocks;
 }
 
 // Allocate data blocks.  The offset for the allocated block comes back in
