@@ -181,14 +181,15 @@ void vmpem_nl_cleanup(void) {
 struct pgcache_node {
     /* First 64-byte */
     unsigned long address;
-    struct rb_node rb_node;
+    struct page *page;
     struct list_head lru_node;
     struct list_head wb_node;
-    /* Second 64-byte */
     struct list_head evict_node;
+    /* Second 64-byte */
+    struct rb_node rb_node;
     unsigned long pinned;
-    struct page *page;
     struct mm_struct *mm;
+	u64	padding[3];
 };
 
 pte_t *pte_lookup(pgd_t *pgd, unsigned long address);
@@ -1614,6 +1615,11 @@ void vpmem_free_cache(void) {
     }
 }
 
+static void init_once_pgn(void *foo)
+{
+	memset(foo, 0, sizeof(struct pgcache_node));
+}
+
 int vpmem_get(struct nova_sb_info *sbi, unsigned long offset)
 {
     int i, ret;
@@ -1628,7 +1634,7 @@ int vpmem_get(struct nova_sb_info *sbi, unsigned long offset)
 
     nova_vpmem_pgnp = kmem_cache_create("nova_vpmem_pgn",
 					       sizeof(struct pgcache_node),
-					       0, SLAB_RECLAIM_ACCOUNT, NULL);
+					       0, SLAB_RECLAIM_ACCOUNT, init_once_pgn);
 	if (nova_vpmem_pgnp == NULL)
 		return -ENOMEM;
 
