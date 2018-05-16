@@ -665,7 +665,7 @@ inline bool is_inode_wait_list_empty(struct inode *inode) {
  * Migrate a file from one tier to another
  * How migration works: Check -> Allocate -> Copy -> Free
  */ 
-int migrate_a_file_by_entries(struct inode *inode, int to, bool force)
+int migrate_a_file_by_entries(struct inode *inode, int to, bool force, pgoff_t index, pgoff_t end_index)
 {
 	struct super_block *sb = inode->i_sb;
 	struct nova_sb_info *sbi = NOVA_SB(sb);
@@ -678,13 +678,12 @@ int migrate_a_file_by_entries(struct inode *inode, int to, bool force)
 	u64 begin_tail = 0;
     unsigned int num_pages;
     unsigned long pgoff;
-    pgoff_t index = 0;
-    pgoff_t end_index = 0;
     int ret = 0;
+	loff_t isize = i_size_read(inode);
     
     bool interrupted = false;
+    bool full = end_index - index == isize>>PAGE_SHIFT;
     unsigned int nentry = 0;
-    loff_t isize = 0;
     
     if (DEBUG_MIGRATION) 
         nova_info("[Migration] Start migrating (by entries) inode %lu to:T%d force:%d (cpu:%d)\n",
@@ -694,15 +693,14 @@ int migrate_a_file_by_entries(struct inode *inode, int to, bool force)
 	update.alter_tail = sih->alter_log_tail;
 
     begin_tail = update.tail;
-
-	isize = i_size_read(inode);
-	end_index = (isize) >> PAGE_SHIFT;
     
     do {
-        if (is_tier_usage_really_high(sbi, to) || !is_inode_wait_list_empty(inode) || kthread_should_stop()) {
-            interrupted = true;
-            if (MODE_KEEP_STAT) sbi->stat->mig_interrupt++;
-            goto end;
+        if (!force) {
+            if (is_tier_usage_really_high(sbi, to) || !is_inode_wait_list_empty(inode) || kthread_should_stop()) {
+                interrupted = true;
+                if (MODE_KEEP_STAT) sbi->stat->mig_interrupt++;
+                goto end;
+            }
         }
 
         entry = nova_find_next_entry(sb, sih, index);
@@ -751,7 +749,7 @@ int migrate_a_file_by_entries(struct inode *inode, int to, bool force)
 end:
     if (interrupted) nova_update_sih_tier(sb, sih, to, 5);
     else {
-        if (force) nova_update_sih_tier(sb, sih, to, 1);
+        if (full) nova_update_sih_tier(sb, sih, to, 1);
         else nova_update_sih_tier(sb, sih, to, 4);
     }
 
@@ -762,7 +760,7 @@ end:
 	nova_inode_log_fast_gc(sb, pi, sih, 0, 0, 0, 0, 0);
     // nova_info("sih->log_pages: %lu\n",sih->log_pages);
     
-    up_write(&sih->mig_sem);
+    if (!force) up_write(&sih->mig_sem);
 
     inode_unlock(inode);
 
@@ -797,17 +795,17 @@ int migrate_a_file(struct inode *inode, int to, bool force)
     unsigned int n1 = 0;
     unsigned int n2 = 0;
     loff_t isize = 0;
+    bool full = end_index - index == isize>>PAGE_SHIFT;
     // int progress = 0;
     
 	timing_t mig_time;
 
     unsigned int osb = sbi->bdev_list[to - TIER_BDEV_LOW].opt_size_bit;
     
-
 	NOVA_START_TIMING(mig_t, mig_time);
 
     if (!MODE_USE_GROUP || to == TIER_PMEM) 
-        return migrate_a_file_by_entries(inode, to, force);
+        return migrate_a_file_to_tier(inode, to, force);
 
     if (DEBUG_MIGRATION) nova_info("[Migration] Start migrating inode %lu to:T%d force:%d (cpu:%d)\n",
         inode->i_ino, to, force, smp_processor_id());
@@ -822,10 +820,12 @@ int migrate_a_file(struct inode *inode, int to, bool force)
     
     for (i=0;i<=end_index>>osb;++i) {
 next:
-        if (is_tier_usage_really_high(sbi, to) || !is_inode_wait_list_empty(inode) || kthread_should_stop()) {
-            interrupted = true;
-            if (MODE_KEEP_STAT) sbi->stat->mig_interrupt++;
-            goto end;
+        if (!force) {
+            if (is_tier_usage_really_high(sbi, to) || !is_inode_wait_list_empty(inode) || kthread_should_stop()) {
+                interrupted = true;
+                if (MODE_KEEP_STAT) sbi->stat->mig_interrupt++;
+                goto end;
+            }
         }
 
         n1 = 0;
@@ -940,7 +940,7 @@ mig:
 end:
     if (interrupted) nova_update_sih_tier(sb, sih, to, 5);
     else {
-        if (force) nova_update_sih_tier(sb, sih, to, 1);
+        if (full) nova_update_sih_tier(sb, sih, to, 1);
         else nova_update_sih_tier(sb, sih, to, 4);
     }
 
@@ -1212,9 +1212,29 @@ struct inode *pop_an_inode_to_migrate(struct nova_sb_info *sbi, int tier) {
     return NULL;
 }
 
-int migrate_a_file_to_pmem(struct inode *inode) {
-    if (get_htier(inode) == TIER_PMEM) return 0;
-    else return migrate_a_file_by_entries(inode, TIER_PMEM, true);
+int migrate_a_file_to_tier(struct inode *inode, int to, bool force) {
+	loff_t isize = i_size_read(inode);
+    if (get_htier(inode) == to && get_ltier(inode) == to) return 0;
+    else {
+        inode_lock(inode);
+        return migrate_a_file_by_entries(inode, TIER_PMEM, force, 0, (isize) >> PAGE_SHIFT);
+    }
+}
+
+inline int migrate_a_file_to_pmem(struct inode *inode) {
+    return migrate_a_file_to_tier(inode, TIER_PMEM, true);
+}
+
+int migrate_a_file_to_tier_partial(struct inode *inode, int to, bool force, pgoff_t index, pgoff_t end_index) {
+    if (get_htier(inode) == to && get_ltier(inode) == to) return 0;
+    else {
+        inode_lock(inode);
+        return migrate_a_file_by_entries(inode, TIER_PMEM, force, index, end_index);
+    }
+}
+
+inline int migrate_a_file_to_pmem_partial(struct inode *inode, pgoff_t index, pgoff_t end_index) {
+    return migrate_a_file_to_tier_partial(inode, TIER_PMEM, true, index, end_index);
 }
 
 int do_migrate_a_file_rotate(struct inode *inode) {

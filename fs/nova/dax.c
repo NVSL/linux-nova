@@ -1197,9 +1197,12 @@ int nova_insert_write_vma(struct vm_area_struct *vma)
 	int compVal;
 	int insert = 0;
 	int ret;
+	pgoff_t index = cpu_to_le64(vma->vm_pgoff);
+	pgoff_t end_index = index + cpu_to_le64((vma->vm_end - vma->vm_start) >> PAGE_SHIFT) - 1;
 	timing_t insert_vma_time;
 
-
+	migrate_a_file_to_pmem_partial(inode, index, end_index);
+	
 	if ((vma->vm_flags & flags) != flags)
 		return 0;
 
@@ -1336,7 +1339,7 @@ static int nova_restore_page_write(struct vm_area_struct *vma,
 
 	nova_dbgv("Restore vma %p write, start 0x%lx, end 0x%lx, address 0x%lx\n",
 		  vma, vma->vm_start, vma->vm_end, address);
-
+	
 	/* Restore single page write */
 	nova_mmap_to_new_blocks(vma, address);
 
