@@ -1,5 +1,6 @@
 #include <linux/list.h>
 #include "nova.h"
+#include "bdev.h"
 
 #define SYNC_BIT        20
 #define SEQ_BIT         2
@@ -244,5 +245,48 @@ int nova_update_sih_tier(struct super_block *sb, struct nova_inode_info_header *
     
 	NOVA_END_TIMING(usih_t, usih_time);
 
+    return 0;
+}
+
+// Profiler module #4
+// Read vs. Write
+// The threshold of PMEM should be (#read)/(#read+#write)
+inline int most_sig_lbit(unsigned long v) {
+    int r = 0;
+    while (v >>= 1) r++;
+    return r;
+}
+
+int nova_give_advise(struct nova_sb_info *sbi) {
+    int invalid = 0;
+    unsigned long total_read = 0;
+    unsigned long total_write = 0;
+    int bitr, bitw, i, adv;
+    for (i=0;i<4;++i) {
+        total_read += sbi->stat->fread[i];
+        total_write += sbi->stat->fwrite[i];
+        if (sbi->stat->fread[i]==0 && sbi->stat->fwrite[i]==0) invalid++;
+    }
+    if (invalid > 1) return 0;
+    bitr = most_sig_lbit(total_read);
+    bitw = most_sig_lbit(total_write);
+    i = bitr - bitw;
+    adv = 50 + i*10;
+    if (adv>90) adv = 90;
+    if (adv<10) adv = 10;
+    MIGRATION_DOWN_PMEM_PERC = adv;
+    return 0;
+}
+
+int nova_update_stat(struct nova_sb_info *sbi, size_t len, bool read) {
+    int cur = current_kernel_time().tv_sec & (unsigned int)3;
+    if (sbi->stat->cur != cur) {
+        sbi->stat->cur = cur;
+        nova_give_advise(sbi);
+        sbi->stat->fread[cur] = 0;
+        sbi->stat->fwrite[cur] = 0;
+    }
+    if (read) sbi->stat->fread[cur] += len;
+    else sbi->stat->fwrite[cur] += len;
     return 0;
 }
