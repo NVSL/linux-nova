@@ -739,7 +739,6 @@ int get_wb_smart_range(struct pgcache_node *pgn, unsigned long *start_addr) {
     *start_addr = address;
     blockoff = virt_to_blockoff(address);
     osb = vsbi->bdev_list[get_tier(vsbi, blockoff)-TIER_BDEV_LOW].opt_size_bit + PAGE_SHIFT;
-    osb <<= 1;
     begin = (address >> osb) << osb;
     end = ((address >> osb) + 1) << osb;
 

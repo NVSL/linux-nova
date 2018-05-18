@@ -1412,7 +1412,7 @@ again_bdev:
     
 again_rev:
     if (kthread_should_stop()) return -1;
-    if (sbi->stat->adv<1) return 0;
+    if (sbi->stat->adv<3) return 0;
     for (i=TIER_BDEV_LOW;i<=TIER_BDEV_HIGH;++i) {
         if (!is_pmem_usage_quite_high(sbi)) {
             if(DEBUG_MIGRATION) nova_info("\e[1;31mPMEM usage quite low.\e[0m\n");
