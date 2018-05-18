@@ -695,12 +695,10 @@ int migrate_a_file_by_entries(struct inode *inode, int to, bool force, pgoff_t i
     begin_tail = update.tail;
     
     do {
-        if (!force) {
-            if (is_tier_usage_really_high(sbi, to) || !is_inode_wait_list_empty(inode) || kthread_should_stop()) {
-                interrupted = true;
-                if (MODE_KEEP_STAT) sbi->stat->mig_interrupt++;
-                goto end;
-            }
+        if (is_tier_usage_quite_high(sbi, to) || (!force && !is_inode_wait_list_empty(inode)) || kthread_should_stop()) {
+            interrupted = true;
+            if (MODE_KEEP_STAT) sbi->stat->mig_interrupt++;
+            goto end;
         }
 
         entry = nova_find_next_entry(sb, sih, index);
@@ -760,7 +758,7 @@ end:
 	nova_inode_log_fast_gc(sb, pi, sih, 0, 0, 0, 0, 0);
     // nova_info("sih->log_pages: %lu\n",sih->log_pages);
     
-    if (!force) up_write(&sih->mig_sem);
+    up_write(&sih->mig_sem);
 
     inode_unlock(inode);
 
@@ -820,12 +818,10 @@ int migrate_a_file(struct inode *inode, int to, bool force)
     
     for (i=0;i<=end_index>>osb;++i) {
 next:
-        if (!force) {
-            if (is_tier_usage_really_high(sbi, to) || !is_inode_wait_list_empty(inode) || kthread_should_stop()) {
-                interrupted = true;
-                if (MODE_KEEP_STAT) sbi->stat->mig_interrupt++;
-                goto end;
-            }
+        if (is_tier_usage_really_high(sbi, to) || (!force && !is_inode_wait_list_empty(inode)) || kthread_should_stop()) {
+            interrupted = true;
+            if (MODE_KEEP_STAT) sbi->stat->mig_interrupt++;
+            goto end;
         }
 
         n1 = 0;
@@ -987,6 +983,16 @@ unsigned long nova_pmem_total(struct nova_sb_info *sbi) {
     return total;
 }
 
+// Used for reverse migration
+bool is_pmem_usage_quite_high(struct nova_sb_info *sbi) {
+    unsigned long used = nova_pmem_used(sbi);
+    unsigned long total = nova_pmem_total(sbi);
+    // Usage high: used / total > (MIGRATION_DOWN_PMEM_PERC-10) / 100
+    if (DEBUG_MIGRATION) nova_info("PMEM usage: U:%8lu G:%8lu T:%8lu.\n",
+        used, (MIGRATION_DOWN_PMEM_PERC-10) * total / 100, total);
+    return used * 100 > (MIGRATION_DOWN_PMEM_PERC-10) * total;
+}
+
 // Used for migration
 bool is_pmem_usage_high(struct nova_sb_info *sbi) {
     unsigned long used = nova_pmem_used(sbi);
@@ -1029,6 +1035,16 @@ unsigned long nova_bdev_total(struct nova_sb_info *sbi, int tier) {
     return total;
 }
 
+// Used for reverse migration
+bool is_bdev_usage_quite_high(struct nova_sb_info *sbi, int tier) {
+    unsigned long used = nova_bdev_used(sbi, tier);
+    unsigned long total = nova_bdev_total(sbi, tier);
+    // Usage high: used / total > (MIGRATION_DOWN_BDEV_PERC-10) / 100
+    if (DEBUG_MIGRATION) nova_info("B-T%d usage: U:%8lu G:%8lu T:%8lu.\n", 
+        tier, used, (MIGRATION_DOWN_BDEV_PERC-10) * total / 100, total);
+    return used * 100 > (MIGRATION_DOWN_BDEV_PERC-10) * total;
+}
+
 // Used for migration
 bool is_bdev_usage_high(struct nova_sb_info *sbi, int tier) {
     unsigned long used = nova_bdev_used(sbi, tier);
@@ -1052,6 +1068,11 @@ bool is_bdev_usage_really_high(struct nova_sb_info *sbi, int tier) {
 inline bool is_tier_usage_really_high(struct nova_sb_info *sbi, int tier) {
     if (tier == TIER_PMEM) return is_pmem_usage_really_high(sbi);
     else return is_bdev_usage_really_high(sbi, tier);
+}
+
+inline bool is_tier_usage_quite_high(struct nova_sb_info *sbi, int tier) {
+    if (tier == TIER_PMEM) return is_pmem_usage_quite_high(sbi);
+    else return is_bdev_usage_quite_high(sbi, tier);
 }
 
 int get_lowest_tier(struct super_block *sb) {
@@ -1212,28 +1233,118 @@ struct inode *pop_an_inode_to_migrate(struct nova_sb_info *sbi, int tier) {
     return NULL;
 }
 
+struct inode *pop_an_inode_to_migrate_reverse(struct nova_sb_info *sbi, int tier) {
+	struct super_block *sb = sbi->sb;
+    struct nova_inode_info *si;
+	struct nova_inode_info_header *sih, *tmpsih;
+    struct nova_inode *pi;
+	struct list_head *list;
+    struct mutex *mutex;
+    struct inode *ret;
+    int cpu = smp_processor_id();
+    int j, jj;
+    bool first = true;
+	timing_t pop_time;
+
+	NOVA_START_TIMING(pop_t, pop_time);
+
+    for (jj=cpu;jj<cpu+sbi->cpus;++jj) {
+        j = jj%(sbi->cpus);
+        mutex = nova_get_inode_lru_mutex(sbi, tier, j);
+        mutex_lock(mutex);
+        list = nova_get_inode_lru_lists(sbi, tier, j);
+        list_for_each_entry_safe_reverse(sih, tmpsih, list, lru_list[tier]) {
+            if (first) {
+                first = false;
+                continue;
+            }
+            if (DEBUG_MIGRATION) nova_info("Inode %lu is selected.\n", sih->ino);
+            if (sih->lru_list[tier].next == &sih->lru_list[tier]) {
+                nova_info("Error: sih->lru_list[%d].next is self.\n", tier);
+                break;
+            }
+            if (sih->ino<36) {
+                nova_info("Error: sih->ino is %lu.\n", sih->ino);
+                continue;
+            }
+            pi = nova_get_block(sb, sih->pi_addr);
+            if (!pi) {
+                nova_info("Error: pi is NULL, sih->pi_addr %lu.\n", sih->pi_addr);
+                continue;
+            }
+            si = container_of(sih, struct nova_inode_info, header);
+            if (!si) {
+                nova_info("Error: si is NULL.\n");
+                continue;
+            }
+            ret = &si->vfs_inode;
+            if (!ret) {
+                nova_info("Error: ret is NULL.\n");
+                continue;
+            }
+            if (!i_size_read(ret)) {
+                nova_info("Error: ret->i_size is 0.\n");
+                continue;
+            }
+            if (!inode_trylock(ret)) {
+                if (DEBUG_MIGRATION) nova_info("Error: Inode %lu rw_sem is locked.\n", sih->ino);
+                continue;
+            }
+            if (!down_write_trylock(&sih->mig_sem)) {
+                inode_unlock(ret);
+                if (DEBUG_MIGRATION) nova_info("Error: Inode %lu is locked.\n", sih->ino);
+                continue;
+            }
+            if (DEBUG_MIGRATION) nova_info("Inode %lu is poped.\n", sih->ino);
+            mutex_unlock(mutex);
+	        NOVA_END_TIMING(pop_t, pop_time);
+            return ret;
+        }
+        mutex_unlock(mutex);
+    }
+        
+	NOVA_END_TIMING(pop_t, pop_time);
+    return NULL;
+}
+
+// Used only during migration (previously locked)
 int migrate_a_file_to_tier(struct inode *inode, int to, bool force) {
 	loff_t isize = i_size_read(inode);
-    if (get_htier(inode) == to && get_ltier(inode) == to) return 0;
+    if (get_htier(inode) == to && get_ltier(inode) == to) {
+        inode_unlock(inode);
+        return 0;
+    }
     else {
-        inode_lock(inode);
         return migrate_a_file_by_entries(inode, TIER_PMEM, force, 0, (isize) >> PAGE_SHIFT);
     }
 }
 
+// Used during foreground operations (not previously locked)
 inline int migrate_a_file_to_pmem(struct inode *inode) {
+	struct nova_inode_info *si = NOVA_I(inode);
+	struct nova_inode_info_header *sih = &si->header;
+    inode_lock(inode);
+    down_write(&sih->mig_sem);
     return migrate_a_file_to_tier(inode, TIER_PMEM, true);
 }
 
+// Used only during migration (previously locked)
 int migrate_a_file_to_tier_partial(struct inode *inode, int to, bool force, pgoff_t index, pgoff_t end_index) {
-    if (get_htier(inode) == to && get_ltier(inode) == to) return 0;
+	if (get_htier(inode) == to && get_ltier(inode) == to)  {
+        inode_unlock(inode);
+        return 0;
+    }
     else {
-        inode_lock(inode);
         return migrate_a_file_by_entries(inode, TIER_PMEM, force, index, end_index);
     }
 }
 
+// Used during foreground operations (not previously locked)
 inline int migrate_a_file_to_pmem_partial(struct inode *inode, pgoff_t index, pgoff_t end_index) {
+	struct nova_inode_info *si = NOVA_I(inode);
+	struct nova_inode_info_header *sih = &si->header;
+    inode_lock(inode);
+    down_write(&sih->mig_sem);
     return migrate_a_file_to_tier_partial(inode, TIER_PMEM, true, index, end_index);
 }
 
@@ -1299,6 +1410,22 @@ again_bdev:
         else if(DEBUG_MIGRATION) nova_info("\e[1;32mB-T%d usage low.\e[0m\n",i);
     }
     
+again_rev:
+    if (kthread_should_stop()) return -1;
+    if (sbi->stat->adv<1) return 0;
+    for (i=TIER_BDEV_LOW;i<=TIER_BDEV_HIGH;++i) {
+        if (!is_pmem_usage_quite_high(sbi)) {
+            if(DEBUG_MIGRATION) nova_info("\e[1;31mPMEM usage quite low.\e[0m\n");
+            this = pop_an_inode_to_migrate_reverse(sbi, i);
+            if (!this) {
+                if(DEBUG_MIGRATION) nova_info("PMEM usage is quite low yet no inode is found.\n");
+                return 0;
+            }
+            migrate_a_file(this, get_available_tier(sb, TIER_PMEM), true);
+            goto again_rev;
+        }
+        else if(DEBUG_MIGRATION) nova_info("\e[1;31mPMEM usage quite high.\e[0m\n");
+    }
     return 0;
 }
 

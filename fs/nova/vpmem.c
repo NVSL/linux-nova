@@ -1323,7 +1323,7 @@ bool vpmem_load_block_range(unsigned long address, struct page **p, int count)
     }
 
     if (unlikely(ret)) {
-        printk("vpmem:\033[1;33m could not read from bdev %d %lu\033[0m\n", ret, ++dif_mm2);
+        printk("vpmem:\033[1;33m could not read from bdev range %d %lu\033[0m\n", ret, ++dif_mm2);
         return false;
     } else {
         #ifdef VPMEM_DEBUG

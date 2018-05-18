@@ -5,7 +5,7 @@ struct tiering_stat {
 	unsigned long fwrite[4];
 	unsigned long fread[4];
 	int cur;
-	int advise;
+	int adv;
 	unsigned long write;
 	unsigned long write_dram;
 	unsigned long read;

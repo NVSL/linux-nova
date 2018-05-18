@@ -271,6 +271,7 @@ int nova_give_advise(struct nova_sb_info *sbi) {
     bitr = most_sig_lbit(total_read);
     bitw = most_sig_lbit(total_write);
     i = bitr - bitw;
+    sbi->stat->adv = i;
     adv = 50 + i*10;
     if (adv>90) adv = 90;
     if (adv<10) adv = 10;
