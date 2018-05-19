@@ -452,7 +452,9 @@ int migrate_entry_blocks(struct nova_sb_info *sbi, int to, struct nova_inode_inf
 
     // nova_info("en %llu blocknr %lu p %lx", entryt.block >> PAGE_SHIFT, blocknr, blockoff_to_virt(blocknr));
 
-    // Temp solution: memcpy to invalidate the page cache
+    if (is_tier_bdev(to)) clear_dram_buffer_range(blocknr, le32_to_cpu(nentry.num_pages));
+    
+    // [Deprecated] Temp solution: memcpy to invalidate the page cache
     if (MODE_USE_MEMCPY && is_tier_bdev(to)) {
         // nova_info("[Migration] memcpy %lu <- %llu num: %u\n", 
         // blocknr, nentry.block>>PAGE_SHIFT, nentry.num_pages);
@@ -682,7 +684,7 @@ int migrate_a_file_by_entries(struct inode *inode, int to, bool force, pgoff_t i
 	loff_t isize = i_size_read(inode);
     
     bool interrupted = false;
-    bool full = end_index - index == isize>>PAGE_SHIFT;
+    bool full = ((end_index - index) == isize>>PAGE_SHIFT);
     unsigned int nentry = 0;
     
     if (DEBUG_MIGRATION) 
