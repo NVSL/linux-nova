@@ -1245,7 +1245,7 @@ struct inode *pop_an_inode_to_migrate_reverse(struct nova_sb_info *sbi, int tier
     struct inode *ret;
     int cpu = smp_processor_id();
     int j, jj;
-    bool first = true;
+    bool first = false;
 	timing_t pop_time;
 
 	NOVA_START_TIMING(pop_t, pop_time);
@@ -1317,7 +1317,7 @@ int migrate_a_file_to_tier(struct inode *inode, int to, bool force) {
         return 0;
     }
     else {
-        return migrate_a_file_by_entries(inode, TIER_PMEM, force, 0, (isize) >> PAGE_SHIFT);
+        return migrate_a_file_by_entries(inode, to, force, 0, (isize) >> PAGE_SHIFT);
     }
 }
 
@@ -1337,7 +1337,7 @@ int migrate_a_file_to_tier_partial(struct inode *inode, int to, bool force, pgof
         return 0;
     }
     else {
-        return migrate_a_file_by_entries(inode, TIER_PMEM, force, index, end_index);
+        return migrate_a_file_by_entries(inode, to, force, index, end_index);
     }
 }
 
@@ -1412,7 +1412,7 @@ again_bdev:
         else if(DEBUG_MIGRATION) nova_info("\e[1;32mB-T%d usage low.\e[0m\n",i);
     }
 
-    return 0;
+    // return 0;
     
 again_rev:
     if (kthread_should_stop()) return -1;
@@ -1420,7 +1420,7 @@ again_rev:
     for (i=TIER_BDEV_LOW;i<=TIER_BDEV_HIGH;++i) {
         if (!is_pmem_usage_quite_high(sbi)) {
             if(DEBUG_MIGRATION) nova_info("\e[1;31mPMEM usage quite low.\e[0m\n");
-            this = pop_an_inode_to_migrate(sbi, i);
+            this = pop_an_inode_to_migrate_reverse(sbi, i);
             if (!this) {
                 if(DEBUG_MIGRATION) nova_info("PMEM usage is quite low yet no inode is found.\n");
                 return 0;
