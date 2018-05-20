@@ -452,7 +452,7 @@ int migrate_entry_blocks(struct nova_sb_info *sbi, int to, struct nova_inode_inf
 
     // nova_info("en %llu blocknr %lu p %lx", entryt.block >> PAGE_SHIFT, blocknr, blockoff_to_virt(blocknr));
 
-    if (is_tier_bdev(to)) clear_dram_buffer_range(blocknr, le32_to_cpu(nentry.num_pages));
+    // if (is_tier_bdev(to)) clear_dram_buffer_range(blocknr, le32_to_cpu(nentry.num_pages));
     
     // [Deprecated] Temp solution: memcpy to invalidate the page cache
     if (MODE_USE_MEMCPY && is_tier_bdev(to)) {
@@ -697,7 +697,7 @@ int migrate_a_file_by_entries(struct inode *inode, int to, bool force, pgoff_t i
     begin_tail = update.tail;
     
     do {
-        if (is_tier_usage_quite_high(sbi, to) || (!force && !is_inode_wait_list_empty(inode)) || kthread_should_stop()) {
+        if (is_tier_usage_quite_high(sbi, to) || !is_inode_wait_list_empty(inode) || kthread_should_stop()) {
             interrupted = true;
             if (MODE_KEEP_STAT) sbi->stat->mig_interrupt++;
             goto end;
@@ -820,7 +820,7 @@ int migrate_a_file(struct inode *inode, int to, bool force)
     
     for (i=0;i<=end_index>>osb;++i) {
 next:
-        if (is_tier_usage_really_high(sbi, to) || (!force && !is_inode_wait_list_empty(inode)) || kthread_should_stop()) {
+        if (is_tier_usage_really_high(sbi, to) || !is_inode_wait_list_empty(inode) || kthread_should_stop()) {
             interrupted = true;
             if (MODE_KEEP_STAT) sbi->stat->mig_interrupt++;
             goto end;
@@ -1418,7 +1418,7 @@ again_rev:
     for (i=TIER_BDEV_LOW;i<=TIER_BDEV_HIGH;++i) {
         if (!is_pmem_usage_quite_high(sbi)) {
             if(DEBUG_MIGRATION) nova_info("\e[1;31mPMEM usage quite low.\e[0m\n");
-            this = pop_an_inode_to_migrate_reverse(sbi, i);
+            this = pop_an_inode_to_migrate(sbi, i);
             if (!this) {
                 if(DEBUG_MIGRATION) nova_info("PMEM usage is quite low yet no inode is found.\n");
                 return 0;
