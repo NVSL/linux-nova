@@ -895,11 +895,10 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 
 		// nova_info("p %d b %d\n",pgc_tier_free_order(0),pgc_tier_free_order(1));
 		write_tier = get_suitable_tier(sb, num_blocks);
+	}
 
 prof:
-		write_tier = get_available_tier(sb, write_tier);
-		
-	}
+	write_tier = get_available_tier(sb, write_tier);
 
 	if (MODE_KEEP_STAT) sbi->stat->write += len;
 	nova_update_stat(sbi, len, false);

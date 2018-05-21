@@ -785,10 +785,10 @@ inline int nova_new_data_blocks(struct super_block *sb,
 	int allocated;
 	timing_t alloc_time;
 
-	if (get_available_tier(sb, TIER_PMEM) != TIER_PMEM) {
-		return nova_alloc_block_tier(NOVA_SB(sb), TIER_BDEV_LOW, cpu, 
-			blocknr, num, ALLOC_FROM_HEAD);
-	}
+	// if (get_available_tier(sb, TIER_PMEM) != TIER_PMEM) {
+	// 	return nova_alloc_block_tier(NOVA_SB(sb), TIER_BDEV_LOW, cpu, 
+	// 		blocknr, num, ALLOC_FROM_HEAD);
+	// }
 
 	NOVA_START_TIMING(new_data_blocks_t, alloc_time);
 	allocated = nova_new_blocks(sb, blocknr, num,
