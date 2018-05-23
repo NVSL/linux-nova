@@ -354,7 +354,7 @@ static int nova_parse_tiering_options(struct nova_sb_info *sbi, char *options)
 				return -EINVAL;
 			}
 			// vsize is in MB
-			VPMEM_MAX_PAGES = (int) input*128;
+			VPMEM_MAX_PAGES_QTR = (int) input*64;
 		}
 		if(token == Opt_bsize) {
 			if (match_int(&args[0], &input)){

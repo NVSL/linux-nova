@@ -71,7 +71,7 @@ unsigned long vpmem_start=0;
 unsigned long vpmem_end=0;
 int *wb_empty;
 
-int VPMEM_MAX_PAGES = 8192;
+int VPMEM_MAX_PAGES_QTR = 4096;
 
 struct kmem_cache *nova_vpmem_pgnp;
 
@@ -229,7 +229,7 @@ int pgc_tier_free_order(int tier) {
     else {
         for (i=(tier-TIER_BDEV_LOW)*vsbi->cpus;i<(tier-TIER_BDEV_LOW+1)*vsbi->cpus;++i) 
             used += atomic_read(&vsbi->pgcache_size[i]);
-        total = VPMEM_MAX_PAGES*2*vsbi->cpus;
+        total = VPMEM_MAX_PAGES_QTR*4*vsbi->cpus;
     }
     free = total - used;
     return most_sig_bit(total) - most_sig_bit(free);
@@ -243,17 +243,17 @@ inline int pgc_total_size(void) {
 }
 
 inline bool is_pgcache_large(void) {
-    return pgc_total_size() > VPMEM_MAX_PAGES*2*TIER_BDEV_HIGH*vsbi->cpus;
+    return pgc_total_size() > VPMEM_MAX_PAGES_QTR*4*TIER_BDEV_HIGH*vsbi->cpus;
 }
 
 // Exit write back
 inline bool is_pgcache_very_small(int index) {
-    return atomic_read(&vsbi->pgcache_size[index]) <= VPMEM_MAX_PAGES - VPMEM_RES_PAGES;
+    return atomic_read(&vsbi->pgcache_size[index]) <= VPMEM_MAX_PAGES_QTR * 3;
 }
 
 // Enter write back
 inline bool is_pgcache_small(int index) {
-    return atomic_read(&vsbi->pgcache_size[index]) <= VPMEM_MAX_PAGES;
+    return atomic_read(&vsbi->pgcache_size[index]) <= VPMEM_MAX_PAGES_QTR * 3 + VPMEM_RES_PAGES;
 }
 
 inline unsigned long virt_to_block(unsigned long address) {
@@ -837,7 +837,7 @@ inline bool vpmem_writeback(int index, bool clear) {
     }
 
 again:
-    if (unlikely(!clear) && ++counter > VPMEM_MAX_PAGES) return false;
+    if (unlikely(!clear) && ++counter > VPMEM_MAX_PAGES_QTR) return false;
 
     mutex_lock(&vsbi->vpmem_wb_mutex[index]);
 
@@ -1395,7 +1395,7 @@ again:
         return false;
     }
     dif_mm3++;
-    if (!all && is_pgn_young_reset(pgn) && counter<VPMEM_MAX_PAGES) {
+    if (!all && is_pgn_young_reset(pgn) && counter<VPMEM_MAX_PAGES_QTR) {
         counter++;
         // This pgn is spared for now
         list_move_tail(&pgn->lru_node, &vsbi->vpmem_lru_list[index]);
