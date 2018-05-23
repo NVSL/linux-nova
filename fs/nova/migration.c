@@ -435,7 +435,7 @@ int migrate_entry_blocks(struct nova_sb_info *sbi, int to, struct nova_inode_inf
 
     // Invalidate the page
     if (is_tier_bdev(from)) clear_dram_buffer_range(nentry.block >> PAGE_SHIFT, le32_to_cpu(nentry.num_pages));
-    // if (is_tier_bdev(to)) clear_dram_buffer_range(blocknr, le32_to_cpu(nentry.num_pages));
+    if (is_tier_bdev(to)) clear_dram_buffer_range(blocknr, le32_to_cpu(nentry.num_pages));
 
     ret = migrate_blocks(sbi, nentry.block >> PAGE_SHIFT, le32_to_cpu(nentry.num_pages), from, to, blocknr);
     if (ret<0) {
@@ -1381,7 +1381,7 @@ int do_migrate_a_file_downward(struct super_block *sb) {
     struct inode *this;    
     int i;
 	// if (DEBUG_MIGRATION) nova_info("[Migration-Downward]\n");
-
+    
 again_pmem:
     if (kthread_should_stop()) return -1;
     if (is_pmem_usage_high(sbi)) {
@@ -1411,8 +1411,6 @@ again_bdev:
         }
         else if(DEBUG_MIGRATION) nova_info("\e[1;32mB-T%d usage low.\e[0m\n",i);
     }
-
-    return 0;
     
 again_rev:
     if (kthread_should_stop()) return -1;
@@ -1420,7 +1418,7 @@ again_rev:
     for (i=TIER_BDEV_LOW;i<=TIER_BDEV_HIGH;++i) {
         if (!is_pmem_usage_quite_high(sbi)) {
             if(DEBUG_MIGRATION) nova_info("\e[1;31mPMEM usage quite low.\e[0m\n");
-            this = pop_an_inode_to_migrate(sbi, i);
+            this = pop_an_inode_to_migrate_reverse(sbi, i);
             if (!this) {
                 if(DEBUG_MIGRATION) nova_info("PMEM usage is quite low yet no inode is found.\n");
                 return 0;

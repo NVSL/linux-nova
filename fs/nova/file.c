@@ -749,7 +749,7 @@ out:
 	// TODOzsa: Read-frequent entry -> Pinned page cache
 	// if (entry) nova_update_sih_tier(sb, sih, get_entry_tier(entry), false, true);
 	
-	// if (entry) nova_update_sih_tier(sb, sih, get_entry_tier(entry), 3);
+	if (entry) nova_update_sih_tier(sb, sih, get_entry_tier(entry), 3);
 
 	NOVA_STATS_ADD(read_bytes, copied);
 

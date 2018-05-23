@@ -1237,7 +1237,7 @@ void vpmem_clear_pgn(struct pgcache_node *pgn, int index) {
 }
 
 // Currently, only pages which are freed/migrated will be invalidated.
-// Allocateing new data blocks will not call this function.
+// Allocating new data blocks will not call this function.
 int vpmem_invalidate_pages(unsigned long address, unsigned long count) {
     struct pgcache_node *pgn = NULL;
     struct pgcache_node *pgn_hint = NULL;
@@ -1252,7 +1252,7 @@ int vpmem_invalidate_pages(unsigned long address, unsigned long count) {
         pgn_hint = pgcache_get_hint(pgn);
         if (likely(pgn)) {
             pop_from_lru_list(pgn, index);
-            push_to_evict_list(pgn, index);            
+            push_to_evict_list(pgn, index);    
         }
         address += PAGE_SIZE;
     }
@@ -1711,6 +1711,8 @@ void vpmem_put(void)
 	kmem_cache_destroy(nova_vpmem_pgnp); 
     vpmem_free_lists();
     
+    kfree(wb_empty);
+
     printk(KERN_INFO "vpmem: faults = %d bdev_reads = %d writes = %d bdev_writes = %d pte_not_present=%lu pte_not_found=%lu pgcache_full=%lu\n",
                 atomic_read(&faults), atomic_read(&bdev_read), atomic_read(&writes), atomic_read(&bdev_write), pte_not_present, pte_not_found, pgcache_full);
     printk(KERN_INFO "vpmem: lru_refers = %lu evicts = %d dif_mm = %lu already_cached = %lu dif_mm2 = %lu leaked = %lu\n",
