@@ -1061,10 +1061,12 @@ int nova_free_blocks(struct super_block *sb, unsigned long blocknr,
 long nova_alloc_blocks_in_free_list(struct super_block *sb,
 	struct free_list *free_list, unsigned short btype,
 	enum alloc_type atype, unsigned long num_blocks,
-	unsigned long *new_blocknr, enum nova_alloc_direction from_tail);
+	unsigned long *new_blocknr, enum nova_alloc_direction from_tail,
+	bool contiguous);
 int nova_new_blocks(struct super_block *sb, unsigned long *blocknr,
 	unsigned int num, unsigned short btype, int zero,
-	enum alloc_type atype, int cpuid, enum nova_alloc_direction from_tail);
+	enum alloc_type atype, int cpuid, enum nova_alloc_direction from_tail,
+	bool contiguous);
 	
 /* bbuild.c */
 inline void set_bm(unsigned long bit, struct scan_bitmap *bm,

@@ -424,8 +424,9 @@ int migrate_entry_blocks(struct nova_sb_info *sbi, int to, struct nova_inode_inf
         ret = nova_alloc_block_tier(sbi, to, ANY_CPU, &blocknr, le32_to_cpu(nentry.num_pages), ALLOC_FROM_HEAD);
 
         if (ret<0) {
-            nova_info("[Migration] Block allocation error.\n");
-            return ret;
+            nova_info("[Migration] Block allocation error T%d %d.\n", to, ret);
+            // Note that PMEM may not have large contingous blocks
+            goto end;
         }
         if (DEBUG_MIGRATION_ALLOC) nova_info("[Migration] Allocate blocknr:%lu number:%d.\n",
             blocknr, le32_to_cpu(nentry.num_pages));
@@ -475,6 +476,7 @@ int migrate_entry_blocks(struct nova_sb_info *sbi, int to, struct nova_inode_inf
     /* Step 5. Clone */
     if (!blocknr_hint) ret = nova_clone_write_entry(sbi, si, &nentry, to, blocknr, 0, update);
 
+end:
     // Update tiering info
     entry->updating = 0;
 	nova_update_entry_csum(entry);
@@ -1412,22 +1414,25 @@ again_bdev:
         else if(DEBUG_MIGRATION) nova_info("\e[1;32mB-T%d usage low.\e[0m\n",i);
     }
     
+    if (MODE_REV_MIG) {
 again_rev:
-    if (kthread_should_stop()) return -1;
-    if (sbi->stat->adv<3) return 0;
-    for (i=TIER_BDEV_LOW;i<=TIER_BDEV_HIGH;++i) {
-        if (!is_pmem_usage_quite_high(sbi)) {
-            if(DEBUG_MIGRATION) nova_info("\e[1;31mPMEM usage quite low.\e[0m\n");
-            this = pop_an_inode_to_migrate_reverse(sbi, i);
-            if (!this) {
-                if(DEBUG_MIGRATION) nova_info("PMEM usage is quite low yet no inode is found.\n");
-                return 0;
+        if (kthread_should_stop()) return -1;
+        if (sbi->stat->adv<3) return 0;
+        for (i=TIER_BDEV_LOW;i<=TIER_BDEV_HIGH;++i) {
+            if (!is_pmem_usage_quite_high(sbi)) {
+                if(DEBUG_MIGRATION) nova_info("\e[1;31mPMEM usage quite low.\e[0m\n");
+                this = pop_an_inode_to_migrate_reverse(sbi, i);
+                if (!this) {
+                    if(DEBUG_MIGRATION) nova_info("PMEM usage is quite low yet no inode is found.\n");
+                    return 0;
+                }
+                migrate_a_file(this, get_available_tier(sb, TIER_PMEM), true);
+                goto again_rev;
             }
-            migrate_a_file(this, get_available_tier(sb, TIER_PMEM), true);
-            goto again_rev;
+            else if(DEBUG_MIGRATION) nova_info("\e[1;31mPMEM usage quite high.\e[0m\n");
         }
-        else if(DEBUG_MIGRATION) nova_info("\e[1;31mPMEM usage quite high.\e[0m\n");
     }
+    
     return 0;
 }
 

@@ -15,6 +15,7 @@
 #define MODE_FORE_PMEM 1
 #define MODE_FORE_BAL 0
 #define MODE_BACK_MIG 1
+#define MODE_REV_MIG 1
 
 /* Configure */
 #define BDEV_OPT_SIZE_BIT 6

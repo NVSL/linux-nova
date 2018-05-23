@@ -570,7 +570,8 @@ static int not_enough_blocks(struct free_list *free_list,
 long nova_alloc_blocks_in_free_list(struct super_block *sb,
 	struct free_list *free_list, unsigned short btype,
 	enum alloc_type atype, unsigned long num_blocks,
-	unsigned long *new_blocknr, enum nova_alloc_direction from_tail)
+	unsigned long *new_blocknr, enum nova_alloc_direction from_tail,
+	bool contiguous)
 {
 	struct rb_root *tree;
 	struct nova_range_node *curr, *next = NULL, *prev = NULL;
@@ -611,7 +612,7 @@ long nova_alloc_blocks_in_free_list(struct super_block *sb,
 
 		if (num_blocks >= curr_blocks) {
 			/* Superpage allocation must succeed */
-			if (btype > 0 && num_blocks > curr_blocks)
+			if ((btype > 0 || contiguous) && num_blocks > curr_blocks)
 				goto next;
 
 			/* Otherwise, allocate the whole blocknode */
@@ -700,7 +701,8 @@ static int nova_get_candidate_free_list(struct super_block *sb)
 
 int nova_new_blocks(struct super_block *sb, unsigned long *blocknr,
 	unsigned int num, unsigned short btype, int zero,
-	enum alloc_type atype, int cpuid, enum nova_alloc_direction from_tail)
+	enum alloc_type atype, int cpuid, enum nova_alloc_direction from_tail,
+	bool contiguous)
 {
 	struct free_list *free_list;
 	void *bp;
@@ -740,7 +742,7 @@ retry:
 	}
 alloc:
 	ret_blocks = nova_alloc_blocks_in_free_list(sb, free_list, btype, atype,
-					num_blocks, &new_blocknr, from_tail);
+					num_blocks, &new_blocknr, from_tail, contiguous);
 
 	if (ret_blocks > 0) {
 		if (atype == LOG) {
@@ -792,7 +794,7 @@ inline int nova_new_data_blocks(struct super_block *sb,
 
 	NOVA_START_TIMING(new_data_blocks_t, alloc_time);
 	allocated = nova_new_blocks(sb, blocknr, num,
-			    sih->i_blk_type, zero, DATA, cpu, from_tail);
+			    sih->i_blk_type, zero, DATA, cpu, from_tail, false);
 	NOVA_END_TIMING(new_data_blocks_t, alloc_time);
 	if (allocated < 0) {
 		nova_dbgv("FAILED: Inode %lu, start blk %lu, alloc %d data blocks from %lu to %lu\n",
@@ -820,7 +822,7 @@ inline int nova_new_log_blocks(struct super_block *sb,
 
 	NOVA_START_TIMING(new_log_blocks_t, alloc_time);
 	allocated = nova_new_blocks(sb, blocknr, num,
-			    sih->i_blk_type, zero, LOG, cpu, from_tail);
+			    sih->i_blk_type, zero, LOG, cpu, from_tail, false);
 	NOVA_END_TIMING(new_log_blocks_t, alloc_time);
 	if (allocated < 0) {
 		nova_dbgv("%s: ino %lu, failed to alloc %d log blocks",

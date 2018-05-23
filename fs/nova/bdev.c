@@ -721,7 +721,7 @@ static int nova_get_candidate_bdev_free_list(struct super_block *sb, int tier)
 }
 
 /*
- * Allocate data block from block device, return how many blocks allocated
+ * Allocate data block from block device, return how many blocks allocated, should be exact.
  * *blocknr: Returns the offset of block
  * num_block: Number of blocks of the request
  * from_tail: Direction
@@ -1117,7 +1117,7 @@ long nova_alloc_block_tier(struct nova_sb_info *sbi, int tier, int cpuid,
 	// Tier pmem
 	if (is_tier_pmem(tier)) {
 		allocated = nova_new_blocks(sb, blocknr, num_blocks,
-			NOVA_DEFAULT_BLOCK_TYPE, ALLOC_INIT_ZERO, DATA, cpuid, ALLOC_FROM_TAIL);
+			NOVA_DEFAULT_BLOCK_TYPE, ALLOC_INIT_ZERO, DATA, cpuid, ALLOC_FROM_TAIL, true);
 		// struct free_list *free_list = nova_get_free_list(sb, cpuid);
 		// spin_lock(&free_list->s_lock);
 		// allocated = nova_alloc_blocks_in_free_list(sb, free_list, 
