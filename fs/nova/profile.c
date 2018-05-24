@@ -164,11 +164,12 @@ inline int nova_unlink_inode_lru_list(struct nova_sb_info *sbi, struct nova_inod
         return -2;
     }
 	NOVA_START_TIMING(rmsih_t, rmsih_time);
+    if (DEBUG_MIGRATION_SEM) nova_info("Mig_sem (inode %lu) up_write (nova_unlink_inode_lru_list)\n", sih->ino);
     if (!down_write_trylock(&sih->mig_sem)) {
 	    NOVA_END_TIMING(rmsih_t, rmsih_time);
         return 0;
     }
-    up_write(&sih->mig_sem);
+	up_write(&sih->mig_sem);
 	NOVA_END_TIMING(rmsih_t, rmsih_time);
     return nova_remove_inode_lru_list(sbi, sih, TIER_BDEV_HIGH);
 }

@@ -300,7 +300,8 @@ static int nova_release(struct inode *inode, struct file *file)
 	struct nova_inode_info *si = NOVA_I(inode);
 	struct nova_inode_info_header *sih = &si->header;
 	if (DEBUG_FORE_FILE) nova_info("nova_release (inode %lu) is called\n", inode->i_ino);
-    up_read(&sih->mig_sem);
+	// if (DEBUG_MIGRATION_SEM) nova_info("Mig_sem (inode %lu) up_read (nova_release)\n", sih->ino);
+    // up_read(&sih->mig_sem);
 	if (0) return nova_migration(inode, file);
 	return 0;
 }
@@ -310,7 +311,8 @@ static int nova_open(struct inode *inode, struct file *filp)
 	struct nova_inode_info *si = NOVA_I(inode);
 	struct nova_inode_info_header *sih = &si->header;
 	if (DEBUG_FORE_FILE) nova_info("nova_open (inode %lu) is called\n", inode->i_ino);
-    down_read(&sih->mig_sem);
+	// if (DEBUG_MIGRATION_SEM) nova_info("Mig_sem (inode %lu) down_read (nova_open)\n", sih->ino);
+    // down_read(&sih->mig_sem);
 	return generic_file_open(inode, filp);
 }
 

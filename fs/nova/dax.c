@@ -1201,7 +1201,7 @@ int nova_insert_write_vma(struct vm_area_struct *vma)
 	pgoff_t end_index = index + cpu_to_le64((vma->vm_end - vma->vm_start) >> PAGE_SHIFT) - 1;
 	timing_t insert_vma_time;
 
-	migrate_a_file_to_pmem_partial(inode, index, end_index);
+	migrate_a_file_to_pmem_partial(inode, index, end_index, true);
 	
 	if ((vma->vm_flags & flags) != flags)
 		return 0;

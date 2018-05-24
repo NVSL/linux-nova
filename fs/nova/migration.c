@@ -669,7 +669,7 @@ inline bool is_inode_wait_list_empty(struct inode *inode) {
  * Migrate a file from one tier to another
  * How migration works: Check -> Allocate -> Copy -> Free
  */ 
-int migrate_a_file_by_entries(struct inode *inode, int to, bool force, pgoff_t index, pgoff_t end_index)
+int migrate_a_file_by_entries(struct inode *inode, int to, bool force, pgoff_t index, pgoff_t end_index, bool sync)
 {
 	struct super_block *sb = inode->i_sb;
 	struct nova_sb_info *sbi = NOVA_SB(sb);
@@ -699,7 +699,7 @@ int migrate_a_file_by_entries(struct inode *inode, int to, bool force, pgoff_t i
     begin_tail = update.tail;
     
     do {
-        if (is_tier_usage_quite_high(sbi, to) || !is_inode_wait_list_empty(inode) || kthread_should_stop()) {
+        if (is_tier_usage_quite_high(sbi, to) || !is_inode_wait_list_empty(inode) || (!sync && kthread_should_stop())) {
             interrupted = true;
             if (MODE_KEEP_STAT) sbi->stat->mig_interrupt++;
             goto end;
@@ -762,6 +762,7 @@ end:
 	nova_inode_log_fast_gc(sb, pi, sih, 0, 0, 0, 0, 0);
     // nova_info("sih->log_pages: %lu\n",sih->log_pages);
     
+	if (DEBUG_MIGRATION_SEM) nova_info("Mig_sem (inode %lu) up_write (migrate_a_file_by_entries)\n", sih->ino);
     up_write(&sih->mig_sem);
 
     inode_unlock(inode);
@@ -954,6 +955,7 @@ end:
         nova_info("[Migration] End migrating inode %lu to:T%d force:%d (E %u->%u)\n",
         inode->i_ino, to, force, oentry, nentry);
 
+	if (DEBUG_MIGRATION_SEM) nova_info("Mig_sem (inode %lu) up_write (migrate_a_file)\n", sih->ino);
     up_write(&sih->mig_sem);
 
     inode_unlock(inode);
@@ -1319,7 +1321,7 @@ int migrate_a_file_to_tier(struct inode *inode, int to, bool force) {
         return 0;
     }
     else {
-        return migrate_a_file_by_entries(inode, to, force, 0, (isize) >> PAGE_SHIFT);
+        return migrate_a_file_by_entries(inode, to, force, 0, (isize) >> PAGE_SHIFT, false);
     }
 }
 
@@ -1328,28 +1330,30 @@ inline int migrate_a_file_to_pmem(struct inode *inode) {
 	struct nova_inode_info *si = NOVA_I(inode);
 	struct nova_inode_info_header *sih = &si->header;
     inode_lock(inode);
+	if (DEBUG_MIGRATION_SEM) nova_info("Mig_sem (inode %lu) down_write (migrate_a_file_to_pmem)\n", sih->ino);
     down_write(&sih->mig_sem);
     return migrate_a_file_to_tier(inode, TIER_PMEM, true);
 }
 
 // Used only during migration (previously locked)
-int migrate_a_file_to_tier_partial(struct inode *inode, int to, bool force, pgoff_t index, pgoff_t end_index) {
+int migrate_a_file_to_tier_partial(struct inode *inode, int to, bool force, pgoff_t index, pgoff_t end_index, bool sync) {
 	if (get_htier(inode) == to && get_ltier(inode) == to)  {
         inode_unlock(inode);
         return 0;
     }
     else {
-        return migrate_a_file_by_entries(inode, to, force, index, end_index);
+        return migrate_a_file_by_entries(inode, to, force, index, end_index, sync);
     }
 }
 
 // Used during foreground operations (not previously locked)
-inline int migrate_a_file_to_pmem_partial(struct inode *inode, pgoff_t index, pgoff_t end_index) {
+inline int migrate_a_file_to_pmem_partial(struct inode *inode, pgoff_t index, pgoff_t end_index, bool sync) {
 	struct nova_inode_info *si = NOVA_I(inode);
 	struct nova_inode_info_header *sih = &si->header;
     inode_lock(inode);
+	if (DEBUG_MIGRATION_SEM) nova_info("Mig_sem (inode %lu) down_write (migrate_a_file_to_pmem_partial)\n", sih->ino);
     down_write(&sih->mig_sem);
-    return migrate_a_file_to_tier_partial(inode, TIER_PMEM, true, index, end_index);
+    return migrate_a_file_to_tier_partial(inode, TIER_PMEM, true, index, end_index, sync);
 }
 
 int do_migrate_a_file_rotate(struct inode *inode) {
