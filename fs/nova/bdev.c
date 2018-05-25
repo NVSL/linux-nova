@@ -980,8 +980,6 @@ int nova_free_blocks_from_bdev(struct nova_sb_info *sbi, unsigned long blocknr,
 		return -EINVAL;
 	}
 
-    ret = clear_dram_buffer_range(blocknr, num_blocks);
-
 	/* Pre-allocate blocknode */
 	curr_node = nova_alloc_blocknode(sb);
 	if (curr_node == NULL) {
@@ -995,6 +993,14 @@ int nova_free_blocks_from_bdev(struct nova_sb_info *sbi, unsigned long blocknr,
 		return -EINVAL;
 	}
 	bfl = nova_get_bdev_free_list_flat(sbi,index);
+
+	if (num_blocks > bfl->block_end + 1 - blocknr) {
+		nova_info("Error in nova_free_blocks_from_bdev\n");
+		num_blocks = bfl->block_end + 1 - blocknr;
+	}
+
+    ret = clear_dram_buffer_range(blocknr, num_blocks);
+
 	spin_lock(&bfl->s_lock);
 
 	tree = &(bfl->block_free_tree);
