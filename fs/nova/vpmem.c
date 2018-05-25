@@ -982,12 +982,12 @@ pte_t newpage(unsigned long address, struct mm_struct *mm, struct page **pout,
 
     p = pgcache_insert(address, mm, &new, refer);
     pte = mk_pte(p->page, PAGE_KERNEL);
-    if(new) {
-        *pout = p->page;
-        *pgn = p;
-    } else {
-        *pout = 0;
-    }
+    // if(new) {
+    *pout = p->page;
+    *pgn = p;
+    // } else {
+    //     *pout = 0;
+    // }
 
     return pte;
 }
