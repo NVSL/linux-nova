@@ -982,12 +982,12 @@ pte_t newpage(unsigned long address, struct mm_struct *mm, struct page **pout,
 
     p = pgcache_insert(address, mm, &new, refer);
     pte = mk_pte(p->page, PAGE_KERNEL);
-    // if(new) {
-    *pout = p->page;
-    *pgn = p;
-    // } else {
-    //     *pout = 0;
-    // }
+    if(new) {
+        *pout = p->page;
+        *pgn = p;
+    } else {
+        *pout = 0;
+    }
 
     return pte;
 }
@@ -1485,9 +1485,11 @@ bool vpmem_do_page_fault(struct pt_regs *regs, unsigned long error_code, unsigne
             
             ret = insert_tlb(newpage(address, current_mm, &p, &pgn, false), address);
 
-            if (!p) return true;
+            if (unlikely(!p)) {
+                nova_info("Error #1 in vpmem_do_page_fault\n");
+                return true;
+            }
 
-            if (unlikely(!p)) nova_info("Error #1 in vpmem_do_page_fault\n");
             if (unlikely(!ret)) nova_info("Error #2 in vpmem_do_page_fault\n");
             if (likely(pgn)) sr = get_fault_smart_range(pgn);
             else sr = 1;
@@ -1499,11 +1501,12 @@ bool vpmem_do_page_fault(struct pt_regs *regs, unsigned long error_code, unsigne
             for (i=1; i<sr; ++i) {
                 curr_address += PAGE_SIZE;
                 ret = insert_tlb(newpage(curr_address, current_mm, &page_array[i], &pgn, false), curr_address);
+                if (!page_array[i]) break;
                 if (unlikely(!ret)) nova_info("Error #4 in vpmem_do_page_fault\n");
             }
-            vpmem_load_block_range(address, page_array, sr);
+            vpmem_load_block_range(address, page_array, i);
 
-            pgcache_lru_refer_range(address, sr);
+            pgcache_lru_refer_range(address, i);
             
             kfree(page_array);
             return true;
