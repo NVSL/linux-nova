@@ -297,8 +297,8 @@ static int nova_flush(struct file *file, fl_owner_t id)
 
 static int nova_release(struct inode *inode, struct file *file)
 {
-	struct nova_inode_info *si = NOVA_I(inode);
-	struct nova_inode_info_header *sih = &si->header;
+	// struct nova_inode_info *si = NOVA_I(inode);
+	// struct nova_inode_info_header *sih = &si->header;
 	if (DEBUG_FORE_FILE) nova_info("nova_release (inode %lu) is called\n", inode->i_ino);
 	// if (DEBUG_MIGRATION_SEM) nova_info("Mig_sem (inode %lu) up_read (nova_release)\n", sih->ino);
     // up_read(&sih->mig_sem);
@@ -308,8 +308,8 @@ static int nova_release(struct inode *inode, struct file *file)
 
 static int nova_open(struct inode *inode, struct file *filp)
 {
-	struct nova_inode_info *si = NOVA_I(inode);
-	struct nova_inode_info_header *sih = &si->header;
+	// struct nova_inode_info *si = NOVA_I(inode);
+	// struct nova_inode_info_header *sih = &si->header;
 	if (DEBUG_FORE_FILE) nova_info("nova_open (inode %lu) is called\n", inode->i_ino);
 	// if (DEBUG_MIGRATION_SEM) nova_info("Mig_sem (inode %lu) down_read (nova_open)\n", sih->ino);
     // down_read(&sih->mig_sem);
