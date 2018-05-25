@@ -729,7 +729,9 @@ struct task_struct *wb_thread = NULL;
 int get_wb_smart_range(struct pgcache_node *pgn, unsigned long *start_addr) {
     struct pgcache_node *tpgn;
     struct rb_node *rbn= NULL;
-    unsigned long address, blockoff, begin, end;
+    int index;
+	struct bdev_free_list *bfl;
+    unsigned long address, blockoff, begin, end, bflbegin, bflend;
     unsigned int osb;
     int count1 = 0; // Dirty pages in the right: [pgn, tpgn]
     int count2 = 0; // Dirty pages in the left: [tpgn, pgn]
@@ -741,6 +743,13 @@ int get_wb_smart_range(struct pgcache_node *pgn, unsigned long *start_addr) {
     osb = vsbi->bdev_list[get_tier(vsbi, blockoff)-TIER_BDEV_LOW].opt_size_bit + PAGE_SHIFT;
     begin = (address >> osb) << osb;
     end = ((address >> osb) + 1) << osb;
+
+    index = get_bfl_index(vsbi, blockoff);
+    bfl = nova_get_bdev_free_list_flat(vsbi,index);
+    bflbegin = blockoff_to_virt(bfl->block_start);
+    bflend = blockoff_to_virt(bfl->block_end + 1);
+    if (begin < bflbegin) begin = bflbegin;
+    if (end > bflend) end = bflend;
 
     /* Count 1: address -> valid */    
     if (!pgn) return 1;
@@ -1423,7 +1432,9 @@ again:
 int get_fault_smart_range(struct pgcache_node *pgn) {
     struct pgcache_node *tpgn;
     struct rb_node *rbn= NULL;
-    unsigned long address, blockoff, begin, end;
+    int index;
+	struct bdev_free_list *bfl;
+    unsigned long address, blockoff, begin, end, bflbegin, bflend;
     unsigned int osb;
     int count1 = 0; // Unmapped pages in the right: [pgn, tpgn)
     int count2 = 0; // Mapped pages in the left: [tpgn, pgn)
@@ -1434,6 +1445,13 @@ int get_fault_smart_range(struct pgcache_node *pgn) {
     osb = vsbi->bdev_list[get_tier(vsbi, blockoff)-TIER_BDEV_LOW].opt_size_bit + PAGE_SHIFT;
     begin = (address >> osb) << osb;
     end = ((address >> osb) + 1) << osb;
+
+    index = get_bfl_index(vsbi, blockoff);
+    bfl = nova_get_bdev_free_list_flat(vsbi,index);
+    bflbegin = blockoff_to_virt(bfl->block_start);
+    bflend = blockoff_to_virt(bfl->block_end + 1);
+    if (begin < bflbegin) begin = bflbegin;
+    if (end > bflend) end = bflend;
 
     /* Count 1: address -> next */
     rbn = rb_next(&pgn->rb_node);
@@ -1474,10 +1492,9 @@ bool vpmem_do_page_fault(struct pt_regs *regs, unsigned long error_code, unsigne
     bool ret;
     struct page **page_array;
     unsigned long curr_address;
-    if (address >= TASK_SIZE_MAX) {
+    struct page *p = NULL;            
         /* Make sure we are in reserved area: */
-        if (address >= VPMEM_START && address < vpmem_end) {
-            struct page *p = NULL;            
+    if (address < TASK_SIZE_MAX || address < VPMEM_START || address > vpmem_end) return false;
             #ifdef VPMEM_DEBUG
                 atomic_inc_return(&faults);
             #endif
@@ -1487,7 +1504,7 @@ bool vpmem_do_page_fault(struct pt_regs *regs, unsigned long error_code, unsigne
 
             if (unlikely(!p)) {
                 nova_info("Error #1 in vpmem_do_page_fault\n");
-                return true;
+                return false;
             }
 
             if (unlikely(!ret)) nova_info("Error #2 in vpmem_do_page_fault\n");
@@ -1511,9 +1528,6 @@ bool vpmem_do_page_fault(struct pt_regs *regs, unsigned long error_code, unsigne
             kfree(page_array);
             return true;
         }
-    }
-    return false;
-}
 
 static DEFINE_MUTEX(checkout_lock);
 bool vpmem_checkout(unsigned long address)

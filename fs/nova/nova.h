@@ -1085,7 +1085,7 @@ int nova_init_tiering_stat(struct super_block *sb);
 int flush_bal_entry(struct nova_sb_info *sbi);
 int nova_alloc_bdev_block_free_lists(struct super_block *sb);
 void nova_init_bdev_blockmap(struct super_block *sb, int recovery);
-unsigned long get_offset_of_tier(struct nova_sb_info *sbi, int tier);
+unsigned long get_start_offset_of_tier(struct nova_sb_info *sbi, int tier);
 int get_bfl_index(struct nova_sb_info *sbi, unsigned long blocknr);
 int get_tier_cpu(struct nova_sb_info *sbi, unsigned long blocknr);
 inline int get_tier_range_node(struct nova_sb_info *sbi, 

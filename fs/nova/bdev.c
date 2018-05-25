@@ -865,7 +865,7 @@ int get_bfl_index(struct nova_sb_info *sbi, unsigned long blocknr) {
 }
 
 // Return global block number offset
-unsigned long get_offset_of_tier(struct nova_sb_info *sbi, int tier) {
+unsigned long get_start_offset_of_tier(struct nova_sb_info *sbi, int tier) {
 	struct super_block *sb = sbi->sb;
 	struct bdev_free_list *bfl = NULL;
 	if (tier==0) return 0;
@@ -900,7 +900,7 @@ inline unsigned long get_raw_from_blocknr(struct nova_sb_info *sbi,
 // Return the global block number of the raw offset
 inline unsigned long get_blocknr_from_raw(struct nova_sb_info *sbi, int tier, 
 	unsigned long blocknr) {
-	return blocknr + get_offset_of_tier(sbi, tier);
+	return blocknr + get_start_offset_of_tier(sbi, tier);
 }
 
 // blocknr: global block number
