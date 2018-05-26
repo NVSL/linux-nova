@@ -170,9 +170,10 @@ int nova_unlink_inode_lru_list(struct nova_sb_info *sbi, struct nova_inode_info_
 	//     NOVA_END_TIMING(rmsih_t, rmsih_time);
     //     return 0;
     // }
+    nova_remove_inode_lru_list(sbi, sih, TIER_BDEV_HIGH);
 	up_write(&sih->mig_sem);
 	NOVA_END_TIMING(rmsih_t, rmsih_time);
-    return nova_remove_inode_lru_list(sbi, sih, TIER_BDEV_HIGH);
+    return 0;
 }
 
 /*

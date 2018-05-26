@@ -1243,7 +1243,7 @@ int migrate_a_file_to_tier(struct inode *inode, int to, bool force);
 inline int migrate_a_file_to_pmem(struct inode *inode);
 inline int migrate_a_file_to_pmem_partial(struct inode *inode, pgoff_t index, pgoff_t end_index, bool sync);
 int do_migrate_a_file_rotate(struct inode *inode);
-int do_migrate_a_file_downward(struct super_block *sb);
+int do_migrate_a_file_downward(struct super_block *sb, int cpu);
 int get_lowest_tier(struct super_block *sb);
 int get_available_tier(struct super_block *sb, int tier);
 unsigned int valid_index_range(struct super_block *sb, struct nova_inode_info_header *sih, pgoff_t index);
