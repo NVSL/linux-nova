@@ -555,6 +555,7 @@ void nova_init_bdev_blockmap(struct super_block *sb, int recovery) {
 	struct bdev_free_list *bfl;
 	int ret;
 	int i,j;
+	unsigned int osb;
 	
 	for (i=TIER_BDEV_LOW;i<=TIER_BDEV_HIGH;++i) {
 		for (j=0;j<sbi->cpus;++j) {
@@ -562,6 +563,7 @@ void nova_init_bdev_blockmap(struct super_block *sb, int recovery) {
 			tree = &(bfl->block_free_tree);
 			nova_init_bdev_free_list(sb, bfl);
 
+    		osb = sbi->bdev_list[bfl->tier-TIER_BDEV_LOW].opt_size_bit;
 			/* For recovery, update these fields later */
 			if (recovery == 0) {
 				bfl->num_free_blocks = bfl->block_end - bfl->block_start + 1;
@@ -569,8 +571,18 @@ void nova_init_bdev_blockmap(struct super_block *sb, int recovery) {
 				blknode = nova_alloc_blocknode(sb);
 				if (blknode == NULL)
 					BUG();
-				blknode->range_low = bfl->block_start;
-				blknode->range_high = bfl->block_end;
+				if (bfl->block_start == ((bfl->block_start>>osb)<<osb) ) {
+					blknode->range_low = bfl->block_start;
+				}
+				else {
+					blknode->range_low = (((bfl->block_start>>osb)+1)<<osb);
+				}				
+				if (bfl->block_end + 1 == (((bfl->block_end+1)>>osb)<<osb) ) {
+					blknode->range_high = bfl->block_end;
+				}
+				else {
+					blknode->range_low = ((((bfl->block_end+1)>>osb)<<osb)-1);
+				}
 				nova_update_range_node_checksum(blknode);
 				ret = nova_insert_blocktree(sbi, tree, blknode);
 				if (ret) {
