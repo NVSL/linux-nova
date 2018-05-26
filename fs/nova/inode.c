@@ -916,7 +916,7 @@ void nova_evict_inode(struct inode *inode)
 	}
 
 	nova_unlink_inode_lru_list(sbi, sih);
-
+	
 	// pi can be NULL if the file has already been deleted, but a handle
 	// remains.
 	if (pi && pi->nova_ino != inode->i_ino) {
