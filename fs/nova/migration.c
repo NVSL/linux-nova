@@ -574,7 +574,7 @@ bool is_entry_cross_boundary(struct nova_sb_info *sbi, int tier,
  *   x: Other data pages in this write entry
  * Normally, the entry only crosses the boundary once.
  */
-int nova_split_write_entry(struct nova_sb_info *sbi, struct nova_inode_info *si, 
+unsigned int nova_split_write_entry(struct nova_sb_info *sbi, struct nova_inode_info *si, 
     struct nova_file_write_entry *entry, int tier, struct nova_inode_update *update,
     unsigned long new_pgoff, unsigned int new_num_pages) {
 	struct super_block *sb = sbi->sb;
@@ -634,7 +634,7 @@ int nova_split_write_entry(struct nova_sb_info *sbi, struct nova_inode_info *si,
     if (ret) {
         nova_dbg("%s: append inode entry failed\n", __func__);
         ret = -ENOSPC;
-        return ret;
+        return 0;
     }
     addr = (void *) nova_get_block(sb, update->curr_entry);
     entryc = (struct nova_file_write_entry *)addr;
@@ -650,7 +650,7 @@ int nova_split_write_entry(struct nova_sb_info *sbi, struct nova_inode_info *si,
     if (ret) {
         nova_dbg("%s: append inode entry failed\n", __func__);
         ret = -ENOSPC;
-        return ret;
+        return 0;
     }    
     addr = (void *) nova_get_block(sb, update->curr_entry);
     entryc = (struct nova_file_write_entry *)addr;
@@ -660,10 +660,9 @@ int nova_split_write_entry(struct nova_sb_info *sbi, struct nova_inode_info *si,
 	sih->i_blocks += (le32_to_cpu(entry->num_pages) << (data_bits - sb->s_blocksize_bits));
 	inode->i_blocks = sih->i_blocks;    
 	ret = nova_assign_write_entry(sb, sih, entryc, entryc, false);
-
 	// ret = nova_invalidate_write_entry(sb, entry, 1, entry->num_pages);
 
-    return ret;
+    return num_pages1;
 }
 
 inline bool is_inode_wait_list_empty(struct inode *inode) {
@@ -871,7 +870,7 @@ next:
                     if (n1 == 0) {
                         goto mig;
                     }
-                    nova_split_write_entry(sbi, si, entry, to, &update, pgoff, num_pages);
+                    num_pages = nova_split_write_entry(sbi, si, entry, to, &update, pgoff, num_pages);
                 }
                 index = (pgoff + num_pages) > index+1 ? pgoff + num_pages : index+1;
                 n1++;
@@ -915,7 +914,6 @@ mig:
             // nova_info("index:%lu ret:%d\n", index, ret);
 
             if (entry) {
-                if ((entry->pgoff)>>osb != i) break;
                 // if (is_entry_cross_boundary(sbi, entry, to)) {
                 //     nova_split_write_entry(sbi, si, entry, to, &update);
                 // }
@@ -927,6 +925,11 @@ mig:
                 else {
                     pgoff = le64_to_cpu(entry->pgoff);
                     num_pages = le32_to_cpu(entry->num_pages);
+                }
+                if ((entry->pgoff)>>osb != i) {
+                    // nova_info("Error pgoff %llu i %d\n", entry->pgoff, i);
+                    index = (pgoff + num_pages) > index+1 ? pgoff + num_pages : index+1;
+                    continue;
                 }
                 if (should_migrate_entry(entry, to, force)) {
                     if (DEBUG_MIGRATION_ENTRY) 

@@ -995,7 +995,7 @@ pte_t newpage(unsigned long address, struct mm_struct *mm, struct page **pout,
         *pout = p->page;
         *pgn = p;
     } else {
-        *pout = 0;
+        *pout = NULL;
     }
 
     return pte;
