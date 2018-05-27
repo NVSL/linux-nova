@@ -269,15 +269,16 @@ inline unsigned long block_to_virt(unsigned long block) {
 
 // Virtual address to global block offset
 inline unsigned long virt_to_blockoff(unsigned long address) {
-    address &= PAGE_MASK;
     if (unlikely(address<vpmem_start)) 
         nova_info("Error in virt_to_blockoff address %lx\n", address);
+    address &= PAGE_MASK;
     return ((address - vpmem_start) >> PAGE_SHIFT) + vsbi->num_blocks;
 }
 
 // Global block offset to virtual address
 inline unsigned long blockoff_to_virt(unsigned long blockoff) {
-    if (unlikely(blockoff<vsbi->num_blocks)) nova_info("Error in blockoff_to_virt\n");
+    if (unlikely(blockoff<vsbi->num_blocks)) 
+        nova_info("Error in blockoff_to_virt blockoff %lu\n", blockoff);
     return vpmem_start + ((blockoff - vsbi->num_blocks) << PAGE_SHIFT);
 }
 

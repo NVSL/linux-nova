@@ -1303,12 +1303,12 @@ struct inode *pop_an_inode_to_migrate_reverse(struct nova_sb_info *sbi, int tier
                 continue;
             }
             if (!inode_trylock(ret)) {
-                if (DEBUG_MIGRATION) nova_info("Error: Inode %lu rw_sem is locked.\n", sih->ino);
+                if (DEBUG_MIGRATION) nova_info("Warning: Inode %lu rw_sem is locked.\n", sih->ino);
                 continue;
             }
             if (!down_write_trylock(&sih->mig_sem)) {
                 inode_unlock(ret);
-                if (DEBUG_MIGRATION) nova_info("Error: Inode %lu is locked.\n", sih->ino);
+                if (DEBUG_MIGRATION) nova_info("Warning: Inode %lu mig_sem is locked.\n", sih->ino);
                 continue;
             }
             if (DEBUG_MIGRATION) nova_info("Inode %lu is poped.\n", sih->ino);
@@ -1409,31 +1409,31 @@ int do_migrate_a_file_downward(struct super_block *sb, int cpu) {
 again_pmem:
     if (kthread_should_stop()) return -1;
     if (is_pmem_usage_high(sbi)) {
-        if(DEBUG_MIGRATION) nova_info("[C%2d]\e[1;31mPMEM usage high.\e[0m\n", cpu);
+        if(DEBUG_MIGRATION) nova_info("[C%2d] \e[1;31mPMEM usage high.\e[0m\n", cpu);
         this = pop_an_inode_to_migrate(sbi, TIER_PMEM);
         if (!this) {
-            if(DEBUG_MIGRATION) nova_info("[C%2d]PMEM usage is high yet no inode is found.\n", cpu);
+            if(DEBUG_MIGRATION) nova_info("[C%2d] PMEM usage is high yet no inode is found.\n", cpu);
             goto again_bdev;
         }
 	    migrate_a_file(this, get_available_tier(sb, TIER_BDEV_LOW), false);
 	    goto again_pmem;
     }
-    else if(DEBUG_MIGRATION) nova_info("[C%2d]\e[1;32mPMEM usage low.\e[0m\n", cpu);
+    else if(DEBUG_MIGRATION) nova_info("[C%2d] \e[1;32mPMEM usage low.\e[0m\n", cpu);
             
 again_bdev:
     if (kthread_should_stop()) return -1;
     for (i=TIER_BDEV_LOW;i<TIER_BDEV_HIGH;++i) {
         if (is_bdev_usage_high(sbi, i)) {
-            if(DEBUG_MIGRATION) nova_info("[C%2d]\e[1;31mB-T%d usage high.\e[0m\n", cpu, i);
+            if(DEBUG_MIGRATION) nova_info("[C%2d] \e[1;31mB-T%d usage high.\e[0m\n", cpu, i);
             this = pop_an_inode_to_migrate(sbi, i);
             if (!this) {
-                if(DEBUG_MIGRATION) nova_info("[C%2d]B-T%d usage is high yet no inode is found.\n", cpu, i);
+                if(DEBUG_MIGRATION) nova_info("[C%2d] B-T%d usage is high yet no inode is found.\n", cpu, i);
                 return 0;
             }
             migrate_a_file(this, get_available_tier(sb, i+1), false);
             goto again_bdev;
         }
-        else if(DEBUG_MIGRATION) nova_info("[C%2d]\e[1;32mB-T%d usage low.\e[0m\n", cpu, i);
+        else if(DEBUG_MIGRATION) nova_info("[C%2d] \e[1;32mB-T%d usage low.\e[0m\n", cpu, i);
     }
     
     if (MODE_REV_MIG) {
@@ -1442,16 +1442,16 @@ again_rev:
         if (sbi->stat->adv<3) return 0;
         for (i=TIER_BDEV_LOW;i<=TIER_BDEV_HIGH;++i) {
             if (!is_pmem_usage_quite_high(sbi)) {
-                if(DEBUG_MIGRATION) nova_info("[C%2d]\e[1;31mPMEM usage quite low.\e[0m\n", cpu);
+                if(DEBUG_MIGRATION) nova_info("[C%2d] \e[1;31mPMEM usage quite low.\e[0m\n", cpu);
                 this = pop_an_inode_to_migrate_reverse(sbi, i);
                 if (!this) {
-                    if(DEBUG_MIGRATION) nova_info("[C%2d]PMEM usage is quite low yet no inode is found.\n", cpu);
+                    if(DEBUG_MIGRATION) nova_info("[C%2d] PMEM usage is quite low yet no inode is found.\n", cpu);
                     return 0;
                 }
                 migrate_a_file(this, get_available_tier(sb, TIER_PMEM), true);
                 goto again_rev;
             }
-            else if(DEBUG_MIGRATION) nova_info("[C%2d]\e[1;31mPMEM usage quite high.\e[0m\n", cpu);
+            else if(DEBUG_MIGRATION) nova_info("[C%2d] \e[1;31mPMEM usage quite high.\e[0m\n", cpu);
         }
     }
     
