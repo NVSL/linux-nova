@@ -992,13 +992,10 @@ pte_t newpage(unsigned long address, struct mm_struct *mm, struct page **pout,
 
     p = pgcache_insert(address, mm, &new, refer);
     pte = mk_pte(p->page, PAGE_KERNEL);
-    if(new) {
-        *pout = p->page;
-        *pgn = p;
-    } else {
-        *pout = NULL;
-    }
 
+    *pout = p->page;
+    *pgn = p;
+    
     return pte;
 }
 
@@ -1120,7 +1117,6 @@ int pgcache_lru_refer_range(unsigned long address, unsigned long count) {
 
 int vpmem_cache_pages(unsigned long address, unsigned long count, bool load)
 {
-    int new_count = 0;
     struct pgcache_node *pgn = NULL;
     unsigned long addr;
     address &= PAGE_MASK;
@@ -1132,19 +1128,12 @@ int vpmem_cache_pages(unsigned long address, unsigned long count, bool load)
             addr += PAGE_SIZE;
             continue;
         }        
-        if(insert_tlb(newpage(addr, current_mm, &p, &pgn, true), addr)) {
-            if (p) new_count++;
-        } else {
-            return 1;
-        }
+        insert_tlb(newpage(addr, current_mm, &p, &pgn, true), addr);        
         addr += PAGE_SIZE;
     }
     // Warning: load here is never called(tested) for now
     if (load) {
-        if (likely(new_count == count))
-            vpmem_load_block(address, address_to_page((void *)address), count);
-        else
-            nova_info("Error in vpmem_cache_pages\n");
+        vpmem_load_block(address, address_to_page((void *)address), count);
     }    
     return 0;
 }

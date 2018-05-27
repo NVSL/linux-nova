@@ -1229,12 +1229,12 @@ struct inode *pop_an_inode_to_migrate(struct nova_sb_info *sbi, int tier) {
                 continue;
             }
             if (!inode_trylock(ret)) {
-                if (DEBUG_MIGRATION) nova_info("Error: Inode %lu rw_sem is locked.\n", sih->ino);
+                if (DEBUG_MIGRATION) nova_info("Warning: Inode %lu rw_sem is locked.\n", sih->ino);
                 continue;
             }
             if (!down_write_trylock(&sih->mig_sem)) {
                 inode_unlock(ret);
-                if (DEBUG_MIGRATION) nova_info("Error: Inode %lu is locked.\n", sih->ino);
+                if (DEBUG_MIGRATION) nova_info("Warning: Inode %lu is locked.\n", sih->ino);
                 continue;
             }
             if (DEBUG_MIGRATION) nova_info("Inode %lu is poped.\n", sih->ino);
