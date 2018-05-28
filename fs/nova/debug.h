@@ -6,8 +6,9 @@
  */
 
 /* Mode */
-#define MODE_USE_MEMCPY 0
+#define MODE_USE_MEMCPY 1
 #define MODE_USE_GROUP 1
+#define MODE_USE_DYN_THRES 0
 #define MODE_KEEP_STAT 0
 #define MODE_KEEP_STAT_VPMEM
 

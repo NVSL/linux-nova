@@ -281,7 +281,7 @@ int nova_give_advise(struct nova_sb_info *sbi) {
     adv = 50 + i*10;
     if (adv>90) adv = 90;
     if (adv<10) adv = 10;
-    MIGRATION_DOWN_PMEM_PERC = adv;
+    if (MODE_USE_DYN_THRES) MIGRATION_DOWN_PMEM_PERC = adv;
     return 0;
 }
 

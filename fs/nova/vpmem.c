@@ -1485,39 +1485,39 @@ bool vpmem_do_page_fault(struct pt_regs *regs, unsigned long error_code, unsigne
     struct page *p = NULL;            
         /* Make sure we are in reserved area: */
     if (address < TASK_SIZE_MAX || address < VPMEM_START || address > vpmem_end) return false;
-            #ifdef VPMEM_DEBUG
-                atomic_inc_return(&faults);
-            #endif
-            address &= PAGE_MASK;
-            
-            ret = insert_tlb(newpage(address, current_mm, &p, &pgn, false), address);
+    #ifdef VPMEM_DEBUG
+        atomic_inc_return(&faults);
+    #endif
+    address &= PAGE_MASK;
+    
+    ret = insert_tlb(newpage(address, current_mm, &p, &pgn, false), address);
 
-            if (unlikely(!p)) {
-                nova_info("Error #1 in vpmem_do_page_fault\n");
-                return false;
-            }
+    if (unlikely(!p)) {
+        nova_info("Error #1 in vpmem_do_page_fault\n");
+        return false;
+    }
 
-            if (unlikely(!ret)) nova_info("Error #2 in vpmem_do_page_fault\n");
-            if (likely(pgn)) sr = get_fault_smart_range(pgn);
-            else sr = 1;
-            // nova_info("address %lx sr %d\n", address, sr);
-            if (unlikely(sr<1||sr>32)) nova_info("Error #3 in vpmem_do_page_fault sr %d\n",sr);
-            page_array = kcalloc(sr, sizeof(struct page *), GFP_KERNEL);
-            page_array[0] = p; 
-            curr_address = address;
-            for (i=1; i<sr; ++i) {
-                curr_address += PAGE_SIZE;
-                ret = insert_tlb(newpage(curr_address, current_mm, &page_array[i], &pgn, false), curr_address);
-                if (!page_array[i]) break;
-                if (unlikely(!ret)) nova_info("Error #4 in vpmem_do_page_fault\n");
-            }
-            vpmem_load_block_range(address, page_array, i);
+    if (unlikely(!ret)) nova_info("Error #2 in vpmem_do_page_fault\n");
+    if (likely(pgn)) sr = get_fault_smart_range(pgn);
+    else sr = 1;
+    // nova_info("address %lx sr %d\n", address, sr);
+    if (unlikely(sr<1||sr>32)) nova_info("Error #3 in vpmem_do_page_fault sr %d\n",sr);
+    page_array = kcalloc(sr, sizeof(struct page *), GFP_KERNEL);
+    page_array[0] = p; 
+    curr_address = address;
+    for (i=1; i<sr; ++i) {
+        curr_address += PAGE_SIZE;
+        ret = insert_tlb(newpage(curr_address, current_mm, &page_array[i], &pgn, false), curr_address);
+        if (!page_array[i]) break;
+        if (unlikely(!ret)) nova_info("Error #4 in vpmem_do_page_fault\n");
+    }
+    vpmem_load_block_range(address, page_array, i);
 
-            pgcache_lru_refer_range(address, i);
-            
-            kfree(page_array);
-            return true;
-        }
+    pgcache_lru_refer_range(address, i);
+    
+    kfree(page_array);
+    return true;
+}
 
 static DEFINE_MUTEX(checkout_lock);
 bool vpmem_checkout(unsigned long address)
