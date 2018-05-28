@@ -773,6 +773,8 @@ end:
 
     inode_unlock(inode);
 
+    if (interrupted) schedule();
+    
     if (DEBUG_MIGRATION) 
         nova_info("[Migration] End migrating (by entries) inode %lu to:T%d force:%d (%d entries)\n",
         inode->i_ino, to, force, nentry);
@@ -972,6 +974,8 @@ end:
 
 	NOVA_END_TIMING(mig_t, mig_time);
 
+    if (interrupted) schedule();
+    
     return ret;
 }
 
