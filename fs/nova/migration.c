@@ -1138,6 +1138,7 @@ struct inode *pop_an_inode_to_migrate_by_ino(struct nova_sb_info *sbi, int tier)
 	struct nova_file_write_entry *entry;
 
     for (jj=cpu;jj<cpu+sbi->cpus;++jj) {
+        if (MODE_MIG_SELF && jj!=cpu) break;
         j = jj%(sbi->cpus);
         inode_map = &sbi->inode_maps[j];
         i = inode_map->first_inode_range;
@@ -1195,6 +1196,7 @@ struct inode *pop_an_inode_to_migrate(struct nova_sb_info *sbi, int tier) {
 	NOVA_START_TIMING(pop_t, pop_time);
 
     for (jj=cpu;jj<cpu+sbi->cpus;++jj) {
+        if (MODE_MIG_SELF && jj!=cpu) break;
         j = jj%(sbi->cpus);
         mutex = nova_get_inode_lru_mutex(sbi, tier, j);
         mutex_lock(mutex);
@@ -1265,6 +1267,7 @@ struct inode *pop_an_inode_to_migrate_reverse(struct nova_sb_info *sbi, int tier
 	NOVA_START_TIMING(pop_t, pop_time);
 
     for (jj=cpu;jj<cpu+sbi->cpus;++jj) {
+        if (MODE_MIG_SELF && jj!=cpu) break;
         j = jj%(sbi->cpus);
         mutex = nova_get_inode_lru_mutex(sbi, tier, j);
         mutex_lock(mutex);
