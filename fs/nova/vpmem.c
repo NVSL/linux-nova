@@ -543,30 +543,6 @@ struct pgcache_node *pgcache_insert(unsigned long address, struct mm_struct *mm,
     return newp;
 }
 
-void pgcache_remove(struct pgcache_node *pgn, int index)
-{
-    if (unlikely(!pgn)) {
-        nova_info("Error in pgcache_remove 1\n");
-        return;
-    }
-    if (unlikely(RB_EMPTY_NODE(&pgn->rb_node))) {
-        nova_info("Error in pgcache_remove 2 %lu %lu\n", pgn->address, 
-            (unsigned long)&vsbi->vpmem_lru_list[index]);
-        return;
-    }
-    if (unlikely(!list_empty(&pgn->lru_node))) {
-        nova_info("Error in pgcache_remove 3\n");
-        // return;
-    }
-    pop_from_lru_list(pgn, index);
-    pop_from_wb_list(pgn, index);
-    mutex_lock(&vsbi->vpmem_rb_mutex[index]);
-    rb_erase(&pgn->rb_node, &vsbi->vpmem_rb_tree[index]);
-    mutex_unlock(&vsbi->vpmem_rb_mutex[index]);
-    if (atomic_read(&vsbi->pgcache_size[index])==0) nova_info("ERROR in pgcache_size\n");
-    atomic_dec_return(&vsbi->pgcache_size[index]);
-}
-
 void *vpmem_lru_refer(unsigned long address)
 {
     struct pgcache_node *pgn = pgcache_lookup(address & PAGE_MASK);
@@ -1215,7 +1191,26 @@ int vpmem_flush_pages(unsigned long address, unsigned long count) {
 void vpmem_clear_pgn(struct pgcache_node *pgn, int index) {
     struct page *p;
     pte_t *pte = NULL;
-    pgcache_remove(pgn, index);
+
+    if (unlikely(!pgn)) {
+        nova_info("Error in pgcache_remove 1\n");
+        return;
+    }
+    if (unlikely(RB_EMPTY_NODE(&pgn->rb_node))) {
+        nova_info("Error in pgcache_remove 2 %lu %lu\n", pgn->address, 
+            (unsigned long)&vsbi->vpmem_lru_list[index]);
+        return;
+    }
+    if (unlikely(!list_empty(&pgn->lru_node))) {
+        nova_info("Error in pgcache_remove 3\n");
+        // return;
+    }
+    pop_from_lru_list(pgn, index);
+    pop_from_wb_list(pgn, index);
+    mutex_lock(&vsbi->vpmem_rb_mutex[index]);
+    rb_erase(&pgn->rb_node, &vsbi->vpmem_rb_tree[index]);
+    if (atomic_read(&vsbi->pgcache_size[index])==0) nova_info("ERROR in pgcache_size\n");
+
     nl_send("ev %20lu %16lu %2d", pgn->address, 0, 0);
 
     p = pgn->page;
@@ -1227,10 +1222,15 @@ void vpmem_clear_pgn(struct pgcache_node *pgn, int index) {
     if (pte) {
         pte_clear(current_mm, pgn->address, pte);
     }
+
+    __flush_tlb_one(pgn->address);
+
+    mutex_unlock(&vsbi->vpmem_rb_mutex[index]);
+
     #ifdef VPMEM_DEBUG
         atomic_inc_return(&evicts);
     #endif
-    __flush_tlb_one(pgn->address);
+    atomic_dec_return(&vsbi->pgcache_size[index]);
 
     kmem_cache_free(nova_vpmem_pgnp, pgn);
 }
