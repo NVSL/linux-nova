@@ -455,7 +455,7 @@ int migrate_entry_blocks(struct nova_sb_info *sbi, int to, struct nova_inode_inf
 
     // if (is_tier_bdev(to)) clear_dram_buffer_range(blocknr, le32_to_cpu(nentry.num_pages));
     
-    // [Deprecated] Temp solution: memcpy to invalidate the page cache
+    // Temp solution: memcpy to invalidate the page cache + pre-allocate empty page
     if (MODE_USE_MEMCPY && is_tier_bdev(to)) {
         // nova_info("[Migration] memcpy %lu <- %llu num: %u\n", 
         // blocknr, nentry.block>>PAGE_SHIFT, nentry.num_pages);
