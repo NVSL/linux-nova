@@ -1095,7 +1095,7 @@ int vpmem_cache_pages(unsigned long address, unsigned long count, bool load)
         }
         pgn = pgcache_insert(addr, current_mm, &new, true);
         p = pgn->page;
-        if (likely(new)) insert_tlb(pgn, addr);
+        insert_tlb(pgn, addr);
         addr += PAGE_SIZE;
     }
     // Warning: load here is never called(tested) for now
@@ -1484,8 +1484,8 @@ bool vpmem_do_page_fault(struct pt_regs *regs, unsigned long error_code, unsigne
  
     pgn = pgcache_insert(address, current_mm, &new, false);
     p = pgn->page;
-    if (likely(new)) ret = insert_tlb(pgn, address);
-    else return false;
+    ret = insert_tlb(pgn, address);
+    if (unlikely(!new)) return false;
 
     if (unlikely(!p)) {
         nova_info("Error #1 in vpmem_do_page_fault\n");
@@ -1504,8 +1504,8 @@ bool vpmem_do_page_fault(struct pt_regs *regs, unsigned long error_code, unsigne
         curr_address += PAGE_SIZE;
         pgn = pgcache_insert(curr_address, current_mm, &new, false);
         page_array[i] = pgn->page;
-        if (likely(new)) ret = insert_tlb(pgn, curr_address);
-        else break;
+        ret = insert_tlb(pgn, curr_address);
+        if (unlikely(!new)) break;
         if (unlikely(!ret)) nova_info("Error #4 in vpmem_do_page_fault\n");
     }
     vpmem_load_block_range(address, page_array, i);
