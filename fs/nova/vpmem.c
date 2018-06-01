@@ -189,7 +189,8 @@ struct pgcache_node {
     struct rb_node rb_node;
     unsigned long pinned;
     struct mm_struct *mm;
-	u64	padding[3];
+    spinlock_t lock;
+    u64 padding[2];
 };
 
 pte_t *pte_lookup(pgd_t *pgd, unsigned long address);
@@ -479,6 +480,8 @@ int set_pgn_clean_addr(unsigned long address) {
     return 0;
 }
 
+void vpmem_clear_pgn(struct pgcache_node *pgn, int index);
+
 struct pgcache_node *pgcache_insert(unsigned long address, struct mm_struct *mm, bool *new, bool refer)
 {
     struct pgcache_node *p, *newp;
@@ -489,8 +492,9 @@ struct pgcache_node *pgcache_insert(unsigned long address, struct mm_struct *mm,
     *new = false;
 
     while (is_pgcache_large()) schedule();
-
     mutex_lock(&vsbi->vpmem_rb_mutex[index]);
+
+again:
     /* Go to the bottom of the tree */
     while (*link)
     {
@@ -505,15 +509,16 @@ struct pgcache_node *pgcache_insert(unsigned long address, struct mm_struct *mm,
             mutex_unlock(&vsbi->vpmem_rb_mutex[index]);
             nova_info("Warning in pgcache_insert address %lx addr %lx page %p p %p\n",
                 address, p->address, p->page, page_address(p->page));
-            pgcache_lru_refer(p);   
+            vpmem_clear_pgn(p, index);
             already_cached++;
-            p->mm = mm;
-            return p;
+            goto again;
         }
     }
 
     // newp = (struct pgcache_node *)kmalloc(sizeof(struct pgcache_node), GFP_KERNEL | GFP_ATOMIC);
     newp = kmem_cache_alloc(nova_vpmem_pgnp, GFP_NOFS);
+    spin_lock_init(&newp->lock);
+    spin_lock(&newp->lock);
     newp->page = alloc_page(GFP_KERNEL);
     if (!newp->page) {
         printk("vpmem: NO PAGE LEFT!\n");
@@ -715,6 +720,8 @@ int get_wb_smart_range(struct pgcache_node *pgn, unsigned long *start_addr) {
     int count1 = 0; // Dirty pages in the right: [pgn, tpgn]
     int count2 = 0; // Dirty pages in the left: [tpgn, pgn]
     
+    if (!MODE_SR_WB) return 1;
+
     if (!pgn) return 1;
     address = pgn->address;
     *start_addr = address;
@@ -1010,7 +1017,7 @@ inline pte_t *vpmem_get_pte_addr(unsigned long address) {
     return pte_lookup(pgd_offset_k(address), address);
 }
 
-bool insert_tlb(struct pgcache_node *pgn, unsigned long address) {
+bool insert_tlb(struct pgcache_node *pgn) {
     pgd_t *pgd;
     p4d_t *p4d;
     pud_t *pud;
@@ -1018,7 +1025,8 @@ bool insert_tlb(struct pgcache_node *pgn, unsigned long address) {
     pte_t *pte;
     pte_t ptein = mk_pte(pgn->page, PAGE_KERNEL);
     struct mm_struct *mm = current_mm;
-    
+    unsigned long address = pgn->address;
+
 	smp_mb();
 
     spin_lock(&mm->page_table_lock);
@@ -1037,6 +1045,9 @@ bool insert_tlb(struct pgcache_node *pgn, unsigned long address) {
     smp_mb();
 
     __flush_tlb_one(address);
+
+    set_pgn_clean_addr(address);
+
     return true;
 }
 
@@ -1095,7 +1106,10 @@ int vpmem_cache_pages(unsigned long address, unsigned long count, bool load)
         }
         pgn = pgcache_insert(addr, current_mm, &new, true);
         p = pgn->page;
-        insert_tlb(pgn, addr);
+        if (likely(new)) {
+            insert_tlb(pgn);
+            spin_unlock(&pgn->lock);
+        }
         addr += PAGE_SIZE;
     }
     // Warning: load here is never called(tested) for now
@@ -1182,23 +1196,23 @@ int vpmem_flush_pages(unsigned long address, unsigned long count) {
 void vpmem_clear_pgn(struct pgcache_node *pgn, int index) {
     struct page *p;
     pte_t *pte = NULL;
-
+    
     if (unlikely(!pgn)) {
         nova_info("Error in pgcache_remove 1\n");
         return;
     }
-    if (unlikely(RB_EMPTY_NODE(&pgn->rb_node))) {
-        nova_info("Error in pgcache_remove 2 %lu %lu\n", pgn->address, 
-            (unsigned long)&vsbi->vpmem_lru_list[index]);
-        return;
-    }
-    if (unlikely(!list_empty(&pgn->lru_node))) {
-        nova_info("Error in pgcache_remove 3\n");
-        // return;
-    }
+    // if (unlikely(!list_empty(&pgn->lru_node))) {
+    //     nova_info("Error in pgcache_remove 2 %lx\n", (unsigned long)&vsbi->vpmem_lru_list[index]);
+    // }
     pop_from_lru_list(pgn, index);
     pop_from_wb_list(pgn, index);
+    pop_from_evict_list(pgn, index);
+    if (unlikely(RB_EMPTY_NODE(&pgn->rb_node))) {
+        nova_info("Error in pgcache_remove 2 %lx\n", pgn->address);
+        return;
+    }
     mutex_lock(&vsbi->vpmem_rb_mutex[index]);
+    //spin_lock(&pgn->lock);
     rb_erase(&pgn->rb_node, &vsbi->vpmem_rb_tree[index]);
     if (atomic_read(&vsbi->pgcache_size[index])==0) nova_info("ERROR in pgcache_size\n");
 
@@ -1289,7 +1303,7 @@ bool vpmem_load_block(unsigned long address, struct page *p, int count)
 {
     int ret = vpmem_read_from_bdev(address, count, p);
 
-    set_pgn_clean_addr(address);
+    // set_pgn_clean_addr(address);  
 
     if (unlikely(ret)) {
         printk("vpmem:\033[1;33m could not read from bdev %d %lu\033[0m\n", ret, ++dif_mm2);
@@ -1305,12 +1319,12 @@ bool vpmem_load_block(unsigned long address, struct page *p, int count)
 bool vpmem_load_block_range(unsigned long address, struct page **p, int count)
 {
     int ret = vpmem_read_from_bdev_range(address, count, p);
-    int i;
+    // int i;
 
-    for (i=0;i<count;++i) {
-        set_pgn_clean_addr(address);       
-        address += PAGE_SIZE;
-    }
+    // for (i=0;i<count;++i) {
+    //     set_pgn_clean_addr(address);       
+    //     address += PAGE_SIZE;
+    // }
 
     if (unlikely(ret)) {
         printk("vpmem:\033[1;33m could not read from bdev range %d %lu\033[0m\n", ret, ++dif_mm2);
@@ -1419,7 +1433,9 @@ int get_fault_smart_range(struct pgcache_node *pgn) {
     unsigned int osb;
     int count1 = 0; // Unmapped pages in the right: [pgn, tpgn)
     int count2 = 0; // Mapped pages in the left: [tpgn, pgn)
-    
+
+    if (!MODE_SR_FAULT) return 1;
+
     if (!pgn) return 1;
     address = pgn->address;
     blockoff = virt_to_blockoff(address);
@@ -1452,7 +1468,7 @@ int get_fault_smart_range(struct pgcache_node *pgn) {
         rbn = rb_prev(&tpgn->rb_node);
         if (!rbn) break;
         tpgn = container_of(rbn, struct pgcache_node, rb_node);
-        if (!tpgn) break;
+        if (!tpgn || spin_is_locked(&tpgn->lock)) break;
     }
 
     if (count2 == 0) return 1;
@@ -1471,6 +1487,7 @@ bool vpmem_do_page_fault(struct pt_regs *regs, unsigned long error_code, unsigne
     struct pgcache_node *pgn;
     int i, sr;
     bool ret = true;
+    struct pgcache_node **pgn_array;
     struct page **page_array;
     unsigned long curr_address;
     struct page *p = NULL;
@@ -1484,12 +1501,11 @@ bool vpmem_do_page_fault(struct pt_regs *regs, unsigned long error_code, unsigne
  
     pgn = pgcache_insert(address, current_mm, &new, false);
     p = pgn->page;
-    ret = insert_tlb(pgn, address);
+ 
     if (unlikely(!new)) return false;
 
     if (unlikely(!p)) {
         nova_info("Error #1 in vpmem_do_page_fault\n");
-        return false;
     }
 
     if (unlikely(!ret)) nova_info("Error #2 in vpmem_do_page_fault\n");
@@ -1497,21 +1513,30 @@ bool vpmem_do_page_fault(struct pt_regs *regs, unsigned long error_code, unsigne
     else sr = 1;
     // nova_info("address %lx sr %d\n", address, sr);
     if (unlikely(sr<1||sr>32)) nova_info("Error #3 in vpmem_do_page_fault sr %d\n",sr);
+    pgn_array = kcalloc(sr, sizeof(struct pgcache_node *), GFP_KERNEL);
     page_array = kcalloc(sr, sizeof(struct page *), GFP_KERNEL);
+    pgn_array[0] = pgn;
     page_array[0] = p; 
     curr_address = address;
     for (i=1; i<sr; ++i) {
         curr_address += PAGE_SIZE;
         pgn = pgcache_insert(curr_address, current_mm, &new, false);
+        pgn_array[i] = pgn;
         page_array[i] = pgn->page;
-        ret = insert_tlb(pgn, curr_address);
-        if (unlikely(!new)) break;
-        if (unlikely(!ret)) nova_info("Error #4 in vpmem_do_page_fault\n");
+        if (unlikely(!new)) {
+            nova_info("Error #4 in vpmem_do_page_fault\n");
+            break;
+        }
     }
-    vpmem_load_block_range(address, page_array, i);
+    sr = i;
+    vpmem_load_block_range(address, page_array, sr);
+    pgcache_lru_refer_range(address, sr);
+    for (i=0; i<sr; ++i) {
+        insert_tlb(pgn_array[i]);
+        spin_unlock(&pgn_array[i]->lock);
+    }
 
-    pgcache_lru_refer_range(address, i);
-    
+    kfree(pgn_array);
     kfree(page_array);
     return true;
 }
@@ -1723,8 +1748,8 @@ void vpmem_put(void)
                 lru_refers, atomic_read(&evicts), dif_mm, already_cached, dif_mm2, leaked);
     printk(KERN_INFO "vpmem: dif_mm3 = %lu dif_mm4 = %lu\n",
                 dif_mm3, dif_mm4);
-    printk(KERN_INFO "vpmem: hit = %lu miss1 = %lu miss2 = %lu\n",
-                hit, miss1, miss2);
+    printk(KERN_INFO "vpmem: hit = %lu miss1 = %lu miss2 = %lu size_of_pgn = %lu\n",
+                hit, miss1, miss2, sizeof(struct pgcache_node));
 #ifdef ENABLE_NETLINK
     vmpem_nl_cleanup();
 #endif

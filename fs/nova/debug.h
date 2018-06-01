@@ -6,7 +6,7 @@
  */
 
 /* Mode */
-#define MODE_USE_MEMCPY 1
+#define MODE_USE_MEMCPY 0
 #define MODE_USE_GROUP 1
 #define MODE_USE_DYN_THRES 1
 #define MODE_KEEP_STAT 0
@@ -18,6 +18,9 @@
 #define MODE_BACK_MIG 1
 #define MODE_REV_MIG 0
 #define MODE_MIG_SELF 1
+
+#define MODE_SR_FAULT 0
+#define MODE_SR_WB 1
 
 /* Configure */
 #define BDEV_OPT_SIZE_BIT 6

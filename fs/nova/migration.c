@@ -421,7 +421,7 @@ int migrate_entry_blocks(struct nova_sb_info *sbi, int to, struct nova_inode_inf
     }
     else {
         // The &blocknr is global block number
-        ret = nova_alloc_block_tier(sbi, to, ANY_CPU, &blocknr, le32_to_cpu(nentry.num_pages), ALLOC_FROM_HEAD);
+        ret = nova_alloc_block_tier(sbi, to, ANY_CPU, &blocknr, le32_to_cpu(nentry.num_pages), ALLOC_FROM_HEAD, false);
 
         if (ret<0) {
             nova_info("[Migration] Block allocation error T%d %d.\n", to, ret);
@@ -436,7 +436,7 @@ int migrate_entry_blocks(struct nova_sb_info *sbi, int to, struct nova_inode_inf
 
     // Invalidate the page
     if (is_tier_bdev(from)) clear_dram_buffer_range(nentry.block >> PAGE_SHIFT, le32_to_cpu(nentry.num_pages));
-    if (is_tier_bdev(to)) clear_dram_buffer_range(blocknr, le32_to_cpu(nentry.num_pages));
+    // if (is_tier_bdev(to)) clear_dram_buffer_range(blocknr, le32_to_cpu(nentry.num_pages));
 
     ret = migrate_blocks(sbi, nentry.block >> PAGE_SHIFT, le32_to_cpu(nentry.num_pages), from, to, blocknr);
     if (ret<0) {
@@ -508,7 +508,7 @@ int migrate_group_entry_blocks(struct nova_sb_info *sbi, struct inode *inode, in
 
 	if (MODE_KEEP_STAT) sbi->stat->mig_group += end_index - start_index + 1;
 
-    ret = nova_alloc_block_tier(sbi, to, ANY_CPU, &blocknr, opt_size, ALLOC_FROM_TAIL);
+    ret = nova_alloc_block_tier(sbi, to, ANY_CPU, &blocknr, opt_size, ALLOC_FROM_TAIL, false);
     if (ret<0) {
         nova_info("[Migration] Block group allocation error.\n");
         return ret;

@@ -925,7 +925,7 @@ prof:
 		}
 		else {
 			allocated = nova_alloc_block_tier(NOVA_SB(sb), write_tier, ANY_CPU, 
-				&blocknr, num_blocks, ALLOC_FROM_HEAD);
+				&blocknr, num_blocks, ALLOC_FROM_HEAD, true);
 		}
 
 		nova_dbg_verbose("%s: alloc %d blocks @ %lu\n", __func__,

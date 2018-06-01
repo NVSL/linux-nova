@@ -736,7 +736,7 @@ static int nova_get_candidate_bdev_free_list(struct super_block *sb, int tier)
  */ 
 static long nova_new_blocks_from_bdev(struct super_block *sb, int tier, 
 	unsigned long *blocknr,	unsigned int num_blocks, int cpuid, 
-	enum nova_alloc_direction from_tail) {
+	enum nova_alloc_direction from_tail, bool cache) {
 
 	struct bdev_free_list *bfl;
 	unsigned long new_blocknr = 0;
@@ -786,7 +786,7 @@ retry:
 	*blocknr = new_blocknr;
 
 	// Prefetch empty pages
-	vpmem_cache_pages(blockoff_to_virt(new_blocknr), num_blocks, false);
+	if (cache) vpmem_cache_pages(blockoff_to_virt(new_blocknr), num_blocks, false);
 
 	// blocknr starts with the range of the block device (after PMEM) instead of 0.
 	if (DEBUG_MIGRATION_ALLOC) nova_info("[Bdev] Alloc %lu BDEV blocks at %lu (%lu) from T%d C%d\n"
@@ -1100,14 +1100,14 @@ out:
  * blocknr: the block number (global)
  */ 
 long nova_bdev_alloc_blocks(struct nova_sb_info *sbi, int tier, int cpuid, 
-	unsigned long *blocknr, unsigned int num_blocks, enum nova_alloc_direction from_tail) {
+	unsigned long *blocknr, unsigned int num_blocks, enum nova_alloc_direction from_tail, bool cache) {
 	struct super_block *sb = sbi->sb;
 	int ret = 0;
 
 	if (cpuid == ANY_CPU)
 		cpuid = smp_processor_id();
 
-	ret = nova_new_blocks_from_bdev(sb, tier, blocknr, num_blocks, cpuid, from_tail);
+	ret = nova_new_blocks_from_bdev(sb, tier, blocknr, num_blocks, cpuid, from_tail, cache);
 
     // vpmem_invalidate_pages(blockoff_to_virt(*blocknr), num_blocks);
 	
@@ -1119,7 +1119,7 @@ long nova_bdev_alloc_blocks(struct nova_sb_info *sbi, int tier, int cpuid,
  * blocknr: Global block number
  */
 long nova_alloc_block_tier(struct nova_sb_info *sbi, int tier, int cpuid, 
-	unsigned long *blocknr, unsigned int num_blocks, enum nova_alloc_direction from_tail) {
+	unsigned long *blocknr, unsigned int num_blocks, enum nova_alloc_direction from_tail, bool cache) {
 	struct super_block *sb = sbi->sb;
 	long allocated = 0;
 
@@ -1141,7 +1141,7 @@ long nova_alloc_block_tier(struct nova_sb_info *sbi, int tier, int cpuid,
 	}
 	// Tier bdev
 	if (is_tier_bdev(tier)) {
-		return nova_bdev_alloc_blocks(sbi, tier, cpuid, blocknr, num_blocks, from_tail);
+		return nova_bdev_alloc_blocks(sbi, tier, cpuid, blocknr, num_blocks, from_tail, cache);
 	}
 	return -1;
 }
@@ -1315,15 +1315,15 @@ void bfl_test(struct nova_sb_info *sbi) {
 	nova_info("size of struct bio_vec:%lu\n",sizeof(struct bio_vec));
 	nova_info("size of struct submit_bio_ret:%lu\n",sizeof(struct submit_bio_ret));
 
-	ret = nova_bdev_alloc_blocks(sbi, TIER_BDEV_LOW, ANY_CPU, &tmp, 1, ALLOC_FROM_HEAD);
+	ret = nova_bdev_alloc_blocks(sbi, TIER_BDEV_LOW, ANY_CPU, &tmp, 1, ALLOC_FROM_HEAD, true);
 	nova_info("[bfl1] ret:%lu, offset:%lu" ,ret, tmp);
-	ret = nova_bdev_alloc_blocks(sbi, TIER_BDEV_LOW, ANY_CPU, &tmp, 2, ALLOC_FROM_HEAD);
+	ret = nova_bdev_alloc_blocks(sbi, TIER_BDEV_LOW, ANY_CPU, &tmp, 2, ALLOC_FROM_HEAD, true);
 	nova_info("[bfl2] ret:%lu, offset:%lu" ,ret, tmp);
-	ret = nova_bdev_alloc_blocks(sbi, TIER_BDEV_LOW, ANY_CPU, &tmp, 3, ALLOC_FROM_HEAD);
+	ret = nova_bdev_alloc_blocks(sbi, TIER_BDEV_LOW, ANY_CPU, &tmp, 3, ALLOC_FROM_HEAD, true);
 	nova_info("[bfl3] ret:%lu, offset:%lu" ,ret, tmp);
 	ret = nova_bdev_free_blocks(sbi, TIER_BDEV_LOW, 1, 2);
 	nova_info("[bfl4] ret:%lu" ,ret);
-	ret = nova_bdev_alloc_blocks(sbi, TIER_BDEV_LOW, ANY_CPU, &tmp, 2, ALLOC_FROM_HEAD);
+	ret = nova_bdev_alloc_blocks(sbi, TIER_BDEV_LOW, ANY_CPU, &tmp, 2, ALLOC_FROM_HEAD, true);
 	nova_info("[bfl5] ret:%lu, offset:%lu" ,ret, tmp);
 
 }
