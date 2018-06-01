@@ -745,7 +745,9 @@ int get_wb_smart_range(struct pgcache_node *pgn, unsigned long *start_addr) {
     while (is_pgn_dirty(tpgn) && tpgn->address == address && tpgn->address < end) {
         count1++;
         address += PAGE_SIZE;
+        mutex_lock(&vsbi->vpmem_rb_mutex[index]);
         rbn = rb_next(&tpgn->rb_node);
+        mutex_unlock(&vsbi->vpmem_rb_mutex[index]);
         if (!rbn) break;
         tpgn = container_of(rbn, struct pgcache_node, rb_node);
         if (!tpgn) break;
@@ -758,7 +760,9 @@ int get_wb_smart_range(struct pgcache_node *pgn, unsigned long *start_addr) {
         count2++;
         *start_addr = address;
         address -= PAGE_SIZE;
+        mutex_lock(&vsbi->vpmem_rb_mutex[index]);
         rbn = rb_prev(&tpgn->rb_node);
+        mutex_unlock(&vsbi->vpmem_rb_mutex[index]);
         if (!rbn) break;
         tpgn = container_of(rbn, struct pgcache_node, rb_node);
         if (!tpgn) break;
@@ -1258,6 +1262,7 @@ int vpmem_invalidate_pages(unsigned long address, unsigned long count) {
         pgn_hint = pgcache_get_hint(pgn);
         if (likely(pgn)) {
             pop_from_lru_list(pgn, index);
+            pop_from_wb_list(pgn, index);
             push_to_evict_list(pgn, index);    
         }
         address += PAGE_SIZE;
@@ -1453,7 +1458,9 @@ int get_fault_smart_range(struct pgcache_node *pgn) {
     if (end > bflend) end = bflend;
 
     /* Count 1: address -> next */
+    mutex_lock(&vsbi->vpmem_rb_mutex[index]);
     rbn = rb_next(&pgn->rb_node);
+    mutex_unlock(&vsbi->vpmem_rb_mutex[index]);
     if (rbn) {
         tpgn = container_of(rbn, struct pgcache_node, rb_node);
         if (tpgn) {
@@ -1467,7 +1474,9 @@ int get_fault_smart_range(struct pgcache_node *pgn) {
     while (tpgn->address == address && tpgn->address > begin) {
         count2++;
         address -= PAGE_SIZE;
+        mutex_lock(&vsbi->vpmem_rb_mutex[index]);
         rbn = rb_prev(&tpgn->rb_node);
+        mutex_unlock(&vsbi->vpmem_rb_mutex[index]);
         if (!rbn) break;
         tpgn = container_of(rbn, struct pgcache_node, rb_node);
         if (!tpgn) break;
