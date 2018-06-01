@@ -19,7 +19,7 @@
 #define MODE_REV_MIG 0
 #define MODE_MIG_SELF 1
 
-#define MODE_SR_FAULT 0
+#define MODE_SR_FAULT 1
 #define MODE_SR_WB 1
 
 /* Configure */

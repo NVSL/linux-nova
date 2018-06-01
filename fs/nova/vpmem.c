@@ -189,7 +189,7 @@ struct pgcache_node {
     struct rb_node rb_node;
     unsigned long pinned;
     struct mm_struct *mm;
-    spinlock_t lock;
+    struct mutex lock;
     u64 padding[2];
 };
 
@@ -494,7 +494,6 @@ struct pgcache_node *pgcache_insert(unsigned long address, struct mm_struct *mm,
     while (is_pgcache_large()) schedule();
     mutex_lock(&vsbi->vpmem_rb_mutex[index]);
 
-again:
     /* Go to the bottom of the tree */
     while (*link)
     {
@@ -509,16 +508,19 @@ again:
             mutex_unlock(&vsbi->vpmem_rb_mutex[index]);
             nova_info("Warning in pgcache_insert address %lx addr %lx page %p p %p\n",
                 address, p->address, p->page, page_address(p->page));
-            vpmem_clear_pgn(p, index);
+            mutex_lock(&p->lock);
+            mutex_unlock(&p->lock);
+            // nova_info("Warning unlocked\n");
+            // vpmem_clear_pgn(p, index);
             already_cached++;
-            goto again;
+            return p;
         }
     }
 
     // newp = (struct pgcache_node *)kmalloc(sizeof(struct pgcache_node), GFP_KERNEL | GFP_ATOMIC);
     newp = kmem_cache_alloc(nova_vpmem_pgnp, GFP_NOFS);
-    spin_lock_init(&newp->lock);
-    spin_lock(&newp->lock);
+    mutex_init(&newp->lock);
+    mutex_lock(&newp->lock);
     newp->page = alloc_page(GFP_KERNEL);
     if (!newp->page) {
         printk("vpmem: NO PAGE LEFT!\n");
@@ -1108,7 +1110,7 @@ int vpmem_cache_pages(unsigned long address, unsigned long count, bool load)
         p = pgn->page;
         if (likely(new)) {
             insert_tlb(pgn);
-            spin_unlock(&pgn->lock);
+            mutex_unlock(&pgn->lock);
         }
         addr += PAGE_SIZE;
     }
@@ -1206,29 +1208,29 @@ void vpmem_clear_pgn(struct pgcache_node *pgn, int index) {
     // }
     pop_from_lru_list(pgn, index);
     pop_from_wb_list(pgn, index);
-    pop_from_evict_list(pgn, index);
+    
     if (unlikely(RB_EMPTY_NODE(&pgn->rb_node))) {
         nova_info("Error in pgcache_remove 2 %lx\n", pgn->address);
         return;
     }
     mutex_lock(&vsbi->vpmem_rb_mutex[index]);
-    //spin_lock(&pgn->lock);
     rb_erase(&pgn->rb_node, &vsbi->vpmem_rb_tree[index]);
+    if (!mutex_trylock(&pgn->lock)) nova_info("Error in pgcache_remove 3 %lx", pgn->address);
     if (atomic_read(&vsbi->pgcache_size[index])==0) nova_info("ERROR in pgcache_size\n");
 
     nl_send("ev %20lu %16lu %2d", pgn->address, 0, 0);
+
+    pte = vpmem_get_pte(pgn);
+    if (pte) {
+        pte_clear(current_mm, pgn->address, pte);
+    }
+    __flush_tlb_one(pgn->address);
 
     p = pgn->page;
     if (p) {
         unlock_page(p);
         __free_page(p);
     }
-    pte = vpmem_get_pte(pgn);
-    if (pte) {
-        pte_clear(current_mm, pgn->address, pte);
-    }
-
-    __flush_tlb_one(pgn->address);
 
     mutex_unlock(&vsbi->vpmem_rb_mutex[index]);
 
@@ -1468,7 +1470,9 @@ int get_fault_smart_range(struct pgcache_node *pgn) {
         rbn = rb_prev(&tpgn->rb_node);
         if (!rbn) break;
         tpgn = container_of(rbn, struct pgcache_node, rb_node);
-        if (!tpgn || spin_is_locked(&tpgn->lock)) break;
+        if (!tpgn) break;
+        if (mutex_trylock(&tpgn->lock)) mutex_unlock(&tpgn->lock);
+        else break;
     }
 
     if (count2 == 0) return 1;
@@ -1511,7 +1515,7 @@ bool vpmem_do_page_fault(struct pt_regs *regs, unsigned long error_code, unsigne
     if (unlikely(!ret)) nova_info("Error #2 in vpmem_do_page_fault\n");
     if (likely(pgn)) sr = get_fault_smart_range(pgn);
     else sr = 1;
-    // nova_info("address %lx sr %d\n", address, sr);
+    // nova_info("[Lock] address %lx sr %d\n", address, sr);
     if (unlikely(sr<1||sr>32)) nova_info("Error #3 in vpmem_do_page_fault sr %d\n",sr);
     pgn_array = kcalloc(sr, sizeof(struct pgcache_node *), GFP_KERNEL);
     page_array = kcalloc(sr, sizeof(struct page *), GFP_KERNEL);
@@ -1533,8 +1537,9 @@ bool vpmem_do_page_fault(struct pt_regs *regs, unsigned long error_code, unsigne
     pgcache_lru_refer_range(address, sr);
     for (i=0; i<sr; ++i) {
         insert_tlb(pgn_array[i]);
-        spin_unlock(&pgn_array[i]->lock);
+        mutex_unlock(&pgn_array[i]->lock);
     }
+    // nova_info("[Unlock] address %lx sr %d\n", address, sr);
 
     kfree(pgn_array);
     kfree(page_array);

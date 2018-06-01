@@ -1098,6 +1098,9 @@ out:
  * 		If success, return how many blocks it allocates 
  * 			(could be not enough, since it forces continuous)
  * blocknr: the block number (global)
+ * cache: true - If the allocation is for foreground writes, then allocate an empty pgn,
+ * 				 which skips loading the page from bdev.
+ * 		  false - If the allocation is for migration, then there is no need to allocate pgn for it.
  */ 
 long nova_bdev_alloc_blocks(struct nova_sb_info *sbi, int tier, int cpuid, 
 	unsigned long *blocknr, unsigned int num_blocks, enum nova_alloc_direction from_tail, bool cache) {
