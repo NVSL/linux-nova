@@ -77,6 +77,27 @@ void print_a_write_entry(struct super_block *sb, struct nova_file_write_entry *e
     kfree(ctmp);
 }
 
+void print_a_write_entry_data(struct super_block *sb, void* addr, int n) {
+    char *ii;
+    char stmp[100] = {0};
+	char *ctmp = kzalloc(300, GFP_KERNEL);
+    int count = 0;
+    int i;
+    addr = (void *)((unsigned long)addr & PAGE_MASK);
+
+    for (ii=(char *)addr; ii<(char *)addr+PAGE_SIZE; ii+=64) {
+        ctmp[count++] = *ii;
+        ctmp[count]='\0';
+    }
+    for(i=0;i<count;i+=16) {
+        strncat(stmp, &ctmp[i], 16);
+        printk("%p %lu %d %s \n",addr,virt_to_blockoff((unsigned long)addr),n,stmp);
+        stmp[0] = '\0';
+    }
+
+    kfree(ctmp);
+}
+
 int print_file_write_entries(struct super_block *sb, struct nova_inode_info_header *sih) {
 	void *addr;
     struct nova_inode_log_page *addrp;
@@ -1231,7 +1252,7 @@ struct inode *pop_an_inode_to_migrate(struct nova_sb_info *sbi, int tier) {
                 continue;
             }
             if (!i_size_read(ret)) {
-                nova_info("Error: ret->i_size is 0.\n");
+                if (DEBUG_MIGRATION) nova_info("Warning: Inode %lu ret->i_size is 0.\n", sih->ino);
                 continue;
             }
             if (!inode_trylock(ret)) {
@@ -1306,7 +1327,7 @@ struct inode *pop_an_inode_to_migrate_reverse(struct nova_sb_info *sbi, int tier
                 continue;
             }
             if (!i_size_read(ret)) {
-                nova_info("Error: ret->i_size is 0.\n");
+                if (DEBUG_MIGRATION) nova_info("Warning: Inode %lu ret->i_size is 0.\n", sih->ino);
                 continue;
             }
             if (!inode_trylock(ret)) {

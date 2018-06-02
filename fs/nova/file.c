@@ -618,6 +618,8 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 	index = pos >> PAGE_SHIFT;
 	offset = pos & ~PAGE_MASK;
 
+	// nova_info("read 1 len %lu pos %llu\n", len, pos);
+
 	if (!access_ok(VERIFY_WRITE, buf, len)) {
 		error = -EFAULT;
 		goto out;
@@ -715,11 +717,21 @@ skip_verify:
 		NOVA_START_TIMING(memcpy_r_nvmm_t, memcpy_time);
 
 		if (!zero) {
+			// nova_info("read 2 buf %p, copied %lu dax_mem %p offset %lu nr %lu\n", 
+			// 	buf, copied, dax_mem, offset, nr);
 			left = __copy_to_user(buf + copied,
 						dax_mem + offset, nr);
 		}
 		else
 			left = __clear_user(buf + copied, nr);
+
+		/*
+		nova_info("read 3 ino %lu len %lu pos %llu block [%llu,%llu] virt [%lx,%lx] pgoff [%llu,%llu] nr %lu left %lu\n", sih->ino, len, pos, 
+			entry->block>>PAGE_SHIFT, (entry->block>>PAGE_SHIFT)+((unsigned long)entry->num_pages)-1, 
+			blockoff_to_virt(entry->block>>PAGE_SHIFT), blockoff_to_virt((entry->block>>PAGE_SHIFT)+(unsigned long)entry->num_pages-1),
+			entry->pgoff, entry->pgoff+(unsigned long)entry->num_pages-1, 
+			(unsigned long)entry->num_pages, left);
+		*/
 
 		NOVA_END_TIMING(memcpy_r_nvmm_t, memcpy_time);
 
@@ -973,6 +985,15 @@ prof:
 			file_size = cpu_to_le64(pos + copied);
 		else
 			file_size = cpu_to_le64(inode->i_size);
+
+		/*
+		if (write_tier!=TIER_PMEM) {
+		nova_info("Write: kmem %p block [%lu,%lu] [%lu,%lu]offset %lu buf %p bytes %lu size %llu\n", kmem, 
+			virt_to_blockoff((unsigned long)kmem), virt_to_blockoff((unsigned long)kmem+offset+bytes),
+			start_blk, ((start_blk<<PAGE_SHIFT)+offset+bytes)>>PAGE_SHIFT,
+			offset, buf, bytes, file_size>>PAGE_SHIFT);
+		}
+		*/
 
 		nova_init_file_write_entry(sb, sih, &entry_data, epoch_id,
 					start_blk, allocated, blocknr, time,

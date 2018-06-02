@@ -32,7 +32,7 @@ static inline int nova_copy_partial_block(struct super_block *sb,
 
 	nvmm = get_nvmm(sb, sih, entry, index);
 	ptr = nova_get_block(sb, (nvmm << PAGE_SHIFT));
-
+	
 	if (ptr != NULL) {
 		if (support_clwb)
 			rc = memcpy_mcsafe(kmem + offset, ptr + offset,
@@ -41,6 +41,14 @@ static inline int nova_copy_partial_block(struct super_block *sb,
 			memcpy_to_pmem_nocache(kmem + offset, ptr + offset,
 						length);
 	}
+
+	/*
+	if ((unsigned long)ptr>vpmem_start) {
+		memcpy_mcsafe(kmem, ptr, PAGE_SIZE);
+		nova_info("partial kmem %p (%lu) ptr %p (%lu)\n", kmem, 
+			virt_to_blockoff((unsigned long)kmem), ptr, virt_to_blockoff((unsigned long)ptr));
+	}
+	*/
 
 	// reclaim_get_nvmm(sb, nvmm, entry, index);
 	/* TODO: If rc < 0, go to MCE data recovery. */

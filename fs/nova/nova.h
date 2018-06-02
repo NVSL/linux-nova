@@ -367,7 +367,7 @@ static inline void *nova_get_block(struct super_block *sb, u64 block)
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_super_block *ps = nova_get_super(sb);
 	if (is_logical_offset(sbi, le64_to_cpu(block))){
-		return block ? ((void *)block_to_virt(block)) : NULL;
+		return block ? ((void *)block_to_virt(le64_to_cpu(block))) : NULL;
 	}
 	else
 		return block ? ((void *)ps + block) : NULL;
@@ -637,6 +637,7 @@ void nova_update_entry_csum(void *entry);
 int get_tier(struct nova_sb_info *sbi, unsigned long blocknr);
 inline int get_entry_tier(struct nova_file_write_entry *entry);
 void print_a_write_entry(struct super_block *sb, struct nova_file_write_entry *entry, int n);
+void print_a_write_entry_data(struct super_block *sb, void* addr, int n);
 void print_a_page(void* addr);
 
 /*

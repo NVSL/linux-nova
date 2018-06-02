@@ -175,8 +175,7 @@ void vmpem_nl_cleanup(void) {
 
 /*********** Page Cache ***********/
 /*
- * Current size: 104 bytes
- * TODO: Shrink to 64 bytes or expand to 128 bytes
+ * Current size: 128 bytes
  */
 struct pgcache_node {
     /* First 64-byte */
@@ -187,17 +186,15 @@ struct pgcache_node {
     struct list_head evict_node;
     /* Second 64-byte */
     struct rb_node rb_node;
-    unsigned long pinned;
-    struct mm_struct *mm;
     struct mutex lock;
-    u64 padding[2];
+    struct mm_struct *mm;
 };
 
 pte_t *pte_lookup(pgd_t *pgd, unsigned long address);
 inline pte_t *vpmem_get_pte(struct pgcache_node *pgn);
 inline pte_t *vpmem_get_pte_addr(unsigned long address);
 
-bool clear_evict_list(int index);
+bool clear_evict_list(int index, bool clear);
 bool push_victim_to_wb_list(int index, bool all, bool del_lru);
 bool vpmem_load_block(unsigned long address, struct page *p, int count);
 
@@ -345,6 +342,14 @@ void pop_from_evict_list(struct pgcache_node *pgn, int index) {
         mutex_lock(&vsbi->vpmem_evict_mutex[index]);
         list_del_init(&pgn->evict_node);
         mutex_unlock(&vsbi->vpmem_evict_mutex[index]);
+    }
+}
+
+void push_to_lru_list(struct pgcache_node *pgn, int index) {
+    if (list_empty(&pgn->lru_node)) {
+        mutex_lock(&vsbi->vpmem_lru_mutex[index]);
+        list_add_tail(&pgn->lru_node, &vsbi->vpmem_lru_list[index]);
+        mutex_unlock(&vsbi->vpmem_lru_mutex[index]);
     }
 }
 
@@ -525,6 +530,7 @@ struct pgcache_node *pgcache_insert(unsigned long address, struct mm_struct *mm,
     if (!newp->page) {
         printk("vpmem: NO PAGE LEFT!\n");
     }
+    // memset(page_address(newp->page), 0, PAGE_SIZE);
     // newp->pfn = page_to_pfn(newp->page);
     newp->address = address;
     newp->mm = mm;
@@ -534,7 +540,6 @@ struct pgcache_node *pgcache_insert(unsigned long address, struct mm_struct *mm,
 	INIT_LIST_HEAD(&newp->wb_node);
 	INIT_LIST_HEAD(&newp->evict_node);
 
-    newp->pinned = 0;
     lock_page(newp->page);
 
     *new = true;
@@ -722,11 +727,11 @@ int get_wb_smart_range(struct pgcache_node *pgn, unsigned long *start_addr) {
     int count1 = 0; // Dirty pages in the right: [pgn, tpgn]
     int count2 = 0; // Dirty pages in the left: [tpgn, pgn]
     
-    if (!MODE_SR_WB) return 1;
-
     if (!pgn) return 1;
     address = pgn->address;
     *start_addr = address;
+    if (!MODE_SR_WB) return 1;
+    
     blockoff = virt_to_blockoff(address);
     osb = vsbi->bdev_list[get_tier(vsbi, blockoff)-TIER_BDEV_LOW].opt_size_bit + PAGE_SHIFT;
     begin = (address >> osb) << osb;
@@ -769,7 +774,9 @@ int get_wb_smart_range(struct pgcache_node *pgn, unsigned long *start_addr) {
     }
     
     if (unlikely(count1<1||count2<1)) {
-        nova_info("Error in get_wb_smart_range count1 %d count2 %d\n", count1, count2);
+        if (!is_pgn_dirty(tpgn)) nova_info("not dirty\n");
+        nova_info("Error in get_wb_smart_range count1 %d count2 %d %lx %lx %lx\n", 
+            count1, count2, tpgn->address, begin, bflbegin);
         return 1;
     }
 
@@ -818,7 +825,7 @@ inline bool vpmem_writeback(int index, bool clear) {
     struct pgcache_node *pgn;
     unsigned long address = 0;
     int counter = 0;
-    unsigned long start_addr;
+    unsigned long start_addr = 0;
     int ret, sr;
     struct page **page_array = NULL;
 
@@ -905,14 +912,14 @@ int wb_thread_worker(void *data) {
     do {
 		if (ret) schedule_timeout_interruptible(msecs_to_jiffies(WB_THREAD_SLEEP_TIME));
         ret = vpmem_writeback(index, false);
-        clear_evict_list(index);
+        clear_evict_list(index, false);
     } while(!kthread_should_stop());  
 
 #ifdef ENABLE_WRITEBACK
     vpmem_print_status();
     vpmem_writeback(index, true);
     vpmem_print_status();
-    clear_evict_list(index);
+    clear_evict_list(index, true);
     vpmem_print_status();
 #endif
 
@@ -1263,6 +1270,7 @@ int vpmem_invalidate_pages(unsigned long address, unsigned long count) {
         if (likely(pgn)) {
             pop_from_lru_list(pgn, index);
             pop_from_wb_list(pgn, index);
+            set_pgn_clean(pgn);
             push_to_evict_list(pgn, index);    
         }
         address += PAGE_SIZE;
@@ -1285,6 +1293,7 @@ unsigned long vpmem_cached(unsigned long address, unsigned long count) {
     return cnt;
 }
 
+// Not being used
 int vpmem_pin_pages(unsigned long address, unsigned long count) {
     struct pgcache_node *pgn = NULL;
     struct pgcache_node *pgn_hint = NULL;
@@ -1293,7 +1302,6 @@ int vpmem_pin_pages(unsigned long address, unsigned long count) {
         if (is_pgcache_hint_hit(pgn_hint,address)) pgn = pgn_hint;
         else pgn = pgcache_lookup(address);
         pgn_hint = pgcache_get_hint(pgn);
-        if (likely(pgn)) pgn->pinned = 1;
         address += PAGE_SIZE;
     }
     return 0;
@@ -1345,7 +1353,7 @@ bool vpmem_load_block_range(unsigned long address, struct page **p, int count)
 }
 
 // This function should only be called by the wb_thread.
-bool clear_evict_list(int index)
+bool clear_evict_list(int index, bool clear)
 {
     struct pgcache_node *pgn;
     // struct page *p;
@@ -1363,7 +1371,21 @@ again:
         mutex_unlock(&vsbi->vpmem_evict_mutex[index]);
         return false;
     }
-        
+    if (!clear && is_pgn_dirty(pgn)) {
+        // printk(KERN_INFO "vpmem: pgcache_node error2 in clear_evict_list(). %lx\n", pgn->address);
+        list_del_init(&pgn->evict_node);
+        mutex_unlock(&vsbi->vpmem_evict_mutex[index]);
+        push_to_lru_list(pgn, index);
+        push_to_wb_list(pgn, index);
+        goto again;
+    }
+    if (!clear && is_pgn_young_reset(pgn)) {
+        // printk(KERN_INFO "vpmem: pgcache_node error3 in clear_evict_list(). %lx\n", pgn->address);
+        list_del_init(&pgn->evict_node);
+        mutex_unlock(&vsbi->vpmem_evict_mutex[index]);
+        push_to_lru_list(pgn, index);
+        goto again;
+    }
     list_del_init(&pgn->evict_node);
     vpmem_clear_pgn(pgn, index);
 
