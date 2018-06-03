@@ -1268,10 +1268,9 @@ int vpmem_invalidate_pages(unsigned long address, unsigned long count) {
         else pgn = pgcache_lookup(address);
         pgn_hint = pgcache_get_hint(pgn);
         if (likely(pgn)) {
-            pop_from_lru_list(pgn, index);
-            pop_from_wb_list(pgn, index);
+            pop_from_evict_list(pgn, index);    
             set_pgn_clean(pgn);
-            push_to_evict_list(pgn, index);    
+            vpmem_clear_pgn(pgn, index);
         }
         address += PAGE_SIZE;
     }
