@@ -1215,6 +1215,7 @@ void vpmem_clear_pgn(struct pgcache_node *pgn, int index) {
     struct page *p;
     pte_t *pte = NULL;
     
+retry:
     if (unlikely(!pgn)) {
         nova_info("Error in pgcache_remove 1\n");
         return;
@@ -1222,16 +1223,20 @@ void vpmem_clear_pgn(struct pgcache_node *pgn, int index) {
     // if (unlikely(!list_empty(&pgn->lru_node))) {
     //     nova_info("Error in pgcache_remove 2 %lx\n", (unsigned long)&vsbi->vpmem_lru_list[index]);
     // }
+    if (!mutex_trylock(&pgn->lock)) {
+        nova_info("Error in pgcache_remove 2 %lx", pgn->address);
+        schedule();
+        goto retry;
+    }
     pop_from_lru_list(pgn, index);
     pop_from_wb_list(pgn, index);
     
     if (unlikely(RB_EMPTY_NODE(&pgn->rb_node))) {
-        nova_info("Error in pgcache_remove 2 %lx\n", pgn->address);
+        nova_info("Error in pgcache_remove 3 %lx\n", pgn->address);
         return;
     }
     mutex_lock(&vsbi->vpmem_rb_mutex[index]);
     rb_erase(&pgn->rb_node, &vsbi->vpmem_rb_tree[index]);
-    if (!mutex_trylock(&pgn->lock)) nova_info("Error in pgcache_remove 3 %lx", pgn->address);
     if (atomic_read(&vsbi->pgcache_size[index])==0) nova_info("ERROR in pgcache_size\n");
 
     nl_send("ev %20lu %16lu %2d", pgn->address, 0, 0);
