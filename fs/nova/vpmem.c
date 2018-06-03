@@ -1215,7 +1215,6 @@ void vpmem_clear_pgn(struct pgcache_node *pgn, int index) {
     struct page *p;
     pte_t *pte = NULL;
     
-retry:
     if (unlikely(!pgn)) {
         nova_info("Error in pgcache_remove 1\n");
         return;
@@ -1226,11 +1225,12 @@ retry:
     if (!mutex_trylock(&pgn->lock)) {
         nova_info("Error in pgcache_remove 2 %lx", pgn->address);
         schedule();
-        goto retry;
+        return;
     }
     pop_from_lru_list(pgn, index);
-    pop_from_wb_list(pgn, index);
-    
+    pop_from_wb_list(pgn, index);    
+    pop_from_evict_list(pgn, index); 
+       
     if (unlikely(RB_EMPTY_NODE(&pgn->rb_node))) {
         nova_info("Error in pgcache_remove 3 %lx\n", pgn->address);
         return;
@@ -1278,7 +1278,6 @@ int vpmem_invalidate_pages(unsigned long address, unsigned long count) {
         else pgn = pgcache_lookup(address);
         pgn_hint = pgcache_get_hint(pgn);
         if (likely(pgn)) {
-            pop_from_evict_list(pgn, index);    
             set_pgn_clean(pgn);
             vpmem_clear_pgn(pgn, index);
         }
@@ -1395,10 +1394,9 @@ again:
         push_to_lru_list(pgn, index);
         goto again;
     }
-    list_del_init(&pgn->evict_node);
-    vpmem_clear_pgn(pgn, index);
-
     mutex_unlock(&vsbi->vpmem_evict_mutex[index]);
+
+    vpmem_clear_pgn(pgn, index);
 
     goto again;
 
