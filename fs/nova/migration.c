@@ -486,11 +486,20 @@ int migrate_entry_blocks(struct nova_sb_info *sbi, int to, struct nova_inode_inf
     }
 
     if (MODE_USE_COOKIE && is_tier_pmem(from)) {
-        vpmem_do_page_fault_mini(nova_get_block(sb, nentry.block),
-            nova_get_block(sb, blocknr << PAGE_SHIFT));
-        if (nentry.num_pages>1) {
-            vpmem_do_page_fault_mini(nova_get_block(sb, nentry.block) + ((nentry.num_pages-1) << PAGE_SHIFT),
-                nova_get_block(sb, blocknr << PAGE_SHIFT) + ((nentry.num_pages-1) << PAGE_SHIFT));
+        if (is_pgcache_quite_small()) {
+            for (i=0;i<nentry.num_pages;++i)
+                vpmem_do_page_fault_lite(nova_get_block(sb, nentry.block) + (i << PAGE_SHIFT),
+                    nova_get_block(sb, blocknr << PAGE_SHIFT) + (i << PAGE_SHIFT));
+        }
+        else {
+            if (!is_pgcache_large()) {
+                vpmem_do_page_fault_lite(nova_get_block(sb, nentry.block),
+                    nova_get_block(sb, blocknr << PAGE_SHIFT));
+                if (nentry.num_pages>1) {
+                    vpmem_do_page_fault_lite(nova_get_block(sb, nentry.block) + ((nentry.num_pages-1) << PAGE_SHIFT),
+                        nova_get_block(sb, blocknr << PAGE_SHIFT) + ((nentry.num_pages-1) << PAGE_SHIFT));
+                }
+            }
         }
     }
 

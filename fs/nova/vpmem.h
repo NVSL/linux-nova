@@ -18,12 +18,14 @@ int vpmem_init(void);
 
 int pgc_tier_free_order(int tier);
 inline int pgc_total_size(void);
+inline bool is_pgcache_large(void);
+inline bool is_pgcache_quite_small(void);
 
 int vpmem_get(struct nova_sb_info *sbi, unsigned long offset);
 void vpmem_put(void);
 
 void vpmem_reset(void);
-bool vpmem_do_page_fault_mini(void *address_from, void *address_to);
+bool vpmem_do_page_fault_lite(void *address_from, void *address_to);
 
 // int vpmem_pin(unsigned long vaddr, int count);            
 // int vpmem_unpin(unsigned long vaddr, int count);

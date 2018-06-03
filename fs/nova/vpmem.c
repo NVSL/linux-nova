@@ -244,6 +244,10 @@ inline bool is_pgcache_large(void) {
     return pgc_total_size() > VPMEM_MAX_PAGES_QTR*4*TIER_BDEV_HIGH*vsbi->cpus;
 }
 
+inline bool is_pgcache_quite_small(void) {
+    return pgc_total_size()*2 < VPMEM_MAX_PAGES_QTR*4*TIER_BDEV_HIGH*vsbi->cpus;
+}
+
 // Exit write back
 inline bool is_pgcache_very_small(int index) {
     return atomic_read(&vsbi->pgcache_size[index]) <= VPMEM_MAX_PAGES_QTR * 3;
@@ -1577,13 +1581,13 @@ bool vpmem_do_page_fault(struct pt_regs *regs, unsigned long error_code, unsigne
     return true;
 }
 
-bool vpmem_do_page_fault_mini(void *address_from, void *address_to)
+bool vpmem_do_page_fault_lite(void *address_from, void *address_to)
 {
     struct pgcache_node *pgn;
     bool new = false;   
     pgn = pgcache_insert((unsigned long)address_to, current_mm, &new);
     if (unlikely(!new)) {
-        nova_info("Error in vpmem_do_page_fault_mini\n");
+        nova_info("Error in vpmem_do_page_fault_lite\n");
         return false;
     }
     memcpy_mcsafe(page_address(pgn->page), address_from, PAGE_SIZE);
