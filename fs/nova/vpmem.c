@@ -245,7 +245,7 @@ inline bool is_pgcache_large(void) {
 }
 
 inline bool is_pgcache_quite_small(void) {
-    return pgc_total_size()*2 < VPMEM_MAX_PAGES_QTR*4*TIER_BDEV_HIGH*vsbi->cpus;
+    return pgc_total_size()*100 < MIGRATION_IDEAL_PERC*VPMEM_MAX_PAGES_QTR*4*TIER_BDEV_HIGH*vsbi->cpus;
 }
 
 // Exit write back
@@ -255,7 +255,7 @@ inline bool is_pgcache_very_small(int index) {
 
 // Enter write back
 inline bool is_pgcache_small(int index) {
-    return atomic_read(&vsbi->pgcache_size[index]) <= VPMEM_MAX_PAGES_QTR * 3 + VPMEM_RES_PAGES;
+    return atomic_read(&vsbi->pgcache_size[index])*2 <= VPMEM_MAX_PAGES_QTR * 7;
 }
 
 inline unsigned long virt_to_block(unsigned long address) {

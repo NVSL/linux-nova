@@ -278,10 +278,10 @@ int nova_give_advise(struct nova_sb_info *sbi) {
     bitw = most_sig_lbit(total_write);
     i = bitr - bitw;
     sbi->stat->adv = i;
-    adv = 50 + i*10;
+    adv = 70 + i*5;
     if (adv>90) adv = 90;
     if (adv<10) adv = 10;
-    if (MODE_USE_DYN_THRES) MIGRATION_DOWN_PMEM_PERC = adv>50 ? adv:50;
+    if (MODE_USE_DYN_THRES) MIGRATION_DOWN_PMEM_PERC = adv>70 ? adv:70;
     return 0;
 }
 

@@ -9,7 +9,7 @@
 static struct kmem_cache *nova_submit_bio_ret_cache;
 static struct kmem_cache *nova_bal_cache;
 int TIER_BDEV_HIGH = 0;
-int MIGRATION_DOWN_PMEM_PERC = 50;
+int MIGRATION_DOWN_PMEM_PERC = 70;
 
 int nova_init_bio(void) {
 	nova_submit_bio_ret_cache = kmem_cache_create("nova_submit_bio_ret",
