@@ -477,12 +477,21 @@ int migrate_entry_blocks(struct nova_sb_info *sbi, int to, struct nova_inode_inf
     // if (is_tier_bdev(to)) clear_dram_buffer_range(blocknr, le32_to_cpu(nentry.num_pages));
     
     // Temp solution: memcpy to invalidate the page cache + pre-allocate empty page
-    if (MODE_USE_MEMCPY && is_tier_bdev(to)) {
+    if (MODE_USE_MEMCPY && is_tier_pmem(from) && is_tier_bdev(to)) {
         // nova_info("[Migration] memcpy %lu <- %llu num: %u\n", 
         // blocknr, nentry.block>>PAGE_SHIFT, nentry.num_pages);
         for (i=0;i<nentry.num_pages;++i)
             memcpy_mcsafe(nova_get_block(sb, blocknr << PAGE_SHIFT) + (i << PAGE_SHIFT),
                 nova_get_block(sb, nentry.block) + (i << PAGE_SHIFT), PAGE_SIZE);
+    }
+
+    if (MODE_USE_COOKIE && is_tier_pmem(from)) {
+        vpmem_do_page_fault_mini(nova_get_block(sb, nentry.block),
+            nova_get_block(sb, blocknr << PAGE_SHIFT));
+        if (nentry.num_pages>1) {
+            vpmem_do_page_fault_mini(nova_get_block(sb, nentry.block) + ((nentry.num_pages-1) << PAGE_SHIFT),
+                nova_get_block(sb, blocknr << PAGE_SHIFT) + ((nentry.num_pages-1) << PAGE_SHIFT));
+        }
     }
 
     // nova_bdev_read_blockoff(sbi, blocknr, le32_to_cpu(entry->num_pages), 
