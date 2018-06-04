@@ -173,6 +173,10 @@ inline int put_dram_buffer_range(unsigned long blockoff, unsigned long length) {
     return vpmem_flush_pages(blockoff_to_virt(blockoff), length);
 }
 
+inline int renew_dram_buffer_range(void *addr, unsigned long blockoff, unsigned long length) {
+    return vpmem_renew_pages(addr, blockoff_to_virt(blockoff), length);
+}
+
 bool is_dram_buffer_addr(void *addr) {
     return (vpmem_start <= (unsigned long)addr) && ((unsigned long)addr <= vpmem_end);
 }
@@ -457,6 +461,7 @@ int migrate_entry_blocks(struct nova_sb_info *sbi, int to, struct nova_inode_inf
 
     // Invalidate the page
     if (is_tier_bdev(from)) clear_dram_buffer_range(nentry.block >> PAGE_SHIFT, le32_to_cpu(nentry.num_pages));
+    // if (is_tier_bdev(to)) renew_dram_buffer_range(nova_get_block(sb, nentry.block), blocknr, le32_to_cpu(nentry.num_pages));
     if (is_tier_bdev(to)) clear_dram_buffer_range(blocknr, le32_to_cpu(nentry.num_pages));
 
     ret = migrate_blocks(sbi, nentry.block >> PAGE_SHIFT, le32_to_cpu(nentry.num_pages), from, to, blocknr);

@@ -281,8 +281,8 @@ static int nova_seq_ts_show(struct seq_file *seq, void *v)
         	i, used>>8, used, used * 100 / total, total>>8, total);
     }
 	seq_printf(seq, "---------------------------------------------------------\n");
-	seq_printf(seq, "|DRAM|%6dMB|%9d|%4d%%|  N/A|%7uMB|%9u|\n", 
-		pgc_size/256, pgc_size, pgc_size * 100 / (VPMEM_MAX_PAGES_QTR*4*TIER_BDEV_HIGH*sbi->cpus), 
+	seq_printf(seq, "|DRAM|%6dMB|%9d|%4d%%|%4u%%|%7uMB|%9u|\n", 
+		pgc_size/256, pgc_size, pgc_size * 100 / (VPMEM_MAX_PAGES_QTR*4*TIER_BDEV_HIGH*sbi->cpus), MIGRATION_IDEAL_PERC,
 		(VPMEM_MAX_PAGES_QTR*4*TIER_BDEV_HIGH*sbi->cpus)>>8, VPMEM_MAX_PAGES_QTR*4*TIER_BDEV_HIGH*sbi->cpus);
 	seq_printf(seq, "|NOVA|%6luMB|%9lu|%4lu%%|  N/A|%7luMB|%9lu|\n", sumu>>8, sumu, sumu * 100 / sumt, sumt>>8, sumt);
 	

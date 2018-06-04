@@ -7,7 +7,7 @@
 
 // #define VPMEM_MAX_PAGES_QTR          8192    // 32MB per-cpu
 // Hard limit is VPMEM_MAX_PAGES_QTR*4*TIER_BDEV_HIGH*sbi->cpus
-// #define VPMEM_RES_PAGES             1024       // 32KB per-cpu
+#define VPMEM_RES_PAGES             1024       // 32KB per-cpu
 
 extern unsigned long vpmem_start;
 extern unsigned long vpmem_end;
@@ -34,6 +34,7 @@ int vpmem_cache_pages(unsigned long vaddr, unsigned long count, bool load);   //
 int vpmem_flush_pages(unsigned long vaddr, unsigned long count);   // To free a cached page if it was presented
 int vpmem_flush_pages_sync(unsigned long address, unsigned long count);
 int vpmem_invalidate_pages(unsigned long vaddr, unsigned long count); 
+int vpmem_renew_pages(void *addr, unsigned long address, unsigned long count);
 void *vpmem_lru_refer(unsigned long vaddr);
 unsigned long vpmem_cached(unsigned long vaddr, unsigned long count);        // To check if a particular page is present in the cache
 
