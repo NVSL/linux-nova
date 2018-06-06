@@ -494,6 +494,11 @@ int set_pgn_clean_addr(unsigned long address) {
 void vpmem_clear_pgn(struct pgcache_node *pgn, int index);
 bool insert_tlb(struct pgcache_node *pgn);
 
+inline bool vpmem_valid_address(unsigned long address) {
+    if (address < TASK_SIZE_MAX || address < VPMEM_START || address > vpmem_end) return false;
+    else return true;
+}
+
 struct pgcache_node *pgcache_insert(unsigned long address, struct mm_struct *mm, bool *new)
 {
     struct pgcache_node *p, *newp;
@@ -1137,7 +1142,10 @@ int vpmem_cache_pages(unsigned long address, unsigned long count, bool load)
     unsigned long addr;
     bool new = false;
     address &= PAGE_MASK;
-    addr = address;    
+    addr = address;
+    if (unlikely(!vpmem_valid_address(addr))) {
+        nova_info("Error in vpmem_cache_pages\n");
+    }
     while (count-- > 0) {        
         struct page *p=0;
         pgn = pgcache_lookup(addr);
@@ -1609,7 +1617,9 @@ bool vpmem_do_page_fault(struct pt_regs *regs, unsigned long error_code, unsigne
     struct page *p = NULL;
     bool new = false;   
     /* Make sure we are in reserved area: */
-    if (address < TASK_SIZE_MAX || address < VPMEM_START || address > vpmem_end) return false;
+    if (!vpmem_valid_address(address)) {
+        nova_info("Error in vpmem_do_page_fault\n");
+    }
     #ifdef VPMEM_DEBUG
         atomic_inc_return(&faults);
     #endif
@@ -1661,6 +1671,9 @@ bool vpmem_do_page_fault_lite(void *address_from, void *address_to)
 {
     struct pgcache_node *pgn;
     bool new = false;   
+    if (unlikely(!vpmem_valid_address(address_to))) {
+        nova_info("Error in vpmem_do_page_fault_lite\n");
+    }
     pgn = pgcache_lookup((unsigned long)address_to);
     if (pgn) return false;
     pgn = pgcache_insert((unsigned long)address_to, current_mm, &new);

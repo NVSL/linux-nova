@@ -490,7 +490,7 @@ int migrate_entry_blocks(struct nova_sb_info *sbi, int to, struct nova_inode_inf
                 nova_get_block(sb, nentry.block) + (i << PAGE_SHIFT), PAGE_SIZE);
     }
 
-    if (MODE_USE_COOKIE && is_tier_pmem(from)) {
+    if (MODE_USE_COOKIE && is_tier_pmem(from) && is_tier_bdev(to)) {
         if (is_pgcache_quite_small()) {
             for (i=0;i<nentry.num_pages;++i)
                 vpmem_do_page_fault_lite(nova_get_block(sb, nentry.block) + (i << PAGE_SHIFT),
