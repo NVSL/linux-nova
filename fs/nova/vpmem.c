@@ -517,8 +517,8 @@ struct pgcache_node *pgcache_insert(unsigned long address, struct mm_struct *mm,
         else if(p->address < address)
             link = &(*link)->rb_right;
         else {
-            nova_info("Warning 1 in pgcache_insert address %lx addr %lx page %p p %p\n",
-                address, p->address, p->page, page_address(p->page));
+            // nova_info("Warning 1 in pgcache_insert address %lx addr %lx page %p p %p\n",
+            //     address, p->address, p->page, page_address(p->page));
             // mutex_lock(&p->lock);
             if (!p->page) {
                 p->page = alloc_page(GFP_KERNEL);
@@ -527,16 +527,16 @@ struct pgcache_node *pgcache_insert(unsigned long address, struct mm_struct *mm,
                 }
                 lock_page(p->page);
             }
-            else {
-                nova_info("Warning 2 in pgcache_insert address %lx addr %lx page %p p %p\n",
-                    address, p->address, p->page, page_address(p->page));
-            }
+            // else {
+            //     nova_info("Warning 2 in pgcache_insert address %lx addr %lx page %p p %p\n",
+            //         address, p->address, p->page, page_address(p->page));
+            // }
 
             vpmem_load_block(address, p->page, 1);
             insert_tlb(p);
 
-            nova_info("Warning 3 in pgcache_insert address %lx addr %lx page %p p %p\n",
-                address, p->address, p->page, page_address(p->page));
+            // nova_info("Warning 3 in pgcache_insert address %lx addr %lx page %p p %p\n",
+            //     address, p->address, p->page, page_address(p->page));
 
             // mutex_unlock(&p->lock);
             mutex_unlock(&vsbi->vpmem_rb_mutex[index]);
@@ -1623,7 +1623,7 @@ bool vpmem_do_page_fault(struct pt_regs *regs, unsigned long error_code, unsigne
     if (likely(pgn)) sr = get_fault_smart_range(pgn);
     else sr = 1;
     // nova_info("vpmem_do_page_fault address %lx sr %d\n", address, sr);
-    if (unlikely(sr<1||sr>32)) nova_info("Error #3 in vpmem_do_page_fault sr %d\n",sr);
+    if (unlikely(sr<1)) nova_info("Error #3 in vpmem_do_page_fault sr %d\n",sr);
     pgn_array = kcalloc(sr, sizeof(struct pgcache_node *), GFP_KERNEL);
     page_array = kcalloc(sr, sizeof(struct page *), GFP_KERNEL);
     pgn_array[0] = pgn;
