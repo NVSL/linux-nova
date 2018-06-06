@@ -1512,7 +1512,7 @@ again_rev:
 void wake_up_bm(struct nova_sb_info *sbi) {
     int i;
 	if (sbi->bm_thread) {
-		smp_wmb();
+		smp_mb();
         for (i=0; i<sbi->cpus; ++i) wake_up_process(sbi->bm_thread[i].nova_task);
 	}
 }

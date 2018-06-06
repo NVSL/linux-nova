@@ -982,7 +982,7 @@ int wb_thread_init(struct nova_sb_info *sbi) {
     sbi->wb_thread = wb_thread;
 
 	if (sbi->wb_thread) {
-		smp_wmb();
+		smp_mb();
         for (i=0; i<count; ++i) wake_up_process(sbi->wb_thread[i].nova_task);
 	}
 
@@ -1066,7 +1066,7 @@ bool insert_tlb(struct pgcache_node *pgn) {
     struct mm_struct *mm = current_mm;
     unsigned long address = pgn->address;
 
-	smp_mb();
+	// smp_mb();
 
     spin_lock(&mm->page_table_lock);
 
@@ -1077,15 +1077,17 @@ bool insert_tlb(struct pgcache_node *pgn) {
     pmd = fill_pmd(mm, pud, address); // pmd_alloc(mm, pud, address); 
     pte = fill_pte(mm, pmd, address);
 	
+    *pte = pte_mkyoung(*pte);
     *pte = pte_mkclean(*pte);
+
     set_pte(pte, ptein);
     spin_unlock(&mm->page_table_lock);
-
-    smp_mb();
 
     __flush_tlb_one(address);
 
     set_pgn_clean_addr(address);
+
+    smp_mb();
 
     return true;
 }
@@ -1243,6 +1245,7 @@ void vpmem_invalidate_pgn(struct pgcache_node *pgn) {
     pop_from_evict_list(pgn, index);
     
     if (p) {
+	    // smp_mb();
         pgn->page = NULL;
         pte = vpmem_get_pte(pgn);
         if (pte) {
@@ -1253,6 +1256,7 @@ void vpmem_invalidate_pgn(struct pgcache_node *pgn) {
         unlock_page(p);
         __free_page(p);
     }    
+	smp_mb();
 }
 
 void vpmem_clear_pgn(struct pgcache_node *pgn, int index) {    
@@ -1858,7 +1862,7 @@ void vpmem_put(void)
     vpmem_print_status();
     printk(KERN_INFO "vpmem: [Before cleanup] pgcache_size = %d\n", pgc_total_size());
     wb_thread_cleanup();
-    smp_wmb();
+    smp_mb();
     printk(KERN_INFO "vpmem: [After cleanup] pgcache_size = %d\n", pgc_total_size());
     vpmem_print_status();
     
