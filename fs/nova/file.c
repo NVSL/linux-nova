@@ -639,7 +639,7 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 		goto out;
 
 	if (MODE_KEEP_STAT) sbi->stat->read += len;
-	nova_update_stat(sbi, len, true);
+	if (MODE_USE_DYN_THRES) nova_update_stat(sbi, len, true);
 	
 	entryc = (metadata_csum == 0) ? entry : &entry_copy;
 
@@ -915,7 +915,7 @@ prof:
 	write_tier = get_available_tier(sb, write_tier);
 
 	if (MODE_KEEP_STAT) sbi->stat->write += len;
-	nova_update_stat(sbi, len, false);
+	if (MODE_USE_DYN_THRES) nova_update_stat(sbi, len, false);
 	if (MODE_KEEP_STAT && write_tier!=TIER_PMEM) sbi->stat->write_dram += len;
 
 	// nova_info("[Write] %lu blocks in [tier #%d] -> [seq %u tier #%d].\n", 
