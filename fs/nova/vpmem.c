@@ -578,7 +578,8 @@ struct pgcache_node *pgcache_insert(unsigned long address, struct mm_struct *mm,
     /* Put the new node there */
     rb_link_node(&newp->rb_node, parent, link);
     rb_insert_color(&newp->rb_node, &vsbi->vpmem_rb_tree[index]);
-    
+    smp_mb();
+
     mutex_unlock(&vsbi->vpmem_rb_mutex[index]);
 
     return newp;
@@ -1291,6 +1292,7 @@ void vpmem_clear_pgn(struct pgcache_node *pgn, int index) {
     // }
     // mutex_unlock(&pgn->lock); 
     rb_erase(&pgn->rb_node, &vsbi->vpmem_rb_tree[index]);
+    smp_mb();
     mutex_unlock(&vsbi->vpmem_rb_mutex[index]);
 
     vpmem_invalidate_pgn(pgn);
