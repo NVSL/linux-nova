@@ -19,6 +19,7 @@ int vpmem_init(void);
 int pgc_tier_free_order(int tier);
 inline int pgc_total_size(void);
 inline bool is_pgcache_large(void);
+inline bool is_pgcache_ideal(void);
 inline bool is_pgcache_quite_small(void);
 
 int vpmem_get(struct nova_sb_info *sbi, unsigned long offset);

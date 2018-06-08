@@ -491,7 +491,7 @@ int migrate_entry_blocks(struct nova_sb_info *sbi, int to, struct nova_inode_inf
     }
 
     if (MODE_USE_COOKIE && is_tier_pmem(from) && is_tier_bdev(to)) {
-        if (is_pgcache_quite_small()) {
+        if (is_pgcache_ideal()) {
             for (i=0;i<nentry.num_pages;++i)
                 vpmem_do_page_fault_lite(nova_get_block(sb, nentry.block) + (i << PAGE_SHIFT),
                     nova_get_block(sb, blocknr << PAGE_SHIFT) + (i << PAGE_SHIFT));

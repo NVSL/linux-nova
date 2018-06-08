@@ -96,6 +96,9 @@ unsigned long miss1=0;
 unsigned long miss2=0;
 unsigned long already_cached=0;
 unsigned long leaked=0;
+unsigned long renew=0;
+unsigned long lite=0;
+unsigned long invalidate=0;
 
 enum x86_pf_error_code {
     PF_PROT  = 1 << 0,
@@ -244,8 +247,12 @@ inline bool is_pgcache_large(void) {
     return pgc_total_size() > VPMEM_MAX_PAGES_QTR * 4 * TIER_BDEV_HIGH * vsbi->cpus;
 }
 
-inline bool is_pgcache_quite_small(void) {
+inline bool is_pgcache_ideal(void) {
     return pgc_total_size() * 100 < MIGRATION_IDEAL_PERC * VPMEM_MAX_PAGES_QTR * 4 * TIER_BDEV_HIGH * vsbi->cpus;
+}
+
+inline bool is_pgcache_quite_small(void) {
+    return pgc_total_size() * 100 < (MIGRATION_IDEAL_PERC+10) * VPMEM_MAX_PAGES_QTR * 4 * TIER_BDEV_HIGH * vsbi->cpus;
 }
 
 // Exit write back
@@ -1327,6 +1334,9 @@ int vpmem_invalidate_pages(unsigned long address, unsigned long count) {
             pop_from_wb_list(pgn, index);
             set_pgn_clean(pgn);
             push_to_evict_list(pgn, index);
+            #ifdef VPMEM_DEBUG
+                invalidate++;
+            #endif
         }
         address += PAGE_SIZE;
     }
@@ -1346,6 +1356,9 @@ int vpmem_renew_pages(void *addr, unsigned long address, unsigned long count) {
             memcpy_mcsafe(page_address(pgn->page), addr, PAGE_SIZE);
             set_pgn_clean(pgn);
             pgcache_lru_refer(pgn);
+            #ifdef VPMEM_DEBUG
+                renew++;
+            #endif
         }
         addr += PAGE_SIZE;
         address += PAGE_SIZE;
@@ -1681,6 +1694,9 @@ bool vpmem_do_page_fault_lite(void *address_from, void *address_to)
         nova_info("Warning in vpmem_do_page_fault_lite\n");
         return false;
     }
+    #ifdef VPMEM_DEBUG
+        lite++;
+    #endif
     memcpy_mcsafe(page_address(pgn->page), address_from, PAGE_SIZE);
     insert_tlb(pgn);
     // mutex_unlock(&pgn->lock);
