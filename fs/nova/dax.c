@@ -32,6 +32,10 @@ static inline int nova_copy_partial_block(struct super_block *sb,
 
 	nvmm = get_nvmm(sb, sih, entry, index);
 	ptr = nova_get_block(sb, (nvmm << PAGE_SHIFT));
+
+	if (vpmem_valid_address((unsigned long)ptr)) {
+		vpmem_do_page_fault_range((unsigned long)ptr, 0, 1);
+	}
 	
 	if (ptr != NULL) {
 		if (support_clwb)

@@ -26,6 +26,9 @@ int vpmem_get(struct nova_sb_info *sbi, unsigned long offset);
 void vpmem_put(void);
 
 void vpmem_reset(void);
+
+inline bool vpmem_valid_address(unsigned long address);
+bool vpmem_do_page_fault_range(unsigned long address, unsigned long address_end, unsigned long entry_end);
 bool vpmem_do_page_fault_lite(void *address_from, void *address_to);
 
 // int vpmem_pin(unsigned long vaddr, int count);            

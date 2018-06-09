@@ -28,10 +28,10 @@ extern atomic_t evicts;
 extern atomic_t bdev_read;
 extern atomic_t bdev_write;
 
-extern unsigned long miss2;
 extern unsigned long already_cached;
 extern unsigned long renew;
 extern unsigned long lite;
+extern unsigned long range;
 extern unsigned long invalidate;
 
 extern struct kmem_cache *nova_vpmem_pgnp;
@@ -261,9 +261,9 @@ static int nova_seq_ts_show(struct seq_file *seq, void *v)
 		sbi->stat->write >> 12, sbi->stat->write_dram  >> 12, sbi->stat->read >> 12,sbi->stat->mig_group, 
             sbi->stat->mig_interrupt);
 	seq_printf(seq, "--------------------------------------------------------------------\n");
-	seq_printf(seq, "|  [VPMEM]  |   Miss   |  Cached  |  Renew   |   Lite   |Invalidate|\n");
+	seq_printf(seq, "|  [VPMEM]  |  Cached  |  Range   |  Renew   |   Lite   |Invalidate|\n");
     seq_printf(seq, "|           |%10lu|%10lu|%10lu|%10lu|%10lu|\n",
-		miss2, already_cached, renew, lite, invalidate);
+		already_cached, range, renew, lite, invalidate);
 	
 	seq_printf(seq, "--------------------------------------------------------------------\n");
 	seq_printf(seq, "|  [VPMEM]  |  Faults  | BDV_Read |  Writes  | BDV_Writ |  Evicts  |\n");

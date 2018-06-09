@@ -713,6 +713,12 @@ memcpy:
 				goto out;
 			}
 		}
+
+		if (vpmem_valid_address((unsigned long)dax_mem)) {
+			vpmem_do_page_fault_range((unsigned long)dax_mem, 
+				(unsigned long)dax_mem + offset + nr, entryc->num_pages - (index - entryc->pgoff));
+		}
+
 skip_verify:
 		NOVA_START_TIMING(memcpy_r_nvmm_t, memcpy_time);
 
