@@ -189,6 +189,7 @@ extern int dram_struct_csum;
 extern int TIER_BDEV_HIGH;
 extern int MIGRATION_DOWN_PMEM_PERC;
 extern int VPMEM_MAX_PAGES_QTR;
+extern int BDEV_OPT_SIZE_BIT;
 
 extern unsigned int blk_type_to_shift[NOVA_BLOCK_TYPE_MAX];
 extern unsigned int blk_type_to_size[NOVA_BLOCK_TYPE_MAX];

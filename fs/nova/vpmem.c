@@ -72,6 +72,7 @@ unsigned long vpmem_end=0;
 int *wb_empty;
 
 int VPMEM_MAX_PAGES_QTR = VPMEM_MAX_PAGES_QTR_INIT;
+int BDEV_OPT_SIZE_BIT = BDEV_OPT_SIZE_BIT_INIT;
 
 struct kmem_cache *nova_vpmem_pgnp;
 
