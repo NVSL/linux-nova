@@ -1706,7 +1706,7 @@ bool vpmem_do_page_fault(struct pt_regs *regs, unsigned long error_code, unsigne
 
 bool vpmem_do_page_fault_range(unsigned long address, unsigned long address_end, unsigned long entry_end) {
     struct pgcache_node *pgn;
-    int i, sr;
+    int i, sr = 0;
     int minr, maxr;
     struct pgcache_node **pgn_array;
     struct page **page_array;
@@ -1723,11 +1723,20 @@ bool vpmem_do_page_fault_range(unsigned long address, unsigned long address_end,
     address &= PAGE_MASK;
     address_end &= PAGE_MASK;
 
-    minr = (address_end-address)>>PAGE_SHIFT;
+next:
+    if (address > address_end) return true;
+
+    minr = ((address_end-address)>>PAGE_SHIFT) + 1;   
     maxr = (int)entry_end;
  
     pgn = pgcache_insert(address, current_mm, &new);
-    if (unlikely(!new)) return true;
+    if (!new) {
+        address += PAGE_SIZE;
+        entry_end--;
+        // nova_info("In vpmem_do_page_fault_range address %lx sr %d minr %d maxr %d\n", 
+        //     address, sr, minr, (int)entry_end);
+        goto next;
+    }
 
     p = pgn->page;
     if (unlikely(!p)) {

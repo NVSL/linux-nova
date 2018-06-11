@@ -715,8 +715,10 @@ memcpy:
 		}
 
 		if (vpmem_valid_address((unsigned long)dax_mem)) {
+        // nova_info("dax %lx %lx %lu %lu %lu\n", (unsigned long)dax_mem, (unsigned long)dax_mem + offset + nr - 1,
+		// 	(unsigned long)entryc->num_pages, index, (unsigned long)entryc->pgoff);
 			vpmem_do_page_fault_range((unsigned long)dax_mem, 
-				(unsigned long)dax_mem + offset + nr, entryc->num_pages - (index - entryc->pgoff));
+				(unsigned long)dax_mem + offset + nr - 1, entryc->num_pages - (index - entryc->pgoff));
 		}
 
 skip_verify:
