@@ -569,6 +569,11 @@ static int not_enough_blocks(struct free_list *free_list,
 	return 0;
 }
 
+struct nova_range_node *nova_alloc_blocknode_atomic(struct super_block *sb)
+{
+	return nova_alloc_range_node_atomic(sb);
+}
+
 /* Return how many blocks allocated */
 static long nova_alloc_blocks_in_free_list(struct super_block *sb,
 	struct free_list *free_list, unsigned short btype,
