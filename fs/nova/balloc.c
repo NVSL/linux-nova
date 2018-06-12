@@ -574,6 +574,134 @@ struct nova_range_node *nova_alloc_blocknode_atomic(struct super_block *sb)
 	return nova_alloc_range_node_atomic(sb);
 }
 
+#define PAGES_PER_2MB 512
+#define PAGES_PER_2MB_MASK (512 - 1)
+#define IS_DATABLOCKS_2MB_ALIGNED(numblocks, atype) \
+		(!(num_blocks & PAGES_PER_2MB_MASK) && (atype == DATA))
+
+bool nova_alloc_superpage(struct super_block *sb,
+	struct free_list *free_list, unsigned long num_blocks,
+	unsigned long *new_blocknr, enum nova_alloc_direction from_tail)
+{
+	struct rb_root *tree;
+	struct rb_node *temp;
+	struct nova_range_node *curr;
+	unsigned long curr_blocks;
+	bool found = 0;
+	unsigned long step = 0;
+
+	unsigned int left_margin;
+	unsigned int right_margin;
+
+	tree = &(free_list->block_free_tree);
+	if (from_tail == ALLOC_FROM_HEAD)
+		temp = &(free_list->first_node->node);
+	else
+		temp = &(free_list->last_node->node);
+
+	while (temp) {
+		step++;
+		curr = container_of(temp, struct nova_range_node, node);
+
+		if (!nova_range_node_checksum_ok(curr)) {
+			nova_err(sb, "%s curr failed\n", __func__);
+			goto next;
+		}
+
+		curr_blocks = curr->range_high - curr->range_low + 1;
+		left_margin = PAGES_PER_2MB - (curr->range_low & PAGES_PER_2MB_MASK);
+
+		/*
+		 * Guard against cases where:
+		 * a. Unaligned free blocks is smaller than #512
+		 *    left_margin could larger than curr_blocks.
+		 * b. After alignment, free blocks is smaller than
+		 *    requested blocks.
+		 * Otherwise, we are free to go.
+		 */
+		if ((curr_blocks > left_margin) && \
+			(num_blocks <= (curr_blocks - left_margin))) {
+			struct nova_range_node *node;
+			unsigned long saved_range_high = curr->range_high;
+
+			*new_blocknr = curr->range_low + left_margin;
+			right_margin = curr_blocks - left_margin - num_blocks;
+			nova_dbgv("curr:%p: num_blocks:%lu curr->range_low:%lu high:%lu",
+						curr, num_blocks, curr->range_low, curr->range_high);
+
+			if (left_margin) {
+				/* Reuse "curr" and its "first_node" indicator. */
+				curr->range_high = curr->range_low + left_margin - 1;
+				nova_update_range_node_checksum(curr);
+				nova_dbgv("Insert node for left_margin, range_low:%lu high:%lu",
+							curr->range_low, curr->range_high);
+			}
+
+			if (right_margin) {
+				if (left_margin) {
+					/* curr was reused for left_margin node, grab new one. */
+					node = nova_alloc_blocknode_atomic(sb);
+					if (node == NULL) {
+						nova_warn("Failed to allocate new block node.\n");
+						return -ENOMEM;
+					}
+					node->range_low = curr->range_low + left_margin + num_blocks;
+					node->range_high = saved_range_high;
+					nova_update_range_node_checksum(node);
+					nova_insert_blocktree(tree, node);
+					free_list->num_blocknode++;
+					if (curr == free_list->last_node)
+						free_list->last_node = node;
+				} else {
+					/*
+					 * curr->range_low is aligned, reuse curr for right_margin.
+					 * Update the checksum as needed.
+					 */
+					curr->range_low = curr->range_low + num_blocks;
+					nova_update_range_node_checksum(curr);
+				}
+				nova_dbgv("Insert node for right_margin, range_low:%lu high:%lu",
+							node->range_low, node->range_high);
+			}
+
+			/* Catch up special case where curr is aligned and used up. */
+			if (!left_margin && !right_margin) {
+
+				/* corner case in corner, spotted by Andiry. */
+				node = NULL;
+				if (curr == free_list->first_node) {
+					temp = rb_next(temp);
+					if (temp)
+						node = container_of(temp, struct nova_range_node, node);
+					free_list->first_node = node;
+				}
+				if (curr == free_list->last_node) {
+					temp = rb_prev(temp);
+					if (temp)
+						node = container_of(temp, struct nova_range_node, node);
+					free_list->last_node = node;
+				}
+
+				/* release curr after updating {first, last}_node */
+				rb_erase(&curr->node, tree);
+				nova_free_blocknode(curr);
+				free_list->num_blocknode--;
+			}
+
+			found = 1;
+			break;
+		}
+next:
+		if (from_tail == ALLOC_FROM_HEAD)
+			temp = rb_next(temp);
+		else
+			temp = rb_prev(temp);
+	}
+
+	NOVA_STATS_ADD(alloc_steps, step);
+	return found;
+}
+
 /* Return how many blocks allocated */
 static long nova_alloc_blocks_in_free_list(struct super_block *sb,
 	struct free_list *free_list, unsigned short btype,
@@ -585,6 +713,7 @@ static long nova_alloc_blocks_in_free_list(struct super_block *sb,
 	struct rb_node *temp, *next_node, *prev_node;
 	unsigned long curr_blocks;
 	bool found = 0;
+	bool found_hugeblock = 0;
 	unsigned long step = 0;
 
 	if (!free_list->first_node || free_list->num_free_blocks == 0) {
@@ -606,6 +735,14 @@ static long nova_alloc_blocks_in_free_list(struct super_block *sb,
 	else
 		temp = &(free_list->last_node->node);
 
+	/* Try huge block allocation for data blocks first */
+	if (IS_DATABLOCKS_2MB_ALIGNED(num_blocks, atype)) {
+		found_hugeblock = nova_alloc_superpage(sb, free_list, num_blocks, new_blocknr, from_tail);
+		if (found_hugeblock)
+			goto success;
+	}
+
+	/* fallback to un-aglined allocation then */
 	while (temp) {
 		step++;
 		curr = container_of(temp, struct nova_range_node, node);
@@ -674,7 +811,8 @@ next:
 		return -ENOSPC;
 	}
 
-	if (found == 1)
+success:
+	if ((found == 1) || (found_hugeblock == 1))
 		free_list->num_free_blocks -= num_blocks;
 	else {
 		nova_dbgv("%s: Can't alloc.  found = %d", __func__, found);
