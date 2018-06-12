@@ -155,7 +155,7 @@ able to build and install it just as you would the mainline Linux source.
 
 ### Building NOVA
 
-To build NOVA, build the kernel with PMEM (`CONFIG_BLK_DEV_PMEM`), DAX (`CONFIG_FS_DAX`) and NOVA (`CONFIG_NOVA_FS`) support.  Install as usual.
+To build NOVA, build the kernel with LIBNVDIMM (`CONFIG_LIBNVDIMM`), PMEM (`CONFIG_BLK_DEV_PMEM`), DAX (`CONFIG_FS_DAX`) and NOVA (`CONFIG_NOVA_FS`) support.  Install as usual.  (When running `make menuconfig`, you can find those options under the *Device Drivers* and *File Systems* sections, respectively.)
 
 Documentation/filesystems/nova.txt provides more detailed instructions on building and using NOVA.
 
