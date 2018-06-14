@@ -606,8 +606,9 @@ void nova_init_bdev_blockmap(struct super_block *sb, int recovery) {
  */
 static long nova_alloc_blocks_in_bdev_free_list(struct super_block *sb,
 	struct bdev_free_list *bfl, unsigned long num_blocks,
-	unsigned long *new_blocknr, enum nova_alloc_direction from_tail) {
-		
+	unsigned long *new_blocknr, enum nova_alloc_direction from_tail,
+	bool contiguous)
+{
 	struct rb_root *tree;
 	struct nova_range_node *curr, *next = NULL, *prev = NULL;
 	struct rb_node *temp, *next_node, *prev_node;
@@ -637,7 +638,7 @@ static long nova_alloc_blocks_in_bdev_free_list(struct super_block *sb,
 		curr_blocks = curr->range_high - curr->range_low + 1;
 
 		if (num_blocks >= curr_blocks) {
-			if (num_blocks > curr_blocks)
+			if (contiguous && num_blocks > curr_blocks)
 				goto next;
 
 			if (curr == bfl->first_node) {
@@ -764,7 +765,7 @@ retry:
 	}
 
 	ret_blocks = nova_alloc_blocks_in_bdev_free_list(sb, bfl, num_blocks, 
-		&new_blocknr, from_tail);
+		&new_blocknr, from_tail, !cache);
 
 	if (ret_blocks < 0) {
 		spin_unlock(&bfl->s_lock);
@@ -1134,7 +1135,7 @@ long nova_alloc_block_tier(struct nova_sb_info *sbi, int tier, int cpuid,
 	// Tier pmem
 	if (is_tier_pmem(tier)) {
 		allocated = nova_new_blocks(sb, blocknr, num_blocks,
-			NOVA_DEFAULT_BLOCK_TYPE, ALLOC_INIT_ZERO, DATA, cpuid, ALLOC_FROM_TAIL, true);
+			NOVA_DEFAULT_BLOCK_TYPE, ALLOC_INIT_ZERO, DATA, cpuid, ALLOC_FROM_TAIL, !cache);
 		// struct free_list *free_list = nova_get_free_list(sb, cpuid);
 		// spin_lock(&free_list->s_lock);
 		// allocated = nova_alloc_blocks_in_free_list(sb, free_list, 
