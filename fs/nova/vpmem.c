@@ -557,7 +557,7 @@ struct pgcache_node *pgcache_insert(unsigned long address, struct mm_struct *mm,
             // mutex_unlock(&p->lock);
             mutex_unlock(&vsbi->vpmem_rb_mutex[index]);
 
-            pgcache_lru_refer(p);
+            // pgcache_lru_refer(p);
 
             already_cached++;
             return p;
