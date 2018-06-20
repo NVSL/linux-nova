@@ -792,6 +792,10 @@ inline int nova_new_data_blocks(struct super_block *sb,
 	// 		blocknr, num, ALLOC_FROM_HEAD);
 	// }
 
+	while (is_pmem_usage_too_high(NOVA_SB(sb))) {
+		schedule();
+	}
+	
 	NOVA_START_TIMING(new_data_blocks_t, alloc_time);
 	allocated = nova_new_blocks(sb, blocknr, num,
 			    sih->i_blk_type, zero, DATA, cpu, from_tail, false);
@@ -819,6 +823,10 @@ inline int nova_new_log_blocks(struct super_block *sb,
 {
 	int allocated;
 	timing_t alloc_time;
+
+	while (is_pmem_usage_too_high(NOVA_SB(sb))) {
+		schedule();
+	}
 
 	NOVA_START_TIMING(new_log_blocks_t, alloc_time);
 	allocated = nova_new_blocks(sb, blocknr, num,

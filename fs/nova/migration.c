@@ -1077,6 +1077,16 @@ bool is_pmem_usage_really_high(struct nova_sb_info *sbi) {
     return used * 100 > MIGRATION_FORCE_PERC * total;
 }
 
+// Used for log allocation
+bool is_pmem_usage_too_high(struct nova_sb_info *sbi) {
+    unsigned long used = nova_pmem_used(sbi);
+    unsigned long total = nova_pmem_total(sbi);
+    // Usage high: used / total > MIGRATION_FORCE_PERC / 100
+    if (DEBUG_FORE_ALLOC) nova_info("PMEM usage: U:%8lu G:%8lu T:%8lu.\n",
+        used, MIGRATION_MAX_PERC * total / 100, total);
+    return used * 100 > MIGRATION_MAX_PERC * total;
+}
+
 unsigned long nova_bdev_used(struct nova_sb_info *sbi, int tier) {
     unsigned long used = 0;
     int i;

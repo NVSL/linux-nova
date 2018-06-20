@@ -953,7 +953,7 @@ prof:
 						allocated, blocknr);
         
 		if (allocated <= 0) {
-			nova_info("Error: allocated: %d\n", allocated);
+			nova_info("Error: tier: %d allocated: %d\n", write_tier, allocated);
 			nova_dbg("%s alloc blocks failed %d\n", __func__,
 								allocated);
 			ret = allocated;
