@@ -457,6 +457,7 @@ bool is_pgn_dirty(struct pgcache_node *pgn) {
     pte_t *ptep;
     if (!pgn) return false;
     if (!pgn->page) return false;
+    if (!vpmem_valid_address(pgn->address)) return false;
     ptep = vpmem_get_pte(pgn);    
     if (!ptep) return false;
     return pte_dirty(*ptep) != 0;
