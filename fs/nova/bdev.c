@@ -735,7 +735,7 @@ static int nova_get_candidate_bdev_free_list(struct super_block *sb, int tier)
  * num_block: Number of blocks of the request
  * from_tail: Direction
  */ 
-static long nova_new_blocks_from_bdev(struct super_block *sb, int tier, 
+long nova_new_blocks_from_bdev(struct super_block *sb, int tier, 
 	unsigned long *blocknr,	unsigned int num_blocks, int cpuid, 
 	enum nova_alloc_direction from_tail, bool cache) {
 

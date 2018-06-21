@@ -823,14 +823,38 @@ inline int nova_new_log_blocks(struct super_block *sb,
 {
 	int allocated;
 	timing_t alloc_time;
+	int timed = 0;
+    unsigned long used = 0;
+	bool tier_bdev = false;
 
 	while (is_pmem_usage_too_high(NOVA_SB(sb))) {
+		if (timed == 0) {
+			timed = current_kernel_time().tv_sec;
+			used = nova_pmem_used(NOVA_SB(sb));
+			continue;
+		}
+		if (current_kernel_time().tv_sec - timed > 10) {
+			if (used == nova_pmem_used(NOVA_SB(sb))) {
+				nova_info("Warning in nova_new_log_blocks\n");
+				tier_bdev = true;
+			}
+			else {
+				timed = current_kernel_time().tv_sec;
+				used = nova_pmem_used(NOVA_SB(sb));
+			}
+		}
 		schedule();
 	}
 
 	NOVA_START_TIMING(new_log_blocks_t, alloc_time);
-	allocated = nova_new_blocks(sb, blocknr, num,
-			    sih->i_blk_type, zero, LOG, cpu, from_tail, false);
+	if (unlikely(tier_bdev)) {
+		allocated = nova_new_blocks_from_bdev(sb, TIER_BDEV_HIGH, blocknr, 
+			num, cpu, from_tail, false);
+	}
+	else {
+		allocated = nova_new_blocks(sb, blocknr, num,
+			sih->i_blk_type, zero, LOG, cpu, from_tail, false);
+	}
 	NOVA_END_TIMING(new_log_blocks_t, alloc_time);
 	if (allocated < 0) {
 		nova_dbgv("%s: ino %lu, failed to alloc %d log blocks",
