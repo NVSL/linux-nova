@@ -792,7 +792,7 @@ inline int nova_new_data_blocks(struct super_block *sb,
 	// 		blocknr, num, ALLOC_FROM_HEAD);
 	// }
 
-	while (is_pmem_usage_too_high(NOVA_SB(sb))) {
+	while (unlikely(is_pmem_usage_too_high(NOVA_SB(sb)))) {
 		schedule();
 	}
 	
@@ -827,7 +827,7 @@ inline int nova_new_log_blocks(struct super_block *sb,
     unsigned long used = 0;
 	bool tier_bdev = false;
 
-	while (is_pmem_usage_too_high(NOVA_SB(sb))) {
+	while (unlikely(is_pmem_usage_too_high(NOVA_SB(sb)))) {
 		if (timed == 0) {
 			timed = current_kernel_time().tv_sec;
 			used = nova_pmem_used(NOVA_SB(sb));

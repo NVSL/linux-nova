@@ -11,6 +11,17 @@ struct tiering_stat {
 	unsigned long read;
 	unsigned long mig_group;
 	unsigned long mig_interrupt;
+
+	bool pgcache_large;
+	bool pgcache_ideal;
+	bool pgcache_quite_small;
+	bool *pgcache_very_small;
+	bool *pgcache_small;
+
+	bool *tier_usage_quite_high;
+	bool *tier_usage_high;
+	bool *tier_usage_really_high;
+	bool *tier_usage_too_high;
 };
 
 /*

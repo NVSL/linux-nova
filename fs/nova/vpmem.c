@@ -247,28 +247,56 @@ inline int pgc_total_size(void) {
     return ret;
 }
 
+inline void set_is_pgcache_large(void) {
+    vsbi->stat->pgcache_large =  pgc_total_size() > VPMEM_MAX_PAGES_QTR * 4 * TIER_BDEV_HIGH * vsbi->cpus;
+}
+
+inline void set_is_pgcache_ideal(void) {
+    vsbi->stat->pgcache_ideal = pgc_total_size() * 100 < MIGRATION_IDEAL_PERC * VPMEM_MAX_PAGES_QTR * 4 * TIER_BDEV_HIGH * vsbi->cpus;
+}
+
+inline void set_is_pgcache_quite_small(void) {
+    vsbi->stat->pgcache_quite_small = pgc_total_size() * 100 < (MIGRATION_IDEAL_PERC+10) * VPMEM_MAX_PAGES_QTR * 4 * TIER_BDEV_HIGH * vsbi->cpus;
+}
+
+// Exit write back
+void set_is_pgcache_very_small(void) {
+    int i;
+    for (i=0; i<vsbi->cpus; ++i) {
+        vsbi->stat->pgcache_very_small[i] = is_pgcache_quite_small() ||
+            atomic_read(&vsbi->pgcache_size[i]) <= VPMEM_MAX_PAGES_QTR * 3;
+    }
+}
+
+// Enter write back
+void set_is_pgcache_small(void) {
+    int i;
+    for (i=0; i<vsbi->cpus; ++i) {
+        vsbi->stat->pgcache_small[i] = is_pgcache_quite_small() ||
+            atomic_read(&vsbi->pgcache_size[i]) <= VPMEM_MAX_PAGES_QTR * 3 + VPMEM_RES_PAGES;
+    }
+}
+
 inline bool is_pgcache_large(void) {
-    return pgc_total_size() > VPMEM_MAX_PAGES_QTR * 4 * TIER_BDEV_HIGH * vsbi->cpus;
+    return vsbi->stat->pgcache_large;
 }
 
 inline bool is_pgcache_ideal(void) {
-    return pgc_total_size() * 100 < MIGRATION_IDEAL_PERC * VPMEM_MAX_PAGES_QTR * 4 * TIER_BDEV_HIGH * vsbi->cpus;
+    return vsbi->stat->pgcache_ideal;
 }
 
 inline bool is_pgcache_quite_small(void) {
-    return pgc_total_size() * 100 < (MIGRATION_IDEAL_PERC+10) * VPMEM_MAX_PAGES_QTR * 4 * TIER_BDEV_HIGH * vsbi->cpus;
+    return vsbi->stat->pgcache_quite_small;
 }
 
 // Exit write back
 inline bool is_pgcache_very_small(int index) {
-    return is_pgcache_quite_small() ||
-        atomic_read(&vsbi->pgcache_size[index]) <= VPMEM_MAX_PAGES_QTR * 3;
+    return vsbi->stat->pgcache_very_small[index];
 }
 
 // Enter write back
 inline bool is_pgcache_small(int index) {
-    return is_pgcache_quite_small() ||
-        atomic_read(&vsbi->pgcache_size[index]) <= VPMEM_MAX_PAGES_QTR * 3 + VPMEM_RES_PAGES;
+    return vsbi->stat->pgcache_small[index];
 }
 
 inline unsigned long virt_to_block(unsigned long address) {

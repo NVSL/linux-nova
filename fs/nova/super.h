@@ -202,6 +202,7 @@ struct nova_sb_info {
 
 	/* Background migration thread */
 	struct nova_kthread *bm_thread;	
+	struct nova_kthread *usage_thread;	
 
 	/* Free block list for block devices */
 	struct bdev_free_list *bdev_free_list;

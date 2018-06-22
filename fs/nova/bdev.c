@@ -214,6 +214,12 @@ void print_a_page(void* addr) {
 int nova_init_tiering_stat(struct super_block *sb) {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
     sbi->stat = kzalloc(sizeof(struct tiering_stat), GFP_KERNEL);
+	sbi->stat->pgcache_very_small = kcalloc(sbi->cpus, sizeof(bool), GFP_KERNEL);
+	sbi->stat->pgcache_small = kcalloc(sbi->cpus, sizeof(bool), GFP_KERNEL);
+    sbi->stat->tier_usage_quite_high = kcalloc(TIER_BDEV_HIGH, sizeof(bool), GFP_KERNEL);
+    sbi->stat->tier_usage_high = kcalloc(TIER_BDEV_HIGH, sizeof(bool), GFP_KERNEL);
+    sbi->stat->tier_usage_really_high = kcalloc(TIER_BDEV_HIGH, sizeof(bool), GFP_KERNEL);
+    sbi->stat->tier_usage_too_high = kcalloc(TIER_BDEV_HIGH, sizeof(bool), GFP_KERNEL);
     return 0;
 }
 

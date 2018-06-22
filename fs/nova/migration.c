@@ -1048,43 +1048,23 @@ unsigned long nova_pmem_total(struct nova_sb_info *sbi) {
 }
 
 // Used for reverse migration
-bool is_pmem_usage_quite_high(struct nova_sb_info *sbi) {
-    unsigned long used = nova_pmem_used(sbi);
-    unsigned long total = nova_pmem_total(sbi);
-    // Usage high: used / total > (MIGRATION_DOWN_PMEM_PERC-10) / 100
-    if (DEBUG_MIGRATION) nova_info("PMEM usage: U:%8lu G:%8lu T:%8lu.\n",
-        used, (MIGRATION_DOWN_PMEM_PERC-10) * total / 100, total);
-    return used * 100 > (MIGRATION_DOWN_PMEM_PERC-10) * total;
+inline bool is_pmem_usage_quite_high(struct nova_sb_info *sbi) {
+    return sbi->stat->tier_usage_quite_high[TIER_PMEM];
 }
 
 // Used for migration
-bool is_pmem_usage_high(struct nova_sb_info *sbi) {
-    unsigned long used = nova_pmem_used(sbi);
-    unsigned long total = nova_pmem_total(sbi);
-    // Usage high: used / total > MIGRATION_DOWN_PMEM_PERC / 100
-    if (DEBUG_MIGRATION) nova_info("PMEM usage: U:%8lu G:%8lu T:%8lu.\n",
-        used, MIGRATION_DOWN_PMEM_PERC * total / 100, total);
-    return used * 100 > MIGRATION_DOWN_PMEM_PERC * total;
+inline bool is_pmem_usage_high(struct nova_sb_info *sbi) {
+    return sbi->stat->tier_usage_high[TIER_PMEM];
 }
 
 // Used for foreground allocation
-bool is_pmem_usage_really_high(struct nova_sb_info *sbi) {
-    unsigned long used = nova_pmem_used(sbi);
-    unsigned long total = nova_pmem_total(sbi);
-    // Usage high: used / total > MIGRATION_FORCE_PERC / 100
-    if (DEBUG_FORE_ALLOC) nova_info("PMEM usage: U:%8lu G:%8lu T:%8lu.\n",
-        used, MIGRATION_FORCE_PERC * total / 100, total);
-    return used * 100 > MIGRATION_FORCE_PERC * total;
+inline bool is_pmem_usage_really_high(struct nova_sb_info *sbi) {
+    return sbi->stat->tier_usage_really_high[TIER_PMEM];
 }
 
 // Used for log allocation
-bool is_pmem_usage_too_high(struct nova_sb_info *sbi) {
-    unsigned long used = nova_pmem_used(sbi);
-    unsigned long total = nova_pmem_total(sbi);
-    // Usage high: used / total > MIGRATION_FORCE_PERC / 100
-    if (DEBUG_FORE_ALLOC) nova_info("PMEM usage: U:%8lu G:%8lu T:%8lu.\n",
-        used, MIGRATION_MAX_PERC * total / 100, total);
-    return used * 100 > MIGRATION_MAX_PERC * total;
+inline bool is_pmem_usage_too_high(struct nova_sb_info *sbi) {
+    return sbi->stat->tier_usage_too_high[TIER_PMEM];
 }
 
 unsigned long nova_bdev_used(struct nova_sb_info *sbi, int tier) {
@@ -1110,33 +1090,18 @@ unsigned long nova_bdev_total(struct nova_sb_info *sbi, int tier) {
 }
 
 // Used for reverse migration
-bool is_bdev_usage_quite_high(struct nova_sb_info *sbi, int tier) {
-    unsigned long used = nova_bdev_used(sbi, tier);
-    unsigned long total = nova_bdev_total(sbi, tier);
-    // Usage high: used / total > (MIGRATION_DOWN_BDEV_PERC-10) / 100
-    if (DEBUG_MIGRATION) nova_info("B-T%d usage: U:%8lu G:%8lu T:%8lu.\n", 
-        tier, used, (MIGRATION_DOWN_BDEV_PERC-10) * total / 100, total);
-    return used * 100 > (MIGRATION_DOWN_BDEV_PERC-10) * total;
+inline bool is_bdev_usage_quite_high(struct nova_sb_info *sbi, int tier) {
+    return sbi->stat->tier_usage_quite_high[tier];
 }
 
 // Used for migration
-bool is_bdev_usage_high(struct nova_sb_info *sbi, int tier) {
-    unsigned long used = nova_bdev_used(sbi, tier);
-    unsigned long total = nova_bdev_total(sbi, tier);
-    // Usage high: used / total > MIGRATION_DOWN_BDEV_PERC / 100
-    if (DEBUG_MIGRATION) nova_info("B-T%d usage: U:%8lu G:%8lu T:%8lu.\n", 
-        tier, used, MIGRATION_DOWN_BDEV_PERC * total / 100, total);
-    return used * 100 > MIGRATION_DOWN_BDEV_PERC * total;
+inline bool is_bdev_usage_high(struct nova_sb_info *sbi, int tier) {
+    return sbi->stat->tier_usage_high[tier];
 }
 
 // Used for foreground allocation
-bool is_bdev_usage_really_high(struct nova_sb_info *sbi, int tier) {
-    unsigned long used = nova_bdev_used(sbi, tier);
-    unsigned long total = nova_bdev_total(sbi, tier);
-    // Usage high: used / total > MIGRATION_FORCE_PERC / 100
-    if (DEBUG_FORE_ALLOC) nova_info("B-T%d usage: U:%8lu G:%8lu T:%8lu.\n", 
-        tier, used, MIGRATION_FORCE_PERC * total / 100, total);
-    return used * 100 > MIGRATION_FORCE_PERC * total;
+inline bool is_bdev_usage_really_high(struct nova_sb_info *sbi, int tier) {
+    return sbi->stat->tier_usage_really_high[tier];
 }
 
 inline bool is_tier_usage_really_high(struct nova_sb_info *sbi, int tier) {
@@ -1547,7 +1512,7 @@ int start_bm_thread(struct nova_sb_info *sbi) {
 	int i, err = 0;
     int cpus = sbi->cpus;
     char stmp[100] = {0};
-
+    
 	sbi->bm_thread = NULL;
 	/* Initialize background migration kthread */
 	bm_thread = kcalloc(cpus, sizeof(struct nova_kthread), GFP_KERNEL);
@@ -1584,5 +1549,129 @@ void stop_bm_thread(struct nova_sb_info *sbi) {
 	    for (i=0; i<sbi->cpus; ++i) kthread_stop(sbi->bm_thread[i].nova_task);
 		kfree(sbi->bm_thread);
 		sbi->bm_thread = NULL;
+	}
+}
+
+int nova_update_usage(struct super_block *sb) {
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+    unsigned long used;
+    unsigned long total;
+    int tier;
+    // nova_info("usage\n");
+
+    /* VPMEM usage */
+    set_is_pgcache_large();
+    set_is_pgcache_ideal();
+    set_is_pgcache_quite_small();
+    set_is_pgcache_very_small();
+    set_is_pgcache_small();
+
+    /* PMEM usage */
+    used = nova_pmem_used(sbi);
+    total = nova_pmem_total(sbi);
+    // Usage high: used / total > (MIGRATION_DOWN_PMEM_PERC-10) / 100
+    if (DEBUG_MIGRATION) nova_info("PMEM usage: U:%8lu G:%8lu T:%8lu.\n",
+        used, (MIGRATION_DOWN_PMEM_PERC-10) * total / 100, total);
+    sbi->stat->tier_usage_quite_high[TIER_PMEM]
+        = used * 100 > (MIGRATION_DOWN_PMEM_PERC-10) * total;
+    // Usage high: used / total > MIGRATION_DOWN_PMEM_PERC / 100
+    if (DEBUG_MIGRATION) nova_info("PMEM usage: U:%8lu G:%8lu T:%8lu.\n",
+        used, MIGRATION_DOWN_PMEM_PERC * total / 100, total);
+    sbi->stat->tier_usage_high[TIER_PMEM] 
+        = used * 100 > MIGRATION_DOWN_PMEM_PERC * total;
+    // Usage high: used / total > MIGRATION_FORCE_PERC / 100
+    if (DEBUG_MIGRATION) nova_info("PMEM usage: U:%8lu G:%8lu T:%8lu.\n",
+        used, MIGRATION_FORCE_PERC * total / 100, total);
+    sbi->stat->tier_usage_really_high[TIER_PMEM]
+        = used * 100 > MIGRATION_FORCE_PERC * total;
+    // Usage high: used / total > MIGRATION_MAX_PERC / 100
+    if (DEBUG_MIGRATION) nova_info("PMEM usage: U:%8lu G:%8lu T:%8lu.\n",
+        used, MIGRATION_MAX_PERC * total / 100, total);
+    sbi->stat->tier_usage_too_high[TIER_PMEM]
+        = used * 100 > MIGRATION_MAX_PERC * total;
+
+    /* BDEV usage */
+    for (tier = TIER_BDEV_LOW; tier<= TIER_BDEV_HIGH; ++tier) {
+        used = nova_bdev_used(sbi, tier);
+        total = nova_bdev_total(sbi, tier);
+        // Usage high: used / total > (MIGRATION_DOWN_BDEV_PERC-10) / 100
+        if (DEBUG_MIGRATION) nova_info("B-T%d usage: U:%8lu G:%8lu T:%8lu.\n", 
+            tier, used, (MIGRATION_DOWN_BDEV_PERC-10) * total / 100, total);
+        sbi->stat->tier_usage_quite_high[tier]
+            = used * 100 > (MIGRATION_DOWN_BDEV_PERC-10) * total;
+        // Usage high: used / total > MIGRATION_DOWN_BDEV_PERC / 100
+        if (DEBUG_MIGRATION) nova_info("B-T%d usage: U:%8lu G:%8lu T:%8lu.\n", 
+            tier, used, MIGRATION_DOWN_BDEV_PERC * total / 100, total);
+        sbi->stat->tier_usage_high[tier]
+            = used * 100 > MIGRATION_DOWN_BDEV_PERC * total;
+        // Usage high: used / total > MIGRATION_FORCE_PERC / 100
+        if (DEBUG_MIGRATION) nova_info("B-T%d usage: U:%8lu G:%8lu T:%8lu.\n", 
+            tier, used, MIGRATION_FORCE_PERC * total / 100, total);
+        sbi->stat->tier_usage_really_high[tier]
+            = used * 100 > MIGRATION_FORCE_PERC * total;
+        // Usage high: used / total > MIGRATION_MAX_PERC / 100
+        if (DEBUG_MIGRATION) nova_info("B-T%d usage: U:%8lu G:%8lu T:%8lu.\n",
+            tier, used, MIGRATION_MAX_PERC * total / 100, total);
+        sbi->stat->tier_usage_too_high[tier]
+            = used * 100 > MIGRATION_MAX_PERC * total;        
+    }
+    return 0;
+}
+
+void wake_up_usage(struct nova_sb_info *sbi) {
+	if (sbi->usage_thread) {
+		smp_mb();
+        wake_up_process(sbi->usage_thread->nova_task);
+	}
+}
+
+static int usage_thread_func(void *data) {
+	struct nova_sb_info *sbi = data;
+	struct super_block *sb = sbi->sb;
+    do {
+		schedule_timeout_interruptible(msecs_to_jiffies(USAGE_THREAD_SLEEP_TIME));
+        if (DEBUG_KTHREAD) nova_info("---- [Usage Migration Thread] ----\n");
+        nova_update_usage(sb);
+    } while(!kthread_should_stop());  
+    return 0;
+}
+
+int start_usage_thread(struct nova_sb_info *sbi) {
+	struct nova_kthread *usage_thread = NULL;
+	int err = 0;
+    char stmp[100] = "NOVA_USAGE";
+
+	sbi->usage_thread = NULL;
+	/* Initialize background usage info kthread */
+	usage_thread = kzalloc(sizeof(struct nova_kthread), GFP_KERNEL);
+	if (!usage_thread) {
+		return -ENOMEM;
+	}
+
+    init_waitqueue_head(&(usage_thread->wait_queue_head));
+    // sprintf(&stmp[0], "NOVA_USAGE");
+    usage_thread->nova_task = kthread_create(usage_thread_func, sbi, stmp);
+    kthread_bind(usage_thread->nova_task, sbi->cpus/2);
+
+    if (IS_ERR(usage_thread->nova_task)) {
+        err = PTR_ERR(usage_thread->nova_task);
+        goto free;
+    }
+
+	sbi->usage_thread = usage_thread;
+    wake_up_usage(sbi);
+
+	return 0;
+
+free:
+	kfree(usage_thread);
+	return err;
+}
+
+void stop_usage_thread(struct nova_sb_info *sbi) {
+	if (sbi->usage_thread) {		
+	    kthread_stop(sbi->usage_thread->nova_task);
+		kfree(sbi->usage_thread);
+		sbi->usage_thread = NULL;
 	}
 }

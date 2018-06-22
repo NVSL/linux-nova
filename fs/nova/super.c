@@ -850,6 +850,10 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 
 	if (DEBUG_STARTUP_TEST) bdev_test(sbi);
 
+	retval = start_usage_thread(sbi);
+	if (retval)
+		goto out;
+
 	retval = start_bm_thread(sbi);
 	if (retval)
 		goto out;
@@ -1195,6 +1199,7 @@ static void nova_put_super(struct super_block *sb)
 	nova_print_curr_epoch_id(sb);
 
 	stop_bm_thread(sbi);
+	stop_usage_thread(sbi);
 	
 	vpmem_put();
 	

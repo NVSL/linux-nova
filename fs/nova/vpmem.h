@@ -42,6 +42,12 @@ int vpmem_renew_pages(void *addr, unsigned long address, unsigned long count);
 void *vpmem_lru_refer(unsigned long vaddr);
 unsigned long vpmem_cached(unsigned long vaddr, unsigned long count);        // To check if a particular page is present in the cache
 
+inline void set_is_pgcache_large(void);
+inline void set_is_pgcache_ideal(void);
+inline void set_is_pgcache_quite_small(void);
+void set_is_pgcache_very_small(void);
+void set_is_pgcache_small(void);
+
 // int vpmem_range_rwsem_set(unsigned long vaddr, unsigned long count, bool down);
 // bool vpmem_is_range_rwsem_locked(unsigned long vaddr, unsigned long count);
 
