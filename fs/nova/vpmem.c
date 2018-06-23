@@ -193,7 +193,8 @@ struct pgcache_node {
     struct rb_node rb_node;
     struct mm_struct *mm;
     int index;
-	u64	padding[3];
+    pte_t *pte;
+	u64	padding[2];
     // struct mutex lock;
 };
 
@@ -483,11 +484,10 @@ void pgcache_lru_refer(struct pgcache_node *pgn) {
 
 bool is_pgn_dirty(struct pgcache_node *pgn) {
     pte_t *ptep;
-    unsigned long address = pgn->address;
     if (!pgn) return false;
     if (!pgn->page) return false;
-    if (!vpmem_valid_address(address)) return false;
-    ptep = vpmem_get_pte_addr(address);
+    if (!vpmem_valid_address(pgn->address)) return false;
+    ptep = vpmem_get_pte(pgn);
     if (!ptep) return false;
     return pte_dirty(*ptep) != 0;
 }
@@ -1126,7 +1126,8 @@ pte_t *pte_lookup(pgd_t *pgd, unsigned long address)
 }
 
 inline pte_t *vpmem_get_pte(struct pgcache_node *pgn) {
-    return pte_lookup(pgd_offset_k(pgn->address), pgn->address);
+    return pgn->pte;
+    // return pte_lookup(pgd_offset_k(pgn->address), pgn->address);
 }
 
 inline pte_t *vpmem_get_pte_addr(unsigned long address) {
@@ -1158,11 +1159,10 @@ bool insert_tlb(struct pgcache_node *pgn) {
     *pte = pte_mkclean(*pte);
 
     set_pte(pte, ptein);
+    pgn->pte = pte;
     spin_unlock(&mm->page_table_lock);
 
     __flush_tlb_one(address);
-
-    set_pgn_clean_addr(address);
 
     smp_mb();
 
