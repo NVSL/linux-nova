@@ -827,6 +827,7 @@ inline int nova_new_log_blocks(struct super_block *sb,
     unsigned long used = 0;
 	bool tier_bdev = false;
 
+retry:
 	while (unlikely(is_pmem_usage_too_high(NOVA_SB(sb)))) {
 		if (timed == 0) {
 			timed = current_kernel_time().tv_sec;
@@ -859,6 +860,8 @@ inline int nova_new_log_blocks(struct super_block *sb,
 	if (allocated < 0) {
 		nova_dbgv("%s: ino %lu, failed to alloc %d log blocks",
 			  __func__, sih->ino, num);
+		schedule();
+		goto retry;
 	} else {
 		nova_dbgv("%s: ino %lu, alloc %d of %d log blocks %lu to %lu\n",
 			  __func__, sih->ino, allocated, num, *blocknr,

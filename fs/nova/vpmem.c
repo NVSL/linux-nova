@@ -483,10 +483,11 @@ void pgcache_lru_refer(struct pgcache_node *pgn) {
 
 bool is_pgn_dirty(struct pgcache_node *pgn) {
     pte_t *ptep;
+    unsigned long address = pgn->address;
     if (!pgn) return false;
     if (!pgn->page) return false;
-    if (!vpmem_valid_address(pgn->address)) return false;
-    ptep = vpmem_get_pte(pgn);    
+    if (!vpmem_valid_address(address)) return false;
+    ptep = vpmem_get_pte_addr(address);
     if (!ptep) return false;
     return pte_dirty(*ptep) != 0;
 }
