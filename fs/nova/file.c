@@ -794,7 +794,7 @@ out:
 static ssize_t nova_dax_file_read(struct file *filp, char __user *buf,
 			    size_t len, loff_t *ppos)
 {
-	struct inode *inode = filp->f_mapping->host;
+	// struct inode *inode = filp->f_mapping->host;
 	ssize_t res;
 	timing_t dax_read_time;
 

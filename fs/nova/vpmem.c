@@ -463,12 +463,12 @@ inline bool is_pgcache_hint_hit(struct pgcache_node *hint, unsigned long address
 
 struct pgcache_node *pgcache_get_hint(struct pgcache_node *prev) {
     struct rb_node *n;
-    // int index;
+    int index;
     if (!prev) return NULL;
-    // index = vpmem_get_pgn_index(prev);
-    // mutex_lock(&vsbi->vpmem_rb_mutex[index]);
+    index = vpmem_get_pgn_index(prev);
+    mutex_lock(&vsbi->vpmem_rb_mutex[index]);
     n = rb_next(&prev->rb_node);
-    // mutex_unlock(&vsbi->vpmem_rb_mutex[index]);
+    mutex_unlock(&vsbi->vpmem_rb_mutex[index]);
     if (!n) return NULL;
     return container_of(n, struct pgcache_node, rb_node);
 }
@@ -833,9 +833,9 @@ int get_wb_smart_range(struct pgcache_node *pgn, unsigned long *start_addr) {
         if (!tpgn || !tpgn->page || !list_empty(&tpgn->evict_node)) break;
         count1++;
         address += PAGE_SIZE;
-        // mutex_lock(&vsbi->vpmem_rb_mutex[index]);
+        mutex_lock(&vsbi->vpmem_rb_mutex[index]);
         rbn = rb_next(&tpgn->rb_node);
-        // mutex_unlock(&vsbi->vpmem_rb_mutex[index]);
+        mutex_unlock(&vsbi->vpmem_rb_mutex[index]);
         if (!rbn) break;
         tpgn = container_of(rbn, struct pgcache_node, rb_node);
     }
@@ -853,9 +853,9 @@ int get_wb_smart_range(struct pgcache_node *pgn, unsigned long *start_addr) {
     while (is_pgn_dirty(tpgn) && tpgn->address == address && tpgn->address >= begin) {
         if (!tpgn || !tpgn->page || !list_empty(&tpgn->evict_node)) break;
         count2++;
-        // mutex_lock(&vsbi->vpmem_rb_mutex[index]);
+        mutex_lock(&vsbi->vpmem_rb_mutex[index]);
         rbn = rb_prev(&tpgn->rb_node);
-        // mutex_unlock(&vsbi->vpmem_rb_mutex[index]);
+        mutex_unlock(&vsbi->vpmem_rb_mutex[index]);
         if (!rbn) break;
         tpgn = container_of(rbn, struct pgcache_node, rb_node);
         *start_addr = address;
@@ -1647,9 +1647,9 @@ int get_fault_smart_range(struct pgcache_node *pgn) {
     if (end > bflend) end = bflend;
 
     /* Count 1: address -> next */
-    // mutex_lock(&vsbi->vpmem_rb_mutex[index]);
+    mutex_lock(&vsbi->vpmem_rb_mutex[index]);
     rbn = rb_next(&pgn->rb_node);
-    // mutex_unlock(&vsbi->vpmem_rb_mutex[index]);
+    mutex_unlock(&vsbi->vpmem_rb_mutex[index]);
     if (rbn) {
         tpgn = container_of(rbn, struct pgcache_node, rb_node);
         if (tpgn) {
@@ -1663,9 +1663,9 @@ int get_fault_smart_range(struct pgcache_node *pgn) {
     while (tpgn->address == address && tpgn->address > begin) {
         count2++;
         address -= PAGE_SIZE;
-        // mutex_lock(&vsbi->vpmem_rb_mutex[index]);
+        mutex_lock(&vsbi->vpmem_rb_mutex[index]);
         rbn = rb_prev(&tpgn->rb_node);
-        // mutex_unlock(&vsbi->vpmem_rb_mutex[index]);
+        mutex_unlock(&vsbi->vpmem_rb_mutex[index]);
         if (!rbn) break;
         tpgn = container_of(rbn, struct pgcache_node, rb_node);
         if (!tpgn) break;
