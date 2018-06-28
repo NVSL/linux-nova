@@ -514,10 +514,16 @@ bool is_pgn_young_reset(struct pgcache_node *pgn) {
     else return false;
 }
 
+inline void wait_until_pgn_is_valid(struct pgcache_node *pgn) {
+    while (unlikely(pgn && !pgn->pte)) schedule();
+}
+
 int set_pgn_clean(struct pgcache_node *pgn) {
-    pte_t *ptep = vpmem_get_pte(pgn);
+    pte_t *ptep;
+    wait_until_pgn_is_valid(pgn);
+    ptep = vpmem_get_pte(pgn);
     if (unlikely(!ptep)) {
-        nova_info("Error in set_pgn_clean\n");
+        nova_info("Error in set_pgn_clean %lx\n", pgn->address);
         return -1;
     }
 	*ptep = pte_mkclean(*ptep);
@@ -1267,7 +1273,6 @@ int vpmem_flush_pages_sync(unsigned long address, unsigned long count) {
 }
 
 /*
- * TODO: Range
  * APIs for VPMEM writeback
  * |             | Has writeback |  Valid after  |
  * | Write_back  |      Yes      |      Yes      | 
@@ -1551,6 +1556,7 @@ again:
     }  
     mutex_unlock(&vsbi->vpmem_evict_mutex[index]);
 
+    wait_until_pgn_is_valid(pgn);
     vpmem_clear_pgn(pgn, index);
     goto again;
 
@@ -1778,7 +1784,7 @@ bool vpmem_do_page_fault_range(unsigned long address, unsigned long address_end,
 next:
     if (address > address_end) return true;
 
-    minr = ((address_end-address)>>PAGE_SHIFT) + 1;   
+    minr = ((address_end-address)>>PAGE_SHIFT) + 1;
     maxr = (int)entry_end;
  
     pgn = pgcache_insert(address, current_mm, &new);
