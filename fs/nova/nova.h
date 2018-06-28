@@ -350,7 +350,6 @@ static inline void memset_nt(void *dest, uint32_t dword, size_t length)
 		: "memory", "rcx");
 }
 
-
 #include "super.h" // Remove when we factor out these and other functions.
 
 /* Translate an offset the beginning of the Nova instance to a PMEM address.
@@ -622,8 +621,68 @@ struct nova_kthread {
 
 #include "log.h"
 
+#include "balloc.h"
+
+static inline struct nova_file_write_entry *
+nova_get_or_lock_write_entry(struct super_block *sb,
+	struct nova_inode_info_header *sih, unsigned long blocknr, int lock)
+{
+	struct nova_file_write_entry *entry;
+	void **entryp;
+
+	rcu_read_lock();
+repeat:
+	entry = NULL;
+	entryp = radix_tree_lookup_slot(&sih->tree, blocknr);
+	if (entryp) {
+		entry = radix_tree_deref_slot(entryp);
+		if (unlikely(!entry))
+			goto out;
+
+		if (radix_tree_exception(entry)) {
+			if (radix_tree_deref_retry(entry))
+				goto repeat;
+
+			/* FIXME: What to do here? */
+			entry = NULL;
+			goto out;
+		}
+
+		if (lock) {
+			if (!lock_write_entry(entry))
+				goto repeat;
+		} else {
+			if (!get_write_entry(entry))
+				goto repeat;
+		}
+
+		if (unlikely(entry != *entryp)) {
+			put_write_entry(entry);
+			goto repeat;
+		}
+	}
+out:
+	rcu_read_unlock();
+
+	return entry;
+}
+
 static inline struct nova_file_write_entry *
 nova_get_write_entry(struct super_block *sb,
+	struct nova_inode_info_header *sih, unsigned long blocknr)
+{
+	return nova_get_or_lock_write_entry(sb, sih, blocknr, 0);
+}
+
+static inline struct nova_file_write_entry *
+nova_lock_write_entry(struct super_block *sb,
+	struct nova_inode_info_header *sih, unsigned long blocknr)
+{
+	return nova_get_or_lock_write_entry(sb, sih, blocknr, 1);
+}
+
+static inline struct nova_file_write_entry *
+nova_get_write_entry_lockfree(struct super_block *sb,
 	struct nova_inode_info_header *sih, unsigned long blocknr)
 {
 	struct nova_file_write_entry *entry;
@@ -710,7 +769,7 @@ static inline u64 nova_find_nvmm_block(struct super_block *sb,
 	struct nova_file_write_entry *entryc, entry_copy;
 
 	if (!entry) {
-		entry = nova_get_write_entry(sb, sih, blocknr);
+		entry = nova_get_write_entry_lockfree(sb, sih, blocknr);
 		if (!entry)
 			return 0;
 	}
@@ -967,8 +1026,6 @@ static inline int is_dir_init_entry(struct super_block *sb,
 
 	return 0;
 }
-
-#include "balloc.h" // remove once we move the following functions away
 
 /* Checksum methods */
 static inline void *nova_get_data_csum_addr(struct super_block *sb, u64 strp_nr,

@@ -886,7 +886,7 @@ int vpmem_prepare_page_array(unsigned long address, unsigned long count, struct 
             page_array[i] = pgn->page;
         }
         else {
-            nova_info("Warning in vpmem_prepare_page_array i %d count %lu\n", i, count);
+            nova_info("Warning in vpmem_prepare_page_array addr %lx i %d count %lu\n", address, i, count);
             break;
         }
         address += PAGE_SIZE;

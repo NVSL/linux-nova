@@ -280,7 +280,6 @@ int nova_delete_file_tree(struct super_block *sb,
 	u64 epoch_id)
 {
 	struct nova_file_write_entry *entry;
-	struct nova_file_write_entry *entryc, entry_copy;
 	struct nova_file_write_entry *old_entry = NULL;
 	unsigned long pgoff = start_blocknr;
 	unsigned long old_pgoff = 0;
@@ -291,14 +290,13 @@ int nova_delete_file_tree(struct super_block *sb,
 
 	NOVA_START_TIMING(delete_file_tree_t, delete_time);
 
-	entryc = (metadata_csum == 0) ? entry : &entry_copy;
-
 	/* Handle EOF blocks */
 	do {
-		entry = radix_tree_lookup(&sih->tree, pgoff);
+		entry = nova_lock_write_entry(sb, sih, pgoff);
 		if (entry) {
 			ret = radix_tree_delete(&sih->tree, pgoff);
-			BUG_ON(!ret || ret != entry);
+			unlock_write_entry(entry);
+			WARN_ON(!ret || ret != entry);
 			if (entry != old_entry) {
 				if (old_entry && delete_nvmm) {
 					nova_free_old_entry(sb, sih,
@@ -321,13 +319,9 @@ int nova_delete_file_tree(struct super_block *sb,
 			if (!entry)
 				break;
 
-			if (metadata_csum == 0)
-				entryc = entry;
-			else if (!nova_verify_entry_csum(sb, entry, entryc))
-				break;
-
 			pgoff++;
-			pgoff = pgoff > entryc->pgoff ? pgoff : entryc->pgoff;
+			pgoff = pgoff > entry->pgoff ? pgoff : entry->pgoff;
+			put_write_entry(entry);
 		}
 	} while (1);
 
@@ -435,18 +429,16 @@ static int nova_lookup_hole_in_range(struct super_block *sb,
 	int *data_found, int *hole_found, int hole)
 {
 	struct nova_file_write_entry *entry;
-	struct nova_file_write_entry *entryc, entry_copy;
 	unsigned long blocks = 0;
 	unsigned long pgoff, old_pgoff;
-
-	entryc = (metadata_csum == 0) ? entry : &entry_copy;
 
 	pgoff = first_blocknr;
 	while (pgoff <= last_blocknr) {
 		old_pgoff = pgoff;
-		entry = radix_tree_lookup(&sih->tree, pgoff);
+		entry = nova_get_write_entry(sb, sih, pgoff);
 		if (entry) {
 			*data_found = 1;
+			put_write_entry(entry);
 			if (!hole)
 				goto done;
 			pgoff++;
@@ -455,16 +447,11 @@ static int nova_lookup_hole_in_range(struct super_block *sb,
 			entry = nova_find_next_entry(sb, sih, pgoff);
 			pgoff++;
 			if (entry) {
-				if (metadata_csum == 0)
-					entryc = entry;
-				else if (!nova_verify_entry_csum(sb, entry,
-								entryc))
-					goto done;
-
-				pgoff = pgoff > entryc->pgoff ?
-					pgoff : entryc->pgoff;
+				pgoff = pgoff > entry->pgoff ?
+					pgoff : entry->pgoff;
 				if (pgoff > last_blocknr)
 					pgoff = last_blocknr + 1;
+				put_write_entry(entry);
 			}
 		}
 

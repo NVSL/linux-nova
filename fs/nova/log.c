@@ -189,6 +189,46 @@ out:
 struct nova_file_write_entry *nova_find_next_entry(struct super_block *sb,
 	struct nova_inode_info_header *sih, pgoff_t pgoff)
 {
+	struct nova_file_write_entry *entry;
+	void **entryp = NULL;
+	int nr_entries;
+
+	rcu_read_lock();
+repeat:
+	entry = NULL;
+	nr_entries = radix_tree_gang_lookup_slot(&sih->tree,
+					&entryp, NULL, pgoff, 1);
+	if (!entryp)
+		goto out;
+
+	entry = radix_tree_deref_slot(entryp);
+	if (unlikely(!entry))
+		goto out;
+
+	if (radix_tree_exception(entry)) {
+		if (radix_tree_deref_retry(entry))
+			goto repeat;
+
+		entry = NULL;
+		goto out;
+	}
+
+	if (!get_write_entry(entry))
+		goto repeat;
+
+	if (unlikely(entry != *entryp)) {
+		put_write_entry(entry);
+		goto repeat;
+	}
+
+out:
+	rcu_read_unlock();
+	return entry;
+}
+
+struct nova_file_write_entry *nova_find_next_entry_lockfree(struct super_block *sb,
+	struct nova_inode_info_header *sih, pgoff_t pgoff)
+{
 	struct nova_file_write_entry *entry = NULL;
 	struct nova_file_write_entry *entries[1];
 	int nr_entries;
@@ -211,9 +251,10 @@ void nova_clear_last_page_tail(struct super_block *sb,
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_inode_info *si = NOVA_I(inode);
 	struct nova_inode_info_header *sih = &si->header;
+	struct nova_file_write_entry *entry;
 	unsigned long offset = newsize & (sb->s_blocksize - 1);
 	unsigned long pgoff, length;
-	u64 nvmm;
+	unsigned long nvmm;
 	char *nvmm_addr;
 
 	if (offset == 0 || newsize > inode->i_size)
@@ -222,22 +263,16 @@ void nova_clear_last_page_tail(struct super_block *sb,
 	length = sb->s_blocksize - offset;
 	pgoff = newsize >> sb->s_blocksize_bits;
 
-	nvmm = nova_find_nvmm_block(sb, sih, NULL, pgoff);
-	if (nvmm == 0)
+	entry = nova_get_write_entry(sb, sih, pgoff);
+	if (!entry)
 		return;
 
-	nvmm_addr = (char *)nova_get_block(sb, nvmm);
-	nova_memunlock_range(sb, nvmm_addr + offset, length);
+	nvmm = get_nvmm(sb, sih, entry, pgoff);
+	nvmm_addr = (char *)nova_get_block(sb, nvmm << PAGE_SHIFT);
 	memcpy_to_pmem_nocache(nvmm_addr + offset, sbi->zeroed_page, length);
-	nova_memlock_range(sb, nvmm_addr + offset, length);
-
-	if (data_csum > 0)
-		nova_update_truncated_block_csum(sb, inode, newsize);
-	if (data_parity > 0)
-		nova_update_truncated_block_parity(sb, inode, newsize);
-
-	// reclaim_get_nvmm(sb, nvmm >> PAGE_SHIFT, NULL, pgoff);
+	put_write_entry(entry);
 }
+
 
 static void nova_update_setattr_entry(struct inode *inode,
 	struct nova_setattr_logentry *entry,
@@ -839,7 +874,10 @@ int nova_assign_write_entry(struct super_block *sb,
 				num_free++;
 			}
 
+			lock_write_entry(old_entry);
 			radix_tree_replace_slot(&sih->tree, pentry, entry);
+			unlock_write_entry(old_entry);
+			
 		} else {
 			ret = radix_tree_insert(&sih->tree, curr_pgoff, entry);
 			if (ret) {

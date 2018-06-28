@@ -126,9 +126,12 @@ int nova_handle_head_tail_blocks(struct super_block *sb,
 	nova_dbg_verbose("%s: start offset %lu start blk %lu %p\n", __func__,
 				offset, start_blk, kmem);
 	if (offset != 0) {
-		entry = nova_get_write_entry(sb, sih, start_blk);
+		entry = nova_get_write_entry_lockfree(sb, sih, start_blk);
 		ret = nova_handle_partial_block(sb, sih, entry,
 						start_blk, 0, offset, kmem);
+		// if (entry)
+		// 	put_write_entry(entry);
+
 		if (ret < 0)
 			return ret;
 	}
@@ -139,12 +142,15 @@ int nova_handle_head_tail_blocks(struct super_block *sb,
 	nova_dbg_verbose("%s: end offset %lu, end blk %lu %p\n", __func__,
 				eblk_offset, end_blk, kmem);
 	if (eblk_offset != 0) {
-		entry = nova_get_write_entry(sb, sih, end_blk);
+		entry = nova_get_write_entry_lockfree(sb, sih, end_blk);
 
 		ret = nova_handle_partial_block(sb, sih, entry, end_blk,
 						eblk_offset,
 						sb->s_blocksize - eblk_offset,
 						kmem);
+		// if (entry)
+		// 	put_write_entry(entry);
+
 		if (ret < 0)
 			return ret;
 	}
@@ -275,7 +281,7 @@ void nova_init_file_write_entry(struct super_block *sb,
 	entry->block = cpu_to_le64(nova_get_block_off(sb, blocknr,
 							sih->i_blk_type));
 	entry->mtime = cpu_to_le32(time);
-
+	entry->counter = 0;
 	entry->size = file_size;
 }
 
@@ -327,7 +333,7 @@ int nova_protect_file_data(struct super_block *sb, struct inode *inode,
 
 	if (offset != 0) {
 		NOVA_STATS_ADD(protect_head, 1);
-		entry = nova_get_write_entry(sb, sih, start_blk);
+		entry = nova_get_write_entry_lockfree(sb, sih, start_blk);
 		if (entry != NULL) {
 			if (metadata_csum == 0)
 				entryc = entry;
@@ -398,7 +404,7 @@ eblk:
 
 	if (eblk_offset != 0) {
 		NOVA_STATS_ADD(protect_tail, 1);
-		entry = nova_get_write_entry(sb, sih, end_blk);
+		entry = nova_get_write_entry_lockfree(sb, sih, end_blk);
 		if (entry != NULL) {
 			if (metadata_csum == 0)
 				entryc = entry;
@@ -501,7 +507,7 @@ unsigned long nova_check_existing_entry(struct super_block *sb,
 
 	*ret_entry = NULL;
 	*inplace = 0;
-	entry = nova_get_write_entry(sb, sih, start_blk);
+	entry = nova_get_write_entry_lockfree(sb, sih, start_blk);
 
 	entryc = (metadata_csum == 0) ? entry : ret_entryc;
 
@@ -872,7 +878,7 @@ int nova_check_overlap_vmas(struct super_block *sb,
 					num_pages, &start_pgoff, &num);
 		if (ret) {
 			for (i = 0; i < num; i++) {
-				if (nova_get_write_entry(sb, sih,
+				if (nova_get_write_entry_lockfree(sb, sih,
 							start_pgoff + i))
 					return 1;
 			}
@@ -938,8 +944,10 @@ again:
 			nvmm = get_nvmm(sb, sih, entryc, iblock);
 			nova_dbgv("%s: found pgoff %lu, block %lu\n",
 					__func__, iblock, nvmm);
+			put_write_entry(entry);
 			goto out;
 		}
+		put_write_entry(entry);
 	}
 
 	if (create == 0) {
@@ -1014,8 +1022,6 @@ out:
 	}
 
 	*bno = nvmm;
-
-	// reclaim_get_nvmm(sb, nvmm, entryc, iblock);
 //	if (num_blocks > 1)
 //		bh->b_size = sb->s_blocksize * num_blocks;
 

@@ -200,7 +200,7 @@ int nova_reset_csum_parity_range(struct super_block *sb,
 
 	for (pgoff = start_pgoff; pgoff < end_pgoff; pgoff++) {
 		if (entry && check_entry && zero == 0) {
-			curr = nova_get_write_entry(sb, sih, pgoff);
+			curr = nova_get_write_entry_lockfree(sb, sih, pgoff);
 			if (curr != entry)
 				continue;
 		}

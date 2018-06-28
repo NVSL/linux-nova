@@ -172,9 +172,12 @@ static int nova_gc_assign_file_entry(struct super_block *sb,
 		pentry = radix_tree_lookup_slot(&sih->tree, curr_pgoff);
 		if (pentry) {
 			temp = radix_tree_deref_slot(pentry);
-			if (temp == old_entry)
+			if (temp == old_entry) {
+				lock_write_entry(temp);
 				radix_tree_replace_slot(&sih->tree, pentry,
 							new_entry);
+				unlock_write_entry(temp);
+			}
 		}
 	}
 

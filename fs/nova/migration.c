@@ -192,7 +192,7 @@ int current_tier(struct inode *inode) {
     pgoff_t end_index = (isize) >> PAGE_SHIFT;
     if ( si == NULL || sih == NULL || end_index == 0 ) return -1;
     do {
-        entry = nova_find_next_entry(sb, sih, index);
+        entry = nova_find_next_entry_lockfree(sb, sih, index);
         if (entry) {
             return get_entry_tier(entry);
         }
@@ -229,7 +229,7 @@ int is_not_same_tier(struct inode *inode) {
     if ( si == NULL || sih == NULL || end_index == 0 ) return 1;
     do {
         // nova_info("%lu index %lu end_index %lu\n",inode->i_ino,index,end_index);
-        entry = nova_find_next_entry(sb, sih, index);
+        entry = nova_find_next_entry_lockfree(sb, sih, index);
         if (entry) {
             if (!exist) {
                 exist = true;
@@ -253,6 +253,11 @@ int is_not_same_tier(struct inode *inode) {
 }
 
 inline bool should_migrate_entry(struct nova_file_write_entry *entry, int to, bool force) {
+	atomic_t *counter = (atomic_t *)&entry->counter;
+    if (atomic_read(counter) != 0) {
+        // nova_info("counter %d\n", atomic_read(counter));
+        return false;
+    }
     if (force) return (get_entry_tier(entry)) != to;
     else return (get_entry_tier(entry)) < to;
 }
@@ -331,12 +336,12 @@ unsigned int valid_index_range(struct super_block *sb,
 	struct nova_file_write_entry *entry;
     unsigned long ret = 1;
 
-    entry = nova_find_next_entry(sb, sih, index);
+    entry = nova_find_next_entry_lockfree(sb, sih, index);
     if (!entry) {
         nova_info("valid entry not found\n");
         return 0;
     }
-    while (entry == nova_find_next_entry(sb, sih, index+ret)) ret++;
+    while (entry == nova_find_next_entry_lockfree(sb, sih, index+ret)) ret++;
     return ret;
 }
 
@@ -559,7 +564,7 @@ int migrate_group_entry_blocks(struct nova_sb_info *sbi, struct inode *inode, in
     }
     
     do {
-        entry = nova_find_next_entry(sb, sih, index);
+        entry = nova_find_next_entry_lockfree(sb, sih, index);
         if (entry) {            
             if (DEBUG_MIGRATION_ENTRY) 
                 nova_info("[Migration] Migrating (group) write entry with index:%lu (inode %lu)\n", index, sih->ino);
@@ -578,7 +583,7 @@ int migrate_group_entry_blocks(struct nova_sb_info *sbi, struct inode *inode, in
         else index++;
     } while (index < end_index);
 
-    entry_first = nova_get_write_entry(sb, sih, start_index);
+    entry_first = nova_find_next_entry_lockfree(sb, sih, start_index);
 
     if (DEBUG_MIGRATION_MERGE) nova_info("Merge entry: [Before] [entry] %llu,%llu,%u\n", 
         entry_first->block >> PAGE_SHIFT, entry_first->pgoff, entry_first->num_pages);
@@ -755,7 +760,7 @@ int migrate_a_file_by_entries(struct inode *inode, int to, bool force, pgoff_t i
             goto end;
         }
 
-        entry = nova_find_next_entry(sb, sih, index);
+        entry = nova_find_next_entry_lockfree(sb, sih, index);
         // nova_info("entry %p\n", entry);
         // nova_info("index:%lu ret:%d\n", index, ret);
 
@@ -782,7 +787,7 @@ int migrate_a_file_by_entries(struct inode *inode, int to, bool force, pgoff_t i
                         index, sih->ino);
                 ret = migrate_entry_blocks(sbi, to, si, entry, 0, &update, pgoff, num_pages);
             }
-            entryd = nova_find_next_entry(sb, sih, index);
+            entryd = nova_find_next_entry_lockfree(sb, sih, index);
             if (DEBUG_MIGRATION_ENTRY) {
                 if (entryd) print_a_write_entry(sb, entryd, 0);
                 else nova_info("entryd: %p\n", entryd);
@@ -889,7 +894,7 @@ next:
         //         nova_info("[Migration] Progress:%3d%% Index:%lu\n", 10*(progress++), index);
         // }
         do {
-            entry = nova_find_next_entry(sb, sih, index);
+            entry = nova_find_next_entry_lockfree(sb, sih, index);
             if (entry) {
                 if (get_entry_tier(entry) == to) {
                         goto mig;
@@ -955,7 +960,7 @@ next:
 mig: 
         index = i<<osb;
         do {
-            entry = nova_find_next_entry(sb, sih, index);
+            entry = nova_find_next_entry_lockfree(sb, sih, index);
             // nova_info("entry %p\n", entry);
             // nova_info("index:%lu ret:%d\n", index, ret);
 
@@ -1182,7 +1187,7 @@ struct inode *pop_an_inode_to_migrate_by_ino(struct nova_sb_info *sbi, int tier)
                 if (!ret) goto next;
                 si = NOVA_I(ret);
                 if (!si) goto next;
-                entry = nova_get_write_entry(sb, &si->header, 0);
+                entry = nova_find_next_entry_lockfree(sb, &si->header, 0);
                 if (!entry) goto next;
                 if (get_entry_tier(entry) == tier) {
                     if(DEBUG_MIGRATION) nova_info("Inode %lu is poped.\n",ino);

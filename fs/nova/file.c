@@ -136,6 +136,7 @@ int nova_fsync_range(struct inode *inode, unsigned long start_pgoff, unsigned lo
         if (entry) {            
             if (entry == last_entry) {
                 index++;
+				put_write_entry(entry);
                 continue;
             }
             if (entry->reassigned) {
@@ -150,6 +151,7 @@ int nova_fsync_range(struct inode *inode, unsigned long start_pgoff, unsigned lo
 				ret += nova_sync_entry_blocks(entry);
 			
             index = (pgoff + num_pages) > index+1 ? pgoff + num_pages : index+1;
+			put_write_entry(entry);
         }
         else {
             index++;
@@ -405,7 +407,10 @@ static long nova_fallocate(struct file *file, int mode, loff_t offset,
 				nova_memlock_range(sb, entry, CACHELINE_SIZE);
 			}
 			allocated = ent_blks;
+			put_write_entry(entry);
 			goto next;
+		} else if (entry) {
+			put_write_entry(entry);
 		}
 
 		/* Allocate zeroed blocks to fill hole */
@@ -743,6 +748,8 @@ skip_verify:
 
 		NOVA_END_TIMING(memcpy_r_nvmm_t, memcpy_time);
 
+		if (entry)
+			put_write_entry(entry);
 		// reclaim_get_nvmm(sb, nvmm, entry, index);
 		
 		// if (is_dram_buffer_addr(dax_mem)) {
@@ -792,9 +799,9 @@ static ssize_t nova_dax_file_read(struct file *filp, char __user *buf,
 	timing_t dax_read_time;
 
 	NOVA_START_TIMING(dax_read_t, dax_read_time);
-	inode_lock_shared(inode);
+	// inode_lock_shared(inode);
 	res = do_dax_mapping_read(filp, buf, len, ppos);
-	inode_unlock_shared(inode);
+	// inode_unlock_shared(inode);
 	NOVA_END_TIMING(dax_read_t, dax_read_time);
 	return res;
 }

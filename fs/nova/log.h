@@ -83,8 +83,8 @@ struct nova_file_write_entry {
 	__le64	size;           /* Write size for non-aligned writes */
 	__le64	epoch_id;
 	__le64	trans_id;
-	__le32	csumpadding;
 	__le32	csum;
+	__le32	counter;	/* Atomic counter for entry locking */
 } __attribute((__packed__));
 
 #define WENTRY(entry)	((struct nova_file_write_entry *) entry)
@@ -264,6 +264,43 @@ static inline size_t nova_get_log_entry_size(struct super_block *sb,
 	return size;
 }
 
+/*
+ * counter definition
+ * - if == 0 then there are no active readers or writers.
+ * - if > 0 then that is the number of active readers.
+ * - if == -1 then there is one active writer.
+ */
+static inline int get_write_entry(struct nova_file_write_entry *entry)
+{
+	atomic_t *counter = (atomic_t *)&entry->counter;
+	int ret = atomic_add_unless(counter, 1, -1);
+
+	return ret;
+}
+
+/* Return true if the counter fell to zero */
+static inline int put_write_entry(struct nova_file_write_entry *entry)
+{
+	atomic_t *counter = (atomic_t *)&entry->counter;
+	int ret = atomic_dec_and_test(counter);
+
+	return ret;
+}
+
+static inline int lock_write_entry(struct nova_file_write_entry *entry)
+{
+	atomic_t *counter = (atomic_t *)&entry->counter;
+	int ret = atomic_cmpxchg(counter, 0, -1);
+
+	return ret;
+}
+
+static inline void unlock_write_entry(struct nova_file_write_entry *entry)
+{
+	atomic_t *counter = (atomic_t *)&entry->counter;
+	atomic_inc(counter);
+}
+
 int nova_invalidate_logentry(struct super_block *sb, void *entry,
 	enum nova_entry_type type, unsigned int num_free);
 int nova_reassign_logentry(struct super_block *sb, void *entry,
@@ -287,6 +324,8 @@ int nova_update_alter_pages(struct super_block *sb, struct nova_inode *pi,
 	u64 curr, u64 alter_curr);
 struct nova_file_write_entry *nova_find_next_entry(struct super_block *sb,
 	struct nova_inode_info_header *sih, pgoff_t pgoff);
+struct nova_file_write_entry *nova_find_next_entry_lockfree(struct super_block *sb,
+	struct nova_inode_info_header *sih, pgoff_t pgoff);	
 int nova_allocate_inode_log_pages(struct super_block *sb,
 	struct nova_inode_info_header *sih, unsigned long num_pages,
 	u64 *new_block, int cpuid, enum nova_alloc_direction from_tail);
