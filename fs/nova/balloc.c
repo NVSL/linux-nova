@@ -830,23 +830,25 @@ inline int nova_new_log_blocks(struct super_block *sb,
 	bool tier_bdev = false;
 
 retry:
-	while (unlikely(is_pmem_usage_too_high(NOVA_SB(sb)))) {
-		if (timed == 0) {
-			timed = current_kernel_time().tv_sec;
-			used = nova_pmem_used(NOVA_SB(sb));
-			continue;
-		}
-		if (current_kernel_time().tv_sec - timed > 10) {
-			if (used == nova_pmem_used(NOVA_SB(sb))) {
-				nova_info("Warning in nova_new_log_blocks\n");
-				tier_bdev = true;
-			}
-			else {
+	if (MODE_FORE_LOG) {
+		while (unlikely(is_pmem_usage_too_high(NOVA_SB(sb)))) {
+			if (timed == 0) {
 				timed = current_kernel_time().tv_sec;
 				used = nova_pmem_used(NOVA_SB(sb));
+				continue;
 			}
+			if (current_kernel_time().tv_sec - timed > 10) {
+				if (used == nova_pmem_used(NOVA_SB(sb))) {
+					nova_info("Warning in nova_new_log_blocks\n");
+					tier_bdev = true;
+				}
+				else {
+					timed = current_kernel_time().tv_sec;
+					used = nova_pmem_used(NOVA_SB(sb));
+				}
+			}
+			schedule();
 		}
-		schedule();
 	}
 	
 	NOVA_START_TIMING(new_log_blocks_t, alloc_time);

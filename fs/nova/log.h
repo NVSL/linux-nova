@@ -274,6 +274,7 @@ static inline int get_write_entry(struct nova_file_write_entry *entry)
 {
 	atomic_t *counter = (atomic_t *)&entry->counter;
 	int ret = atomic_add_unless(counter, 1, -1);
+	// nova_info("entry %llu counter %d\n", entry->pgoff, entry->counter);
 
 	return ret;
 }
