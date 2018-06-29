@@ -710,6 +710,7 @@ memcpy:
 			if (nova_find_pgoff_in_vma(inode, index))
 				goto skip_verify;
 
+			/*
 			if (!nova_verify_data_csum(sb, sih, nvmm, offset, nr)) {
 				nova_err(sb, "%s: nova data checksum and recovery fail! inode %lu, offset %lu, entry pgoff %lu, %u pages, pgoff %lu\n",
 					 __func__, inode->i_ino, offset,
@@ -717,6 +718,7 @@ memcpy:
 				error = -EIO;
 				goto out;
 			}
+			*/
 		}
 
 		if (vpmem_valid_address((unsigned long)dax_mem)) {
@@ -818,7 +820,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	struct nova_inode_info_header *sih = &si->header;
 	struct super_block *sb = inode->i_sb;
 	struct nova_sb_info *sbi = NOVA_SB(sb);
-	struct nova_inode *pi, inode_copy;
+	struct nova_inode *pi;
 	struct nova_file_write_entry entry_data;
 	struct nova_inode_update update;
 	ssize_t	written = 0;
@@ -864,17 +866,20 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	/* nova_inode tail pointer will be updated and we make sure all other
 	 * inode fields are good before checksumming the whole structure
 	 */
+	/*
 	if (nova_check_inode_integrity(sb, sih->ino, sih->pi_addr,
 			sih->alter_pi_addr, &inode_copy, 0) < 0) {
 		ret = -EIO;
 		goto out;
 	}
+	*/
 
 	offset = pos & (sb->s_blocksize - 1);
 	num_blocks = ((count + offset - 1) >> sb->s_blocksize_bits) + 1;
 	total_blocks = num_blocks;
 	start_blk = pos >> sb->s_blocksize_bits;
 
+	/*
 	if (nova_check_overlap_vmas(sb, sih, start_blk, num_blocks)) {
 		nova_dbgv("COW write overlaps with vma: inode %lu, pgoff %lu, %lu blocks\n",
 				inode->i_ino, start_blk, num_blocks);
@@ -883,6 +888,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 		ret = -EACCES;
 		goto out;
 	}
+	*/
 
 	/* offset in the actual block size block */
 
@@ -983,18 +989,20 @@ prof:
 		/* Now copy from user buf */
 		//		nova_dbg("Write: %p\n", kmem);
 		NOVA_START_TIMING(memcpy_w_nvmm_t, memcpy_time);
-		nova_memunlock_range(sb, kmem + offset, bytes);
+		// nova_memunlock_range(sb, kmem + offset, bytes);
 		copied = bytes - memcpy_to_pmem_nocache(kmem + offset,
 						buf, bytes);
-		nova_memlock_range(sb, kmem + offset, bytes);
+		// nova_memlock_range(sb, kmem + offset, bytes);
 		NOVA_END_TIMING(memcpy_w_nvmm_t, memcpy_time);
 
+		/*
 		if (data_csum > 0 || data_parity > 0) {
 			ret = nova_protect_file_data(sb, inode, pos, bytes,
 							buf, blocknr, false);
 			if (ret)
 				goto out;
 		}
+		*/
 
 		if (pos + copied > inode->i_size)
 			file_size = cpu_to_le64(pos + copied);
@@ -1049,9 +1057,9 @@ prof:
 	data_bits = blk_type_to_shift[sih->i_blk_type];
 	sih->i_blocks += (total_blocks << (data_bits - sb->s_blocksize_bits));
 
-	nova_memunlock_inode(sb, pi);
+	// nova_memunlock_inode(sb, pi);
 	nova_update_inode(sb, inode, pi, &update, 1);
-	nova_memlock_inode(sb, pi);
+	// nova_memlock_inode(sb, pi);
 
 	/* Free the overlap blocks after the write is committed */
 	ret = nova_reassign_file_tree(sb, sih, begin_tail, true);

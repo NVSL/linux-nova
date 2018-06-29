@@ -36,7 +36,7 @@ static inline int nova_copy_partial_block(struct super_block *sb,
 	if (vpmem_valid_address((unsigned long)ptr)) {
 		vpmem_do_page_fault_range((unsigned long)ptr, (unsigned long)ptr, 1);
 	}
-	
+
 	if (ptr != NULL) {
 		if (support_clwb)
 			rc = memcpy_mcsafe(kmem + offset, ptr + offset,

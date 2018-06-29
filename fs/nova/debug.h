@@ -16,7 +16,7 @@
 #define MODE_FORE_ALLOC 0
 #define MODE_FORE_PMEM 1
 #define MODE_FORE_BAL 0
-#define MODE_FORE_PREFETCH 0
+#define MODE_FORE_PREFETCH 1
 #define MODE_BACK_MIG 1
 #define MODE_REV_MIG 0
 #define MODE_MIG_SELF 1

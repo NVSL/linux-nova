@@ -848,7 +848,7 @@ retry:
 		}
 		schedule();
 	}
-
+	
 	NOVA_START_TIMING(new_log_blocks_t, alloc_time);
 	if (unlikely(tier_bdev)) {
 		allocated = nova_new_blocks_from_bdev(sb, TIER_BDEV_HIGH, blocknr, 
