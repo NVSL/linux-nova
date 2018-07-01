@@ -760,7 +760,9 @@ alloc:
 	if (ret_blocks <= 0 || new_blocknr == 0) {
 		nova_dbg_verbose("%s: not able to allocate %d blocks.  ret_blocks=%ld; new_blocknr=%lu",
 				 __func__, num, ret_blocks, new_blocknr);
-		schedule();
+		// while (unlikely(is_pmem_usage_too_high(NOVA_SB(sb)))) {
+			schedule();
+		// }
 		goto retry;
 		return -ENOSPC;
 	}

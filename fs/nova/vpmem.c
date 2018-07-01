@@ -537,7 +537,7 @@ int set_pgn_clean(struct pgcache_node *pgn) {
     }
 	*ptep = pte_mkclean(*ptep);
 	*ptep = pte_mkold(*ptep);
-    // smp_wmb();
+    // smp_mb();
     return 0;
 }
 
@@ -549,7 +549,7 @@ int set_pgn_clean_addr(unsigned long address) {
     }
 	*ptep = pte_mkclean(*ptep);
 	*ptep = pte_mkold(*ptep);
-    // smp_wmb();
+    // smp_mb();
     return 0;
 }
 
@@ -568,12 +568,15 @@ struct pgcache_node *pgcache_insert(unsigned long address, struct mm_struct *mm,
     int index = vpmem_get_index(address);
     struct rb_node **link = &vsbi->vpmem_rb_tree[index].rb_node;
     struct rb_node *parent = NULL;
+	unsigned long flags;
 
     *new = false;
 
     while (is_pgcache_large()) schedule();
     mutex_lock(&vsbi->vpmem_rb_mutex[index]);
 
+    smp_mb();
+    local_irq_save(flags);
 redo:
     /* Go to the bottom of the tree */
     while (*link)
@@ -612,7 +615,9 @@ redo:
             //     address, p->address, p->page, page_address(p->page));
 
             // mutex_unlock(&p->lock);
+            smp_mb();
             mutex_unlock(&vsbi->vpmem_rb_mutex[index]);
+            local_irq_restore(flags);
 
             // pgcache_lru_refer(p);
 
@@ -650,6 +655,7 @@ redo:
     smp_mb();
 
     mutex_unlock(&vsbi->vpmem_rb_mutex[index]);
+    local_irq_restore(flags);
 
     return newp;
 }
@@ -1159,10 +1165,12 @@ bool insert_tlb(struct pgcache_node *pgn) {
     pte_t ptein = mk_pte(pgn->page, PAGE_KERNEL);
     struct mm_struct *mm = current_mm;
     unsigned long address = pgn->address;
+	unsigned long flags;
 
 	// smp_mb();
 
     spin_lock(&mm->page_table_lock);
+    local_irq_save(flags);
 
     // pgd = __va(read_cr3_pa()) + pgd_index(address); // pgd_offset(current->mm, address);
     pgd = pgd_offset(mm, address);
@@ -1177,11 +1185,14 @@ bool insert_tlb(struct pgcache_node *pgn) {
     set_pte(pte, ptein);
     pgn->pte = pte;
     spin_unlock(&mm->page_table_lock);
+    local_irq_restore(flags);
 
     __flush_tlb_one(address);
 
     smp_mb();
 
+	*pte = pte_mkclean(*pte);
+    
     return true;
 }
 
