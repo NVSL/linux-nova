@@ -555,7 +555,7 @@ int set_pgn_clean_addr(unsigned long address) {
 }
 
 void vpmem_invalidate_pgn(struct pgcache_node *pgn);
-void vpmem_clear_pgn(struct pgcache_node *pgn, int index);
+void vpmem_clear_pgn(struct pgcache_node *pgn, int index, unsigned long flags);
 bool insert_tlb(struct pgcache_node *pgn);
 
 inline bool vpmem_valid_address(unsigned long address) {
@@ -574,11 +574,9 @@ struct pgcache_node *pgcache_insert(unsigned long address, struct mm_struct *mm,
     *new = false;
 
     while (is_pgcache_large()) schedule();
-    mutex_lock(&vsbi->vpmem_rb_mutex[index]);
-
-    smp_mb();
-    local_irq_save(flags);
 redo:
+    mutex_lock(&vsbi->vpmem_rb_mutex[index]);
+    local_irq_save(flags);
     /* Go to the bottom of the tree */
     while (*link)
     {
@@ -594,10 +592,11 @@ redo:
             //     address, p->address, p->page, page_address(p->page));
             // mutex_lock(&p->lock);
             // vpmem_invalidate_pgn(p);
-            wait_until_pgn_is_valid(p);
-            if (unlikely(!p->page)) {
+            if (unlikely(!p->page||!p->pte)) {
                 nova_info("Warning in pgcache_insert address %lx\n", address);
                 schedule();
+                mutex_unlock(&vsbi->vpmem_rb_mutex[index]);
+                local_irq_restore(flags);
                 goto redo;
                 p->page = alloc_page(GFP_KERNEL|__GFP_ZERO);
                 if (unlikely(!p->page)) {
@@ -607,6 +606,7 @@ redo:
                 vpmem_load_block(address, p->page, 1);
                 insert_tlb(p);
             }
+            wait_until_pgn_is_valid(p);
             // else {
             //     nova_info("Warning 2 in pgcache_insert address %lx addr %lx page %p p %p\n",
             //         address, p->address, p->page, page_address(p->page));
@@ -1322,30 +1322,15 @@ int vpmem_flush_pages(unsigned long address, unsigned long count) {
 }
 
 void vpmem_invalidate_pgn(struct pgcache_node *pgn) {
-    struct page *p = NULL;
-    pte_t *pte = NULL;
 
     pop_from_lru_list(pgn);
     pop_from_wb_list(pgn);
     pop_from_evict_list(pgn);
 
-    smp_mb();
-    p = pgn->page;
-    if (p) {
-        pgn->page = NULL;
-        pte = vpmem_get_pte(pgn);
-        if (pte) {
-            pte_clear(current_mm, pgn->address, pte);
-        }
-        __flush_tlb_one(pgn->address);
-
-        unlock_page(p);
-        __free_page(p);
-    }    
 	smp_mb();
 }
 
-void vpmem_clear_pgn(struct pgcache_node *pgn, int index) {    
+void vpmem_clear_pgn(struct pgcache_node *pgn, int index, unsigned long flags) {    
 
     if (unlikely(!pgn)) {
         nova_info("Error in pgcache_remove 1\n");
@@ -1357,7 +1342,6 @@ void vpmem_clear_pgn(struct pgcache_node *pgn, int index) {
     //     nova_info("Error in pgcache_remove 2 %lx\n", (unsigned long)&vsbi->vpmem_lru_list[index]);
     // }    
 
-    mutex_lock(&vsbi->vpmem_rb_mutex[index]);
     if (unlikely(RB_EMPTY_NODE(&pgn->rb_node))) {
         nova_info("Error in pgcache_remove 2 %lx\n", pgn->address);
         mutex_unlock(&vsbi->vpmem_rb_mutex[index]);
@@ -1371,11 +1355,11 @@ void vpmem_clear_pgn(struct pgcache_node *pgn, int index) {
     // }
     // mutex_unlock(&pgn->lock); 
     rb_erase(&pgn->rb_node, &vsbi->vpmem_rb_tree[index]);
-    smp_mb();
     mutex_unlock(&vsbi->vpmem_rb_mutex[index]);
 
 clear:
     vpmem_invalidate_pgn(pgn);
+    local_irq_restore(flags);
     // nl_send("ev %20lu %16lu %2d", pgn->address, 0, 0);
 
     #ifdef VPMEM_DEBUG
@@ -1503,7 +1487,8 @@ bool clear_evict_list(int index, bool clear)
 {
     struct pgcache_node *pgn;
     // struct page *p;
-    // pte_t *pte = NULL;
+    pte_t *pte = NULL;
+	unsigned long flags;
 
 again:
     mutex_lock(&vsbi->vpmem_evict_mutex[index]);
@@ -1517,6 +1502,7 @@ again:
         mutex_unlock(&vsbi->vpmem_evict_mutex[index]);
         return false;
     }
+    wait_until_pgn_is_valid(pgn);
     if (unlikely(vpmem_get_pgn_index(pgn) != index)) {
         nova_info("Error in clear_evict_list addr %lx, virt %lu, index %d\n", 
             pgn->address, virt_to_blockoff(pgn->address), index);
@@ -1527,8 +1513,10 @@ again:
         push_to_lru_list(pgn);
     }
 
+    local_irq_save(flags);
     if (pgn->page) {
         if (!clear && is_pgn_dirty(pgn)) {
+            local_irq_restore(flags);
             list_del_init(&pgn->evict_node);
             mutex_unlock(&vsbi->vpmem_evict_mutex[index]);
             push_to_lru_list(pgn);
@@ -1536,16 +1524,29 @@ again:
             goto again;
         }
         if (!clear && is_pgn_young_reset(pgn)) {
+            local_irq_restore(flags);
             list_del_init(&pgn->evict_node);
             mutex_unlock(&vsbi->vpmem_evict_mutex[index]);
             push_to_lru_list(pgn);
             goto again;
         }
     }  
+
+    mutex_lock(&vsbi->vpmem_rb_mutex[index]);
+    pte = vpmem_get_pte(pgn);
+    if (pte) {
+        pte_clear(current_mm, pgn->address, pte);
+    }
+    __flush_tlb_one(pgn->address);
+    pgn->pte = NULL;
+
+    unlock_page(pgn->page);
+    __free_page(pgn->page);
+    pgn->page = NULL;
+
     mutex_unlock(&vsbi->vpmem_evict_mutex[index]);
 
-    wait_until_pgn_is_valid(pgn);
-    vpmem_clear_pgn(pgn, index);
+    vpmem_clear_pgn(pgn, index, flags);
     goto again;
 
     return true;

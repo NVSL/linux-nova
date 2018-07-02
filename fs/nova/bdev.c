@@ -793,7 +793,7 @@ retry:
 	*blocknr = new_blocknr;
 
 	// Prefetch empty pages
-	if (MODE_FORE_PREFETCH && cache) vpmem_cache_pages(blockoff_to_virt(new_blocknr), num_blocks, false);
+	if (MODE_FORE_PREFETCH && cache) vpmem_cache_pages(blockoff_to_virt(new_blocknr), ret_blocks, false);
 
 	// blocknr starts with the range of the block device (after PMEM) instead of 0.
 	if (DEBUG_MIGRATION_ALLOC) nova_info("[Bdev] Alloc %lu BDEV blocks at %lu (%lu) from T%d C%d\n"
