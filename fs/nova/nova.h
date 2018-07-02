@@ -640,8 +640,9 @@ repeat:
 			goto out;
 
 		if (radix_tree_exception(entry)) {
-			if (radix_tree_deref_retry(entry))
+			if (radix_tree_deref_retry(entry)) {
 				goto repeat;
+			}
 
 			/* FIXME: What to do here? */
 			entry = NULL;
@@ -649,11 +650,13 @@ repeat:
 		}
 
 		if (lock) {
-			if (!lock_write_entry(entry))
+			if (!lock_write_entry(entry)) {
 				goto repeat;
+			}
 		} else {
-			if (!get_write_entry(entry))
+			if (!get_write_entry(entry)) {
 				goto repeat;
+			}
 		}
 
 		if (unlikely(entry != *entryp)) {

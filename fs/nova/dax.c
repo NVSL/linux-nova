@@ -126,11 +126,11 @@ int nova_handle_head_tail_blocks(struct super_block *sb,
 	nova_dbg_verbose("%s: start offset %lu start blk %lu %p\n", __func__,
 				offset, start_blk, kmem);
 	if (offset != 0) {
-		entry = nova_get_write_entry_lockfree(sb, sih, start_blk);
+		entry = nova_get_write_entry(sb, sih, start_blk);
 		ret = nova_handle_partial_block(sb, sih, entry,
 						start_blk, 0, offset, kmem);
-		// if (entry)
-		// 	put_write_entry(entry);
+		if (entry)
+			put_write_entry(entry);
 
 		if (ret < 0)
 			return ret;
@@ -142,14 +142,14 @@ int nova_handle_head_tail_blocks(struct super_block *sb,
 	nova_dbg_verbose("%s: end offset %lu, end blk %lu %p\n", __func__,
 				eblk_offset, end_blk, kmem);
 	if (eblk_offset != 0) {
-		entry = nova_get_write_entry_lockfree(sb, sih, end_blk);
+		entry = nova_get_write_entry(sb, sih, end_blk);
 
 		ret = nova_handle_partial_block(sb, sih, entry, end_blk,
 						eblk_offset,
 						sb->s_blocksize - eblk_offset,
 						kmem);
-		// if (entry)
-		// 	put_write_entry(entry);
+		if (entry)
+			put_write_entry(entry);
 
 		if (ret < 0)
 			return ret;
@@ -507,7 +507,7 @@ unsigned long nova_check_existing_entry(struct super_block *sb,
 
 	*ret_entry = NULL;
 	*inplace = 0;
-	entry = nova_get_write_entry_lockfree(sb, sih, start_blk);
+	entry = nova_get_write_entry(sb, sih, start_blk);
 
 	entryc = (metadata_csum == 0) ? entry : ret_entryc;
 

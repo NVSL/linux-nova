@@ -14,7 +14,7 @@
 #define MODE_KEEP_STAT_VPMEM
 
 #define MODE_FORE_ALLOC 0
-#define MODE_FORE_PMEM 0
+#define MODE_FORE_PMEM 1
 #define MODE_FORE_BAL 0
 #define MODE_FORE_PREFETCH 1
 #define MODE_FORE_LOG 0

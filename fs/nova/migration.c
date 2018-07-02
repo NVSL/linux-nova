@@ -60,9 +60,9 @@ void print_a_write_entry(struct super_block *sb, struct nova_file_write_entry *e
     nova_info("\e[0;32m#%3d\e[0m [P]%p [B]%lu\n", n, entry, virt_to_block((unsigned long)entry));
     
     if (entry->entry_type == FILE_WRITE || n == -2) {
-        nova_info("     ||Type|Tier| num_pg |invalidp| block  | pgoff  ||");
-        nova_info("     ||%4u|%4u|%8u|%8u|%8llu|%8llu||", entry->entry_type, get_entry_tier(entry),
-            entry->num_pages, entry->invalid_pages, entry->block  >> PAGE_SHIFT, entry->pgoff);
+        nova_info("     ||Type|Tier| num_pg |invalidp| block  | pgoff  |counter ||");
+        nova_info("     ||%4u|%4u|%8u|%8u|%8llu|%8llu|%8d||", entry->entry_type, get_entry_tier(entry),
+            entry->num_pages, entry->invalid_pages, entry->block  >> PAGE_SHIFT, entry->pgoff, entry->counter);
         addr = nova_get_block(sb, entry->block);
         for (ii=(char *)addr; ii<(char *)(addr+((entry->num_pages)<<PAGE_SHIFT)); ii+=1024) {
             ctmp[count++] = *ii;
