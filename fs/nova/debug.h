@@ -39,6 +39,7 @@
 
 #define DEBUG_INIT 0
 #define DEBUG_STARTUP_TEST 0
+#define DEBUG_PROC_LOCK 1
 
 #define DEBUG_BDEV_RW 0
 #define DEBUG_BFL_INFO 0

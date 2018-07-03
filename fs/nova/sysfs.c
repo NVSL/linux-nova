@@ -219,6 +219,10 @@ static int nova_seq_ts_show(struct seq_file *seq, void *v)
 	struct free_list *fl = NULL;
 	struct bdev_free_list *bfl = NULL;
 	int i;
+	int lru = 0;
+	int wb = 0;
+	int evict = 0;
+	int rb = 0;
     unsigned long used = 0;
     unsigned long total = 0;
     unsigned long sumu = 0;
@@ -245,16 +249,39 @@ static int nova_seq_ts_show(struct seq_file *seq, void *v)
 		0, fl->num_free_blocks, fl->block_end - fl->block_start + 1, fl->num_blocknode);
 	}
 
-	seq_printf(seq, "----------------------------------------------------------------------\n");
+	seq_printf(seq, "------------------------------------------------------------------------------\n");
 	seq_printf(seq, "                          [BDEV free lists]\n");
-	seq_printf(seq, "|Tier|CPU|  Start  |   End   |  Used  | Cached |  Free  | Total |Node|\n");
+	seq_printf(seq, "|Tier|CPU|  Start  |   End   |  Used  | Cached |  Free  | Total |Node| Locks |\n");
 	for (i=0;i<TIER_BDEV_HIGH*sbi->cpus;++i) {
+		if (DEBUG_PROC_LOCK) {
+			if (mutex_trylock(&sbi->vpmem_lru_mutex[i])) {
+				lru = 0;
+				mutex_unlock(&sbi->vpmem_lru_mutex[i]);
+			}
+			else lru = 1;
+			if (mutex_trylock(&sbi->vpmem_wb_mutex[i])) {
+				wb = 0;
+				mutex_unlock(&sbi->vpmem_wb_mutex[i]);
+			}
+			else wb = 1;
+			if (mutex_trylock(&sbi->vpmem_evict_mutex[i])) {
+				evict = 0;
+				mutex_unlock(&sbi->vpmem_evict_mutex[i]);
+			}
+			else evict = 1;
+			if (mutex_trylock(&sbi->vpmem_rb_mutex[i])) {
+				rb = 0;
+				mutex_unlock(&sbi->vpmem_rb_mutex[i]);
+			}
+			else rb = 1;
+		}
 		bfl = nova_get_bdev_free_list_flat(sbi,i);
-		seq_printf(seq, "|%4d|%3d|%9lu|%9lu|%8lu|%8d|%8lu|%7lu|%4lu|\n",
+		seq_printf(seq, "|%4d|%3d|%9lu|%9lu|%8lu|%8d|%8lu|%7lu|%4lu|%1d|%1d|%1d|%1d|\n",
 		bfl->tier, bfl->cpu, bfl->block_start, bfl->block_end, bfl->num_total_blocks - bfl->num_free_blocks,
-		atomic_read(&sbi->pgcache_size[i]), bfl->num_free_blocks, bfl->num_total_blocks, bfl->num_blocknode);
+		atomic_read(&sbi->pgcache_size[i]), bfl->num_free_blocks, bfl->num_total_blocks, bfl->num_blocknode,
+		lru, wb, evict, rb );
 	}
-	seq_printf(seq, "----------------------------------------------------------------------\n");
+	seq_printf(seq, "------------------------------------------------------------------------------\n");
 
 	seq_printf(seq, "|[Migration]|  Writes  | Writes-C |  Reads   |Group Migs|Interrupts|\n");
     seq_printf(seq, "|           |%10lu|%10lu|%10lu|%10lu|%10lu|\n",

@@ -1532,6 +1532,7 @@ again:
         }
     }  
 
+    mutex_unlock(&vsbi->vpmem_evict_mutex[index]);
     mutex_lock(&vsbi->vpmem_rb_mutex[index]);
     pte = vpmem_get_pte(pgn);
     if (pte) {
@@ -1543,8 +1544,6 @@ again:
     unlock_page(pgn->page);
     __free_page(pgn->page);
     pgn->page = NULL;
-
-    mutex_unlock(&vsbi->vpmem_evict_mutex[index]);
 
     vpmem_clear_pgn(pgn, index, flags);
     goto again;
