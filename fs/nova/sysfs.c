@@ -248,10 +248,19 @@ static int nova_seq_ts_show(struct seq_file *seq, void *v)
 		0, fl->index, fl->block_start, fl->block_end, fl->block_end - fl->block_start + 1 - fl->num_free_blocks,
 		0, fl->num_free_blocks, fl->block_end - fl->block_start + 1, fl->num_blocknode);
 	}
-
+	if (DEBUG_PROC_LOCK) {
 	seq_printf(seq, "------------------------------------------------------------------------------\n");
+	}
+	else {
+	seq_printf(seq, "----------------------------------------------------------------------\n");
+	}
 	seq_printf(seq, "                          [BDEV free lists]\n");
+	if (DEBUG_PROC_LOCK) {
 	seq_printf(seq, "|Tier|CPU|  Start  |   End   |  Used  | Cached |  Free  | Total |Node| Locks |\n");
+	}
+	else {
+	seq_printf(seq, "|Tier|CPU|  Start  |   End   |  Used  | Cached |  Free  | Total |Node|\n");
+	}
 	for (i=0;i<TIER_BDEV_HIGH*sbi->cpus;++i) {
 		if (DEBUG_PROC_LOCK) {
 			if (mutex_trylock(&sbi->vpmem_lru_mutex[i])) {
@@ -281,7 +290,12 @@ static int nova_seq_ts_show(struct seq_file *seq, void *v)
 		atomic_read(&sbi->pgcache_size[i]), bfl->num_free_blocks, bfl->num_total_blocks, bfl->num_blocknode,
 		lru, wb, evict, rb );
 	}
+	if (DEBUG_PROC_LOCK) {
 	seq_printf(seq, "------------------------------------------------------------------------------\n");
+	}
+	else {
+	seq_printf(seq, "----------------------------------------------------------------------\n");
+	}
 
 	seq_printf(seq, "|[Migration]|  Writes  | Writes-C |  Reads   |Group Migs|Interrupts|\n");
     seq_printf(seq, "|           |%10lu|%10lu|%10lu|%10lu|%10lu|\n",

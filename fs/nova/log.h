@@ -292,6 +292,7 @@ static inline int lock_write_entry(struct nova_file_write_entry *entry)
 {
 	atomic_t *counter = (atomic_t *)&entry->counter;
 	int ret = atomic_cmpxchg(counter, 0, -1);
+	// nova_info("entry %llu counter %d ret %d\n", entry->pgoff, entry->counter, ret);
 
 	return ret;
 }
@@ -299,7 +300,7 @@ static inline int lock_write_entry(struct nova_file_write_entry *entry)
 static inline void unlock_write_entry(struct nova_file_write_entry *entry)
 {
 	atomic_t *counter = (atomic_t *)&entry->counter;
-	atomic_inc(counter);
+	atomic_set(counter, 0);
 }
 
 int nova_invalidate_logentry(struct super_block *sb, void *entry,
