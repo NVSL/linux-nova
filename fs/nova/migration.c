@@ -1448,9 +1448,11 @@ again_pmem:
         this = pop_an_inode_to_migrate(sbi, TIER_PMEM);
         if (!this) {
             if(DEBUG_MIGRATION_INFO) nova_info("[C%2d] PMEM usage is high yet no inode is found.\n", cpu);
+            schedule();
             goto again_bdev;
         }
 	    migrate_a_file(this, get_available_tier(sb, TIER_BDEV_LOW), false);
+        schedule();
 	    goto again_pmem;
     }
     else if(DEBUG_MIGRATION_INFO) nova_info("[C%2d] \e[1;32mPMEM usage low.\e[0m\n", cpu);
@@ -1466,6 +1468,7 @@ again_bdev:
                 return 0;
             }
             migrate_a_file(this, get_available_tier(sb, i+1), false);
+            schedule();
             goto again_bdev;
         }
         else if(DEBUG_MIGRATION_INFO) nova_info("[C%2d] \e[1;32mB-T%d usage low.\e[0m\n", cpu, i);
@@ -1484,6 +1487,7 @@ again_rev:
                     return 0;
                 }
                 migrate_a_file(this, get_available_tier(sb, TIER_PMEM), true);
+                schedule();
                 goto again_rev;
             }
             else if(DEBUG_MIGRATION_INFO) nova_info("[C%2d] \e[1;31mPMEM usage quite high.\e[0m\n", cpu);
