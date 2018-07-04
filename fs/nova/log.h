@@ -331,6 +331,9 @@ struct nova_file_write_entry *nova_find_next_entry_lockfree(struct super_block *
 int nova_allocate_inode_log_pages(struct super_block *sb,
 	struct nova_inode_info_header *sih, unsigned long num_pages,
 	u64 *new_block, int cpuid, enum nova_alloc_direction from_tail);
+int nova_allocate_inode_log_pages_from_bdev(struct super_block *sb,
+	struct nova_inode_info_header *sih, unsigned long num_pages,
+	u64 *new_block, int cpuid, enum nova_alloc_direction from_tail);
 int nova_free_contiguous_log_blocks(struct super_block *sb,
 	struct nova_inode_info_header *sih, u64 head);
 u64 nova_get_append_head(struct super_block *sb, struct nova_inode *pi,

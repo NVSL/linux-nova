@@ -835,6 +835,22 @@ end:
 }
 
 // inode->i_rwsem and sih->mig_sem are (write) locked before calling this function
+int migrate_file_logs(struct inode *inode, int to, bool force)
+{
+	struct super_block *sb = inode->i_sb;
+	struct nova_inode_info *si = NOVA_I(inode);
+	struct nova_inode_info_header *sih = &si->header;
+    struct nova_inode *pi = nova_get_block(sb, sih->pi_addr);
+    int ret = nova_inode_log_fast_gc_to_bdev(sb, pi, sih, 0, 0, 0, 0, 1);
+
+    nova_update_sih_tier(sb, sih, to, 5);
+
+    up_write(&sih->mig_sem);
+    inode_unlock(inode);
+    return ret;
+}
+
+// inode->i_rwsem and sih->mig_sem are (write) locked before calling this function
 int migrate_a_file(struct inode *inode, int to, bool force)
 {
 	struct super_block *sb = inode->i_sb;
@@ -1445,6 +1461,8 @@ again_pmem:
     if (kthread_should_stop()) return -1;
     if (is_pmem_usage_high(sbi)) {
         if(DEBUG_MIGRATION_INFO) nova_info("[C%2d] \e[1;31mPMEM usage high.\e[0m\n", cpu);
+        if (MODE_MIG_SELF && is_inode_lru_list_empty(sbi, TIER_PMEM, cpu))
+            goto again_bdev;
         this = pop_an_inode_to_migrate(sbi, TIER_PMEM);
         if (!this) {
             if(DEBUG_MIGRATION_INFO) nova_info("[C%2d] PMEM usage is high yet no inode is found.\n", cpu);
@@ -1453,6 +1471,7 @@ again_pmem:
         }
 	    migrate_a_file(this, get_available_tier(sb, TIER_BDEV_LOW), false);
         schedule();
+        // Multiple migration per loop
 	    goto again_pmem;
     }
     else if(DEBUG_MIGRATION_INFO) nova_info("[C%2d] \e[1;32mPMEM usage low.\e[0m\n", cpu);
@@ -1462,16 +1481,38 @@ again_bdev:
     for (i=TIER_BDEV_LOW;i<TIER_BDEV_HIGH;++i) {
         if (is_bdev_usage_high(sbi, i)) {
             if(DEBUG_MIGRATION_INFO) nova_info("[C%2d] \e[1;31mB-T%d usage high.\e[0m\n", cpu, i);
+            if (MODE_MIG_SELF && is_inode_lru_list_empty(sbi, TIER_PMEM, cpu))
+                goto again_log;    
             this = pop_an_inode_to_migrate(sbi, i);
             if (!this) {
                 if(DEBUG_MIGRATION_INFO) nova_info("[C%2d] B-T%d usage is high yet no inode is found.\n", cpu, i);
-                return 0;
+                goto again_log;
             }
             migrate_a_file(this, get_available_tier(sb, i+1), false);
             schedule();
-            goto again_bdev;
+            // One migration per loop
+            goto again_log;
         }
         else if(DEBUG_MIGRATION_INFO) nova_info("[C%2d] \e[1;32mB-T%d usage low.\e[0m\n", cpu, i);
+    }
+    
+again_log:
+//  && is_pmem_usage_too_high(sbi)
+    if (kthread_should_stop()) return -1;
+    for (i=TIER_BDEV_LOW;i<=TIER_BDEV_HIGH;++i) {
+        if (MODE_LOG_MIG && is_should_migrate_log()) {
+            if(DEBUG_MIGRATION_INFO) nova_info("[C%2d] \e[1;31mPMEM usage too high.\e[0m\n", cpu);
+            this = pop_an_inode_to_migrate(sbi, i);
+            if (!this) {
+                if(DEBUG_MIGRATION_INFO) nova_info("[C%2d] B-T%d no inode is found.\n", cpu, i);
+                goto again_rev;
+            }
+            migrate_file_logs(this, get_available_tier(sb, i), false);
+            schedule();
+            // One migration per loop
+            goto again_rev;
+        }
+        else if(DEBUG_MIGRATION_INFO) nova_info("[C%2d] \e[1;32mPMEM usage not too high.\e[0m\n", cpu);
     }
     
     if (MODE_REV_MIG) {
@@ -1484,16 +1525,18 @@ again_rev:
                 this = pop_an_inode_to_migrate_reverse(sbi, i);
                 if (!this) {
                     if(DEBUG_MIGRATION_INFO) nova_info("[C%2d] PMEM usage is quite low yet no inode is found.\n", cpu);
-                    return 0;
+                    goto end;
                 }
                 migrate_a_file(this, get_available_tier(sb, TIER_PMEM), true);
                 schedule();
-                goto again_rev;
+                // One migration per loop
+                goto end;
             }
             else if(DEBUG_MIGRATION_INFO) nova_info("[C%2d] \e[1;31mPMEM usage quite high.\e[0m\n", cpu);
         }
     }
-    
+
+end:
     return 0;
 }
 
@@ -1573,6 +1616,7 @@ int nova_update_usage(struct super_block *sb) {
     // nova_info("usage\n");
 
     /* VPMEM usage */
+    set_should_migrate_log();
     set_is_pgcache_large();
     set_is_pgcache_ideal();
     set_is_pgcache_quite_small();

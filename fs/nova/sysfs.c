@@ -285,10 +285,17 @@ static int nova_seq_ts_show(struct seq_file *seq, void *v)
 			else rb = 1;
 		}
 		bfl = nova_get_bdev_free_list_flat(sbi,i);
-		seq_printf(seq, "|%4d|%3d|%9lu|%9lu|%8lu|%8d|%8lu|%7lu|%4lu|%1d|%1d|%1d|%1d|\n",
-		bfl->tier, bfl->cpu, bfl->block_start, bfl->block_end, bfl->num_total_blocks - bfl->num_free_blocks,
-		atomic_read(&sbi->pgcache_size[i]), bfl->num_free_blocks, bfl->num_total_blocks, bfl->num_blocknode,
-		lru, wb, evict, rb );
+		if (DEBUG_PROC_LOCK) {
+			seq_printf(seq, "|%4d|%3d|%9lu|%9lu|%8lu|%8d|%8lu|%7lu|%4lu|%1d|%1d|%1d|%1d|\n",
+			bfl->tier, bfl->cpu, bfl->block_start, bfl->block_end, bfl->num_total_blocks - bfl->num_free_blocks,
+			atomic_read(&sbi->pgcache_size[i]), bfl->num_free_blocks, bfl->num_total_blocks, bfl->num_blocknode,
+			lru, wb, evict, rb );
+		}
+		else {
+			seq_printf(seq, "|%4d|%3d|%9lu|%9lu|%8lu|%8d|%8lu|%7lu|%4lu|\n",
+			bfl->tier, bfl->cpu, bfl->block_start, bfl->block_end, bfl->num_total_blocks - bfl->num_free_blocks,
+			atomic_read(&sbi->pgcache_size[i]), bfl->num_free_blocks, bfl->num_total_blocks, bfl->num_blocknode);
+		}
 	}
 	if (DEBUG_PROC_LOCK) {
 	seq_printf(seq, "------------------------------------------------------------------------------\n");

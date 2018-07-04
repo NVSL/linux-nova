@@ -248,16 +248,28 @@ inline int pgc_total_size(void) {
     return ret;
 }
 
+void set_should_migrate_log(void) {
+    bool ans = true;
+    int i;
+    for (i=0;i<vsbi->cpus;++i) {
+        if (!is_inode_lru_list_empty(vsbi, TIER_PMEM, i)) {
+            ans = false;
+            break;
+        }
+    }
+    vsbi->stat->should_migrate_log = ans;
+}
+
 inline void set_is_pgcache_large(void) {
     vsbi->stat->pgcache_large =  pgc_total_size() > VPMEM_MAX_PAGES_QTR * 4 * TIER_BDEV_HIGH * vsbi->cpus;
 }
 
 inline void set_is_pgcache_ideal(void) {
-    vsbi->stat->pgcache_ideal = pgc_total_size() * 100 < MIGRATION_IDEAL_PERC * VPMEM_MAX_PAGES_QTR * 4 * TIER_BDEV_HIGH * vsbi->cpus;
+    vsbi->stat->pgcache_ideal = pgc_total_size() * 100 < (MIGRATION_IDEAL_PERC-10) * VPMEM_MAX_PAGES_QTR * 4 * TIER_BDEV_HIGH * vsbi->cpus;
 }
 
 inline void set_is_pgcache_quite_small(void) {
-    vsbi->stat->pgcache_quite_small = pgc_total_size() * 100 < (MIGRATION_IDEAL_PERC+10) * VPMEM_MAX_PAGES_QTR * 4 * TIER_BDEV_HIGH * vsbi->cpus;
+    vsbi->stat->pgcache_quite_small = pgc_total_size() * 100 < (MIGRATION_IDEAL_PERC) * VPMEM_MAX_PAGES_QTR * 4 * TIER_BDEV_HIGH * vsbi->cpus;
 }
 
 // Exit write back
@@ -276,6 +288,10 @@ void set_is_pgcache_small(void) {
         vsbi->stat->pgcache_small[i] = is_pgcache_quite_small() ||
             atomic_read(&vsbi->pgcache_size[i]) <= VPMEM_MAX_PAGES_QTR * 3 + VPMEM_RES_PAGES;
     }
+}
+
+inline bool is_should_migrate_log(void) {
+    return vsbi->stat->should_migrate_log;
 }
 
 inline bool is_pgcache_large(void) {

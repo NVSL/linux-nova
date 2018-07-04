@@ -12,6 +12,8 @@ struct tiering_stat {
 	unsigned long mig_group;
 	unsigned long mig_interrupt;
 
+	bool should_migrate_log;
+
 	bool pgcache_large;
 	bool pgcache_ideal;
 	bool pgcache_quite_small;

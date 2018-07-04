@@ -1286,6 +1286,10 @@ int nova_inode_log_fast_gc(struct super_block *sb,
 	struct nova_inode *pi, struct nova_inode_info_header *sih,
 	u64 curr_tail, u64 new_block, u64 alter_new_block, int num_pages,
 	int force_thorough);
+int nova_inode_log_fast_gc_to_bdev(struct super_block *sb,
+	struct nova_inode *pi, struct nova_inode_info_header *sih,
+	u64 curr_tail, u64 new_block, u64 alter_new_block, int num_pages,
+	int force_thorough);
 
 /* ioctl.c */
 extern long nova_ioctl(struct file *filp, unsigned int cmd, unsigned long arg);
@@ -1368,6 +1372,7 @@ inline bool nova_prof_judge_seq(unsigned int seq_count);
 inline bool nova_entry_judge_seq(struct nova_file_write_entry *entry);
 int nova_alloc_inode_lru_lists(struct super_block *sb);
 inline struct list_head *nova_get_inode_lru_lists(struct nova_sb_info *sbi, int tier, int cpu);
+inline bool is_inode_lru_list_empty(struct nova_sb_info *sbi, int tier, int cpu);
 inline struct mutex *nova_get_inode_lru_mutex(struct nova_sb_info *sbi, int tier, int cpu);
 int nova_update_sih_tier(struct super_block *sb, struct nova_inode_info_header *sih, 
     int tier, int mode);

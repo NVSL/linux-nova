@@ -123,6 +123,10 @@ inline struct mutex *nova_get_inode_lru_mutex(struct nova_sb_info *sbi, int tier
     return &sbi->il_mutex[tier*sbi->cpus+cpu];
 }
 
+inline bool is_inode_lru_list_empty(struct nova_sb_info *sbi, int tier, int cpu) {
+    return list_empty(nova_get_inode_lru_lists(sbi, tier, cpu));
+}
+
 int nova_remove_inode_lru_list(struct nova_sb_info *sbi, struct nova_inode_info_header *sih, int tier) {
     int i;
     int cpu = sih->ino % sbi->cpus;

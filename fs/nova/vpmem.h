@@ -18,6 +18,7 @@ int vpmem_init(void);
 
 int pgc_tier_free_order(int tier);
 inline int pgc_total_size(void);
+inline bool is_should_migrate_log(void);
 inline bool is_pgcache_large(void);
 inline bool is_pgcache_ideal(void);
 inline bool is_pgcache_quite_small(void);
@@ -42,6 +43,7 @@ int vpmem_renew_pages(void *addr, unsigned long address, unsigned long count);
 void *vpmem_lru_refer(unsigned long vaddr);
 unsigned long vpmem_cached(unsigned long vaddr, unsigned long count);        // To check if a particular page is present in the cache
 
+void set_should_migrate_log(void);
 inline void set_is_pgcache_large(void);
 inline void set_is_pgcache_ideal(void);
 inline void set_is_pgcache_quite_small(void);
