@@ -763,7 +763,7 @@ alloc:
 		// while (unlikely(is_pmem_usage_too_high(NOVA_SB(sb)))) {
 			schedule();
 		// }
-		goto retry;
+		if (!MODE_FORE_ALLOC) goto retry;
 		return -ENOSPC;
 	}
 

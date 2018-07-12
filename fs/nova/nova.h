@@ -1318,6 +1318,7 @@ int get_lowest_tier(struct super_block *sb);
 int get_available_tier(struct super_block *sb, int tier);
 unsigned int valid_index_range(struct super_block *sb, struct nova_inode_info_header *sih, pgoff_t index);
 
+int nova_update_usage(struct super_block *sb);
 unsigned long nova_pmem_used(struct nova_sb_info *sbi);
 unsigned long nova_pmem_total(struct nova_sb_info *sbi);
 unsigned long nova_bdev_used(struct nova_sb_info *sbi, int tier);

@@ -961,6 +961,12 @@ prof:
 				&blocknr, num_blocks, ALLOC_FROM_HEAD, true);
 		}
 
+		if (MODE_FORE_ALLOC && allocated <= 0) {
+			nova_update_usage(sb);
+			allocated = nova_alloc_block_tier(NOVA_SB(sb), TIER_BDEV_LOW, ANY_CPU, 
+				&blocknr, num_blocks, ALLOC_FROM_HEAD, true);
+		}
+
 		nova_dbg_verbose("%s: alloc %d blocks @ %lu\n", __func__,
 						allocated, blocknr);
         

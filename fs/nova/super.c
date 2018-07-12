@@ -45,7 +45,7 @@
 #include "bdev.h"
 #include "debug.h"
 
-int measure_timing = 1;
+int measure_timing = MODE_KEEP_TIMING;
 int metadata_csum;
 int wprotect;
 int data_csum;
