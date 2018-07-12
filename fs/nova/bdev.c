@@ -762,7 +762,7 @@ retry:
 	bfl = nova_get_bdev_free_list(sbi, tier, cpuid);
 	spin_lock(&bfl->s_lock);
 
-	if (not_enough_blocks_bfl(bfl, num_blocks)) {
+	if (!cache && not_enough_blocks_bfl(bfl, num_blocks)) {
 		spin_unlock(&bfl->s_lock);
 		// nova_info("noe tier %d cpuid %d free %lu\n", tier, cpuid, bfl->num_free_blocks);
 		// nova_info("used tier %lu\n", nova_bdev_used(sbi, tier));

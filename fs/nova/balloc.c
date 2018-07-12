@@ -614,6 +614,13 @@ long nova_alloc_blocks_in_free_list(struct super_block *sb,
 			/* Superpage allocation must succeed */
 			if ((btype > 0 || contiguous) && num_blocks > curr_blocks)
 				goto next;
+			if (curr_blocks == free_list->num_free_blocks) {
+				if (curr_blocks <= (1<<BDEV_OPT_SIZE_BIT)) return -ENOSPC;
+				else {
+					num_blocks = curr_blocks - (1<<BDEV_OPT_SIZE_BIT);
+					goto partial;
+				}
+			}
 
 			/* Otherwise, allocate the whole blocknode */
 			if (curr == free_list->first_node) {
@@ -641,6 +648,7 @@ long nova_alloc_blocks_in_free_list(struct super_block *sb,
 			break;
 		}
 
+partial:
 		/* Allocate partial blocknode */
 		if (from_tail == ALLOC_FROM_HEAD) {
 			*new_blocknr = curr->range_low;

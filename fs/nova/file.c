@@ -920,7 +920,12 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 
 	if (MODE_FORE_ALLOC) {	
 		write_tier = TIER_PMEM;
-		
+
+		if (len < (1<<BDEV_OPT_SIZE_BIT) ) {
+			write_tier = TIER_PMEM;
+			goto prof;
+		}
+	
 		/* Profiler #1 */
 		nova_sih_increase_wcount(sb, sih, len);
 		if (nova_sih_is_sync(sih)) {
