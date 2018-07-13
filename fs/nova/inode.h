@@ -102,6 +102,7 @@ struct nova_inode_info_header {
 	unsigned long valid_entries;	/* For thorough GC */
 	unsigned long num_entries;	/* For thorough GC */
 	unsigned long wcount;
+	unsigned long avg_atime;
 	int htier;				/* highest tier */
 	int ltier;				/* lowest tier */
 	struct list_head lru_list[BDEV_COUNT_MAX+1];

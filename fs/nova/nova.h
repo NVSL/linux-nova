@@ -1375,6 +1375,8 @@ int nova_alloc_inode_lru_lists(struct super_block *sb);
 inline struct list_head *nova_get_inode_lru_lists(struct nova_sb_info *sbi, int tier, int cpu);
 inline bool is_inode_lru_list_empty(struct nova_sb_info *sbi, int tier, int cpu);
 inline struct mutex *nova_get_inode_lru_mutex(struct nova_sb_info *sbi, int tier, int cpu);
+int nova_update_avg_atime(struct super_block *sb, struct nova_inode_info_header *sih, 
+    unsigned long len);
 int nova_update_sih_tier(struct super_block *sb, struct nova_inode_info_header *sih, 
     int tier, int mode);
 int nova_unlink_inode_lru_list(struct nova_sb_info *sbi, struct nova_inode_info_header *sih);

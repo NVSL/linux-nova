@@ -252,12 +252,15 @@ int is_not_same_tier(struct inode *inode) {
     return 0;
 }
 
-inline bool should_migrate_entry(struct nova_file_write_entry *entry, int to, bool force) {
+inline bool should_migrate_entry(struct inode *inode, struct nova_inode_info_header *sih,
+    struct nova_file_write_entry *entry, int to, bool force) {
 	// atomic_t *counter = (atomic_t *)&entry->counter;
     // if (atomic_read(counter) != 0) {
     //     // nova_info("counter %d\n", atomic_read(counter));
     //     return false;
     // }
+    if (entry->mtime > sih->avg_atime && sih->avg_atime > current_time(inode).tv_sec - 1)
+        return false;
     if (force) return (get_entry_tier(entry)) != to;
     else return (get_entry_tier(entry)) < to;
 }
@@ -784,7 +787,7 @@ int migrate_a_file_by_entries(struct inode *inode, int to, bool force, pgoff_t i
             // nova_info("Inode %lu Index:%lu entry->pgoff:%lu entry->num_pages:%u \n", 
             //     sih->ino, index, pgoff, num_pages);
             
-            if (should_migrate_entry(entry, to, force)) {
+            if (should_migrate_entry(inode, sih, entry, to, force)) {
                 if (DEBUG_MIGRATION_ENTRY) 
                     nova_info("[Migration] Migrating ( one ) write entry with index:%lu (inode %lu)\n", 
                         index, sih->ino);
@@ -926,7 +929,7 @@ next:
                     }
                     else goto mig;
                 }
-                if (!should_migrate_entry(entry, to, force)) goto mig;
+                if (!should_migrate_entry(inode, sih, entry, to, force)) goto mig;
 
                 if (entry->reassigned) {
                     pgoff = index;
@@ -1002,7 +1005,7 @@ mig:
                     index = (pgoff + num_pages) > index+1 ? pgoff + num_pages : index+1;
                     continue;
                 }
-                if (should_migrate_entry(entry, to, force)) {
+                if (should_migrate_entry(inode, sih, entry, to, force)) {
                     if (DEBUG_MIGRATION_ENTRY) 
                         nova_info("[Migration] Migrating ( one ) write entry with index:%lu (inode %lu)\n", 
                             index, sih->ino);

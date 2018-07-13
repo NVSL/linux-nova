@@ -787,6 +787,7 @@ out:
 	// TODOzsa: Read-frequent entry -> Pinned page cache
 	// if (entry) nova_update_sih_tier(sb, sih, get_entry_tier(entry), false, true);
 	
+	nova_update_avg_atime(sb, sih, len);
 	if (entry) nova_update_sih_tier(sb, sih, get_entry_tier(entry), 3);
 
 	NOVA_STATS_ADD(read_bytes, copied);
@@ -954,6 +955,7 @@ prof:
 	// nova_info("[Write] %lu blocks in [tier #%d] -> [seq %u tier #%d].\n", 
 	// 	num_blocks, old_write_tier, seq_count, write_tier);
 
+	nova_update_avg_atime(sb, sih, len);
 	nova_update_sih_tier(sb, sih, write_tier, 3);
 
 	update.tail = sih->log_tail;

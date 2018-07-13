@@ -6,6 +6,12 @@
 #define SEQ_BIT         2
 #define RESET_BIT       36  /* 64 seconds */
 
+inline int most_sig_lbit(unsigned long v) {
+    int r = 0;
+    while (v >>= 1) r++;
+    return r;
+}
+
 // Profiler module #1
 // Synchronize vs. Asynchronous
 bool is_wcount_time_out(struct super_block *sb, struct nova_inode_info_header *sih) {
@@ -180,6 +186,28 @@ int nova_unlink_inode_lru_list(struct nova_sb_info *sbi, struct nova_inode_info_
     return 0;
 }
 
+int nova_calibrate_sih_list(struct super_block *sb, struct nova_inode_info_header *sih,
+    int tier, struct list_head *new_list) {
+    struct nova_inode_info_header *prev_sih;
+    if (sih->lru_list[tier].prev == new_list) return 0;
+    prev_sih = container_of(sih->lru_list[tier].prev, struct nova_inode_info_header, lru_list[tier]);
+    if (prev_sih->avg_atime > sih->avg_atime) 
+        list_move_tail(&prev_sih->lru_list[tier], new_list);
+    return 0;
+}
+
+int nova_update_avg_atime(struct super_block *sb, struct nova_inode_info_header *sih, 
+    unsigned long len) {
+    unsigned long prev_bit, len_bit, prev_atime;
+    unsigned long atime = current_kernel_time().tv_sec;
+    prev_bit = most_sig_lbit(sih->i_size);
+    len_bit = most_sig_lbit(len);
+    prev_atime = sih->avg_atime;
+    if (len_bit >= prev_bit) sih->avg_atime = atime;
+    sih->avg_atime = prev_atime + ((atime-prev_atime) >> (prev_bit-len_bit));
+    return 0;
+}
+
 /*
  * Update htier and ltier in sih
  * mode: 1 - force migration
@@ -213,9 +241,11 @@ int nova_update_sih_tier(struct super_block *sb, struct nova_inode_info_header *
     switch (mode) {
 	    case 1:
             nova_remove_inode_lru_list(sbi, sih, TIER_BDEV_HIGH);
-            mutex_lock(mutex);
-            list_add_tail(&sih->lru_list[tier], new_list);
-            mutex_unlock(mutex);
+            if (sih->lru_list[tier].next != new_list) {
+                mutex_lock(mutex);
+                list_add_tail(&sih->lru_list[tier], new_list);
+                mutex_unlock(mutex);
+            }
             sih->htier = tier;
             sih->ltier = tier;
 		    break;
@@ -223,31 +253,41 @@ int nova_update_sih_tier(struct super_block *sb, struct nova_inode_info_header *
             for (i=sih->ltier; i<=sih->htier; ++i) {
                 mutex = nova_get_inode_lru_mutex(sbi, i, cpu);
                 new_list = nova_get_inode_lru_lists(sbi, i, cpu);
-                mutex_lock(mutex);
-                list_move_tail(&sih->lru_list[i], new_list);
-                mutex_unlock(mutex);
+                if (sih->lru_list[i].next != new_list) {
+                    mutex_lock(mutex);
+                    list_move_tail(&sih->lru_list[i], new_list);
+                    mutex_unlock(mutex);
+                }
             }
+            sih->avg_atime = current_kernel_time().tv_sec;
 		    break;
 	    case 3:
-            mutex_lock(mutex);
-            list_move_tail(&sih->lru_list[tier], new_list);
-            mutex_unlock(mutex);
+            if (sih->lru_list[tier].next != new_list) {
+                mutex_lock(mutex);
+                list_move_tail(&sih->lru_list[tier], new_list);
+                nova_calibrate_sih_list(sb, sih, tier, new_list);
+                mutex_unlock(mutex);
+            }
             if (sih->ltier > tier) sih->ltier = tier;
             if (sih->htier < tier) sih->htier = tier;
 		    break;
 	    case 4:
             nova_remove_inode_lru_list(sbi, sih, tier);
-            mutex_lock(mutex);
-            list_add_tail(&sih->lru_list[tier], new_list);
-            mutex_unlock(mutex);
+            if (sih->lru_list[tier].next != new_list) {
+                mutex_lock(mutex);
+                list_add_tail(&sih->lru_list[tier], new_list);
+                mutex_unlock(mutex);
+            }
             if (sih->ltier < tier) sih->ltier = tier;       
             if (sih->htier < sih->ltier) sih->htier = sih->ltier;    
 		    break;   
 	    case 5:
             nova_renew_inode_lru_list(sbi, sih);
-            mutex_lock(mutex);
-            list_move_tail(&sih->lru_list[tier], new_list);
-            mutex_unlock(mutex);
+            if (sih->lru_list[tier].next != new_list) {
+                mutex_lock(mutex);
+                list_move_tail(&sih->lru_list[tier], new_list);
+                mutex_unlock(mutex);
+            }
             if (sih->ltier < tier) sih->ltier = tier;       
             if (sih->htier < sih->ltier) sih->htier = sih->ltier;
 		    break;
@@ -261,12 +301,6 @@ int nova_update_sih_tier(struct super_block *sb, struct nova_inode_info_header *
 // Profiler module #4
 // Read vs. Write
 // The threshold of PMEM should be (#read)/(#read+#write)
-inline int most_sig_lbit(unsigned long v) {
-    int r = 0;
-    while (v >>= 1) r++;
-    return r;
-}
-
 int nova_give_advise(struct nova_sb_info *sbi) {
     int invalid = 0;
     unsigned long total_read = 0;
