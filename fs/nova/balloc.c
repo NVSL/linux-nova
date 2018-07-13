@@ -555,6 +555,10 @@ static int not_enough_blocks(struct free_list *free_list,
 		return 1;
 	}
 
+	if (atype != LOG && free_list->num_free_blocks <= PMEM_RES_SIZE) {
+		return 1;
+	}
+
 	if (atype == LOG &&
 	    last->range_high - first->range_low < DEAD_ZONE_BLOCKS) {
 		nova_dbgv("%s: allocation would cause deadzone violation. high=0x%lx, low=0x%lx, DEADZONE=%d",
@@ -615,9 +619,11 @@ long nova_alloc_blocks_in_free_list(struct super_block *sb,
 			if ((btype > 0 || contiguous) && num_blocks > curr_blocks)
 				goto next;
 			if (curr_blocks == free_list->num_free_blocks) {
-				if (curr_blocks <= (1<<BDEV_OPT_SIZE_BIT)) return -ENOSPC;
+				if (curr_blocks <= PMEM_RES_SIZE) {
+					return -ENOSPC;
+				}
 				else {
-					num_blocks = curr_blocks - (1<<BDEV_OPT_SIZE_BIT);
+					num_blocks = curr_blocks - PMEM_RES_SIZE;
 					goto partial;
 				}
 			}
@@ -769,9 +775,9 @@ alloc:
 		nova_dbg_verbose("%s: not able to allocate %d blocks.  ret_blocks=%ld; new_blocknr=%lu",
 				 __func__, num, ret_blocks, new_blocknr);
 		// while (unlikely(is_pmem_usage_too_high(NOVA_SB(sb)))) {
-			schedule();
+			// schedule();
 		// }
-		if (!MODE_FORE_ALLOC) goto retry;
+		// if (!MODE_FORE_ALLOC) goto retry;
 		return -ENOSPC;
 	}
 
@@ -804,9 +810,9 @@ inline int nova_new_data_blocks(struct super_block *sb,
 	// 		blocknr, num, ALLOC_FROM_HEAD);
 	// }
 
-	while (unlikely(is_pmem_usage_too_high(NOVA_SB(sb)))) {
-		schedule();
-	}
+	// while (unlikely(is_pmem_usage_too_high(NOVA_SB(sb)))) {
+	// 	schedule();
+	// }
 	
 	NOVA_START_TIMING(new_data_blocks_t, alloc_time);
 	allocated = nova_new_blocks(sb, blocknr, num,

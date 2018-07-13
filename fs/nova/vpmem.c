@@ -552,8 +552,8 @@ int set_pgn_clean(struct pgcache_node *pgn) {
         nova_info("Error in set_pgn_clean %lx\n", pgn->address);
         return -1;
     }
-	*ptep = pte_mkclean(*ptep);
 	*ptep = pte_mkold(*ptep);
+	*ptep = pte_mkclean(*ptep);
     // smp_mb();
     return 0;
 }
@@ -564,8 +564,8 @@ int set_pgn_clean_addr(unsigned long address) {
         nova_info("Error in set_pgn_clean_addr\n");
         return -1;
     }
-	*ptep = pte_mkclean(*ptep);
 	*ptep = pte_mkold(*ptep);
+	*ptep = pte_mkclean(*ptep);
     // smp_mb();
     return 0;
 }

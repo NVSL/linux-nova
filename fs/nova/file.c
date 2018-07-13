@@ -412,7 +412,7 @@ static long nova_fallocate(struct file *file, int mode, loff_t offset,
 		} else if (entry) {
 			put_write_entry(entry);
 		}
-
+		if ( ent_blks>(1<<BDEV_OPT_SIZE_BIT_INIT) ) ent_blks = (1<<BDEV_OPT_SIZE_BIT_INIT);
 		/* Allocate zeroed blocks to fill hole */
 		allocated = nova_new_data_blocks(sb, sih, &blocknr, start_blk,
 				 ent_blks, ALLOC_INIT_ZERO, ANY_CPU,
@@ -421,7 +421,7 @@ static long nova_fallocate(struct file *file, int mode, loff_t offset,
 						allocated, blocknr);
 
 
-		if (MODE_FORE_ALLOC && allocated <= 0) {
+		if (allocated <= 0) {
 			nova_update_usage(sb);
 			allocated = nova_alloc_block_tier(NOVA_SB(sb), TIER_BDEV_LOW, ANY_CPU, 
 				&blocknr, ent_blks, ALLOC_FROM_HEAD, true);
@@ -922,7 +922,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	if (MODE_FORE_ALLOC) {	
 		write_tier = TIER_PMEM;
 
-		if (len < (1<<BDEV_OPT_SIZE_BIT) ) {
+		if (len < (1<<(BDEV_OPT_SIZE_BIT+PAGE_SHIFT)) ) {
 			write_tier = TIER_PMEM;
 			goto prof;
 		}
@@ -975,7 +975,7 @@ prof:
 				&blocknr, num_blocks, ALLOC_FROM_HEAD, true);
 		}
 
-		if (MODE_FORE_ALLOC && allocated <= 0) {
+		if (allocated <= 0) {
 			nova_update_usage(sb);
 			allocated = nova_alloc_block_tier(NOVA_SB(sb), TIER_BDEV_LOW, ANY_CPU, 
 				&blocknr, num_blocks, ALLOC_FROM_HEAD, true);
