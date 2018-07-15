@@ -1460,9 +1460,10 @@ int do_migrate_a_file_downward(struct super_block *sb, int cpu) {
     int i;
 	// if (DEBUG_MIGRATION) nova_info("[Migration-Downward]\n");
     
+    if (!is_pmem_usage_high(sbi)) goto again_bdev;
 again_pmem:
     if (kthread_should_stop()) return -1;
-    if (is_pmem_usage_high(sbi)) {
+    if (is_pmem_usage_quite_high(sbi)) {
         if(DEBUG_MIGRATION_INFO) nova_info("[C%2d] \e[1;31mPMEM usage high.\e[0m\n", cpu);
         if (MODE_MIG_SELF && is_inode_lru_list_empty(sbi, TIER_PMEM, cpu))
             goto again_bdev;
