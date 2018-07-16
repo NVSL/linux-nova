@@ -946,7 +946,7 @@ int nova_append_file_write_entry(struct super_block *sb, struct nova_inode *pi,
 	entry_info.epoch_id = data->epoch_id;
 	entry_info.trans_id = data->trans_id;
 	entry_info.inplace = 0;
-
+	
 	ret = nova_append_log_entry(sb, pi, inode, sih, &entry_info);
 	if (ret)
 		nova_err(sb, "%s failed\n", __func__);

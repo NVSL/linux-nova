@@ -420,11 +420,12 @@ static long nova_fallocate(struct file *file, int mode, loff_t offset,
 		nova_dbgv("%s: alloc %d blocks @ %lu\n", __func__,
 						allocated, blocknr);
 
-
 		if (allocated <= 0) {
 			nova_update_usage(sb);
 			allocated = nova_alloc_block_tier(NOVA_SB(sb), TIER_BDEV_LOW, ANY_CPU, 
-				&blocknr, ent_blks, ALLOC_FROM_HEAD, true);
+				&blocknr, ent_blks,
+				ent_blks == (1<<BDEV_OPT_SIZE_BIT_INIT) ? ALLOC_FROM_TAIL : ALLOC_FROM_HEAD, 
+				true);
 		}
 
 		if (allocated <= 0) {

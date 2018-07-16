@@ -555,17 +555,17 @@ static int not_enough_blocks(struct free_list *free_list,
 		return 1;
 	}
 
-	if (atype != LOG && free_list->num_free_blocks <= PMEM_RES_SIZE) {
+	if (atype == DATA && free_list->num_free_blocks <= PMEM_RES_SIZE_DATA) {
 		return 1;
 	}
 
-	if (atype == LOG &&
-	    last->range_high - first->range_low < DEAD_ZONE_BLOCKS) {
-		nova_dbgv("%s: allocation would cause deadzone violation. high=0x%lx, low=0x%lx, DEADZONE=%d",
-			  __func__, last->range_high, first->range_low,
-			  DEAD_ZONE_BLOCKS);
-		return 1;
-	}
+	// if (atype == LOG &&
+	//     last->range_high - first->range_low < DEAD_ZONE_BLOCKS) {
+	// 	nova_dbgv("%s: allocation would cause deadzone violation. high=0x%lx, low=0x%lx, DEADZONE=%d",
+	// 		  __func__, last->range_high, first->range_low,
+	// 		  DEAD_ZONE_BLOCKS);
+	// 	return 1;
+	// }
 
 	return 0;
 }
@@ -583,7 +583,7 @@ long nova_alloc_blocks_in_free_list(struct super_block *sb,
 	unsigned long curr_blocks;
 	bool found = 0;
 	unsigned long step = 0;
-
+	
 	if (!free_list->first_node || free_list->num_free_blocks == 0) {
 		nova_dbgv("%s: Can't alloc. free_list->first_node=0x%p free_list->num_free_blocks = %lu",
 			  __func__, free_list->first_node,
@@ -618,12 +618,12 @@ long nova_alloc_blocks_in_free_list(struct super_block *sb,
 			/* Superpage allocation must succeed */
 			if ((btype > 0 || contiguous) && num_blocks > curr_blocks)
 				goto next;
-			if (curr_blocks == free_list->num_free_blocks) {
-				if (curr_blocks <= PMEM_RES_SIZE) {
+			if (atype == DATA && curr_blocks == free_list->num_free_blocks) {
+				if (curr_blocks <= PMEM_RES_SIZE_LOG) {
 					return -ENOSPC;
 				}
 				else {
-					num_blocks = curr_blocks - PMEM_RES_SIZE;
+					num_blocks = curr_blocks - PMEM_RES_SIZE_LOG;
 					goto partial;
 				}
 			}
@@ -777,7 +777,7 @@ alloc:
 		// while (unlikely(is_pmem_usage_too_high(NOVA_SB(sb)))) {
 			// schedule();
 		// }
-		// if (!MODE_FORE_ALLOC) goto retry;
+		if (atype == LOG) goto retry;
 		return -ENOSPC;
 	}
 
@@ -869,7 +869,7 @@ retry:
 	
 	NOVA_START_TIMING(new_log_blocks_t, alloc_time);
 	if (unlikely(tier_bdev)) {
-		allocated = nova_new_blocks_from_bdev(sb, TIER_BDEV_HIGH, blocknr, 
+		allocated = nova_new_blocks_from_bdev(sb, TIER_BDEV_LOW, blocknr, 
 			num, cpu, from_tail, false);
 	}
 	else {
