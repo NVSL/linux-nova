@@ -249,14 +249,14 @@ static int nova_seq_ts_show(struct seq_file *seq, void *v)
 		0, fl->num_free_blocks, fl->block_end - fl->block_start + 1, fl->num_blocknode);
 	}
 	if (DEBUG_PROC_LOCK) {
-	seq_printf(seq, "------------------------------------------------------------------------------\n");
+	seq_printf(seq, "--------------------------------------------------------------------------------\n");
 	}
 	else {
 	seq_printf(seq, "----------------------------------------------------------------------\n");
 	}
 	seq_printf(seq, "                          [BDEV free lists]\n");
 	if (DEBUG_PROC_LOCK) {
-	seq_printf(seq, "|Tier|CPU|  Start  |   End   |  Used  | Cached |  Free  | Total |Node| Locks |\n");
+	seq_printf(seq, "|Tier|CPU|  Start  |   End   |  Used  | Cached |  Free  | Total |Node|  Locks  |\n");
 	}
 	else {
 	seq_printf(seq, "|Tier|CPU|  Start  |   End   |  Used  | Cached |  Free  | Total |Node|\n");
@@ -286,10 +286,10 @@ static int nova_seq_ts_show(struct seq_file *seq, void *v)
 		}
 		bfl = nova_get_bdev_free_list_flat(sbi,i);
 		if (DEBUG_PROC_LOCK) {
-			seq_printf(seq, "|%4d|%3d|%9lu|%9lu|%8lu|%8d|%8lu|%7lu|%4lu|%1d|%1d|%1d|%1d|\n",
+			seq_printf(seq, "|%4d|%3d|%9lu|%9lu|%8lu|%8d|%8lu|%7lu|%4lu|%1d|%1d|%1d|%1d|%d|\n",
 			bfl->tier, bfl->cpu, bfl->block_start, bfl->block_end, bfl->num_total_blocks - bfl->num_free_blocks,
 			atomic_read(&sbi->pgcache_size[i]), bfl->num_free_blocks, bfl->num_total_blocks, bfl->num_blocknode,
-			lru, wb, evict, rb );
+			lru, wb, evict, rb, sbi->bm_thread[bfl->cpu].stage);
 		}
 		else {
 			seq_printf(seq, "|%4d|%3d|%9lu|%9lu|%8lu|%8d|%8lu|%7lu|%4lu|\n",
@@ -298,7 +298,7 @@ static int nova_seq_ts_show(struct seq_file *seq, void *v)
 		}
 	}
 	if (DEBUG_PROC_LOCK) {
-	seq_printf(seq, "------------------------------------------------------------------------------\n");
+	seq_printf(seq, "--------------------------------------------------------------------------------\n");
 	}
 	else {
 	seq_printf(seq, "----------------------------------------------------------------------\n");

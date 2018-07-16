@@ -416,6 +416,7 @@ int migrate_entry_blocks(struct nova_sb_info *sbi, int to, struct nova_inode_inf
     int from, ret = 0;
     unsigned long i;
 
+    if (DEBUG_PROC_LOCK) sbi->bm_thread[smp_processor_id()].stage=6;
     /* Step 1. Check */
     if (!entry) return ret;
     if (DEBUG_MIGRATION_ALLOC) 
@@ -526,6 +527,7 @@ int migrate_entry_blocks(struct nova_sb_info *sbi, int to, struct nova_inode_inf
     /* The free step is now included in the clone write entry function */
     // ret = nova_free_blocks_tier(sbi, entry->block >> PAGE_SHIFT, entry->num_pages);
     
+    if (DEBUG_PROC_LOCK) sbi->bm_thread[smp_processor_id()].stage=7;
     /* Step 5. Clone */
     if (!blocknr_hint) ret = nova_clone_write_entry(sbi, si, &nentry, to, blocknr, 0, update);
 
@@ -559,6 +561,7 @@ int migrate_group_entry_blocks(struct nova_sb_info *sbi, struct inode *inode, in
     unsigned int num_pages;
     unsigned long pgoff;
 
+    if (DEBUG_PROC_LOCK) sbi->bm_thread[smp_processor_id()].stage=4;
 	if (MODE_KEEP_STAT) sbi->stat->mig_group += end_index - start_index + 1;
 
     ret = nova_alloc_block_tier(sbi, to, ANY_CPU, &blocknr, opt_size, ALLOC_FROM_TAIL, false);
@@ -916,6 +919,7 @@ next:
         //         nova_info("[Migration] Progress:%3d%% Index:%lu\n", 10*(progress++), index);
         // }
         do {
+            if (DEBUG_PROC_LOCK) sbi->bm_thread[smp_processor_id()].stage=3;
             entry = nova_find_next_entry(sb, sih, index);
             if (entry) {
                 put_write_entry(entry);
@@ -983,6 +987,7 @@ next:
 mig: 
         index = i<<osb;
         do {
+            if (DEBUG_PROC_LOCK) sbi->bm_thread[smp_processor_id()].stage=5;
             entry = nova_find_next_entry_lockfree(sb, sih, index);
             // nova_info("entry %p\n", entry);
             // nova_info("index:%lu ret:%d\n", index, ret);
@@ -1023,6 +1028,7 @@ mig:
     }
 
 end:
+    if (DEBUG_PROC_LOCK) sbi->bm_thread[smp_processor_id()].stage=8;
     if (interrupted) nova_update_sih_tier(sb, sih, to, 5);
     else {
         if (full) nova_update_sih_tier(sb, sih, to, 1);
@@ -1246,6 +1252,7 @@ struct inode *pop_an_inode_to_migrate(struct nova_sb_info *sbi, int tier, struct
 
 	NOVA_START_TIMING(pop_t, pop_time);
 
+    if (DEBUG_PROC_LOCK) sbi->bm_thread[smp_processor_id()].stage=2;
     for (jj=cpu;jj<cpu+sbi->cpus;++jj) {
         if (MODE_MIG_SELF && jj!=cpu) break;
         j = jj%(sbi->cpus);
@@ -1464,6 +1471,7 @@ int do_migrate_a_file_downward(struct super_block *sb, int cpu) {
     int i;
 	// if (DEBUG_MIGRATION) nova_info("[Migration-Downward]\n");
     
+    if (DEBUG_PROC_LOCK) sbi->bm_thread[smp_processor_id()].stage=1;
     if (!is_pmem_usage_high(sbi)) goto again_bdev;
 again_pmem:
     if (kthread_should_stop()) return -1;
@@ -1478,6 +1486,7 @@ again_pmem:
             goto again_bdev;
         }
 	    migrate_a_file(this, get_available_tier(sb, TIER_BDEV_LOW), false);
+        if (DEBUG_PROC_LOCK) sbi->bm_thread[smp_processor_id()].stage=9;
         schedule();
         // Multiple migration per loop
 	    goto again_pmem;
@@ -1587,6 +1596,7 @@ int start_bm_thread(struct nova_sb_info *sbi) {
 	for (i=0; i<cpus; ++i) {
         init_waitqueue_head(&(bm_thread[i].wait_queue_head));
         bm_thread[i].index = i;
+        bm_thread[i].stage = 0;
         sprintf(&stmp[0], "NOVA_BM_C%d",i);
         bm_thread[i].nova_task = kthread_create(bm_thread_func, sbi, stmp);
 		kthread_bind(bm_thread[i].nova_task, i);
@@ -1716,7 +1726,7 @@ int start_usage_thread(struct nova_sb_info *sbi) {
     init_waitqueue_head(&(usage_thread->wait_queue_head));
     // sprintf(&stmp[0], "NOVA_USAGE");
     usage_thread->nova_task = kthread_create(usage_thread_func, sbi, stmp);
-    kthread_bind(usage_thread->nova_task, sbi->cpus/2);
+    kthread_bind(usage_thread->nova_task, sbi->cpus/2-1);
 
     if (IS_ERR(usage_thread->nova_task)) {
         err = PTR_ERR(usage_thread->nova_task);

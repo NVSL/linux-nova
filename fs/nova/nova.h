@@ -614,6 +614,7 @@ static inline unsigned long nova_tier_end_block(struct nova_sb_info *sbi,
 struct nova_kthread {
 	struct task_struct *nova_task;
 	int index;
+	int stage;
 	wait_queue_head_t wait_queue_head;
 };
 
