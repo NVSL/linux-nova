@@ -554,7 +554,7 @@ int migrate_group_entry_blocks(struct nova_sb_info *sbi, struct inode *inode, in
     unsigned int opt_size = 1 << sbi->bdev_list[to - TIER_BDEV_LOW].opt_size_bit;
 	struct nova_file_write_entry *entry;
 	struct nova_file_write_entry *entry_first = NULL;
-	struct nova_file_write_entry entry_data;
+	// struct nova_file_write_entry entry_data;
     pgoff_t index = start_index;
     unsigned int num_pages;
     unsigned long pgoff;
@@ -595,8 +595,8 @@ int migrate_group_entry_blocks(struct nova_sb_info *sbi, struct inode *inode, in
 
     ret = nova_clone_write_entry(sbi, si, entry_first, to, blocknr, end_index - start_index, update);
 
-    if (DEBUG_MIGRATION_MERGE) nova_info("Merge entry: [After ] [entry] %llu,%llu,%u\n", 
-        entry_data.block >> PAGE_SHIFT, entry_data.pgoff, entry_data.num_pages);
+    // if (DEBUG_MIGRATION_MERGE) nova_info("Merge entry: [After ] [entry] %llu,%llu,%u\n", 
+        // entry_data.block >> PAGE_SHIFT, entry_data.pgoff, entry_data.num_pages);
     
     return ret;
 }
@@ -1036,8 +1036,8 @@ end:
 	nova_inode_log_fast_gc(sb, pi, sih, 0, 0, 0, 0, 1);
 
     if (DEBUG_MIGRATION) 
-        nova_info("[Migration] End migrating inode %lu to:T%d force:%d (E %u->%u)\n",
-        inode->i_ino, to, force, oentry, nentry);
+        nova_info("[Migration] End migrating inode %lu to:T%d force:%d (E %u->%u) I:%d F:%d\n",
+        inode->i_ino, to, force, oentry, nentry, interrupted?1:0, full?1:0);
 
 	if (DEBUG_MIGRATION_SEM) nova_info("Mig_sem (inode %lu) up_write (migrate_a_file)\n", sih->ino);
     up_write(&sih->mig_sem);
@@ -1232,7 +1232,7 @@ struct inode *pop_an_inode_to_migrate_by_ino(struct nova_sb_info *sbi, int tier)
  *        [3] NULL
  * Return an inode with mig_sem and i_rwsem locked
  */
-struct inode *pop_an_inode_to_migrate(struct nova_sb_info *sbi, int tier) {
+struct inode *pop_an_inode_to_migrate(struct nova_sb_info *sbi, int tier, struct inode *last) {
 	struct super_block *sb = sbi->sb;
     struct nova_inode_info *si;
 	struct nova_inode_info_header *sih, *tmpsih;
@@ -1253,7 +1253,7 @@ struct inode *pop_an_inode_to_migrate(struct nova_sb_info *sbi, int tier) {
         mutex_lock(mutex);
         list = nova_get_inode_lru_lists(sbi, tier, j);
         list_for_each_entry_safe(sih, tmpsih, list, lru_list[tier]) {
-            if (DEBUG_MIGRATION) nova_info("Inode %lu is selected.\n", sih->ino);
+            if (DEBUG_MIGRATION) nova_info("[C%2d] Inode %lu is selected.\n", cpu, sih->ino);
             if (sih->lru_list[tier].next == &sih->lru_list[tier]) {
                 nova_info("Error: sih->lru_list[%d].next is self.\n", tier);
                 break;
@@ -1277,6 +1277,10 @@ struct inode *pop_an_inode_to_migrate(struct nova_sb_info *sbi, int tier) {
                 nova_info("Error: ret is NULL.\n");
                 continue;
             }
+            if (ret == last) {
+                if (DEBUG_MIGRATION) nova_info("Warning: ret is last\n");
+                continue;
+            }
             if (!i_size_read(ret)) {
                 if (DEBUG_MIGRATION) nova_info("Warning: Inode %lu ret->i_size is 0.\n", sih->ino);
                 continue;
@@ -1290,7 +1294,7 @@ struct inode *pop_an_inode_to_migrate(struct nova_sb_info *sbi, int tier) {
                 if (DEBUG_MIGRATION) nova_info("Warning: Inode %lu is locked.\n", sih->ino);
                 continue;
             }
-            if (DEBUG_MIGRATION) nova_info("Inode %lu is poped.\n", sih->ino);
+            if (DEBUG_MIGRATION) nova_info("[C%2d] Inode %lu is poped.\n", cpu, sih->ino);
             mutex_unlock(mutex);
 	        NOVA_END_TIMING(pop_t, pop_time);
             return ret;
@@ -1456,7 +1460,7 @@ int do_migrate_a_file_rotate(struct inode *inode) {
 
 int do_migrate_a_file_downward(struct super_block *sb, int cpu) {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
-    struct inode *this;    
+    struct inode *this = NULL;    
     int i;
 	// if (DEBUG_MIGRATION) nova_info("[Migration-Downward]\n");
     
@@ -1467,7 +1471,7 @@ again_pmem:
         if(DEBUG_MIGRATION_INFO) nova_info("[C%2d] \e[1;31mPMEM usage high.\e[0m\n", cpu);
         if (MODE_MIG_SELF && is_inode_lru_list_empty(sbi, TIER_PMEM, cpu))
             goto again_bdev;
-        this = pop_an_inode_to_migrate(sbi, TIER_PMEM);
+        this = pop_an_inode_to_migrate(sbi, TIER_PMEM, this);
         if (!this) {
             if(DEBUG_MIGRATION_INFO) nova_info("[C%2d] PMEM usage is high yet no inode is found.\n", cpu);
             schedule();
@@ -1487,7 +1491,7 @@ again_bdev:
             if(DEBUG_MIGRATION_INFO) nova_info("[C%2d] \e[1;31mB-T%d usage high.\e[0m\n", cpu, i);
             if (MODE_MIG_SELF && is_inode_lru_list_empty(sbi, TIER_PMEM, cpu))
                 goto again_log;    
-            this = pop_an_inode_to_migrate(sbi, i);
+            this = pop_an_inode_to_migrate(sbi, i, this);
             if (!this) {
                 if(DEBUG_MIGRATION_INFO) nova_info("[C%2d] B-T%d usage is high yet no inode is found.\n", cpu, i);
                 goto again_log;
@@ -1506,7 +1510,7 @@ again_log:
     for (i=TIER_BDEV_LOW;i<=TIER_BDEV_HIGH;++i) {
         if (MODE_LOG_MIG && is_should_migrate_log()) {
             if(DEBUG_MIGRATION_INFO) nova_info("[C%2d] \e[1;31mPMEM usage too high.\e[0m\n", cpu);
-            this = pop_an_inode_to_migrate(sbi, i);
+            this = pop_an_inode_to_migrate(sbi, i, this);
             if (!this) {
                 if(DEBUG_MIGRATION_INFO) nova_info("[C%2d] B-T%d no inode is found.\n", cpu, i);
                 goto again_rev;
