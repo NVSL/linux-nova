@@ -131,12 +131,11 @@ int nova_fsync_range(struct inode *inode, unsigned long start_pgoff, unsigned lo
 	if (end_pgoff > (isize) >> PAGE_SHIFT) end_pgoff = (isize) >> PAGE_SHIFT;
 	
     do {
-        entry = nova_find_next_entry(sb, sih, index);
+        entry = nova_find_next_entry_lockfree(sb, sih, index);
 		// nova_info("index %lu %lu %lu\n", index, start_pgoff, end_pgoff);
         if (entry) {            
             if (entry == last_entry) {
                 index++;
-				put_write_entry(entry);
                 continue;
             }
             if (entry->reassigned) {
@@ -151,7 +150,6 @@ int nova_fsync_range(struct inode *inode, unsigned long start_pgoff, unsigned lo
 				ret += nova_sync_entry_blocks(entry);
 			
             index = (pgoff + num_pages) > index+1 ? pgoff + num_pages : index+1;
-			put_write_entry(entry);
         }
         else {
             index++;
@@ -176,6 +174,7 @@ static int nova_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 	int ret = 0;
 	timing_t fsync_time;
 
+	inode_lock(inode);
 	NOVA_START_TIMING(fsync_t, fsync_time);
 	if (DEBUG_FORE_FILE) nova_info("nova_fsync is called\n");
 	if (MODE_FORE_ALLOC) nova_prof_judge_sync(file);
@@ -206,6 +205,7 @@ static int nova_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 persist:
 	PERSISTENT_BARRIER();
 	NOVA_END_TIMING(fsync_t, fsync_time);
+	inode_unlock(inode);
 
 	return ret;
 }

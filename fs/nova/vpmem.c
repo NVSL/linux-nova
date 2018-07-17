@@ -1290,12 +1290,11 @@ int vpmem_flush_pages_sync(unsigned long address, unsigned long count) {
     struct pgcache_node *pgn = NULL;
     unsigned long ret = 0;
     address &= PAGE_MASK;
-    while (count-- > 0) {
+    while (count-- != 0) {
         pgn = pgcache_lookup(address);
-        wait_until_pgn_is_valid(pgn);
-        if (likely(pgn)) {
+        if (pgn&pgn->page) {
             if (is_pgn_dirty(pgn)) {
-                vpmem_write_to_bdev(address, 1, pgn->page);
+                push_to_wb_list(pgn);
                 ret++;
                 set_pgn_clean(pgn);
             }
