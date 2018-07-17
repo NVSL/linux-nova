@@ -309,7 +309,8 @@ int nova_give_advise(struct nova_sb_info *sbi) {
     adv = MIGRATION_DOWN_PMEM_PERC_INIT + i*5;
     if (adv>90) adv = 90;
     if (adv<10) adv = 10;
-    MIGRATION_DOWN_PMEM_PERC = adv>MIGRATION_DOWN_PMEM_PERC_INIT ? adv:MIGRATION_DOWN_PMEM_PERC_INIT;
+    MIGRATION_DOWN_PMEM_PERC = adv;
+    // MIGRATION_DOWN_PMEM_PERC = adv>MIGRATION_DOWN_PMEM_PERC_INIT ? adv:MIGRATION_DOWN_PMEM_PERC_INIT;
     return 0;
 }
 

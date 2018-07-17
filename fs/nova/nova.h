@@ -1448,6 +1448,7 @@ int nova_get_bdev_info(struct nova_sb_info *sbi);
 
 /* vpmem.c */
 int vpmem_setup(struct nova_sb_info *sbi, unsigned long);
+inline void nova_set_stage(int n);
 
 /* perf.c */
 int nova_test_perf(struct super_block *sb, unsigned int func_id,

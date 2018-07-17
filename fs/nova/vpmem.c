@@ -248,6 +248,11 @@ inline int pgc_total_size(void) {
     return ret;
 }
 
+// Setup stage message for debug in proc
+inline void nova_set_stage(int n) {
+    if (DEBUG_PROC_LOCK) vsbi->bm_thread[smp_processor_id()].stage=n;
+}
+
 void set_should_migrate_log(void) {
     bool ans = true;
     int i;

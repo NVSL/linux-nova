@@ -775,8 +775,9 @@ alloc:
 		nova_dbg_verbose("%s: not able to allocate %d blocks.  ret_blocks=%ld; new_blocknr=%lu",
 				 __func__, num, ret_blocks, new_blocknr);
 		// while (unlikely(is_pmem_usage_too_high(NOVA_SB(sb)))) {
-			// schedule();
+		schedule();
 		// }
+		nova_set_stage(0);
 		if (atype == LOG) goto retry;
 		return -ENOSPC;
 	}
