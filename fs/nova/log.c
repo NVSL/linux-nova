@@ -1206,7 +1206,7 @@ int nova_allocate_inode_log_pages_from_bdev(struct super_block *sb,
 	int allocated;
 	int ret_pages = 0;
 
-	allocated = nova_new_blocks_from_bdev(sb, TIER_BDEV_HIGH, &new_inode_blocknr, 
+	allocated = nova_new_blocks_from_bdev(sb, TIER_BDEV_LOW, &new_inode_blocknr, 
 			num_pages, cpuid, from_tail, false);
 			
 	if (allocated <= 0) {
@@ -1226,7 +1226,7 @@ int nova_allocate_inode_log_pages_from_bdev(struct super_block *sb,
 
 	/* Allocate remaining pages */
 	while (num_pages) {
-		allocated = nova_new_blocks_from_bdev(sb, TIER_BDEV_HIGH, &new_inode_blocknr, 
+		allocated = nova_new_blocks_from_bdev(sb, TIER_BDEV_LOW, &new_inode_blocknr, 
 			num_pages, cpuid, from_tail, false);
 
 		nova_dbg_verbose("Alloc %d log blocks @ 0x%lx\n",

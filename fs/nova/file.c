@@ -412,11 +412,17 @@ static long nova_fallocate(struct file *file, int mode, loff_t offset,
 		} else if (entry) {
 			put_write_entry(entry);
 		}
-		if ( ent_blks>(1<<BDEV_OPT_SIZE_BIT_INIT) ) ent_blks = (1<<BDEV_OPT_SIZE_BIT_INIT);
-		/* Allocate zeroed blocks to fill hole */
-		allocated = nova_new_data_blocks(sb, sih, &blocknr, start_blk,
+		if ( ent_blks >= (1<<BDEV_OPT_SIZE_BIT_INIT) ) {
+			ent_blks = (1<<BDEV_OPT_SIZE_BIT_INIT);
+			allocated = nova_new_blocks_from_bdev(sb, TIER_BDEV_LOW, &blocknr, 
+				ent_blks, ANY_CPU, ALLOC_FROM_TAIL, false);
+		}
+		else {
+			/* Allocate zeroed blocks to fill hole */
+			allocated = nova_new_data_blocks(sb, sih, &blocknr, start_blk,
 				 ent_blks, ALLOC_INIT_ZERO, ANY_CPU,
 				 ALLOC_FROM_HEAD);
+		}
 		nova_dbgv("%s: alloc %d blocks @ %lu\n", __func__,
 						allocated, blocknr);
 
@@ -631,7 +637,7 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 	index = pos >> PAGE_SHIFT;
 	offset = pos & ~PAGE_MASK;
 
-	// nova_info("read 1 len %lu pos %llu\n", len, pos);
+	// nova_info("[read] len %lu pos %llu\n", len, pos);
 
 	if (!access_ok(VERIFY_WRITE, buf, len)) {
 		error = -EFAULT;
@@ -864,6 +870,8 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 		goto out;
 	}
 	pos = *ppos;
+
+	//  nova_info("[write] len %lu pos %llu\n", len, pos);
 
 	if (filp->f_flags & O_APPEND)
 		pos = i_size_read(inode);
