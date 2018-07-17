@@ -1292,7 +1292,7 @@ int vpmem_flush_pages_sync(unsigned long address, unsigned long count) {
     address &= PAGE_MASK;
     while (count-- != 0) {
         pgn = pgcache_lookup(address);
-        if (pgn&pgn->page) {
+        if (pgn && pgn->page) {
             if (is_pgn_dirty(pgn)) {
                 push_to_wb_list(pgn);
                 ret++;
