@@ -1416,15 +1416,14 @@ int vpmem_invalidate_pages(unsigned long address, unsigned long count) {
 }
 
 int vpmem_renew_pages(void *addr, unsigned long address, unsigned long count) {
-    struct pgcache_node *pgn = NULL;
-    
+    struct pgcache_node *pgn = NULL;    
     address &= PAGE_MASK;
     while (count-- > 0) {
         pgn = pgcache_lookup(address);
         if (pgn && pgn->page) {
             memcpy_mcsafe(page_address(pgn->page), addr, PAGE_SIZE);
             set_pgn_clean(pgn);
-            pgcache_lru_refer(pgn);
+            // pgcache_lru_refer(pgn);
             #ifdef VPMEM_DEBUG
                 renew++;
             #endif
