@@ -919,9 +919,9 @@ next:
         // }
         do {
             nova_set_stage(3);
-            entry = nova_find_next_entry(sb, sih, index);
+            entry = nova_find_next_entry_lockfree(sb, sih, index);
             if (entry) {
-                put_write_entry(entry);
+                // put_write_entry(entry);
                 if (get_entry_tier(entry) == to) {
                         goto mig;
                 }
