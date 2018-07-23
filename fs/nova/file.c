@@ -930,11 +930,6 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 
 	if (MODE_FORE_ALLOC) {	
 		write_tier = TIER_PMEM;
-
-		if (len < (1<<(BDEV_OPT_SIZE_BIT+PAGE_SHIFT)) ) {
-			write_tier = TIER_PMEM;
-			goto prof;
-		}
 	
 		/* Profiler #1 */
 		nova_sih_increase_wcount(sb, sih, len);
@@ -943,6 +938,8 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 			goto prof;
 		}
 		
+		if (len < (1<<(BDEV_OPT_SIZE_BIT+PAGE_SHIFT)) ) goto pout;
+
 		/* Profiler #2 */
 		seq_count = nova_get_prev_seq_count(sb, sih, start_blk, num_blocks);
 		if (!nova_prof_judge_seq(seq_count)) {
@@ -957,6 +954,7 @@ prof:
 		write_tier = get_available_tier(sb, write_tier);
 	}
 	
+pout:
 	if (MODE_KEEP_STAT) sbi->stat->write += len;
 	if (MODE_USE_DYN_THRES) nova_update_stat(sbi, len, false);
 	if (MODE_KEEP_STAT && write_tier!=TIER_PMEM) sbi->stat->write_dram += len;
@@ -973,6 +971,7 @@ prof:
 		offset = pos & (nova_inode_blk_size(sih) - 1);
 		start_blk = pos >> sb->s_blocksize_bits;
 
+retry:
 		if (write_tier == TIER_PMEM) {
 			/* don't zero-out the allocated blocks */
 			allocated = nova_new_data_blocks(sb, sih, &blocknr, start_blk,
@@ -986,6 +985,8 @@ prof:
 
 		if (allocated <= 0) {
 			nova_update_usage(sb);
+			schedule();
+			if (len < (1<<(BDEV_OPT_SIZE_BIT+PAGE_SHIFT)) ) goto retry;
 			allocated = nova_alloc_block_tier(NOVA_SB(sb), TIER_BDEV_LOW, ANY_CPU, 
 				&blocknr, num_blocks, ALLOC_FROM_HEAD, true);
 		}
