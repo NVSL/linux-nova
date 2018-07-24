@@ -1297,7 +1297,7 @@ int vpmem_flush_pages_sync(unsigned long address, unsigned long count) {
     if (!vpmem_valid_address(address)) return 0;
     while (count-- != 0) {
         pgn = pgcache_lookup(address);
-        if (pgn && pgn->page) {
+        if (pgn && pgn->page && pgn->pte) {
             if (is_pgn_dirty(pgn)) {
                 push_to_wb_list(pgn);
                 ret++;
@@ -1405,7 +1405,7 @@ int vpmem_invalidate_pages(unsigned long address, unsigned long count) {
     while (count-- > 0) {
         dif_mm4++;
         pgn = pgcache_lookup(address);
-        if (pgn && pgn->page) {
+        if (pgn && pgn->page && pgn->pte) {
             pop_from_lru_list(pgn);
             pop_from_wb_list(pgn);
             set_pgn_clean(pgn);
@@ -1425,7 +1425,7 @@ int vpmem_renew_pages(void *addr, unsigned long address, unsigned long count) {
     address &= PAGE_MASK;
     while (count-- > 0) {
         pgn = pgcache_lookup(address);
-        if (pgn && pgn->page) {
+        if (pgn && pgn->page && pgn->pte) {
             memcpy_mcsafe(page_address(pgn->page), addr, PAGE_SIZE);
             set_pgn_clean(pgn);
             // pgcache_lru_refer(pgn);
