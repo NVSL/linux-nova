@@ -1326,6 +1326,7 @@ unsigned long nova_bdev_used(struct nova_sb_info *sbi, int tier);
 unsigned long nova_bdev_total(struct nova_sb_info *sbi, int tier);
 inline bool is_tier_usage_really_high(struct nova_sb_info *sbi, int tier);
 inline bool is_tier_usage_quite_high(struct nova_sb_info *sbi, int tier);
+inline bool is_pmem_usage_high(struct nova_sb_info *sbi);
 inline bool is_pmem_usage_too_high(struct nova_sb_info *sbi);
 int start_bm_thread(struct nova_sb_info *sbi);
 void stop_bm_thread(struct nova_sb_info *sbi);

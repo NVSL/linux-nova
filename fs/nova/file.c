@@ -323,6 +323,7 @@ static long nova_fallocate(struct file *file, int mode, loff_t offset,
 {
 	struct inode *inode = file->f_path.dentry->d_inode;
 	struct super_block *sb = inode->i_sb;
+	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_inode_info *si = NOVA_I(inode);
 	struct nova_inode_info_header *sih = &si->header;
 	struct nova_inode *pi;
@@ -412,7 +413,7 @@ static long nova_fallocate(struct file *file, int mode, loff_t offset,
 		} else if (entry) {
 			put_write_entry(entry);
 		}
-		if ( ent_blks >= (1<<BDEV_OPT_SIZE_BIT_INIT) ) {
+		if ( is_pmem_usage_high(sbi) && ent_blks >= (1<<BDEV_OPT_SIZE_BIT_INIT) ) {
 			ent_blks = (1<<BDEV_OPT_SIZE_BIT_INIT);
 			allocated = nova_new_blocks_from_bdev(sb, TIER_BDEV_LOW, &blocknr, 
 				ent_blks, ANY_CPU, ALLOC_FROM_TAIL, false);
