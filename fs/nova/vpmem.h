@@ -28,6 +28,7 @@ void vpmem_put(void);
 
 void vpmem_reset(void);
 
+inline bool vpmem_valid_blockoff(unsigned long blockoff);
 inline bool vpmem_valid_address(unsigned long address);
 bool vpmem_do_page_fault_range(unsigned long address, unsigned long address_end, unsigned long entry_end);
 bool vpmem_do_page_fault_lite(void *address_from, void *address_to);

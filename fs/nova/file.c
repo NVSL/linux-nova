@@ -118,10 +118,9 @@ inline int nova_sync_entry_blocks(struct nova_file_write_entry *entry) {
 
 int nova_fsync_range(struct inode *inode, unsigned long start_pgoff, unsigned long end_pgoff) {
 	struct super_block *sb = inode->i_sb;
-	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_inode_info *si = NOVA_I(inode);
 	struct nova_inode_info_header *sih = &si->header;
-    unsigned long index = start_pgoff;
+    unsigned long index;
 	int ret = 0;
     unsigned int num_pages;
     unsigned long pgoff, isize;
@@ -129,7 +128,11 @@ int nova_fsync_range(struct inode *inode, unsigned long start_pgoff, unsigned lo
 	
 	isize = i_size_read(inode);
 	if (end_pgoff > (isize) >> PAGE_SHIFT) end_pgoff = (isize) >> PAGE_SHIFT;
-	
+
+	if (start_pgoff < sih->do_sync_start) start_pgoff = sih->do_sync_start;
+	if (end_pgoff > sih->do_sync_end) end_pgoff = sih->do_sync_end;
+	index = start_pgoff;
+
     do {
         entry = nova_find_next_entry_lockfree(sb, sih, index);
 		// nova_info("index %lu %lu %lu\n", index, start_pgoff, end_pgoff);
@@ -146,7 +149,7 @@ int nova_fsync_range(struct inode *inode, unsigned long start_pgoff, unsigned lo
                 pgoff = le64_to_cpu(entry->pgoff);
                 num_pages = le32_to_cpu(entry->num_pages);
             }      
-			if (entry->block >> PAGE_SHIFT >= sbi->num_blocks)     
+			if (vpmem_valid_blockoff(entry->block >> PAGE_SHIFT))     
 				ret += nova_sync_entry_blocks(entry);
 			
             index = (pgoff + num_pages) > index+1 ? pgoff + num_pages : index+1;
@@ -156,8 +159,31 @@ int nova_fsync_range(struct inode *inode, unsigned long start_pgoff, unsigned lo
         }
         last_entry = entry;
     } while (index <= end_pgoff);
-	// nova_info("fsync %d pages\n", ret);
+	// nova_info("fsync %d pages %lu %lu\n", ret, sih->do_sync_start, sih->do_sync_end);
 	return ret;
+}
+
+inline void include_inode_do_sync(struct nova_inode_info_header *sih, 
+	unsigned long start_index, unsigned long end_index) {
+	if ( sih->do_sync == 0 ) {
+		sih->do_sync_start = start_index;
+		sih->do_sync_end = end_index;
+	}
+	else {
+		if ( sih->do_sync_start > start_index ) sih->do_sync_start = start_index;
+		if ( sih->do_sync_end > end_index ) sih->do_sync_end = end_index;
+	}
+	sih->do_sync = 1;
+}
+
+inline void reset_inode_do_sync(struct nova_inode_info_header *sih) {
+	sih->do_sync = 0;
+	sih->do_sync_start = 0;
+	sih->do_sync_end = 0;
+}
+
+inline bool should_inode_do_sync(struct nova_inode_info_header *sih) {
+	return sih->do_sync == 1;
 }
 
 /* This function is called by both msync() and fsync().
@@ -169,6 +195,8 @@ static int nova_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 {
 	struct address_space *mapping = file->f_mapping;
 	struct inode *inode = file->f_path.dentry->d_inode;
+	struct nova_inode_info *si = NOVA_I(inode);
+	struct nova_inode_info_header *sih = &si->header;
 	struct super_block *sb = inode->i_sb;
 	unsigned long start_pgoff, end_pgoff;
 	int ret = 0;
@@ -186,8 +214,12 @@ static int nova_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 	nova_dbgv("%s: msync pgoff range %lu to %lu\n",
 			__func__, start_pgoff, end_pgoff);
 
-	nova_fsync_range(file_inode(file), start_pgoff, end_pgoff);
+	if (should_inode_do_sync(sih)) {
+		nova_fsync_range(file_inode(file), start_pgoff, end_pgoff);
+	}
 	
+	reset_inode_do_sync(sih);
+
 	/* No need to flush if the file is not mmaped */
 	if (!mapping_mapped(mapping))
 		goto persist;
@@ -990,6 +1022,11 @@ retry:
 			if (len < (1<<(BDEV_OPT_SIZE_BIT+PAGE_SHIFT)) ) goto retry;
 			allocated = nova_alloc_block_tier(NOVA_SB(sb), TIER_BDEV_LOW, ANY_CPU, 
 				&blocknr, num_blocks, ALLOC_FROM_HEAD, true);
+			write_tier = TIER_BDEV_LOW;
+		}
+
+		if (write_tier != TIER_PMEM) {
+			include_inode_do_sync(sih, start_blk, start_blk+allocated-1);
 		}
 
 		nova_dbg_verbose("%s: alloc %d blocks @ %lu\n", __func__,

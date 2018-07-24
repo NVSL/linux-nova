@@ -579,6 +579,10 @@ void vpmem_invalidate_pgn(struct pgcache_node *pgn);
 void vpmem_clear_pgn(struct pgcache_node *pgn, int index, unsigned long flags);
 bool insert_tlb(struct pgcache_node *pgn);
 
+inline bool vpmem_valid_blockoff(unsigned long blockoff) {
+	return blockoff >= vsbi->num_blocks;
+}
+
 inline bool vpmem_valid_address(unsigned long address) {
     if (address < TASK_SIZE_MAX || address < VPMEM_START || address > vpmem_end) return false;
     else return true;
@@ -1290,6 +1294,7 @@ int vpmem_flush_pages_sync(unsigned long address, unsigned long count) {
     struct pgcache_node *pgn = NULL;
     unsigned long ret = 0;
     address &= PAGE_MASK;
+    if (!vpmem_valid_address(address)) return 0;
     while (count-- != 0) {
         pgn = pgcache_lookup(address);
         if (pgn && pgn->page) {

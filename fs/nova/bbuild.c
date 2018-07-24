@@ -54,6 +54,9 @@ void nova_init_header(struct super_block *sb,
 	sih->wcount = 0;
 	sih->htier = 0;
 	sih->ltier = 0;
+	sih->do_sync = 0;
+	sih->do_sync_start = 0;
+	sih->do_sync_end = 0;
     init_rwsem(&sih->mig_sem);
 	for (i=0;i<=TIER_BDEV_HIGH;++i) INIT_LIST_HEAD(&sih->lru_list[i]);
 	sih->last_setattr = 0;
