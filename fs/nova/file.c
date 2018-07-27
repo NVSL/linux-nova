@@ -203,6 +203,8 @@ static int nova_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 	timing_t fsync_time;
 
 	inode_lock(inode);
+	down_write(&sih->mig_sem);
+	inode_unlock(inode);
 	NOVA_START_TIMING(fsync_t, fsync_time);
 	if (DEBUG_FORE_FILE) nova_info("nova_fsync is called\n");
 	if (MODE_FORE_ALLOC) nova_prof_judge_sync(file);
@@ -231,13 +233,13 @@ static int nova_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 	 */
 	nova_reset_mapping_csum_parity(sb, inode, mapping,
 					start_pgoff, end_pgoff);
-
+	
 	ret = generic_file_fsync(file, start, end, datasync);
 
 persist:
 	PERSISTENT_BARRIER();
 	NOVA_END_TIMING(fsync_t, fsync_time);
-	inode_unlock(inode);
+	up_write(&sih->mig_sem);
 
 	return ret;
 }

@@ -43,12 +43,12 @@ inline bool nova_sih_is_sync(struct nova_inode_info_header *sih) {
 
 inline bool nova_sih_judge_sync(struct nova_inode_info_header *sih) {
     if ((sih->wcount & ((1UL << 63) - 1)) >> SYNC_BIT > 0) {
-        if (DEBUG_PROF_SYNC) nova_info("Inode sih %lu is async (%lu).\n", sih->ino, sih->wcount);
+        if (DEBUG_PROF_SYNC) nova_info("Inode sih %lu is async (%lx).\n", sih->ino, sih->wcount);
         sih->wcount = 0;
         return false;
     }
     else {
-        if (DEBUG_PROF_SYNC) nova_info("Inode sih %lu is sync (%lu).\n", sih->ino, sih->wcount);
+        if (DEBUG_PROF_SYNC) nova_info("Inode sih %lu is sync (%lx).\n", sih->ino, sih->wcount);
         sih->wcount = 1UL << 63;
         return true;
     }
