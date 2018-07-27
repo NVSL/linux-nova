@@ -11,6 +11,7 @@ struct tiering_stat {
 	unsigned long read;
 	unsigned long mig_group;
 	unsigned long mig_interrupt;
+	unsigned long pmem_free;
 
 	bool should_migrate_log;
 

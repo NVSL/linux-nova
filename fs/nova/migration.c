@@ -1643,6 +1643,7 @@ int nova_update_usage(struct super_block *sb) {
     /* PMEM usage */
     used = nova_pmem_used(sbi);
     total = nova_pmem_total(sbi);
+    sbi->stat->pmem_free = total - used;
     // Usage high: used / total > (MIGRATION_DOWN_PMEM_PERC-10) / 100
     if (DEBUG_MIGRATION_USAGE) nova_info("PMEM usage: U:%8lu G:%8lu T:%8lu.\n",
         used, (MIGRATION_DOWN_PMEM_PERC-10) * total / 100, total);

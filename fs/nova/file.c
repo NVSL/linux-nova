@@ -973,7 +973,8 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 			goto prof;
 		}
 		
-		if (i_size_read(inode) > (sbi->num_blocks<<(PAGE_SHIFT-2)) ) {
+		if (i_size_read(inode) >= (1<<PMEM_LARGE_FILE_SIZE_BIT) && 
+			i_size_read(inode) >= (sbi->stat->pmem_free<<PAGE_SHIFT) ) {
 			write_tier = TIER_BDEV_LOW;
 			goto pout;
 		}
