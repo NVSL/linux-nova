@@ -900,7 +900,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 
 	NOVA_START_TIMING(cow_write_t, cow_write_time);
 
-		if (!access_ok(VERIFY_READ, buf, len)) {
+	if (!access_ok(VERIFY_READ, buf, len)) {
 		ret = -EFAULT;
 		goto out;
 	}
@@ -973,6 +973,11 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 			goto prof;
 		}
 		
+		if (i_size_read(inode) > (sbi->num_blocks<<(PAGE_SHIFT-2)) ) {
+			write_tier = TIER_BDEV_LOW;
+			goto pout;
+		}
+
 		if (len < (1<<(BDEV_OPT_SIZE_BIT+PAGE_SHIFT)) ) goto pout;
 
 		/* Profiler #2 */
