@@ -893,6 +893,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	int try_inplace = 0;
 	u64 epoch_id;
 	u32 time;
+	bool exact;
 	int write_tier = TIER_PMEM;
 
 	if (len == 0)
@@ -973,19 +974,29 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 			goto prof;
 		}
 		
+		/* Profiler #2 */
+		seq_count = nova_get_prev_seq_count(sb, sih, start_blk, num_blocks, &exact);
+
+		// Hot and replacing
+		if (exact) {
+			write_tier = TIER_PMEM;
+			goto pout;
+		}
+
 		if (i_size_read(inode) >= (1<<PMEM_LARGE_FILE_SIZE_BIT) && 
 			i_size_read(inode) >= (sbi->stat->pmem_free<<PAGE_SHIFT) ) {
 			write_tier = TIER_BDEV_LOW;
 			goto pout;
 		}
 
-		if (len < (1<<(BDEV_OPT_SIZE_BIT+PAGE_SHIFT)) ) goto pout;
+		if (len < (1<<(BDEV_OPT_SIZE_BIT+PAGE_SHIFT)) ) {
+			write_tier = TIER_PMEM;
+			goto pout;
+		}
 
-		/* Profiler #2 */
-		seq_count = nova_get_prev_seq_count(sb, sih, start_blk, num_blocks);
 		if (!nova_prof_judge_seq(seq_count)) {
 			write_tier = TIER_PMEM;
-			goto prof;
+			goto pout;
 		}
 
 		// nova_info("p %d b %d\n",pgc_tier_free_order(0),pgc_tier_free_order(1));

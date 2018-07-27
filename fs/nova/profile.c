@@ -69,12 +69,24 @@ bool is_entry_time_out(struct super_block *sb, struct nova_file_write_entry *ent
     else return false;    
 }
 
+bool is_entry_time_in(struct super_block *sb, struct nova_file_write_entry *entry) {
+    unsigned int interval = 3;  /* 30 seconds */
+    if ( timespec_trunc(current_kernel_time(),sb->s_time_gran).tv_sec
+         - entry->mtime > interval) return false;
+    else return true;    
+}
+
 unsigned int nova_get_prev_seq_count(struct super_block *sb, struct nova_inode_info_header *sih, 
-    unsigned long pgoff, int num_pages) {
+    unsigned long pgoff, int num_pages, bool *exact) {
 	struct nova_file_write_entry *entry;
     entry = nova_find_next_entry_lockfree(sb, sih, pgoff);
+    *exact = false;
     if (!entry) goto tail;
     if (is_entry_time_out(sb, entry)) goto tail;
+    if (entry->pgoff == pgoff && entry->num_pages == num_pages) {
+        if (is_entry_time_in(sb, entry)) *exact = true;
+        return entry->seq_count + 1;
+    }
     if (entry->pgoff <= pgoff && entry->pgoff + entry->num_pages - 1 >= pgoff + num_pages/2) 
         return entry->seq_count + 1;
 tail:
@@ -310,6 +322,7 @@ int nova_give_advise(struct nova_sb_info *sbi) {
     if (adv>90) adv = 90;
     if (adv<50) adv = 50;
     MIGRATION_DOWN_PMEM_PERC = adv;
+    MIGRATION_IDEAL_PERC = adv;
     // MIGRATION_DOWN_PMEM_PERC = adv>MIGRATION_DOWN_PMEM_PERC_INIT ? adv:MIGRATION_DOWN_PMEM_PERC_INIT;
     return 0;
 }

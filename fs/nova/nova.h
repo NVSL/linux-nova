@@ -189,6 +189,7 @@ extern int dram_struct_csum;
 
 extern int TIER_BDEV_HIGH;
 extern int MIGRATION_DOWN_PMEM_PERC;
+extern int MIGRATION_IDEAL_PERC;
 extern int VPMEM_MAX_PAGES_QTR;
 extern int BDEV_OPT_SIZE_BIT;
 
@@ -1370,7 +1371,7 @@ inline bool nova_sih_is_sync(struct nova_inode_info_header *sih);
 inline bool nova_sih_judge_sync(struct nova_inode_info_header *sih);
 inline bool nova_prof_judge_sync(struct file *file);
 unsigned int nova_get_prev_seq_count(struct super_block *sb, struct nova_inode_info_header *sih, 
-    unsigned long pgoff, int num_pages);
+    unsigned long pgoff, int num_pages, bool *exact);
 inline bool nova_prof_judge_seq(unsigned int seq_count);
 inline bool nova_entry_judge_seq(struct nova_file_write_entry *entry);
 int nova_alloc_inode_lru_lists(struct super_block *sb);
