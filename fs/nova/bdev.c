@@ -1227,6 +1227,7 @@ int nova_bdev_free_blocks(struct nova_sb_info *sbi, int tier, unsigned long bloc
 	return nova_free_blocks_from_bdev(sbi, blocknr + nova_tier_start_block(sbi, tier), num_blocks);
 }
 
+/* Deprecated */
 /* 
  * Check if get_nvmm allocates mini-buffer
  * If so, put the buffer, return 0

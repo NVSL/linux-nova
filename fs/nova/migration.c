@@ -169,6 +169,7 @@ inline int clear_dram_buffer_range(unsigned long blockoff, unsigned long length)
     return vpmem_invalidate_pages(blockoff_to_virt(blockoff), length);
 }
 
+/* Deprecated */
 inline int put_dram_buffer_range(unsigned long blockoff, unsigned long length) {
     return vpmem_flush_pages(blockoff_to_virt(blockoff), length);
 }

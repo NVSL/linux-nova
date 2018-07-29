@@ -594,6 +594,12 @@ inline bool vpmem_valid_address(unsigned long address) {
     else return true;
 }
 
+inline bool vpmem_present_address(unsigned long address) {
+    pte_t *ptep = vpmem_get_pte_addr(address);
+    if (!ptep) return false;
+    else return pte_present(*ptep);
+}
+
 struct pgcache_node *pgcache_insert(unsigned long address, struct mm_struct *mm, bool *new)
 {
     struct pgcache_node *p, *newp;
@@ -952,17 +958,17 @@ int vpmem_prepare_page_array(unsigned long address, unsigned long count, struct 
 }
 
 int set_pgn_clean_range(unsigned long address, unsigned long count) {
-    struct pgcache_node *pgn = NULL;
-    unsigned long ret = 0;
+    pte_t *ptep;
     address &= PAGE_MASK;
     while (count-- > 0) {
-        pgn = pgcache_lookup(address);
-        if (likely(pgn)) {
-            set_pgn_clean(pgn);
+        ptep = vpmem_get_pte_addr(address);
+        if (ptep && pte_present(*ptep)) {
+            *ptep = pte_mkold(*ptep);
+            *ptep = pte_mkclean(*ptep);
         }
         address += PAGE_SIZE;
     }
-    return ret;
+    return 0;
 }
 
 // Return true if the writeback list is below threshold -> kthread can sleep
@@ -1254,18 +1260,16 @@ bool insert_tlb_lock_free(pte_t ptein, unsigned long address) {
     return true;
 }
 
-int pgcache_lru_refer_range(unsigned long address, unsigned long count) {
+int pgcache_lru_refer_range(struct pgcache_node **pgn_array, unsigned long count) {
     struct pgcache_node *pgn = NULL;
-    unsigned long ret = 0;
-    address &= PAGE_MASK;
-    while (count-- > 0) {
-        pgn = pgcache_lookup(address);
+    int i;
+    for (i=0; i<count; ++i) {
+        pgn = pgn_array[i];
         if (likely(pgn)) {   
             pgcache_lru_refer(pgn);
         }
-        address += PAGE_SIZE;
     }
-    return ret;
+    return 0;
 }
 
 int vpmem_cache_pages(unsigned long address, unsigned long count, bool load)
@@ -1278,11 +1282,13 @@ int vpmem_cache_pages(unsigned long address, unsigned long count, bool load)
     if (unlikely(!vpmem_valid_address(addr))) {
         nova_info("Error in vpmem_cache_pages %lu\n", addr);
     }
-    while (count-- > 0) {        
-        pgn = pgcache_lookup(addr);
-        if (pgn) {
-            addr += PAGE_SIZE;
-            continue;
+    while (count-- > 0) {
+        if (vpmem_present_address(addr)) {
+            pgn = pgcache_lookup(addr);
+            if (pgn) {
+                addr += PAGE_SIZE;
+                continue;
+            }
         }
         pgn = pgcache_insert(addr, current_mm, &new);
         if (new) {
@@ -1311,12 +1317,14 @@ int vpmem_flush_pages_sync(unsigned long address, unsigned long count) {
     address &= PAGE_MASK;
     if (!vpmem_valid_address(address)) return 0;
     while (count-- != 0) {
-        pgn = pgcache_lookup(address);
-        if (pgn && pgn->page && pgn->pte) {
-            if (is_pgn_dirty(pgn)) {
-                push_to_wb_list(pgn);
-                ret++;
-                set_pgn_clean(pgn);
+        if (vpmem_present_address(address)) {
+            pgn = pgcache_lookup(address);
+            if (pgn && pgn->page && pgn->pte) {
+                if (is_pgn_dirty(pgn)) {
+                    push_to_wb_list(pgn);
+                    ret++;
+                    set_pgn_clean(pgn);
+                }
             }
         }
         address += PAGE_SIZE;
@@ -1345,6 +1353,7 @@ int vpmem_write_back_pages(unsigned long address, unsigned long count) {
     return 0;
 }
 
+/* Deprecated */
 // This is async flush
 int vpmem_flush_pages(unsigned long address, unsigned long count) {
     struct pgcache_node *pgn = NULL;
@@ -1442,14 +1451,16 @@ int vpmem_renew_pages(void *addr, unsigned long address, unsigned long count) {
     struct pgcache_node *pgn = NULL;    
     address &= PAGE_MASK;
     while (count-- > 0) {
-        pgn = pgcache_lookup(address);
-        if (pgn && pgn->page && pgn->pte) {
-            memcpy_mcsafe(page_address(pgn->page), addr, PAGE_SIZE);
-            set_pgn_clean(pgn);
-            // pgcache_lru_refer(pgn);
-            #ifdef VPMEM_DEBUG
-                renew++;
-            #endif
+        if (vpmem_present_address(address)) {
+            pgn = pgcache_lookup(address);
+            if (pgn && pgn->page && pgn->pte) {
+                memcpy_mcsafe(page_address(pgn->page), addr, PAGE_SIZE);
+                set_pgn_clean(pgn);
+                // pgcache_lru_refer(pgn);
+                #ifdef VPMEM_DEBUG
+                    renew++;
+                #endif
+            }
         }
         addr += PAGE_SIZE;
         address += PAGE_SIZE;
@@ -1796,7 +1807,7 @@ bool vpmem_do_page_fault(struct pt_regs *regs, unsigned long error_code, unsigne
         insert_tlb(pgn_array[i]);
         // mutex_unlock(&pgn_array[i]->lock);
     }
-    pgcache_lru_refer_range(address, sr);
+    pgcache_lru_refer_range(pgn_array, sr);
     // nova_info("[Unlock] address %lx sr %d\n", address, sr);
 
     kfree(pgn_array);
@@ -1830,8 +1841,7 @@ next:
     minr = ((address_end-address)>>PAGE_SHIFT) + 1;
     maxr = (int)entry_end;
     
-    pgn = pgcache_lookup(address);
-    if (pgn) {
+    if (vpmem_present_address(address)) {
         address += PAGE_SIZE;
         entry_end--;
         // nova_info("In vpmem_do_page_fault_range address %lx sr %d minr %d maxr %d\n", 
@@ -1891,7 +1901,7 @@ next:
     for (i=0; i<sr; ++i) {
         insert_tlb(pgn_array[i]);
     }
-    pgcache_lru_refer_range(address, sr);
+    pgcache_lru_refer_range(pgn_array, sr);
 
     kfree(pgn_array);
     kfree(page_array);
@@ -1907,6 +1917,10 @@ bool vpmem_do_page_fault_lite(void *address_from, void *address_to)
     bool new = false;   
     if (unlikely(!vpmem_valid_address((unsigned long)address_to))) {
         nova_info("Error in vpmem_do_page_fault_lite %p\n", address_to);
+    }
+    if (vpmem_present_address((unsigned long)address_to)) {
+        memcpy_mcsafe(address_to, address_from, PAGE_SIZE);
+        return false;
     }
     pgn = pgcache_lookup((unsigned long)address_to);
     if (pgn) return false;
