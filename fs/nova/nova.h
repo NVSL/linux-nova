@@ -86,9 +86,9 @@
 #define TIER_MIGRATING 	255
 #define BDEV_COUNT_MAX 	5
 
-#define MIGRATION_ROTATE 1
-#define MIGRATION_DOWNWARD 2
-#define MIGRATION_POLICY 2
+// #define MIGRATION_ROTATE 1
+// #define MIGRATION_DOWNWARD 2
+// #define MIGRATION_POLICY 2
 
 #define BM_THREAD_SLEEP_TIME 1000
 #define USAGE_THREAD_SLEEP_TIME 100
@@ -714,14 +714,17 @@ static unsigned long get_nvmm(struct super_block *sb,
 	struct nova_inode_info_header *sih,
 	struct nova_file_write_entry *entry, unsigned long pgoff)
 {
-	struct nova_sb_info *sbi = NOVA_SB(sb);
 	unsigned long ret = 0;
+	#ifdef DEBUG_GET_NVMM
+		struct nova_sb_info *sbi = NOVA_SB(sb);
+	#endif
 
 	/* entry is already verified before this call and resides in dram
 	 * or we can do memcpy_mcsafe here but have to avoid double copy and
 	 * verification of the entry.
 	 */
 	
+	/*
 retry:
 	if (unlikely(nova_get_entry_type(entry) == FILE_WRITE && entry->updating == 1)) {
 		// This should not happen
@@ -729,25 +732,32 @@ retry:
 		msleep(500);
 		goto retry;
 	}
+	*/
 
 	if ( get_entry_tier(entry) != TIER_PMEM ) {
-		if (DEBUG_GET_NVMM) nova_info("[Get_nvmm] Get from TIER_BDEV\n");
+		#ifdef DEBUG_GET_NVMM
+			nova_info("[Get_nvmm] Get from TIER_BDEV\n");
+		#endif
 		ret = (unsigned long) (entry->block >> PAGE_SHIFT) + pgoff
 			- entry->pgoff;
-		if (DEBUG_GET_NVMM) nova_info("ret %lu %lx block %llu num %d\n", ret,
-			(unsigned long)sbi->vpmem,entry->block >> PAGE_SHIFT,entry->num_pages);
+		#ifdef DEBUG_GET_NVMM
+			nova_info("ret %lu %lx block %llu num %d\n", ret,
+				(unsigned long)sbi->vpmem,entry->block >> PAGE_SHIFT,entry->num_pages);
+		#endif
 		return ret;
 	}
 	else {
-		if (DEBUG_GET_NVMM) nova_info("[Get_nvmm] Get from TIER_PMEM\n");
+		#ifdef DEBUG_GET_NVMM
+			nova_info("[Get_nvmm] Get from TIER_PMEM\n");
+		#endif
 		if (entry->pgoff > pgoff || (unsigned long) entry->pgoff +
 				(unsigned long) entry->num_pages <= pgoff) {
 			struct nova_sb_info *sbi = NOVA_SB(sb);
 			u64 curr;
-			if (DEBUG_GET_NVMM) {
+			#ifdef DEBUG_GET_NVMM
 				nova_info("Entry: %p", entry);
 				print_a_write_entry(sb, entry, -2);
-			}
+			#endif
 			
 			curr = nova_get_addr_off(sbi, entry);
 			nova_dbg("Entry ERROR: inode %lu, curr 0x%llx(%p), pgoff %lu, entry pgoff %llu, num %u\n",

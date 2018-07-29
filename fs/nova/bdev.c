@@ -280,8 +280,12 @@ int nova_bdev_write_byte(struct nova_sb_info *sbi, struct block_device *device, 
 		nova_info("[Bdev Write] Cannot allocate bio_vec.\n");
 		return -4;
 	}
-	if (DEBUG_BDEV_RW) nova_info("[Bdev Write] Offset %7lu <- Page %p (size: %lu)\n",offset>>12,
-		page_address(page)+page_offset,size);
+
+	#ifdef DEBUG_BDEV_RW
+		nova_info("[Bdev Write] Offset %7lu <- Page %p (size: %lu)\n",offset>>12,
+			page_address(page)+page_offset,size);
+	#endif
+
 	bio->bi_bdev = device;
 	bio->bi_iter.bi_sector = offset >> 9;
 	bio->bi_iter.bi_size = size;
@@ -341,8 +345,12 @@ int nova_bdev_read_byte(struct nova_sb_info *sbi, struct block_device *device, u
 		return -4;
 	}
 	// bio is about block and bv is about page
-	if (DEBUG_BDEV_RW) nova_info("[Bdev Read ] Offset %7lu -> Page %p (size: %lu)\n",offset>>12,
-		page_address(page)+page_offset,size);
+
+	#ifdef DEBUG_BDEV_RW
+		nova_info("[Bdev Read ] Offset %7lu -> Page %p (size: %lu)\n",offset>>12,
+			page_address(page)+page_offset,size);
+	#endif
+
 	bio->bi_bdev = device;
 	bio->bi_iter.bi_sector = offset >> 9;
 	bio->bi_iter.bi_size = size;
@@ -398,8 +406,12 @@ int nova_bdev_write_byte_range(struct nova_sb_info *sbi, struct block_device *de
 		nova_info("[Bdev Write] Cannot allocate bio_vec.\n");
 		return -4;
 	}
-	if (DEBUG_BDEV_RW) nova_info("[Bdev Write] Offset %7lu -> Page %p (count: %d)\n",offset>>12,
-		page_address(page[0])+page_offset, count);
+
+	#ifdef DEBUG_BDEV_RW
+		nova_info("[Bdev Write] Offset %7lu -> Page %p (count: %d)\n",offset>>12,
+			page_address(page[0])+page_offset, count);
+	#endif
+
 	bio->bi_bdev = device;
 	bio->bi_iter.bi_sector = offset >> 9;
 	bio->bi_iter.bi_size = PAGE_SIZE*count;
@@ -450,8 +462,12 @@ int nova_bdev_read_byte_range(struct nova_sb_info *sbi, struct block_device *dev
 		return -4;
 	}
 	// bio is about block and bv is about page
-	if (DEBUG_BDEV_RW) nova_info("[Bdev Read] Offset %7lu -> Page %p (count: %d)\n",offset>>12,
-		page_address(page[0])+page_offset, count);
+
+	#ifdef DEBUG_BDEV_RW
+		nova_info("[Bdev Read] Offset %7lu -> Page %p (count: %d)\n",offset>>12,
+			page_address(page[0])+page_offset, count);
+	#endif
+
 	bio->bi_bdev = device;
 	bio->bi_iter.bi_sector = offset >> 9;
 	bio->bi_iter.bi_size = PAGE_SIZE*count;
@@ -559,7 +575,9 @@ static void nova_init_bdev_free_list(struct super_block *sb,
 	}
 
 	bfl->num_total_blocks = bfl->block_end - bfl->block_start + 1;
-	if (DEBUG_INIT) nova_info("bfl->block_end = %lu\n",bfl->block_end);
+	#ifdef DEBUG_INIT
+		nova_info("bfl->block_end = %lu\n",bfl->block_end);
+	#endif
 }
 
 // After nova_alloc_bdev_block_free_lists()
@@ -794,11 +812,15 @@ retry:
 	*blocknr = new_blocknr;
 
 	// Prefetch empty pages
-	if (MODE_FORE_PREFETCH && cache) vpmem_cache_pages(blockoff_to_virt(new_blocknr), ret_blocks, false);
+	#ifdef MODE_FORE_PREFETCH
+		if (cache) vpmem_cache_pages(blockoff_to_virt(new_blocknr), ret_blocks, false);
+	#endif
 
 	// blocknr starts with the range of the block device (after PMEM) instead of 0.
-	if (DEBUG_MIGRATION_ALLOC) nova_info("[Bdev] Alloc %lu BDEV blocks at %lu (%lu) from T%d C%d\n"
-	, ret_blocks, *blocknr, get_raw_from_blocknr(sbi, *blocknr), bfl->tier, bfl->cpu);
+	#ifdef DEBUG_MIGRATION_ALLOC
+		nova_info("[Bdev] Alloc %lu BDEV blocks at %lu (%lu) from T%d C%d\n",
+			ret_blocks, *blocknr, get_raw_from_blocknr(sbi, *blocknr), bfl->tier, bfl->cpu);
+	#endif
 	return ret_blocks;
 }
 
@@ -1024,7 +1046,9 @@ int nova_free_blocks_from_bdev(struct nova_sb_info *sbi, unsigned long blocknr,
 	block_low = blocknr;
 	block_high = blocknr + num_blocks - 1;
 
-	if (DEBUG_MIGRATION_FREE) nova_info("Free bdev: %lu - %lu\n", block_low, block_high);
+	#ifdef DEBUG_MIGRATION_FREE
+		nova_info("Free bdev: %lu - %lu\n", block_low, block_high);
+	#endif
 
 	if (blocknr < bfl->block_start ||
 			blocknr + num_blocks > bfl->block_end + 1) {
@@ -1170,18 +1194,24 @@ int nova_free_blocks_tier(struct nova_sb_info *sbi, unsigned long blocknr,
 		nova_info("blocknr: %lu, num_blocks:%lu.\n", blocknr, num_blocks);
 		return -EINVAL;
 	}
-	if (DEBUG_MIGRATION_FREE) 
+
+	#ifdef DEBUG_MIGRATION_FREE
 		if (num_blocks==0) {
 			nova_info("Free 0 blocknr: %lu, num_blocks:%lu.\n", blocknr, num_blocks);
 			return 0;
 		}
+	#endif
 
 	if (is_tier_pmem(tier)) {
-		if (DEBUG_MIGRATION_FREE) nova_info("Free tier_pmem.\n");
+		#ifdef DEBUG_MIGRATION_FREE
+			nova_info("Free tier_pmem.\n");
+		#endif
 		return nova_free_blocks(sb, blocknr, num_blocks, NOVA_DEFAULT_BLOCK_TYPE, 0);
 	}
 	if (is_tier_bdev(tier)) {
-		if (DEBUG_MIGRATION_FREE) nova_info("Free tier_bdev.\n");
+		#ifdef DEBUG_MIGRATION_FREE
+			nova_info("Free tier_bdev.\n");
+		#endif
 		return nova_free_blocks_from_bdev(sbi, blocknr, num_blocks);
 	}
 	return -1;

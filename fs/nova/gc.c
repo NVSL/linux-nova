@@ -317,7 +317,7 @@ static unsigned long nova_inode_log_thorough_gc(struct super_block *sb,
 	int extended = 0;
 	int ret;
 	timing_t gc_time;
-
+	
 	NOVA_START_TIMING(thorough_gc_t, gc_time);
 
 	curr_p = sih->log_head;

@@ -250,7 +250,9 @@ inline int pgc_total_size(void) {
 
 // Setup stage message for debug in proc
 inline void nova_set_stage(int n) {
-    if (DEBUG_PROC_LOCK) vsbi->bm_thread[smp_processor_id()].stage=n;
+    #ifdef DEBUG_PROC_LOCK
+        vsbi->bm_thread[smp_processor_id()].stage=n;
+    #endif
 }
 
 void set_should_migrate_log(void) {
@@ -637,10 +639,6 @@ redo:
             //         address, p->address, p->page, page_address(p->page));
             // }
 
-
-            // nova_info("Warning 3 in pgcache_insert address %lx addr %lx page %p p %p\n",
-            //     address, p->address, p->page, page_address(p->page));
-
             // mutex_unlock(&p->lock);
             smp_mb();
             mutex_unlock(&vsbi->vpmem_rb_mutex[index]);
@@ -648,7 +646,9 @@ redo:
 
             // pgcache_lru_refer(p);
 
-            already_cached++;
+            #ifdef VPMEM_DEBUG
+                already_cached++;
+            #endif
             return p;
         }
     }
@@ -860,7 +860,10 @@ int get_wb_smart_range(struct pgcache_node *pgn, unsigned long *start_addr) {
     if (!pgn || !pgn->page) return 1;
     address = pgn->address;
     *start_addr = address;
-    if (!MODE_SR_WB) return 1;
+
+    #ifndef MODE_SR_WB
+        return 1;
+    #endif
     
     blockoff = virt_to_blockoff(address);
     osb = vsbi->bdev_list[get_tier(vsbi, blockoff)-TIER_BDEV_LOW].opt_size_bit + PAGE_SHIFT;
@@ -1649,7 +1652,9 @@ int get_fault_smart_range(struct pgcache_node *pgn) {
     int count1 = 0; // Unmapped pages in the right: [pgn, tpgn)
     int count2 = 0; // Mapped pages in the left: [tpgn, pgn)
 
-    if (!MODE_SR_FAULT) return 1;
+    #ifndef MODE_SR_FAULT
+        return 1;
+    #endif
 
     if (!pgn) return 1;
     address = pgn->address;

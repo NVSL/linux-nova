@@ -1219,6 +1219,10 @@ int nova_insert_write_vma(struct vm_area_struct *vma)
 	pgoff_t end_index = index + cpu_to_le64((vma->vm_end - vma->vm_start) >> PAGE_SHIFT) - 1;
 	timing_t insert_vma_time;
 
+	#ifdef DEBUG_FILE_OP
+		nova_info("[Mmap] IN index %lu end_index %lu \n", index, end_index);
+	#endif
+
 	migrate_a_file_to_pmem_partial(inode, index, end_index, true);
 	
 	if ((vma->vm_flags & flags) != flags)
@@ -1283,6 +1287,11 @@ out:
 	}
 
 	NOVA_END_TIMING(insert_vma_t, insert_vma_time);
+
+	#ifdef DEBUG_FILE_OP
+		nova_info("[Mmap] OUT index %lu end_index %lu \n", index, end_index);
+	#endif
+
 	return ret;
 }
 
@@ -1352,7 +1361,6 @@ static int nova_restore_page_write(struct vm_area_struct *vma,
 {
 	struct mm_struct *mm = vma->vm_mm;
 
-
 	down_write(&mm->mmap_sem);
 
 	nova_dbgv("Restore vma %p write, start 0x%lx, end 0x%lx, address 0x%lx\n",
@@ -1371,6 +1379,10 @@ static void nova_vma_open(struct vm_area_struct *vma)
 	struct address_space *mapping = vma->vm_file->f_mapping;
 	struct inode *inode = mapping->host;
 
+	#ifdef DEBUG_FILE_OP
+		nova_info("[Mmap open] IN ino %lu\n", inode->i_ino);
+	#endif
+
 	nova_dbg_mmap4k("[%s:%d] inode %lu, MMAP 4KPAGE vm_start(0x%lx), vm_end(0x%lx), vm pgoff %lu, %lu blocks, vm_flags(0x%lx), vm_page_prot(0x%lx)\n",
 			__func__, __LINE__,
 			inode->i_ino, vma->vm_start, vma->vm_end,
@@ -1380,16 +1392,28 @@ static void nova_vma_open(struct vm_area_struct *vma)
 			pgprot_val(vma->vm_page_prot));
 
 	nova_insert_write_vma(vma);
+	
+	#ifdef DEBUG_FILE_OP
+		nova_info("[Mmap open] OUT ino %lu\n", inode->i_ino);
+	#endif
 }
 
 static void nova_vma_close(struct vm_area_struct *vma)
 {
+	
+	#ifdef DEBUG_FILE_OP
+		nova_info("[Mmap close] IN\n");
+	#endif
 	nova_dbgv("[%s:%d] MMAP 4KPAGE vm_start(0x%lx), vm_end(0x%lx), vm_flags(0x%lx), vm_page_prot(0x%lx)\n",
 		  __func__, __LINE__, vma->vm_start, vma->vm_end,
 		  vma->vm_flags, pgprot_val(vma->vm_page_prot));
 
 	vma->original_write = 0;
 	nova_remove_write_vma(vma);
+	
+	#ifdef DEBUG_FILE_OP
+		nova_info("[Mmap close] OUT\n");
+	#endif
 }
 
 const struct vm_operations_struct nova_dax_vm_ops = {

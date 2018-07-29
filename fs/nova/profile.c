@@ -43,12 +43,16 @@ inline bool nova_sih_is_sync(struct nova_inode_info_header *sih) {
 
 inline bool nova_sih_judge_sync(struct nova_inode_info_header *sih) {
     if ((sih->wcount & ((1UL << 63) - 1)) >> SYNC_BIT > 0) {
-        if (DEBUG_PROF_SYNC) nova_info("Inode sih %lu is async (%lx).\n", sih->ino, sih->wcount);
+        #ifdef DEBUG_PROF_SYNC
+            nova_info("Inode sih %lu is async (%lx).\n", sih->ino, sih->wcount);
+        #endif
         sih->wcount = 0;
         return false;
     }
-    else {
-        if (DEBUG_PROF_SYNC) nova_info("Inode sih %lu is sync (%lx).\n", sih->ino, sih->wcount);
+    else {        
+        #ifdef DEBUG_PROF_SYNC
+            nova_info("Inode sih %lu is sync (%lx).\n", sih->ino, sih->wcount);
+        #endif        
         sih->wcount = 1UL << 63;
         return true;
     }
@@ -106,11 +110,15 @@ inline bool nova_prof_judge_seq(unsigned int seq_count) {
 // Judge seq_count
 inline bool nova_entry_judge_seq(struct nova_file_write_entry *entry) {
     if (entry->seq_count >> SEQ_BIT == 0) {
-        if (DEBUG_PROF_SEQ) nova_info("Entry index %llu is random (%u).\n", entry->pgoff, entry->seq_count);
+        #ifdef DEBUG_PROF_SEQ
+            nova_info("Entry index %llu is random (%u).\n", entry->pgoff, entry->seq_count);
+        #endif
         return false;
     }
     else {
-        if (DEBUG_PROF_SEQ) nova_info("Entry index %llu is sequential (%u).\n", entry->pgoff, entry->seq_count);
+        #ifdef DEBUG_PROF_SEQ
+            nova_info("Entry index %llu is sequential (%u).\n", entry->pgoff, entry->seq_count);
+        #endif
         return true;
     }
 }
@@ -182,11 +190,16 @@ int nova_unlink_inode_lru_list(struct nova_sb_info *sbi, struct nova_inode_info_
 	timing_t rmsih_time;
 
     if (!S_ISREG(si->vfs_inode.i_mode)) {
-        if (DEBUG_PROF_HOT) nova_info("Error: si is not a regular file.\n");
+        #ifdef DEBUG_PROF_HOT
+            nova_info("Error: si is not a regular file.\n");
+        #endif
+
         return -2;
     }
 	NOVA_START_TIMING(rmsih_t, rmsih_time);
-    if (DEBUG_MIGRATION_SEM) nova_info("Mig_sem (inode %lu) down_up_write (nova_unlink_inode_lru_list)\n", sih->ino);
+	#ifdef DEBUG_MIGRATION_SEM
+        nova_info("Mig_sem (inode %lu) down_up_write (nova_unlink_inode_lru_list)\n", sih->ino);
+    #endif
     down_write(&sih->mig_sem);
     // if (!down_write_trylock(&sih->mig_sem)) {
 	//     NOVA_END_TIMING(rmsih_t, rmsih_time);
@@ -246,7 +259,10 @@ int nova_update_sih_tier(struct super_block *sb, struct nova_inode_info_header *
         return -1;
     }
     if (!S_ISREG(sih->i_mode)) {
-        if (DEBUG_PROF_HOT) nova_info("Error: si is not a regular file.\n");
+        #ifdef DEBUG_PROF_HOT
+            nova_info("Error: si is not a regular file.\n");
+        #endif
+        
         return -2;
     }
 

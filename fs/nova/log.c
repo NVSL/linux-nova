@@ -173,10 +173,10 @@ unsigned int nova_free_old_entry(struct super_block *sb,
 				__func__, pgoff, num_free);
 	// nova_free_data_blocks(sb, sih, old_nvmm, num_free);
 	if (nova_free_data_blocks(sb, sih, old_nvmm, num_free)) {
-		if (DEBUG_MIGRATION_FREE) {
+		#ifdef DEBUG_MIGRATION_FREE
 			nova_info("old_nvmm %lu num_free %u\n", old_nvmm, num_free);
 			print_a_write_entry(sb, entry, 0);
-		}
+		#endif
 	}
 
 out:

@@ -1,34 +1,34 @@
 /*
  * Debug parameters
- * 1: Print nova_info
- * 0: Block nova_info
- * Too many debug messages will lead to a crash!
  */
 
 /* Mode */
-#define MODE_USE_MEMCPY 0
-#define MODE_USE_COOKIE 1
-#define MODE_USE_GROUP 1
-#define MODE_USE_DYN_THRES 0
+// #define MODE_USE_MEMCPY
+#define MODE_USE_COOKIE 
+#define MODE_USE_GROUP
+#define MODE_USE_DYN_THRES
 
-#define MODE_KEEP_STAT 0
-#define MODE_KEEP_TIMING 0
+#define MODE_KEEP_STAT
 #define MODE_KEEP_STAT_VPMEM
 
-#define MODE_FORE_ALLOC 1
-#define MODE_FORE_PMEM 1
-#define MODE_FORE_BAL 0
-#define MODE_FORE_PREFETCH 1
-#define MODE_FORE_LOG 0
-#define MODE_BACK_MIG 1
-#define MODE_REV_MIG 0
-#define MODE_LOG_MIG 0
-#define MODE_MIG_SELF 1
+#define MODE_FORE_ALLOC
+#define MODE_FORE_PMEM
+// #define MODE_FORE_BAL
+#define MODE_FORE_PREFETCH
+// #define MODE_FORE_LOG
+#define MODE_BACK_MIG
+// #define MODE_REV_MIG
+// #define MODE_LOG_MIG
+#define MODE_MIG_SELF
+#define MODE_MIGRATION_DOWNWARD
 
-#define MODE_SR_FAULT 1
-#define MODE_SR_WB 1
+#define MODE_SR_FAULT
+#define MODE_SR_WB
 
 /* Configure */
+#define SUPER_KEEP_TIMING 0
+#define SUPER_DBGMASK_INIT 0
+
 #define BDEV_OPT_SIZE_BIT_INIT 12
 #define PMEM_LARGE_FILE_SIZE_BIT 30
 #define PMEM_RES_SIZE_LOG 32
@@ -41,40 +41,34 @@
 #define MIGRATION_MAX_PERC 98
 
 /* Debug */
-#define DEBUG_XFSTESTS 0
+// #define DEBUG_XFSTESTS
 
-#define DEBUG_INIT 0
-#define DEBUG_STARTUP_TEST 0
-#define DEBUG_PROC_LOCK 0
+// #define DEBUG_INIT
+// #define DEBUG_STARTUP_TEST
+// #define DEBUG_PROC_LOCK
 
-#define DEBUG_BDEV_RW 0
-#define DEBUG_BFL_INFO 0
-#define DEBUG_WRITE_ENTRY 0
-#define DEBUG_KTHREAD 0
+// #define DEBUG_BDEV_RW
+// #define DEBUG_BFL_INFO
+// #define DEBUG_WRITE_ENTRY
+// #define DEBUG_FILE_OP
+// #define DEBUG_KTHREAD
 
-#define DEBUG_FORE_ALLOC 0
-#define DEBUG_FORE_FILE 0
+// #define DEBUG_PROF_SYNC
+// #define DEBUG_PROF_SEQ
+// #define DEBUG_PROF_HOT
 
-#define DEBUG_PROF_SYNC 0
-#define DEBUG_PROF_SEQ 0
-#define DEBUG_PROF_HOT 0
+// #define DEBUG_DO_MIGRATION
+// #define DEBUG_MIGRATION_FILE
+// #define DEBUG_MIGRATION_INFO
+// #define DEBUG_MIGRATION_USAGE
 
-#define DEBUG_DO_MIGRATION 0
-#define DEBUG_MIGRATION 0
-#define DEBUG_MIGRATION_INFO 0
-#define DEBUG_MIGRATION_USAGE 0
+// #define DEBUG_MIGRATION_ALLOC
+// #define DEBUG_MIGRATION_FREE
+// #define DEBUG_MIGRATION_CLONE
 
-#define DEBUG_MIGRATION_CHECK 0
-#define DEBUG_MIGRATION_ALLOC 0
-#define DEBUG_MIGRATION_COPY 0
-#define DEBUG_MIGRATION_FREE 0
-#define DEBUG_MIGRATION_CLONE 0
+// #define DEBUG_MIGRATION_ENTRY
+// #define DEBUG_MIGRATION_SPLIT
+// #define DEBUG_MIGRATION_MERGE
+// #define DEBUG_MIGRATION_SEM
 
-#define DEBUG_MIGRATION_ENTRY 0
-#define DEBUG_MIGRATION_SPLIT 0
-#define DEBUG_MIGRATION_MERGE 0
-#define DEBUG_MIGRATION_SEM 0
-
-#define DEBUG_GET_NVMM 0
-#define DEBUG_MB_LOCK 0
-#define DEBUG_BUFFERING 0
+// #define DEBUG_GET_NVMM

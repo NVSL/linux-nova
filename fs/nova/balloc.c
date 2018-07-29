@@ -377,7 +377,10 @@ int nova_free_blocks(struct super_block *sb, unsigned long blocknr,
 
 	NOVA_START_TIMING(free_blocks_t, free_time);
 
-	if (DEBUG_MIGRATION_FREE) nova_info("Free blocknr:%lu num:%d\n", blocknr, num);
+	#ifdef DEBUG_MIGRATION_FREE
+		nova_info("Free blocknr:%lu num:%d\n", blocknr, num);
+	#endif
+
 	// For bdev, the data blocks on bdev and vpmem are both "data to be freed"
 	dax_mem = nova_get_block(sb, (blocknr << PAGE_SHIFT));
 	if (is_dram_buffer_addr(dax_mem)) {
@@ -505,7 +508,11 @@ int nova_free_data_blocks(struct super_block *sb,
 		return -EINVAL;
 	}
 	NOVA_START_TIMING(free_data_t, free_time);
-	if (DEBUG_MIGRATION_FREE) nova_info("nova_free_data_blocks\n");
+
+	#ifdef DEBUG_MIGRATION_FREE
+		nova_info("nova_free_data_blocks\n");
+	#endif
+
 	ret = nova_free_blocks(sb, blocknr, num, sih->i_blk_type, 0);
 	if (ret) {
 		nova_err(sb, "Inode %lu: free %d data block from %lu to %lu failed!\n",
@@ -530,7 +537,11 @@ int nova_free_log_blocks(struct super_block *sb,
 		return -EINVAL;
 	}
 	NOVA_START_TIMING(free_log_t, free_time);
-	if (DEBUG_MIGRATION_FREE) nova_info("nova_free_log_blocks\n");
+
+	#ifdef DEBUG_MIGRATION_FREE
+		nova_info("nova_free_log_blocks\n");
+	#endif
+	
 	ret = nova_free_blocks(sb, blocknr, num, sih->i_blk_type, 1);
 	if (ret) {
 		nova_err(sb, "Inode %lu: free %d log block from %lu to %lu failed!\n",
@@ -849,12 +860,15 @@ inline int nova_new_log_blocks(struct super_block *sb,
 {
 	int allocated;
 	timing_t alloc_time;
-	int timed = 0;
-    unsigned long used = 0;
 	bool tier_bdev = false;
+	
+	#ifdef MODE_FORE_LOG
+		int timed = 0;
+    	unsigned long used = 0;
+	#endif
 
 retry:
-	if (MODE_FORE_LOG) {
+	#ifdef MODE_FORE_LOG
 		while (unlikely(is_pmem_usage_too_high(NOVA_SB(sb)))) {
 			if (timed == 0) {
 				timed = current_kernel_time().tv_sec;
@@ -873,7 +887,7 @@ retry:
 			}
 			schedule();
 		}
-	}
+	#endif
 	
 	NOVA_START_TIMING(new_log_blocks_t, alloc_time);
 	if (unlikely(tier_bdev)) {

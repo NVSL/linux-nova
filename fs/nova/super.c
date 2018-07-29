@@ -45,7 +45,7 @@
 #include "bdev.h"
 #include "debug.h"
 
-int measure_timing = MODE_KEEP_TIMING;
+int measure_timing = SUPER_KEEP_TIMING;
 int metadata_csum;
 int wprotect;
 int data_csum;
@@ -85,7 +85,7 @@ static struct kmem_cache *nova_range_node_cachep;
 static struct kmem_cache *nova_snapshot_info_cachep;
 
 /* FIXME: should the following variable be one per NOVA instance? */
-unsigned int nova_dbgmask;
+unsigned int nova_dbgmask = SUPER_DBGMASK_INIT;
 
 void nova_error_mng(struct super_block *sb, const char *fmt, ...)
 {
@@ -174,13 +174,12 @@ static int nova_get_nvmm_info(struct super_block *sb,
 
 // TODO: Link with mount option
 static char *find_block_device(struct nova_sb_info *sbi, int tier) {
-	if (DEBUG_XFSTESTS) {
+	#ifdef DEBUG_XFSTESTS
 		return find_a_raw_sata_auto(sbi);
-	}
-	else {
+	#else
 		if (tier == TIER_BDEV_LOW) return find_a_raw_nvme();
 		if (tier == TIER_BDEV_LOW+1) return find_a_raw_sata();
-	}
+	#endif
 	return NULL;
 }
 
@@ -190,11 +189,15 @@ int nova_get_bdev_info(struct nova_sb_info *sbi){
 	struct gendisk*	bd_disk = NULL;
 	unsigned long nsector;
 	int i=0;
+	int n=1;
 	const fmode_t mode = FMODE_READ | FMODE_WRITE;
 	
 	sbi->bdev_list = kcalloc(BDEV_COUNT_MAX, sizeof(struct bdev_info), GFP_KERNEL);	
 	if (!sbi->bdev_list) return -ENOMEM;
-	for (i=0;i<=(1-DEBUG_XFSTESTS);++i) {	
+	#ifdef DEBUG_XFSTESTS
+		n=0;
+	#endif
+	for (i=0;i<=n;++i) {	
 		bdev_path = find_block_device(sbi, i+1);
 		if (!bdev_path) return -ENOENT;
 
@@ -848,7 +851,9 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 	nova_dbg("%s: dev vpmem, phys_addr 0x%llx, virt_addr %p, size %ld\n",
 		__func__, sbi->phys_addr, sbi->virt_addr, sbi->initsize);
 
-	if (DEBUG_STARTUP_TEST) bdev_test(sbi);
+	#ifdef DEBUG_STARTUP_TEST
+		bdev_test(sbi);
+	#endif
 
 	retval = start_usage_thread(sbi);
 	if (retval)
@@ -1047,8 +1052,13 @@ setup_sb:
 
 	retval = 0;
 
-	if (DEBUG_BFL_INFO) print_all_bfl(sb);
-	// if (DEBUG_STARTUP_TEST) bfl_test(sbi);
+	#ifdef DEBUG_BFL_INFO
+		print_all_bfl(sb);
+	#endif
+
+	// #ifdef DEBUG_STARTUP_TEST
+	// 	bfl_test(sbi);
+	// #endif
 
 	NOVA_END_TIMING(mount_t, mount_time);
 	return retval;
@@ -1195,7 +1205,9 @@ static void nova_put_super(struct super_block *sb)
 	nova_info("*  NOVA umount  *\n");
 	nova_info("*****************\n");
 
-	if (DEBUG_BFL_INFO) print_all_bfl(sb);
+	#ifdef DEBUG_BFL_INFO
+		print_all_bfl(sb);
+	#endif
 	nova_print_curr_epoch_id(sb);
 
 	stop_bm_thread(sbi);

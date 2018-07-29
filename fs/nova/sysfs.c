@@ -219,15 +219,17 @@ static int nova_seq_ts_show(struct seq_file *seq, void *v)
 	struct free_list *fl = NULL;
 	struct bdev_free_list *bfl = NULL;
 	int i;
-	int lru = 0;
-	int wb = 0;
-	int evict = 0;
-	int rb = 0;
     unsigned long used = 0;
     unsigned long total = 0;
     unsigned long sumu = 0;
 	unsigned long sumt = 0;
 	int pgc_size = pgc_total_size();
+	#ifdef DEBUG_PROC_LOCK
+		int lru = 0;
+		int wb = 0;
+		int evict = 0;
+		int rb = 0;
+	#endif
 
 	nova_get_timing_stats();
 	nova_get_IO_stats();
@@ -248,21 +250,22 @@ static int nova_seq_ts_show(struct seq_file *seq, void *v)
 		0, fl->index, fl->block_start, fl->block_end, fl->block_end - fl->block_start + 1 - fl->num_free_blocks,
 		0, fl->num_free_blocks, fl->block_end - fl->block_start + 1, fl->num_blocknode);
 	}
-	if (DEBUG_PROC_LOCK) {
-	seq_printf(seq, "--------------------------------------------------------------------------------\n");
-	}
-	else {
-	seq_printf(seq, "----------------------------------------------------------------------\n");
-	}
+
+	#ifdef DEBUG_PROC_LOCK
+		seq_printf(seq, "--------------------------------------------------------------------------------\n");
+	#else
+		seq_printf(seq, "----------------------------------------------------------------------\n");
+	#endif
+
 	seq_printf(seq, "                          [BDEV free lists]\n");
-	if (DEBUG_PROC_LOCK) {
-	seq_printf(seq, "|Tier|CPU|  Start  |   End   |  Used  | Cached |  Free  | Total |Node|  Locks  |\n");
-	}
-	else {
-	seq_printf(seq, "|Tier|CPU|  Start  |   End   |  Used  | Cached |  Free  | Total |Node|\n");
-	}
+	#ifdef DEBUG_PROC_LOCK
+		seq_printf(seq, "|Tier|CPU|  Start  |   End   |  Used  | Cached |  Free  | Total |Node|  Locks  |\n");
+	#else
+		seq_printf(seq, "|Tier|CPU|  Start  |   End   |  Used  | Cached |  Free  | Total |Node|\n");
+	#endif
+
 	for (i=0;i<TIER_BDEV_HIGH*sbi->cpus;++i) {
-		if (DEBUG_PROC_LOCK) {
+		#ifdef DEBUG_PROC_LOCK
 			if (mutex_trylock(&sbi->vpmem_lru_mutex[i])) {
 				lru = 0;
 				mutex_unlock(&sbi->vpmem_lru_mutex[i]);
@@ -283,26 +286,24 @@ static int nova_seq_ts_show(struct seq_file *seq, void *v)
 				mutex_unlock(&sbi->vpmem_rb_mutex[i]);
 			}
 			else rb = 1;
-		}
+		#endif
 		bfl = nova_get_bdev_free_list_flat(sbi,i);
-		if (DEBUG_PROC_LOCK) {
+		#ifdef DEBUG_PROC_LOCK
 			seq_printf(seq, "|%4d|%3d|%9lu|%9lu|%8lu|%8d|%8lu|%7lu|%4lu|%1d|%1d|%1d|%1d|%d|\n",
 			bfl->tier, bfl->cpu, bfl->block_start, bfl->block_end, bfl->num_total_blocks - bfl->num_free_blocks,
 			atomic_read(&sbi->pgcache_size[i]), bfl->num_free_blocks, bfl->num_total_blocks, bfl->num_blocknode,
 			lru, wb, evict, rb, sbi->bm_thread[bfl->cpu].stage);
-		}
-		else {
+		#else
 			seq_printf(seq, "|%4d|%3d|%9lu|%9lu|%8lu|%8d|%8lu|%7lu|%4lu|\n",
 			bfl->tier, bfl->cpu, bfl->block_start, bfl->block_end, bfl->num_total_blocks - bfl->num_free_blocks,
 			atomic_read(&sbi->pgcache_size[i]), bfl->num_free_blocks, bfl->num_total_blocks, bfl->num_blocknode);
-		}
+		#endif
 	}
-	if (DEBUG_PROC_LOCK) {
-	seq_printf(seq, "--------------------------------------------------------------------------------\n");
-	}
-	else {
-	seq_printf(seq, "----------------------------------------------------------------------\n");
-	}
+	#ifdef DEBUG_PROC_LOCK
+		seq_printf(seq, "--------------------------------------------------------------------------------\n");
+	#else
+		seq_printf(seq, "----------------------------------------------------------------------\n");
+	#endif
 
 	seq_printf(seq, "|[Migration]|  Writes  | Writes-C |  Reads   |Group Migs|Interrupts|\n");
     seq_printf(seq, "|           |%10lu|%10lu|%10lu|%10lu|%10lu|\n",
