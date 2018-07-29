@@ -21,12 +21,14 @@
 // #define MODE_LOG_MIG
 #define MODE_MIG_SELF
 #define MODE_MIGRATION_DOWNWARD
-
 #define MODE_SR_FAULT
 #define MODE_SR_WB
 
+#define MODE_FIXED_BDEV
+#define TIER_BDEV_HIGH 1
+
 /* Configure */
-#define SUPER_KEEP_TIMING 0
+#define SUPER_KEEP_TIMING 1
 #define SUPER_DBGMASK_INIT 0
 
 #define BDEV_OPT_SIZE_BIT_INIT 12

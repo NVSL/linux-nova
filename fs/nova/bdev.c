@@ -8,9 +8,11 @@
 
 static struct kmem_cache *nova_submit_bio_ret_cache;
 static struct kmem_cache *nova_bal_cache;
-int TIER_BDEV_HIGH = 0;
 int MIGRATION_DOWN_PMEM_PERC = MIGRATION_DOWN_PMEM_PERC_INIT;
 int MIGRATION_IDEAL_PERC = MIGRATION_IDEAL_PERC_INIT;
+#ifndef MODE_FIXED_BDEV
+int TIER_BDEV_HIGH = 0;
+#endif
 
 int nova_init_bio(void) {
 	nova_submit_bio_ret_cache = kmem_cache_create("nova_submit_bio_ret",
@@ -953,6 +955,7 @@ int get_tier_cpu(struct nova_sb_info *sbi, unsigned long blocknr) {
 int get_tier(struct nova_sb_info *sbi, unsigned long blocknr) {
 	int index;
 	if (blocknr < sbi->num_blocks) return TIER_PMEM;
+	if (TIER_BDEV_HIGH == TIER_BDEV_LOW) return TIER_BDEV_LOW;
 	index = get_bfl_index(sbi, blocknr);
 	return bfl_index_to_tier(sbi, index);
 }

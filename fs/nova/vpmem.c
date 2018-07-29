@@ -463,6 +463,8 @@ struct pgcache_node *pgcache_lookup(unsigned long address)
     int index = vpmem_get_index(address);
     struct rb_node *n = vsbi->vpmem_rb_tree[index].rb_node;
     struct pgcache_node *ans;
+	timing_t pgcache_lookup_time;
+	NOVA_START_TIMING(pgcache_lookup_t, pgcache_lookup_time);
 
     mutex_lock(&vsbi->vpmem_rb_mutex[index]);
     while (n)
@@ -476,10 +478,12 @@ struct pgcache_node *pgcache_lookup(unsigned long address)
         else {
             mutex_unlock(&vsbi->vpmem_rb_mutex[index]);
             wait_until_pgn_is_valid(ans);
+	        NOVA_END_TIMING(pgcache_lookup_t, pgcache_lookup_time);
             return ans;
         }
     }
     mutex_unlock(&vsbi->vpmem_rb_mutex[index]);
+    NOVA_END_TIMING(pgcache_lookup_t, pgcache_lookup_time);
     return NULL;
 }
 
@@ -597,9 +601,11 @@ struct pgcache_node *pgcache_insert(unsigned long address, struct mm_struct *mm,
     struct rb_node **link = &vsbi->vpmem_rb_tree[index].rb_node;
     struct rb_node *parent = NULL;
 	unsigned long flags;
+	timing_t pgcache_insert_time;
 
     *new = false;
 
+	NOVA_START_TIMING(pgcache_insert_t, pgcache_insert_time);
     while (is_pgcache_large()) schedule();
 redo:
     mutex_lock(&vsbi->vpmem_rb_mutex[index]);
@@ -649,6 +655,7 @@ redo:
             #ifdef VPMEM_DEBUG
                 already_cached++;
             #endif
+            NOVA_END_TIMING(pgcache_insert_t, pgcache_insert_time);
             return p;
         }
     }
@@ -684,6 +691,7 @@ redo:
     mutex_unlock(&vsbi->vpmem_rb_mutex[index]);
     local_irq_restore(flags);
 
+    NOVA_END_TIMING(pgcache_insert_t, pgcache_insert_time);
     return newp;
 }
 
@@ -966,6 +974,7 @@ bool vpmem_writeback(int index, bool clear) {
     unsigned long start_addr = 0;
     int sr, ret = 0;
     struct page **page_array = NULL;
+	timing_t bdev_write_range_time;
 
     if (unlikely(clear)) {
         push_victim_to_wb_list(index, true, true);
@@ -1022,8 +1031,11 @@ again:
         }
 
         page_array = kcalloc(sr, sizeof(struct page *), GFP_KERNEL);
-        sr = vpmem_prepare_page_array(start_addr, sr, page_array);        
+        sr = vpmem_prepare_page_array(start_addr, sr, page_array);
+
+	    NOVA_START_TIMING(bdev_write_range_t, bdev_write_range_time);
         if (sr!=0) ret = vpmem_write_to_bdev_range(start_addr, sr, page_array);
+	    NOVA_END_TIMING(bdev_write_range_t, bdev_write_range_time);
 
         counter += sr;
         set_pgn_clean_range(start_addr, sr);
@@ -1359,7 +1371,9 @@ void vpmem_invalidate_pgn(struct pgcache_node *pgn) {
 }
 
 void vpmem_clear_pgn(struct pgcache_node *pgn, int index, unsigned long flags) {    
+	timing_t pgcache_evict_time;
 
+	NOVA_START_TIMING(pgcache_evict_t, pgcache_evict_time);
     if (unlikely(!pgn)) {
         nova_info("Error in pgcache_remove 1\n");
         return;
@@ -1398,6 +1412,7 @@ clear:
     atomic_dec_return(&vsbi->pgcache_size[index]);
 
     kmem_cache_free(nova_vpmem_pgnp, pgn);
+	NOVA_END_TIMING(pgcache_evict_t, pgcache_evict_time);
 }
 
 // Currently, only pages which are freed/migrated will be invalidated.
@@ -1474,7 +1489,11 @@ int pgsh=0,pgst=0;
 
 bool vpmem_load_block(unsigned long address, struct page *p, int count)
 {
-    int ret = vpmem_read_from_bdev(address, count, p);
+    int ret;
+	timing_t bdev_read_time;
+	NOVA_START_TIMING(bdev_read_t, bdev_read_time);
+    ret = vpmem_read_from_bdev(address, count, p);
+	NOVA_END_TIMING(bdev_read_t, bdev_read_time);
     // set_pgn_clean_addr(address);  
 
     if (unlikely(ret)) {
@@ -1490,7 +1509,12 @@ bool vpmem_load_block(unsigned long address, struct page *p, int count)
 
 bool vpmem_load_block_range(unsigned long address, struct page **p, int count)
 {
-    int ret = vpmem_read_from_bdev_range(address, count, p);
+    int ret;
+	timing_t bdev_read_range_time;
+	NOVA_START_TIMING(bdev_read_range_t, bdev_read_range_time);
+    ret = vpmem_read_from_bdev_range(address, count, p);
+	NOVA_END_TIMING(bdev_read_range_t, bdev_read_range_time);
+
     // int i;
 
     // for (i=0;i<count;++i) {
@@ -1789,16 +1813,19 @@ bool vpmem_do_page_fault_range(unsigned long address, unsigned long address_end,
     unsigned long curr_address;
     struct page *p = NULL;
     bool new = false;
+	timing_t pgcache_range_time;
     /* Make sure we are in reserved area: */
-    if (!vpmem_valid_address(address)) {
-        nova_info("Error #1 in vpmem_do_page_fault_range %lu\n", address);
-    }
-    
+    // if (!vpmem_valid_address(address)) {
+    //     nova_info("Error #1 in vpmem_do_page_fault_range %lu\n", address);
+    // }
+
+	NOVA_START_TIMING(pgcache_range_t, pgcache_range_time);
+
     address &= PAGE_MASK;
     address_end &= PAGE_MASK;
 
 next:
-    if (address > address_end) return true;
+    if (address > address_end) goto end;
 
     minr = ((address_end-address)>>PAGE_SHIFT) + 1;
     maxr = (int)entry_end;
@@ -1835,7 +1862,7 @@ next:
         vpmem_load_block(pgn->address, pgn->page, 1);
         insert_tlb(pgn);
         pgcache_lru_refer(pgn);
-        return true;
+        goto end;
     }
 
     if (likely(pgn)) sr = get_fault_smart_range(pgn);
@@ -1868,6 +1895,9 @@ next:
 
     kfree(pgn_array);
     kfree(page_array);
+
+end:
+	NOVA_END_TIMING(pgcache_range_t, pgcache_range_time);
     return true;
 }
 

@@ -231,7 +231,9 @@ int nova_get_bdev_info(struct nova_sb_info *sbi){
 		sbi->bdev_list[i].capacity_page = nsector>>3;
 		sbi->bdev_list[i].opt_size_bit = BDEV_OPT_SIZE_BIT + i; //temp value
 		strcat(sbi->bdev_list[i].bdev_name,bd_disk->disk_name);
-		TIER_BDEV_HIGH++;
+		#ifndef MODE_FIXED_BDEV
+			TIER_BDEV_HIGH++;
+		#endif
 	}
 
 	return 0;
@@ -241,8 +243,13 @@ int nova_get_one_bdev_info(struct nova_sb_info *sbi, char *bdev_path, unsigned l
 	struct block_device *bdev_raw;
 	struct gendisk*	bd_disk = NULL;
 	unsigned long nsector;
-	int i=TIER_BDEV_HIGH;
 	const fmode_t mode = FMODE_READ | FMODE_WRITE;
+	#ifdef MODE_FIXED_BDEV
+		int i=0;
+	#else
+		int i=TIER_BDEV_HIGH;
+	#endif
+
 
 	if (sbi->bdev_list==NULL) {
 		sbi->bdev_list = kcalloc(BDEV_COUNT_MAX, sizeof(struct bdev_info), GFP_KERNEL);	
@@ -280,7 +287,9 @@ int nova_get_one_bdev_info(struct nova_sb_info *sbi, char *bdev_path, unsigned l
 	sbi->bdev_list[i].capacity_page = nsector>>3;
 	sbi->bdev_list[i].opt_size_bit = BDEV_OPT_SIZE_BIT; //temp value
 	strcat(sbi->bdev_list[i].bdev_name,bd_disk->disk_name);
-	TIER_BDEV_HIGH++;
+	#ifndef MODE_FIXED_BDEV
+		TIER_BDEV_HIGH++;
+	#endif
 	nova_info("Tier %d is set to %s\n", TIER_BDEV_HIGH, bdev_path);
 		
 	return 0;
@@ -819,7 +828,9 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 		goto out;
 	}
 
-	TIER_BDEV_HIGH = 0;
+	#ifndef MODE_FIXED_BDEV
+		TIER_BDEV_HIGH = 0;
+	#endif
 	sbi->initsize = 0;
 	retval = nova_parse_tiering_options(sbi, data);
 	if (retval) {
