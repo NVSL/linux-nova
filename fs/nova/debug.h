@@ -8,8 +8,8 @@
 #define MODE_USE_GROUP
 #define MODE_USE_DYN_THRES
 
-#define MODE_KEEP_STAT
-#define MODE_KEEP_STAT_VPMEM
+// #define MODE_KEEP_STAT
+// #define MODE_KEEP_STAT_VPMEM
 
 #define MODE_FORE_ALLOC
 #define MODE_FORE_PMEM
@@ -28,7 +28,7 @@
 #define TIER_BDEV_HIGH 1
 
 /* Configure */
-#define SUPER_KEEP_TIMING 1
+#define SUPER_KEEP_TIMING 0
 #define SUPER_DBGMASK_INIT 0
 
 #define BDEV_OPT_SIZE_BIT_INIT 12
