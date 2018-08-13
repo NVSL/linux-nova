@@ -983,6 +983,15 @@ void nova_free_snapshot_info(struct snapshot_info *info)
 	kmem_cache_free(nova_snapshot_info_cachep, info);
 }
 
+struct nova_range_node *nova_alloc_range_node_atomic(struct super_block *sb)
+{
+	struct nova_range_node *p;
+
+	p = (struct nova_range_node *)
+		kmem_cache_zalloc(nova_range_node_cachep, GFP_ATOMIC);
+	return p;
+}
+
 struct nova_range_node *nova_alloc_range_node(struct super_block *sb)
 {
 	struct nova_range_node *p;

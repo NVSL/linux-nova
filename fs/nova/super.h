@@ -208,6 +208,7 @@ extern int nova_statfs(struct dentry *d, struct kstatfs *buf);
 extern int nova_remount(struct super_block *sb, int *flags, char *data);
 void *nova_ioremap(struct super_block *sb, phys_addr_t phys_addr,
 	ssize_t size);
+extern struct nova_range_node *nova_alloc_range_node_atomic(struct super_block *sb);
 extern struct nova_range_node *nova_alloc_range_node(struct super_block *sb);
 extern void nova_free_range_node(struct nova_range_node *node);
 extern void nova_update_super_crc(struct super_block *sb);
