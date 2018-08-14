@@ -1028,7 +1028,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 			//&& len == (1<<PAGE_SHIFT) ) {
 			pmem_used = nova_pmem_used(sbi); 
 			pmem_total = sbi->num_blocks; 
-			if ( (pmem_used + (1<<PMEM_LOG_RES_BIT)) > pmem_total ) write_tier = TIER_BDEV_LOW;
+			if ( (pmem_used + (1<<PMEM_LOG_RES_BIT)) + (pmem_total>>3)  > pmem_total ) write_tier = TIER_BDEV_LOW;
 			goto pout;
 		}
 	

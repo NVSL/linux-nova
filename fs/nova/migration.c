@@ -257,6 +257,7 @@ inline bool should_migrate_entry(struct inode *inode, struct nova_inode_info_hea
     struct nova_file_write_entry *entry, int to, bool force) {
     struct super_block *sb = inode->i_sb;
     struct nova_sb_info *sbi = NOVA_SB(sb);
+    if (entry->entry_type != FILE_WRITE) return false;
     /* If file is already to big, then migrate in entry granularity. */
     if (!is_tier_usage_quite_high(sbi, get_entry_tier(entry)) && i_size_read(inode) >= 1<<30 ) return false;
     if (entry->mtime > sih->avg_atime && sih->avg_atime > current_time(inode).tv_sec - 1)
