@@ -533,6 +533,21 @@ bool is_pgn_dirty(struct pgcache_node *pgn) {
     return pte_dirty(*ptep) != 0;
 }
 
+bool is_pgn_dirty_reset(struct pgcache_node *pgn) {
+    pte_t *ptep;
+    if (!pgn) return false;
+    if (!pgn->page) return false;
+    if (!vpmem_valid_address(pgn->address)) return false;
+    ptep = vpmem_get_pte(pgn);
+    if (!ptep) return false;
+    if (pte_dirty(*ptep) != 0) {
+	*ptep = pte_mkold(*ptep);
+        *ptep = pte_mkclean(*ptep);
+	return true;
+    }
+    else return false;
+}
+
 bool is_pgn_dirty_addr(unsigned long address) {
     pte_t *ptep;
     if (!address) return false;
@@ -997,7 +1012,8 @@ bool vpmem_writeback(int index, bool clear) {
     }
 
 again:
-    if (unlikely(!clear) && ++counter > VPMEM_MAX_PAGES_QTR) return false;
+    if (!clear && ++counter > VPMEM_MAX_PAGES_QTR) return false;
+    if (clear && ++counter > VPMEM_MAX_PAGES_QTR<<2) return false;
 
     mutex_lock(&vsbi->vpmem_wb_mutex[index]);
 
@@ -1313,22 +1329,32 @@ inline int vpmem_write_behind_pages(unsigned long address, unsigned long count, 
 // This is sync flush
 int vpmem_flush_pages_sync(unsigned long address, unsigned long count) {
     struct pgcache_node *pgn = NULL;
+    unsigned long addr;
     unsigned long ret = 0;
+    #ifdef DEBUG_FILE_OP
+        nova_info("vpmem sync start address %lx count %lu\n",address , count);
+    #endif
     address &= PAGE_MASK;
+    addr = address;
     if (!vpmem_valid_address(address)) return 0;
     while (count-- != 0) {
         if (vpmem_present_address(address)) {
             pgn = pgcache_lookup(address);
             if (pgn && pgn->page && pgn->pte) {
-                if (is_pgn_dirty(pgn)) {
-                    push_to_wb_list(pgn);
+                if (is_pgn_dirty_reset(pgn)) {
+		    vpmem_write_to_bdev(address, 1, pgn->page);
+                    //push_to_wb_list(pgn);
                     ret++;
-                    set_pgn_clean(pgn);
+                    //set_pgn_clean(pgn);
                 }
             }
         }
         address += PAGE_SIZE;
     }
+	//set_pgn_clean_range(addr, count);
+    #ifdef DEBUG_FILE_OP
+        nova_info("vpmem sync end address %lx count %lu\n",address , count);
+    #endif
     return ret;
 }
 
@@ -1564,7 +1590,7 @@ again:
         mutex_unlock(&vsbi->vpmem_evict_mutex[index]);
         return false;
     }
-    wait_until_pgn_is_valid(pgn);
+    //wait_until_pgn_is_valid(pgn);
     if (unlikely(vpmem_get_pgn_index(pgn) != index)) {
         nova_info("Error in clear_evict_list addr %lx, virt %lu, index %d\n", 
             pgn->address, virt_to_blockoff(pgn->address), index);
@@ -1593,6 +1619,7 @@ again:
             goto again;
         }
     }  
+    local_irq_restore(flags);
 
     mutex_unlock(&vsbi->vpmem_evict_mutex[index]);
     mutex_lock(&vsbi->vpmem_rb_mutex[index]);

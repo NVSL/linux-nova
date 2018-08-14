@@ -336,7 +336,7 @@ int nova_give_advise(struct nova_sb_info *sbi) {
     sbi->stat->adv = i;
     adv = MIGRATION_DOWN_PMEM_PERC_INIT + i*5;
     if (adv>90) adv = 90;
-    if (adv<50) adv = 50;
+    if (adv<60) adv = 60;
     MIGRATION_DOWN_PMEM_PERC = adv;
     MIGRATION_IDEAL_PERC = adv;
     // MIGRATION_DOWN_PMEM_PERC = adv>MIGRATION_DOWN_PMEM_PERC_INIT ? adv:MIGRATION_DOWN_PMEM_PERC_INIT;

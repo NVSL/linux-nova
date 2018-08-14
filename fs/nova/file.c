@@ -128,14 +128,16 @@ int nova_fsync_range(struct inode *inode, unsigned long start_pgoff, unsigned lo
 	
 	isize = i_size_read(inode);
 	if (end_pgoff > (isize) >> PAGE_SHIFT) end_pgoff = (isize) >> PAGE_SHIFT;
-
-	if (start_pgoff < sih->do_sync_start) start_pgoff = sih->do_sync_start;
-	if (end_pgoff > sih->do_sync_end) end_pgoff = sih->do_sync_end;
+	
+	start_pgoff = start_pgoff < sih->do_sync_start ? sih->do_sync_start : start_pgoff;
+	end_pgoff = end_pgoff > sih->do_sync_end ? sih->do_sync_end : end_pgoff;
 	index = start_pgoff;
 
     do {
         entry = nova_find_next_entry_lockfree(sb, sih, index);
-		// nova_info("index %lu %lu %lu\n", index, start_pgoff, end_pgoff);
+	#ifdef DEBUG_FILE_OP
+		nova_info("sync index %lu %lu %lu\n", index, start_pgoff, end_pgoff);
+	#endif
         if (entry) {            
             if (entry == last_entry) {
                 index++;
@@ -159,27 +161,23 @@ int nova_fsync_range(struct inode *inode, unsigned long start_pgoff, unsigned lo
         }
         last_entry = entry;
     } while (index <= end_pgoff);
-	// nova_info("fsync %d pages %lu %lu\n", ret, sih->do_sync_start, sih->do_sync_end);
+	#ifdef DEBUG_FILE_OP
+		nova_info("fsync %d pages %lu %lu\n", ret, sih->do_sync_start, sih->do_sync_end);
+	#endif
 	return ret;
 }
 
 inline void include_inode_do_sync(struct nova_inode_info_header *sih, 
 	unsigned long start_index, unsigned long end_index) {
-	if ( sih->do_sync == 0 ) {
-		sih->do_sync_start = start_index;
-		sih->do_sync_end = end_index;
-	}
-	else {
-		if ( sih->do_sync_start > start_index ) sih->do_sync_start = start_index;
-		if ( sih->do_sync_end > end_index ) sih->do_sync_end = end_index;
-	}
+	sih->do_sync_start = start_index;
+	sih->do_sync_end = end_index;
 	sih->do_sync = 1;
 }
 
 inline void reset_inode_do_sync(struct nova_inode_info_header *sih) {
-	sih->do_sync = 0;
 	sih->do_sync_start = 0;
 	sih->do_sync_end = 0;
+	sih->do_sync = 0;
 }
 
 inline bool should_inode_do_sync(struct nova_inode_info_header *sih) {
@@ -203,13 +201,13 @@ static int nova_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 	int ret = 0;
 	timing_t fsync_time;
 
-	inode_lock(inode);
-	down_write(&sih->mig_sem);
-	inode_unlock(inode);
+	//inode_lock(inode);
+	//down_write(&sih->mig_sem);
+	//inode_unlock(inode);
 	NOVA_START_TIMING(fsync_t, fsync_time);
 
 	#ifdef DEBUG_FILE_OP
-		nova_info("nova_fsync is called\n");
+		nova_info("nova_fsync start\n");
 	#endif
 
 	#ifdef MODE_FORE_ALLOC
@@ -248,7 +246,11 @@ static int nova_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 persist:
 	PERSISTENT_BARRIER();
 	NOVA_END_TIMING(fsync_t, fsync_time);
-	up_write(&sih->mig_sem);
+	//up_write(&sih->mig_sem);
+
+	#ifdef DEBUG_FILE_OP
+		nova_info("nova_fsync end\n");
+	#endif
 
 	return ret;
 }
@@ -941,6 +943,8 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	u64 epoch_id;
 	u32 time;
 	bool exact;
+	unsigned long pmem_used = 0;
+	unsigned long pmem_total = 0;
 	int write_tier = TIER_PMEM;
 
 	if (len == 0)
@@ -1018,26 +1022,29 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 
 	#ifdef MODE_FORE_ALLOC
 		write_tier = TIER_PMEM;
+
+		if (i_size_read(inode) >= (1<<PMEM_LARGE_FILE_SIZE_BIT) && 
+			i_size_read(inode) >= (sbi->stat->pmem_free<<PAGE_SHIFT) ){ 
+			//&& len == (1<<PAGE_SHIFT) ) {
+			pmem_used = nova_pmem_used(sbi); 
+			pmem_total = sbi->num_blocks; 
+			if ( (pmem_used + (1<<PMEM_LOG_RES_BIT)) > pmem_total ) write_tier = TIER_BDEV_LOW;
+			goto pout;
+		}
 	
 		/* Profiler #1 */
 		nova_sih_increase_wcount(sb, sih, len);
 		if (nova_sih_is_sync(sih)) {
 			write_tier = TIER_PMEM;
-			goto prof;
+			goto pout;
 		}
-		
+
 		/* Profiler #2 */
 		seq_count = nova_get_prev_seq_count(sb, sih, start_blk, num_blocks, &exact);
 
 		// Hot and replacing
 		if (exact) {
 			write_tier = TIER_PMEM;
-			goto pout;
-		}
-
-		if (i_size_read(inode) >= (1<<PMEM_LARGE_FILE_SIZE_BIT) && 
-			i_size_read(inode) >= (sbi->stat->pmem_free<<PAGE_SHIFT) ) {
-			write_tier = TIER_BDEV_LOW;
 			goto pout;
 		}
 
@@ -1054,7 +1061,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 		// nova_info("p %d b %d\n",pgc_tier_free_order(0),pgc_tier_free_order(1));
 		write_tier = get_suitable_tier(sb, num_blocks);
 
-prof:
+//prof:
 		write_tier = get_available_tier(sb, write_tier);
 	#endif
 	
