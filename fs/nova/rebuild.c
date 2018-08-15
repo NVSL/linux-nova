@@ -271,7 +271,7 @@ int nova_reset_mapping_csum_parity(struct super_block *sb,
 	bool done = false;
 	int count = 0;
 	unsigned long start = 0;
-	timing_t reset_time;
+	INIT_TIMING(reset_time);
 	int i;
 
 	if (data_csum == 0 && data_parity == 0)
@@ -327,7 +327,7 @@ int nova_reset_vma_csum_parity(struct super_block *sb,
 	struct nova_mmap_entry *entry;
 	unsigned long num_pages;
 	unsigned long start_index, end_index;
-	timing_t reset_time;
+	INIT_TIMING(reset_time);
 	int ret = 0;
 
 	if (data_csum == 0 && data_parity == 0)
@@ -393,7 +393,7 @@ static int nova_rebuild_file_inode_tree(struct super_block *sb,
 	struct nova_inode_rebuild rebuild, *reb;
 	unsigned int data_bits = blk_type_to_shift[sih->i_blk_type];
 	u64 ino = pi->nova_ino;
-	timing_t rebuild_time;
+	INIT_TIMING(rebuild_time);
 	void *addr, *entryc;
 	u64 curr_p;
 	u8 type;
@@ -594,7 +594,7 @@ int nova_rebuild_dir_inode_tree(struct super_block *sb,
 	struct nova_inode_rebuild rebuild, *reb;
 	u64 ino = pi->nova_ino;
 	unsigned short de_len;
-	timing_t rebuild_time;
+	INIT_TIMING(rebuild_time);
 	void *addr, *entryc;
 	u64 curr_p;
 	u8 type;
@@ -764,7 +764,7 @@ int nova_restore_snapshot_table(struct super_block *sb, int just_init)
 	char entry_copy[NOVA_MAX_ENTRY_LEN];
 	size_t size = sizeof(struct nova_snapshot_info_entry);
 	u64 ino = NOVA_SNAPSHOT_INO;
-	timing_t rebuild_time;
+	INIT_TIMING(rebuild_time);
 	int count = 0;
 	void *addr, *entryc;
 	u64 curr_p;

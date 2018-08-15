@@ -211,7 +211,7 @@ static inline int nova_check_inode_checksum(struct nova_inode *pi)
 
 static inline void nova_update_tail(struct nova_inode *pi, u64 new_tail)
 {
-	timing_t update_time;
+	INIT_TIMING(update_time);
 
 	NOVA_START_TIMING(update_tail_t, update_time);
 
@@ -224,7 +224,7 @@ static inline void nova_update_tail(struct nova_inode *pi, u64 new_tail)
 
 static inline void nova_update_alter_tail(struct nova_inode *pi, u64 new_tail)
 {
-	timing_t update_time;
+	INIT_TIMING(update_time);
 
 	if (metadata_csum == 0)
 		return;

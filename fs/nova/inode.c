@@ -287,7 +287,7 @@ int nova_delete_file_tree(struct super_block *sb,
 	unsigned int num_free = 0;
 	int freed = 0;
 	void *ret;
-	timing_t delete_time;
+	INIT_TIMING(delete_time);
 
 	NOVA_START_TIMING(delete_file_tree_t, delete_time);
 
@@ -736,7 +736,7 @@ static int nova_free_inode(struct super_block *sb, struct nova_inode *pi,
 	struct nova_inode_info_header *sih)
 {
 	int err = 0;
-	timing_t free_time;
+	INIT_TIMING(free_time);
 
 	NOVA_START_TIMING(free_inode_t, free_time);
 
@@ -900,9 +900,8 @@ void nova_evict_inode(struct inode *inode)
 {
 	struct super_block *sb = inode->i_sb;
 	struct nova_inode *pi = nova_get_inode(sb, inode);
-	struct nova_inode_info *si = NOVA_I(inode);
-	struct nova_inode_info_header *sih = &si->header;
-	timing_t evict_time;
+	struct nova_inode_info_header *sih = NOVA_IH(inode);
+	INIT_TIMING(evict_time);
 	int destroy = 0;
 	int ret;
 
@@ -1013,7 +1012,7 @@ u64 nova_new_nova_inode(struct super_block *sb, u64 *pi_addr)
 	int map_id;
 	u64 ino = 0;
 	int ret;
-	timing_t new_inode_time;
+	INIT_TIMING(new_inode_time);
 
 	NOVA_START_TIMING(new_nova_inode_t, new_inode_time);
 	map_id = sbi->map_id;
@@ -1058,7 +1057,7 @@ struct inode *nova_new_vfs_inode(enum nova_new_inode_type type,
 	struct nova_inode *alter_pi;
 	int errval;
 	u64 alter_pi_addr = 0;
-	timing_t new_inode_time;
+	INIT_TIMING(new_inode_time);
 
 	NOVA_START_TIMING(new_vfs_inode_t, new_inode_time);
 	sb = dir->i_sb;
@@ -1220,9 +1219,8 @@ static void nova_setsize(struct inode *inode, loff_t oldsize, loff_t newsize,
 	u64 epoch_id)
 {
 	struct super_block *sb = inode->i_sb;
-	struct nova_inode_info *si = NOVA_I(inode);
-	struct nova_inode_info_header *sih = &si->header;
-	timing_t setsize_time;
+	struct nova_inode_info_header *sih = NOVA_IH(inode);
+	INIT_TIMING(setsize_time);
 
 	/* We only support truncate regular file */
 	if (!(S_ISREG(inode->i_mode))) {
@@ -1280,7 +1278,7 @@ int nova_notify_change(struct dentry *dentry, struct iattr *attr)
 	unsigned int ia_valid = attr->ia_valid, attr_mask;
 	loff_t oldsize = inode->i_size;
 	u64 epoch_id;
-	timing_t setattr_time;
+	INIT_TIMING(setattr_time);
 
 	NOVA_START_TIMING(setattr_t, setattr_time);
 	if (!pi) {
@@ -1369,7 +1367,7 @@ static ssize_t nova_direct_IO(struct kiocb *iocb, struct iov_iter *iter)
 	struct address_space *mapping = filp->f_mapping;
 	struct inode *inode = mapping->host;
 	ssize_t ret;
-	timing_t dio_time;
+	INIT_TIMING(dio_time);
 
 	if (WARN_ON_ONCE(IS_DAX(inode)))
 		return -EIO;
@@ -1451,7 +1449,7 @@ static int nova_writepages(struct address_space *mapping,
 	struct writeback_control *wbc)
 {
 	int ret;
-	timing_t wp_time;
+	INIT_TIMING(wp_time);
 
 	NOVA_START_TIMING(write_pages_t, wp_time);
 	ret = dax_writeback_mapping_range(mapping,

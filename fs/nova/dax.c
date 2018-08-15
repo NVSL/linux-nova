@@ -97,7 +97,7 @@ int nova_handle_head_tail_blocks(struct super_block *sb,
 	size_t offset, eblk_offset;
 	unsigned long start_blk, end_blk, num_blocks;
 	struct nova_file_write_entry *entry;
-	timing_t partial_time;
+	INIT_TIMING(partial_time);
 	int ret = 0;
 
 	NOVA_START_TIMING(partial_block_t, partial_time);
@@ -278,7 +278,8 @@ int nova_protect_file_data(struct super_block *sb, struct inode *inode,
 	struct nova_file_write_entry *entryc, entry_copy;
 	bool mapped, nvmm_ok;
 	int ret = 0;
-	timing_t protect_file_data_time, memcpy_time;
+	INIT_TIMING(protect_file_data_time);
+	INIT_TIMING(memcpy_time);
 
 	NOVA_START_TIMING(protect_file_data_t, protect_file_data_time);
 
@@ -475,7 +476,7 @@ unsigned long nova_check_existing_entry(struct super_block *sb,
 	struct nova_file_write_entry *entryc;
 	unsigned long next_pgoff;
 	unsigned long ent_blks = 0;
-	timing_t check_time;
+	INIT_TIMING(check_time);
 
 	NOVA_START_TIMING(check_entry_t, check_time);
 
@@ -577,7 +578,8 @@ ssize_t do_nova_inplace_file_write(struct file *filp,
 	u64 blk_off;
 	size_t bytes;
 	long status = 0;
-	timing_t inplace_write_time, memcpy_time;
+	INIT_TIMING(inplace_write_time);
+	INIT_TIMING(memcpy_time);
 	unsigned long step = 0;
 	u64 begin_tail = 0;
 	u64 epoch_id;
@@ -888,8 +890,7 @@ int nova_dax_get_blocks(struct inode *inode, sector_t iblock,
 	int locked = 0;
 	int check_next = 1;
 	int ret = 0;
-	timing_t get_block_time;
-
+	INIT_TIMING(get_block_time);
 
 	if (max_blocks == 0)
 		return 0;
@@ -1069,7 +1070,7 @@ static int nova_dax_huge_fault(struct vm_fault *vmf,
 			      enum page_entry_size pe_size)
 {
 	int ret = 0;
-	timing_t fault_time;
+	INIT_TIMING(fault_time);
 	struct address_space *mapping = vmf->vma->vm_file->f_mapping;
 	struct inode *inode = mapping->host;
 
@@ -1175,7 +1176,7 @@ int nova_insert_write_vma(struct vm_area_struct *vma)
 	int compVal;
 	int insert = 0;
 	int ret;
-	timing_t insert_vma_time;
+	INIT_TIMING(insert_vma_time);
 
 
 	if ((vma->vm_flags & flags) != flags)
@@ -1256,7 +1257,7 @@ static int nova_remove_write_vma(struct vm_area_struct *vma)
 	int compVal;
 	int found = 0;
 	int remove = 0;
-	timing_t remove_vma_time;
+	INIT_TIMING(remove_vma_time);
 
 
 	NOVA_START_TIMING(remove_vma_t, remove_vma_time);

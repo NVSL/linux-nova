@@ -390,7 +390,7 @@ static struct nova_inode *nova_init(struct super_block *sb,
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_inode_update update;
 	u64 epoch_id;
-	timing_t init_time;
+	INIT_TIMING(init_time);
 
 	NOVA_START_TIMING(new_init_t, init_time);
 	nova_info("creating an empty nova of size %lu\n", size);
@@ -583,7 +583,7 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 	u32 random = 0;
 	int retval = -EINVAL;
 	int i;
-	timing_t mount_time;
+	INIT_TIMING(mount_time);
 
 	NOVA_START_TIMING(mount_t, mount_time);
 
@@ -1157,7 +1157,7 @@ static const struct export_operations nova_export_ops = {
 static int __init init_nova_fs(void)
 {
 	int rc = 0;
-	timing_t init_time;
+	INIT_TIMING(init_time);
 
 	NOVA_START_TIMING(init_t, init_time);
 	nova_dbg("%s: %d cpus online\n", __func__, num_online_cpus());

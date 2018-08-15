@@ -134,7 +134,7 @@ unsigned int nova_free_old_entry(struct super_block *sb,
 	struct nova_file_write_entry *entryc, entry_copy;
 	unsigned long old_nvmm;
 	int ret;
-	timing_t free_time;
+	INIT_TIMING(free_time);
 
 	if (!entry)
 		return 0;
@@ -458,7 +458,7 @@ int nova_inplace_update_log_entry(struct super_block *sb,
 	u64 journal_tail;
 	size_t size;
 	int cpu;
-	timing_t update_time;
+	INIT_TIMING(update_time);
 
 	NOVA_START_TIMING(update_entry_t, update_time);
 	size = nova_get_log_entry_size(sb, type);
@@ -497,7 +497,7 @@ static int nova_append_setattr_entry(struct super_block *sb,
 	struct nova_inode_info_header *sih = &si->header;
 	struct nova_inode inode_copy;
 	struct nova_log_entry_info entry_info;
-	timing_t append_time;
+	INIT_TIMING(append_time);
 	int ret;
 
 	NOVA_START_TIMING(append_setattr_t, append_time);
@@ -743,7 +743,7 @@ int nova_append_link_change_entry(struct super_block *sb,
 	struct nova_inode inode_copy;
 	struct nova_log_entry_info entry_info;
 	int ret = 0;
-	timing_t append_time;
+	INIT_TIMING(append_time);
 
 	NOVA_START_TIMING(append_link_change_t, append_time);
 
@@ -798,7 +798,7 @@ int nova_assign_write_entry(struct super_block *sb,
 	unsigned long curr_pgoff;
 	int i;
 	int ret = 0;
-	timing_t assign_time;
+	INIT_TIMING(assign_time);
 
 	NOVA_START_TIMING(assign_t, assign_time);
 	for (i = 0; i < num; i++) {
@@ -880,7 +880,7 @@ int nova_append_file_write_entry(struct super_block *sb, struct nova_inode *pi,
 	struct nova_inode_info *si = NOVA_I(inode);
 	struct nova_inode_info_header *sih = &si->header;
 	struct nova_log_entry_info entry_info;
-	timing_t append_time;
+	INIT_TIMING(append_time);
 	int ret;
 
 	NOVA_START_TIMING(append_file_entry_t, append_time);
@@ -910,7 +910,7 @@ int nova_append_mmap_entry(struct super_block *sb, struct nova_inode *pi,
 	struct nova_inode_info_header *sih = &si->header;
 	struct nova_inode inode_copy;
 	struct nova_log_entry_info entry_info;
-	timing_t append_time;
+	INIT_TIMING(append_time);
 	int ret;
 
 	NOVA_START_TIMING(append_mmap_entry_t, append_time);
@@ -946,7 +946,7 @@ int nova_append_snapshot_info_entry(struct super_block *sb,
 	struct nova_inode_info_header *sih = &si->header;
 	struct nova_inode inode_copy;
 	struct nova_log_entry_info entry_info;
-	timing_t append_time;
+	INIT_TIMING(append_time);
 	int ret;
 
 	NOVA_START_TIMING(append_snapshot_info_t, append_time);
@@ -984,7 +984,7 @@ int nova_append_dentry(struct super_block *sb, struct nova_inode *pi,
 	struct nova_inode_info_header *sih = &si->header;
 	struct nova_inode inode_copy;
 	struct nova_log_entry_info entry_info;
-	timing_t append_time;
+	INIT_TIMING(append_time);
 	int ret;
 
 	NOVA_START_TIMING(append_dir_entry_t, append_time);
@@ -1385,7 +1385,7 @@ int nova_free_inode_log(struct super_block *sb, struct nova_inode *pi,
 	struct nova_inode_info_header *sih)
 {
 	int freed = 0;
-	timing_t free_time;
+	INIT_TIMING(free_time);
 
 	if (sih->log_head == 0 || sih->log_tail == 0)
 		return 0;

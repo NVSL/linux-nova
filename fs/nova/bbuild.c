@@ -1544,7 +1544,8 @@ int nova_recovery(struct super_block *sb)
 	unsigned long initsize = le64_to_cpu(super->s_size);
 	bool value = false;
 	int ret = 0;
-	timing_t start, end;
+	INIT_TIMING(start);
+	INIT_TIMING(end);
 
 	nova_dbgv("%s\n", __func__);
 
