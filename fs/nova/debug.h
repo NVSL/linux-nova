@@ -17,7 +17,7 @@
 #define MODE_FORE_PREFETCH
 // #define MODE_FORE_LOG
 #define MODE_BACK_MIG
-// #define MODE_REV_MIG
+#define MODE_REV_MIG
 // #define MODE_LOG_MIG
 #define MODE_MIG_SELF
 #define MODE_MIGRATION_DOWNWARD

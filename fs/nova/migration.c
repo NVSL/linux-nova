@@ -258,11 +258,11 @@ inline bool should_migrate_entry(struct inode *inode, struct nova_inode_info_hea
     struct super_block *sb = inode->i_sb;
     struct nova_sb_info *sbi = NOVA_SB(sb);
     if (entry->entry_type != FILE_WRITE) return false;
+    if (force) return (get_entry_tier(entry)) != to;
     /* If file is already to big, then migrate in entry granularity. */
     if (!is_tier_usage_quite_high(sbi, get_entry_tier(entry)) && i_size_read(inode) >= 1<<30 ) return false;
     if (entry->mtime > sih->avg_atime && sih->avg_atime > current_time(inode).tv_sec - 1)
         return false;
-    if (force) return (get_entry_tier(entry)) != to;
     else return (get_entry_tier(entry)) < to;
 }
 
@@ -1149,21 +1149,25 @@ unsigned long nova_pmem_total(struct nova_sb_info *sbi) {
 }
 
 // Used for reverse migration
+// Usage high: used / total > (MIGRATION_DOWN_PMEM_PERC-10) / 100
 inline bool is_pmem_usage_quite_high(struct nova_sb_info *sbi) {
     return sbi->stat->tier_usage_quite_high[TIER_PMEM];
 }
 
 // Used for migration
+// Usage high: used / total > MIGRATION_DOWN_PMEM_PERC / 100
 inline bool is_pmem_usage_high(struct nova_sb_info *sbi) {
     return sbi->stat->tier_usage_high[TIER_PMEM];
 }
 
 // Used for foreground allocation
+// Usage high: used / total > MIGRATION_FORCE_PERC / 100
 inline bool is_pmem_usage_really_high(struct nova_sb_info *sbi) {
     return sbi->stat->tier_usage_really_high[TIER_PMEM];
 }
 
 // Used for log allocation
+// Usage high: used / total > MIGRATION_MAX_PERC / 100
 inline bool is_pmem_usage_too_high(struct nova_sb_info *sbi) {
     return sbi->stat->tier_usage_too_high[TIER_PMEM];
 }
