@@ -1262,13 +1262,15 @@ void bdev_test(struct nova_sb_info *sbi) {
 	unsigned long n1, n3;
 	void *addr = nova_get_block(sb, ((sbi->num_blocks >> 1) << PAGE_SHIFT));
 	int j, k, l;
+	int round = 2;
+	int round2 = 8;
 	timing_t t1, t2;
 
 	char *bdev_name = sbi->bdev_list[0].bdev_path;
 
 	// unsigned long capacity_page = sbi->bdev_list[0].capacity_page;
 
-    nova_info("Block device test IN.\n");
+    nova_info("Block device test start.\n");
     
 	pg = alloc_page(GFP_KERNEL|__GFP_ZERO);
 	pg2 = alloc_page(GFP_KERNEL|__GFP_ZERO);
@@ -1315,42 +1317,113 @@ void bdev_test(struct nova_sb_info *sbi) {
 	for (k=TIER_BDEV_LOW;k<=TIER_BDEV_HIGH;++k) {
 		bdev_raw = sbi->bdev_list[k-TIER_BDEV_LOW].bdev_raw;
 		bdev_name = sbi->bdev_list[k-TIER_BDEV_LOW].bdev_path;
-		nova_info("[%s]\n",bdev_name);
-		for (l=0;l<2;++l) {
-			if (l==0) nova_info("[Write test]\n");
-			else nova_info("[Read test]\n");
-			n1 = 0;
-			for (i=0;i<=12;++i) {
-				j = 1<<i;
-				while (j>=0) {
-					modify_a_page(addr+(j<<PAGE_SHIFT),'A'+j%20);
-					j--;
+		nova_info("[%s] Sequential I/O test\n",bdev_name);
+		while (round-- > 0){
+			for (l=0;l<2;++l) {
+				if (l==0) nova_info("[Write test]\n");
+				else nova_info("[Read test]\n");
+				n1 = 0;
+				for (i=0;i<=8;++i) {
+					j = 1<<i;
+					while (j>=0) {
+						modify_a_page(addr+(j<<PAGE_SHIFT),'A'+j%20);
+						__flush_tlb_all();
+						smp_mb();
+						j--;
+					}
+					if (l==0) {
+						getrawmonotonic(&t1);
+						for (j=0;j<4;++j) {
+							ret = nova_bdev_write_block(sbi, bdev_raw, ((j+1)<<12)+(1<<i), 1<<i, 
+								address_to_page(addr), BIO_SYNC);
+						}
+						getrawmonotonic(&t2);
+					}
+					else {
+						getrawmonotonic(&t1);
+						for (j=0;j<4;++j) {
+							ret = nova_bdev_read_block(sbi, bdev_raw, ((j+6)<<12)+(1<<i), 1<<i, 
+								address_to_page(addr), BIO_SYNC);
+						}
+						getrawmonotonic(&t2);					
+					}
+					n3 = t2.tv_nsec - t1.tv_nsec;
+					if (i==0) nova_info("[size]  %d   N/A %lu\n", i, n3);
+					else nova_info("[size] %2d %4lu%% %lu\n", i, n1*2*100/n3, n3);
+					n1 = n3;
 				}
+			}
+		}	
+	}	
+
+	nova_info("[%s] Random I/O test\n",bdev_name);
+	for (k=TIER_BDEV_LOW;k<=TIER_BDEV_HIGH;++k) {
+		bdev_raw = sbi->bdev_list[k-TIER_BDEV_LOW].bdev_raw;
+		bdev_name = sbi->bdev_list[k-TIER_BDEV_LOW].bdev_path;
+		for (l=0;l<2;++l) {
+			for (i=0;i<round2;++i){
+				modify_a_page(addr,'B'+round);
+				__flush_tlb_all();
+				smp_mb();
 				if (l==0) {
 					getrawmonotonic(&t1);
-					for (j=0;j<4;++j) {
-						ret = nova_bdev_write_block(sbi, bdev_raw, ((j+1)<<12)+(1<<i), 1<<i, 
+					for (j=0;j<1;++j) {
+						ret = nova_bdev_write_block(sbi, bdev_raw, ((j+1)<<12)+round, 1, 
 							address_to_page(addr), BIO_SYNC);
 					}
 					getrawmonotonic(&t2);
 				}
 				else {
 					getrawmonotonic(&t1);
-					for (j=0;j<4;++j) {
-						ret = nova_bdev_read_block(sbi, bdev_raw, ((j+6)<<12)+(1<<i), 1<<i, 
+					for (j=0;j<1;++j) {
+						ret = nova_bdev_read_block(sbi, bdev_raw, ((j+6)<<12)+round, 1, 
 							address_to_page(addr), BIO_SYNC);
 					}
 					getrawmonotonic(&t2);					
 				}
 				n3 = t2.tv_nsec - t1.tv_nsec;
-				if (i==0) nova_info("[size]  %d   N/A %lu\n", i, n3);
-				else nova_info("[size] %2d %4lu%% %lu\n", i, n1*2*100/n3, n3);
-				n1 = n3;
+
+				if (l==0) nova_info("DRAM -> DISK %lu\n", n3);
+				else nova_info("Disk -> DRAM %lu\n", n3);
 			}
 		}	
 	}
+	
+	for (i=0;i<round2;++i){
+		modify_a_page(pg_vir_addr,'C'+i);
+		modify_a_page(pg_vir_addr2,'D'+i);
+		__flush_tlb_all();
+		smp_mb();
+		getrawmonotonic(&t1);
+		memcpy(pg_vir_addr, pg_vir_addr2, PAGE_SIZE);
+		getrawmonotonic(&t2);
+		n3 = t2.tv_nsec - t1.tv_nsec;
+		nova_info("DRAM -> DRAM %lu\n", n3);
+	}
+	for (i=0;i<round2;++i){
+		modify_a_page(pg_vir_addr,'E'+i);
+		modify_a_page(addr,'F'+i);
+		__flush_tlb_all();
+		smp_mb();
+		getrawmonotonic(&t1);
+		memcpy(pg_vir_addr, addr, PAGE_SIZE);
+		getrawmonotonic(&t2);
+		n3 = t2.tv_nsec - t1.tv_nsec;
+		nova_info("NVMM -> DRAM %lu\n", n3);
+	}
+	for (i=0;i<round2;++i){
+		modify_a_page(pg_vir_addr,'G'+i);
+		modify_a_page(addr,'H'+i);
+		__flush_tlb_all();
+		smp_mb();
+		getrawmonotonic(&t1);
+		memcpy(addr, pg_vir_addr, PAGE_SIZE);
+		getrawmonotonic(&t2);
+		n3 = t2.tv_nsec - t1.tv_nsec;
+		nova_info("DRAM -> NVMM %lu\n", n3);
+	}
 
-	nova_info("Block device test OUT.\n");
+	nova_info("Block device test end.\n");
 }
 
 void bfl_test(struct nova_sb_info *sbi) {

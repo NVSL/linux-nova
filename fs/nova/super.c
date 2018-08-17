@@ -862,10 +862,6 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 	nova_dbg("%s: dev vpmem, phys_addr 0x%llx, virt_addr %p, size %ld\n",
 		__func__, sbi->phys_addr, sbi->virt_addr, sbi->initsize);
 
-	#ifdef DEBUG_STARTUP_TEST
-		bdev_test(sbi);
-	#endif
-
 	retval = start_usage_thread(sbi);
 	if (retval)
 		goto out;
@@ -873,6 +869,10 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 	retval = start_bm_thread(sbi);
 	if (retval)
 		goto out;
+		
+	#ifdef DEBUG_STARTUP_TEST
+		bdev_test(sbi);
+	#endif
 
 	nova_dbg("measure timing %d, metadata checksum %d, inplace update %d, wprotect %d, data checksum %d, data parity %d, DRAM checksum %d\n",
 		measure_timing, metadata_csum,
