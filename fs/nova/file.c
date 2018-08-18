@@ -732,10 +732,6 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 	if (len <= 0)
 		goto out;
 
-	#ifdef MODE_KEEP_STAT
-		sbi->stat->read += len;
-	#endif
-
 	#ifdef MODE_USE_DYN_THRES
 		nova_update_stat(sbi, len, true);
 	#endif
@@ -836,6 +832,11 @@ skip_verify:
 		else
 			left = __clear_user(buf + copied, nr);
 
+		#ifdef MODE_KEEP_STAT
+			sbi->stat->read += nr;
+			if (vpmem_valid_address((unsigned long)dax_mem)) sbi->stat->read_dram += nr;
+		#endif
+		
 		/*
 		nova_info("read 3 ino %lu len %lu pos %llu block [%llu,%llu] virt [%lx,%lx] pgoff [%llu,%llu] nr %lu left %lu\n", sih->ino, len, pos, 
 			entry->block>>PAGE_SHIFT, (entry->block>>PAGE_SHIFT)+((unsigned long)entry->num_pages)-1, 
@@ -1066,10 +1067,6 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	#endif
 	
 pout:
-	#ifdef MODE_KEEP_STAT
-		sbi->stat->write += len;
-		if (write_tier!=TIER_PMEM) sbi->stat->write_dram += len;
-	#endif
 
 	#ifdef MODE_USE_DYN_THRES
 		nova_update_stat(sbi, len, false);
@@ -1146,6 +1143,11 @@ retry:
 		// nova_memlock_range(sb, kmem + offset, bytes);
 		NOVA_END_TIMING(memcpy_w_nvmm_t, memcpy_time);
 
+		#ifdef MODE_KEEP_STAT
+			sbi->stat->write += bytes;
+			// nova_info("a %p\n", kmem);
+			if (vpmem_valid_address((unsigned long)kmem)) sbi->stat->write_dram += bytes;
+		#endif
 		/*
 		if (data_csum > 0 || data_parity > 0) {
 			ret = nova_protect_file_data(sb, inode, pos, bytes,

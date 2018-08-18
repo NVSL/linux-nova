@@ -1342,7 +1342,8 @@ int vpmem_flush_pages_sync(unsigned long address, unsigned long count) {
             pgn = pgcache_lookup(address);
             if (pgn && pgn->page && pgn->pte) {
                 if (is_pgn_dirty_reset(pgn)) {
-		    vpmem_write_to_bdev(address, 1, pgn->page);
+		            vpmem_write_to_bdev(address, 1, pgn->page);
+                    atomic_inc_return(&writes);
                     //push_to_wb_list(pgn);
                     ret++;
                     //set_pgn_clean(pgn);
@@ -1564,7 +1565,8 @@ bool vpmem_load_block_range(unsigned long address, struct page **p, int count)
         return false;
     } else {
         #ifdef VPMEM_DEBUG
-            atomic_add_return(count, &bdev_read);
+            // atomic_add_return(count, &bdev_read);
+            atomic_inc_return(&bdev_read);
         #endif
         return true;
     }
