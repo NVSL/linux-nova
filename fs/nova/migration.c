@@ -257,6 +257,7 @@ inline bool should_migrate_entry(struct inode *inode, struct nova_inode_info_hea
     struct nova_file_write_entry *entry, int to, bool force) {
     struct super_block *sb = inode->i_sb;
     struct nova_sb_info *sbi = NOVA_SB(sb);
+	if (sih->num_vmas) return false;
     if (entry->entry_type != FILE_WRITE) return false;
     if (force) return (get_entry_tier(entry)) != to;
     /* If file is already to big, then migrate in entry granularity. */
