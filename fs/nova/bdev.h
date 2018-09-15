@@ -13,6 +13,8 @@ struct tiering_stat {
 	unsigned long mig_group;
 	unsigned long mig_interrupt;
 	unsigned long pmem_free;
+	unsigned long biowrite;
+	unsigned long bioread;
 
 	bool should_migrate_log;
 

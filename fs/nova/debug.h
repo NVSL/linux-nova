@@ -10,6 +10,7 @@
 
 // #define MODE_KEEP_STAT
 // #define MODE_KEEP_STAT_VPMEM
+// #define MODE_KEEP_STAT_BIO
 
 #define MODE_FORE_ALLOC
 #define MODE_FORE_PMEM

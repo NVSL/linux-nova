@@ -274,6 +274,9 @@ int nova_bdev_write_byte(struct nova_sb_info *sbi, struct block_device *device, 
 	struct bio *bio = bio_alloc(GFP_NOIO, 1);
 	struct bio_vec *bv = kzalloc(sizeof(struct bio_vec), GFP_KERNEL);
 	struct submit_bio_ret *bio_ret;
+	#ifdef MODE_KEEP_STAT_BIO
+		sbi->stat->biowrite++;
+	#endif
 	if (unlikely(!bio)) {
 		nova_info("[Bdev Write] Cannot allocate bio.\n");
 		return -3;
@@ -338,6 +341,9 @@ int nova_bdev_read_byte(struct nova_sb_info *sbi, struct block_device *device, u
 	struct bio *bio = bio_alloc(GFP_NOIO, 1);
 	struct bio_vec *bv = kzalloc(sizeof(struct bio_vec), GFP_KERNEL);
 	struct submit_bio_ret *bio_ret;
+	#ifdef MODE_KEEP_STAT_BIO
+		sbi->stat->bioread++;
+	#endif
 	if (unlikely(!bio)) {
 		nova_info("[Bdev Read] Cannot allocate bio.\n");
 		return -3;
@@ -400,6 +406,9 @@ int nova_bdev_write_byte_range(struct nova_sb_info *sbi, struct block_device *de
 	struct bio *bio = bio_alloc(GFP_NOIO, 1);
 	struct bio_vec *bv = kcalloc(count, sizeof(struct bio_vec), GFP_KERNEL);
 	struct submit_bio_ret *bio_ret;
+	#ifdef MODE_KEEP_STAT_BIO
+		sbi->stat->biowrite += count;
+	#endif
 	if (unlikely(!bio)) {
 		nova_info("[Bdev Write] Cannot allocate bio.\n");
 		return -3;
@@ -455,6 +464,9 @@ int nova_bdev_read_byte_range(struct nova_sb_info *sbi, struct block_device *dev
 	struct bio *bio = bio_alloc(GFP_NOIO, 1);
 	struct bio_vec *bv = kcalloc(count, sizeof(struct bio_vec), GFP_KERNEL);
 	struct submit_bio_ret *bio_ret;
+	#ifdef MODE_KEEP_STAT_BIO
+		sbi->stat->bioread += count;
+	#endif
 	if (unlikely(!bio)) {
 		nova_info("[Bdev Read] Cannot allocate bio.\n");
 		return -3;

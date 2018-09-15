@@ -238,11 +238,14 @@ static int nova_seq_ts_show(struct seq_file *seq, void *v)
     	used += nova_bdev_used(sbi, i);
 	}
 	seq_printf(seq, "[TNOVA] FT %d BR %d WR %d BW %d UP %lu UB %lu UD %d\n",
-	atomic_read(&faults), atomic_read(&bdev_read), atomic_read(&writes), atomic_read(&bdev_write),
+		atomic_read(&faults), atomic_read(&bdev_read), atomic_read(&writes), atomic_read(&bdev_write),
 	nova_pmem_used(sbi), used, pgc_size);
 
 	seq_printf(seq, "[TNOVA] FWA %lu FWD %lu FRA %lu FRD %lu\n",
-	sbi->stat->write >> 12, sbi->stat->write_dram >> 12, sbi->stat->read >> 12, sbi->stat->read_dram >> 12);
+		sbi->stat->write >> 12, sbi->stat->write_dram >> 12, sbi->stat->read >> 12, sbi->stat->read_dram >> 12);
+
+	seq_printf(seq, "[TNOVA] BIOWRITE %lu BIOREAD %lu\n",
+		sbi->stat->biowrite, sbi->stat->bioread);
 
 	seq_printf(seq, "----------------------------------------------------------------------\n");
 	seq_printf(seq, "                          [PMEM free lists]\n");
