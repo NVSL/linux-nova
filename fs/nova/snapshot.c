@@ -1055,7 +1055,9 @@ int nova_delete_snapshot(struct super_block *sb, u64 epoch_id)
 	ret = nova_find_target_snapshot_info(sb, epoch_id, &info);
 	if (ret != 1 || info->epoch_id != epoch_id) {
 		nova_dbg("%s: Snapshot info not found\n", __func__);
-		goto out;
+		mutex_unlock(&sbi->s_lock);
+		NOVA_END_TIMING(delete_snapshot_t, delete_snapshot_time);
+		return 0;
 	}
 
 	next = nova_find_next_snapshot_info(sb, info);
@@ -1071,7 +1073,6 @@ int nova_delete_snapshot(struct super_block *sb, u64 epoch_id)
 
 	nova_invalidate_snapshot_entry(sb, info);
 
-out:
 	sbi->num_snapshots--;
 	mutex_unlock(&sbi->s_lock);
 
