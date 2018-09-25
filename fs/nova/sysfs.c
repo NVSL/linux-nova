@@ -321,13 +321,9 @@ ssize_t nova_seq_delete_snapshot(struct file *filp, const char __user *buf,
 	struct inode *inode = mapping->host;
 	struct super_block *sb = PDE_DATA(inode);
 	u64 epoch_id;
-	int ret;
 
-	ret = kstrtoull(buf, 10, &epoch_id);
-	if (ret < 0)
-		nova_warn("Couldn't parse snapshot id %s", buf);
-	else
-		nova_delete_snapshot(sb, epoch_id);
+	sscanf(buf, "%llu", &epoch_id);
+	nova_delete_snapshot(sb, epoch_id);
 
 	return len;
 }
@@ -431,7 +427,6 @@ ssize_t nova_seq_gc(struct file *filp, const char __user *buf,
 	struct nova_inode *target_pi;
 	struct nova_inode_info *target_sih;
 
-	int ret;
 	char *_buf;
 	int retval = len;
 
@@ -448,13 +443,18 @@ ssize_t nova_seq_gc(struct file *filp, const char __user *buf,
 	}
 
 	_buf[len] = 0;
-	ret = kstrtoull(_buf, 0, &target_inode_number);
-	if (ret) {
-		nova_info("%s: Could not parse ino '%s'\n", __func__, _buf);
-		return ret;
-	}
+	sscanf(_buf, "%llu", &target_inode_number);
 	nova_info("%s: target_inode_number=%llu.", __func__,
 		  target_inode_number);
+
+	/* FIXME: inode_number must exist */
+	if (target_inode_number < NOVA_NORMAL_INODE_START &&
+			target_inode_number != NOVA_ROOT_INO) {
+		nova_info("%s: invalid inode %llu.", __func__,
+			  target_inode_number);
+		retval = -ENOENT;
+		goto out;
+	}
 
 	target_inode = nova_iget(sb, target_inode_number);
 	if (target_inode == NULL) {
