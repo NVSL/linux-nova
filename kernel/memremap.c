@@ -49,63 +49,6 @@ int device_private_entry_fault(struct vm_area_struct *vma,
 		       pmd_t *pmdp)
 {
 	struct page *page = device_private_entry_to_page(entry);
-
-static int devm_memremap_match(struct device *dev, void *res, void *match_data)
-{
-	return *(void **)res == match_data;
-}
-
-void *devm_memremap(struct device *dev, resource_size_t offset,
-		size_t size, unsigned long flags)
-{
-	void **ptr, *addr;
-
-	ptr = devres_alloc_node(devm_memremap_release, sizeof(*ptr), GFP_KERNEL,
-			dev_to_node(dev));
-	if (!ptr)
-		return ERR_PTR(-ENOMEM);
-
-	addr = memremap(offset, size, flags);
-	if (addr) {
-		*ptr = addr;
-		devres_add(dev, ptr);
-	} else {
-		devres_free(ptr);
-		return ERR_PTR(-ENXIO);
-	}
-
-	return addr;
-}
-EXPORT_SYMBOL(devm_memremap);
-
-void *devm_memremap_ro(struct device *dev, resource_size_t offset,
-		size_t size, unsigned long flags)
-{
-	void **ptr, *addr;
-
-	printk("%s\n", __func__);
-	ptr = devres_alloc_node(devm_memremap_release, sizeof(*ptr), GFP_KERNEL,
-			dev_to_node(dev));
-	if (!ptr)
-		return ERR_PTR(-ENOMEM);
-
-	addr = ioremap_cache_ro(offset, size);
-	if (addr) {
-		*ptr = addr;
-		devres_add(dev, ptr);
-	} else {
-		devres_free(ptr);
-		return ERR_PTR(-ENXIO);
-	}
-
-	return addr;
-}
-EXPORT_SYMBOL(devm_memremap_ro);
-
-void devm_memunmap(struct device *dev, void *addr)
-{
-	WARN_ON(devres_release(dev, devm_memremap_release,
-				devm_memremap_match, addr));
 	/*
 	 * The page_fault() callback must migrate page back to system memory
 	 * so that CPU can access it. This might fail for various reasons

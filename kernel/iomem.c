@@ -159,6 +159,30 @@ void *devm_memremap(struct device *dev, resource_size_t offset,
 }
 EXPORT_SYMBOL(devm_memremap);
 
+void *devm_memremap_ro(struct device *dev, resource_size_t offset,
+		size_t size, unsigned long flags)
+{
+	void **ptr, *addr;
+
+	printk("%s\n", __func__);
+	ptr = devres_alloc_node(devm_memremap_release, sizeof(*ptr), GFP_KERNEL,
+			dev_to_node(dev));
+	if (!ptr)
+		return ERR_PTR(-ENOMEM);
+
+	addr = ioremap_cache_ro(offset, size);
+	if (addr) {
+		*ptr = addr;
+		devres_add(dev, ptr);
+	} else {
+		devres_free(ptr);
+		return ERR_PTR(-ENXIO);
+	}
+
+	return addr;
+}
+EXPORT_SYMBOL(devm_memremap_ro);
+
 void devm_memunmap(struct device *dev, void *addr)
 {
 	WARN_ON(devres_release(dev, devm_memremap_release,

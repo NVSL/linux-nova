@@ -1028,11 +1028,11 @@ int nova_iomap_begin(struct inode *inode, loff_t offset, loff_t length,
 
 	if (ret == 0) {
 		iomap->type = IOMAP_HOLE;
-		iomap->blkno = IOMAP_NULL_BLOCK;
+		iomap->addr = IOMAP_NULL_ADDR;
 		iomap->length = 1 << blkbits;
 	} else {
 		iomap->type = IOMAP_MAPPED;
-		iomap->blkno = (sector_t)bno << (blkbits - 9);
+		iomap->addr = (u64)bno << blkbits;
 		iomap->length = (u64)ret << blkbits;
 		iomap->flags |= IOMAP_F_MERGED;
 	}
@@ -1078,7 +1078,7 @@ static int nova_dax_huge_fault(struct vm_fault *vmf,
 	nova_dbgv("%s: inode %lu, pgoff %lu\n",
 		  __func__, inode->i_ino, vmf->pgoff);
 
-	ret = dax_iomap_fault(vmf, pe_size, &nova_iomap_ops_lock);
+	ret = dax_iomap_fault(vmf, pe_size, NULL, NULL, &nova_iomap_ops_lock);
 
 	NOVA_END_TIMING(pmd_fault_t, fault_time);
 	return ret;
@@ -1097,23 +1097,13 @@ static int nova_dax_fault(struct vm_fault *vmf)
 
 static int nova_dax_pfn_mkwrite(struct vm_fault *vmf)
 {
-	struct inode *inode = file_inode(vmf->vma->vm_file);
-	loff_t size;
-	int ret = 0;
-	timing_t fault_time;
+	struct address_space *mapping = vmf->vma->vm_file->f_mapping;
+	struct inode *inode = mapping->host;
 
-	NOVA_START_TIMING(pfn_mkwrite_t, fault_time);
+	nova_dbgv("%s: inode %lu, pgoff %lu, flags 0x%x\n",
+			__func__, inode->i_ino, vmf->pgoff, vmf->flags);
 
-	inode_lock(inode);
-	size = (i_size_read(inode) + PAGE_SIZE - 1) >> PAGE_SHIFT;
-	if (vmf->pgoff >= size)
-		ret = VM_FAULT_SIGBUS;
-	else
-		ret = dax_pfn_mkwrite(vmf);
-	inode_unlock(inode);
-
-	NOVA_END_TIMING(pfn_mkwrite_t, fault_time);
-	return ret;
+	return nova_dax_huge_fault(vmf, PE_SIZE_PTE);
 }
 
 static inline int nova_rbtree_compare_vma(struct vma_item *curr,
@@ -1355,7 +1345,7 @@ static void nova_vma_close(struct vm_area_struct *vma)
 		  __func__, __LINE__, vma->vm_start, vma->vm_end,
 		  vma->vm_flags, pgprot_val(vma->vm_page_prot));
 
-	vma->original_write = 0;
+//	vma->original_write = 0;
 	nova_remove_write_vma(vma);
 }
 
@@ -1366,6 +1356,6 @@ const struct vm_operations_struct nova_dax_vm_ops = {
 	.pfn_mkwrite = nova_dax_pfn_mkwrite,
 	.open = nova_vma_open,
 	.close = nova_vma_close,
-	.dax_cow = nova_restore_page_write,
+//	.dax_cow = nova_restore_page_write,
 };
 
