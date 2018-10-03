@@ -62,6 +62,7 @@
 #include <rdma/iw_cm.h>
 
 #include "core_priv.h"
+#include "cma_priv.h"
 
 MODULE_AUTHOR("Sean Hefty");
 MODULE_DESCRIPTION("Generic RDMA CM Agent");
@@ -72,6 +73,7 @@ MODULE_LICENSE("Dual BSD/GPL");
 #define CMA_MAX_CM_RETRIES 15
 #define CMA_CM_MRA_SETTING (IB_CM_MRA_FLAG_DELAY | 24)
 #define CMA_IBOE_PACKET_LIFETIME 18
+#define CMA_PREFERRED_ROCE_GID_TYPE IB_GID_TYPE_ROCE_UDP_ENCAP
 
 static const char * const cma_events[] = {
 	[RDMA_CM_EVENT_ADDR_RESOLVED]	 = "address resolved",
@@ -144,6 +146,34 @@ const void *rdma_consumer_reject_data(struct rdma_cm_id *id,
 }
 EXPORT_SYMBOL(rdma_consumer_reject_data);
 
+/**
+ * rdma_iw_cm_id() - return the iw_cm_id pointer for this cm_id.
+ * @id: Communication Identifier
+ */
+struct iw_cm_id *rdma_iw_cm_id(struct rdma_cm_id *id)
+{
+	struct rdma_id_private *id_priv;
+
+	id_priv = container_of(id, struct rdma_id_private, id);
+	if (id->device->node_type == RDMA_NODE_RNIC)
+		return id_priv->cm_id.iw;
+	return NULL;
+}
+EXPORT_SYMBOL(rdma_iw_cm_id);
+
+/**
+ * rdma_res_to_id() - return the rdma_cm_id pointer for this restrack.
+ * @res: rdma resource tracking entry pointer
+ */
+struct rdma_cm_id *rdma_res_to_id(struct rdma_restrack_entry *res)
+{
+	struct rdma_id_private *id_priv =
+		container_of(res, struct rdma_id_private, res);
+
+	return &id_priv->id;
+}
+EXPORT_SYMBOL(rdma_res_to_id);
+
 static void cma_add_one(struct ib_device *device);
 static void cma_remove_one(struct ib_device *device, void *client_data);
 
@@ -154,7 +184,6 @@ static struct ib_client cma_client = {
 };
 
 static struct ib_sa_client sa_client;
-static struct rdma_addr_client addr_client;
 static LIST_HEAD(dev_list);
 static LIST_HEAD(listen_any_list);
 static DEFINE_MUTEX(lock);
@@ -173,7 +202,7 @@ static struct cma_pernet *cma_pernet(struct net *net)
 	return net_generic(net, cma_pernet_id);
 }
 
-static struct idr *cma_pernet_idr(struct net *net, enum rdma_port_space ps)
+static struct idr *cma_pernet_idr(struct net *net, enum rdma_ucm_port_space ps)
 {
 	struct cma_pernet *pernet = cma_pernet(net);
 
@@ -202,7 +231,7 @@ struct cma_device {
 };
 
 struct rdma_bind_list {
-	enum rdma_port_space	ps;
+	enum rdma_ucm_port_space ps;
 	struct hlist_head	owners;
 	unsigned short		port;
 };
@@ -215,7 +244,7 @@ struct class_port_info_context {
 	u8				port_num;
 };
 
-static int cma_ps_alloc(struct net *net, enum rdma_port_space ps,
+static int cma_ps_alloc(struct net *net, enum rdma_ucm_port_space ps,
 			struct rdma_bind_list *bind_list, int snum)
 {
 	struct idr *idr = cma_pernet_idr(net, ps);
@@ -224,14 +253,15 @@ static int cma_ps_alloc(struct net *net, enum rdma_port_space ps,
 }
 
 static struct rdma_bind_list *cma_ps_find(struct net *net,
-					  enum rdma_port_space ps, int snum)
+					  enum rdma_ucm_port_space ps, int snum)
 {
 	struct idr *idr = cma_pernet_idr(net, ps);
 
 	return idr_find(idr, snum);
 }
 
-static void cma_ps_remove(struct net *net, enum rdma_port_space ps, int snum)
+static void cma_ps_remove(struct net *net, enum rdma_ucm_port_space ps,
+			  int snum)
 {
 	struct idr *idr = cma_pernet_idr(net, ps);
 
@@ -326,46 +356,6 @@ struct ib_device *cma_get_ib_dev(struct cma_device *cma_dev)
  * We do this by disabling removal notification while a callback is in process,
  * and reporting it after the callback completes.
  */
-struct rdma_id_private {
-	struct rdma_cm_id	id;
-
-	struct rdma_bind_list	*bind_list;
-	struct hlist_node	node;
-	struct list_head	list; /* listen_any_list or cma_device.list */
-	struct list_head	listen_list; /* per device listens */
-	struct cma_device	*cma_dev;
-	struct list_head	mc_list;
-
-	int			internal_id;
-	enum rdma_cm_state	state;
-	spinlock_t		lock;
-	struct mutex		qp_mutex;
-
-	struct completion	comp;
-	atomic_t		refcount;
-	struct mutex		handler_mutex;
-
-	int			backlog;
-	int			timeout_ms;
-	struct ib_sa_query	*query;
-	int			query_id;
-	union {
-		struct ib_cm_id	*ib;
-		struct iw_cm_id	*iw;
-	} cm_id;
-
-	u32			seq_num;
-	u32			qkey;
-	u32			qp_num;
-	pid_t			owner;
-	u32			options;
-	u8			srq;
-	u8			tos;
-	bool			tos_set;
-	u8			reuseaddr;
-	u8			afonly;
-	enum ib_gid_type	gid_type;
-};
 
 struct cma_multicast {
 	struct rdma_id_private *id_priv;
@@ -419,6 +409,8 @@ struct cma_hdr {
 #define CMA_VERSION 0x00
 
 struct cma_req_info {
+	struct sockaddr_storage listen_addr_storage;
+	struct sockaddr_storage src_addr_storage;
 	struct ib_device *device;
 	int port;
 	union ib_gid local_gid;
@@ -504,6 +496,8 @@ static void _cma_attach_to_dev(struct rdma_id_private *id_priv,
 	id_priv->id.route.addr.dev_addr.transport =
 		rdma_node_get_transport(cma_dev->device->node_type);
 	list_add_tail(&id_priv->list, &cma_dev->id_list);
+	id_priv->res.type = RDMA_RESTRACK_CM_ID;
+	rdma_restrack_add(&id_priv->res);
 }
 
 static void cma_attach_to_dev(struct rdma_id_private *id_priv,
@@ -600,7 +594,7 @@ static int cma_translate_addr(struct sockaddr *addr, struct rdma_dev_addr *dev_a
 	int ret;
 
 	if (addr->sa_family != AF_IB) {
-		ret = rdma_translate_ip(addr, dev_addr, NULL);
+		ret = rdma_translate_ip(addr, dev_addr);
 	} else {
 		cma_translate_ib((struct sockaddr_ib *) addr, dev_addr);
 		ret = 0;
@@ -611,11 +605,14 @@ static int cma_translate_addr(struct sockaddr *addr, struct rdma_dev_addr *dev_a
 
 static inline int cma_validate_port(struct ib_device *device, u8 port,
 				    enum ib_gid_type gid_type,
-				      union ib_gid *gid, int dev_type,
-				      int bound_if_index)
+				    union ib_gid *gid,
+				    struct rdma_id_private *id_priv)
 {
-	int ret = -ENODEV;
+	struct rdma_dev_addr *dev_addr = &id_priv->id.route.addr.dev_addr;
+	int bound_if_index = dev_addr->bound_dev_if;
+	int dev_type = dev_addr->dev_type;
 	struct net_device *ndev = NULL;
+	int ret = -ENODEV;
 
 	if ((dev_type == ARPHRD_INFINIBAND) && !rdma_protocol_ib(device, port))
 		return ret;
@@ -623,11 +620,13 @@ static inline int cma_validate_port(struct ib_device *device, u8 port,
 	if ((dev_type != ARPHRD_INFINIBAND) && rdma_protocol_ib(device, port))
 		return ret;
 
-	if (dev_type == ARPHRD_ETHER && rdma_protocol_roce(device, port))
-		ndev = dev_get_by_index(&init_net, bound_if_index);
-	else
+	if (dev_type == ARPHRD_ETHER && rdma_protocol_roce(device, port)) {
+		ndev = dev_get_by_index(dev_addr->net, bound_if_index);
+		if (!ndev)
+			return ret;
+	} else {
 		gid_type = IB_GID_TYPE_IB;
-
+	}
 
 	ret = ib_find_cached_gid_by_port(device, gid, gid_type, port,
 					 ndev, NULL);
@@ -668,8 +667,7 @@ static int cma_acquire_dev(struct rdma_id_private *id_priv,
 					rdma_protocol_ib(cma_dev->device, port) ?
 					IB_GID_TYPE_IB :
 					listen_id_priv->gid_type, gidp,
-					dev_addr->dev_type,
-					dev_addr->bound_dev_if);
+					id_priv);
 		if (!ret) {
 			id_priv->id.port_num = port;
 			goto out;
@@ -690,8 +688,7 @@ static int cma_acquire_dev(struct rdma_id_private *id_priv,
 						rdma_protocol_ib(cma_dev->device, port) ?
 						IB_GID_TYPE_IB :
 						cma_dev->default_gid_type[port - 1],
-						gidp, dev_addr->dev_type,
-						dev_addr->bound_dev_if);
+						gidp, id_priv);
 			if (!ret) {
 				id_priv->id.port_num = port;
 				goto out;
@@ -773,10 +770,10 @@ static void cma_deref_id(struct rdma_id_private *id_priv)
 		complete(&id_priv->comp);
 }
 
-struct rdma_cm_id *rdma_create_id(struct net *net,
-				  rdma_cm_event_handler event_handler,
-				  void *context, enum rdma_port_space ps,
-				  enum ib_qp_type qp_type)
+struct rdma_cm_id *__rdma_create_id(struct net *net,
+				    rdma_cm_event_handler event_handler,
+				    void *context, enum rdma_ucm_port_space ps,
+				    enum ib_qp_type qp_type, const char *caller)
 {
 	struct rdma_id_private *id_priv;
 
@@ -784,7 +781,10 @@ struct rdma_cm_id *rdma_create_id(struct net *net,
 	if (!id_priv)
 		return ERR_PTR(-ENOMEM);
 
-	id_priv->owner = task_pid_nr(current);
+	if (caller)
+		id_priv->res.kern_name = caller;
+	else
+		rdma_restrack_set_task(&id_priv->res, current);
 	id_priv->state = RDMA_CM_IDLE;
 	id_priv->id.context = context;
 	id_priv->id.event_handler = event_handler;
@@ -800,10 +800,11 @@ struct rdma_cm_id *rdma_create_id(struct net *net,
 	INIT_LIST_HEAD(&id_priv->mc_list);
 	get_random_bytes(&id_priv->seq_num, sizeof id_priv->seq_num);
 	id_priv->id.route.addr.dev_addr.net = get_net(net);
+	id_priv->seq_num &= 0x00ffffff;
 
 	return &id_priv->id;
 }
-EXPORT_SYMBOL(rdma_create_id);
+EXPORT_SYMBOL(__rdma_create_id);
 
 static int cma_init_ud_qp(struct rdma_id_private *id_priv, struct ib_qp *qp)
 {
@@ -894,7 +895,6 @@ static int cma_modify_qp_rtr(struct rdma_id_private *id_priv,
 {
 	struct ib_qp_attr qp_attr;
 	int qp_attr_mask, ret;
-	union ib_gid sgid;
 
 	mutex_lock(&id_priv->qp_mutex);
 	if (!id_priv->id.qp) {
@@ -914,12 +914,6 @@ static int cma_modify_qp_rtr(struct rdma_id_private *id_priv,
 
 	qp_attr.qp_state = IB_QPS_RTR;
 	ret = rdma_init_qp_attr(&id_priv->id, &qp_attr, &qp_attr_mask);
-	if (ret)
-		goto out;
-
-	ret = ib_query_gid(id_priv->id.device, id_priv->id.port_num,
-			   rdma_ah_read_grh(&qp_attr.ah_attr)->sgid_index,
-			   &sgid, NULL);
 	if (ret)
 		goto out;
 
@@ -1329,7 +1323,7 @@ static bool validate_ipv6_net_dev(struct net_device *net_dev,
 			   IPV6_ADDR_LINKLOCAL;
 	struct rt6_info *rt = rt6_lookup(dev_net(net_dev), &dst_addr->sin6_addr,
 					 &src_addr->sin6_addr, net_dev->ifindex,
-					 strict);
+					 NULL, strict);
 	bool ret;
 
 	if (!rt)
@@ -1368,11 +1362,11 @@ static bool validate_net_dev(struct net_device *net_dev,
 }
 
 static struct net_device *cma_get_net_dev(struct ib_cm_event *ib_event,
-					  const struct cma_req_info *req)
+					  struct cma_req_info *req)
 {
-	struct sockaddr_storage listen_addr_storage, src_addr_storage;
-	struct sockaddr *listen_addr = (struct sockaddr *)&listen_addr_storage,
-			*src_addr = (struct sockaddr *)&src_addr_storage;
+	struct sockaddr *listen_addr =
+			(struct sockaddr *)&req->listen_addr_storage;
+	struct sockaddr *src_addr = (struct sockaddr *)&req->src_addr_storage;
 	struct net_device *net_dev;
 	const union ib_gid *gid = req->has_gid ? &req->local_gid : NULL;
 	int err;
@@ -1387,15 +1381,10 @@ static struct net_device *cma_get_net_dev(struct ib_cm_event *ib_event,
 	if (!net_dev)
 		return ERR_PTR(-ENODEV);
 
-	if (!validate_net_dev(net_dev, listen_addr, src_addr)) {
-		dev_put(net_dev);
-		return ERR_PTR(-EHOSTUNREACH);
-	}
-
 	return net_dev;
 }
 
-static enum rdma_port_space rdma_ps_from_service_id(__be64 service_id)
+static enum rdma_ucm_port_space rdma_ps_from_service_id(__be64 service_id)
 {
 	return (be64_to_cpu(service_id) >> 16) & 0xffff;
 }
@@ -1436,21 +1425,12 @@ static bool cma_match_private_data(struct rdma_id_private *id_priv,
 	return true;
 }
 
-static bool cma_protocol_roce_dev_port(struct ib_device *device, int port_num)
-{
-	enum rdma_link_layer ll = rdma_port_get_link_layer(device, port_num);
-	enum rdma_transport_type transport =
-		rdma_node_get_transport(device->node_type);
-
-	return ll == IB_LINK_LAYER_ETHERNET && transport == RDMA_TRANSPORT_IB;
-}
-
 static bool cma_protocol_roce(const struct rdma_cm_id *id)
 {
 	struct ib_device *device = id->device;
 	const int port_num = id->port_num ?: rdma_start_port(device);
 
-	return cma_protocol_roce_dev_port(device, port_num);
+	return rdma_protocol_roce(device, port_num);
 }
 
 static bool cma_match_net_dev(const struct rdma_cm_id *id,
@@ -1463,7 +1443,7 @@ static bool cma_match_net_dev(const struct rdma_cm_id *id,
 		/* This request is an AF_IB request or a RoCE request */
 		return (!id->port_num || id->port_num == port_num) &&
 		       (addr->src_addr.ss_family == AF_IB ||
-			cma_protocol_roce_dev_port(id->device, port_num));
+			rdma_protocol_roce(id->device, port_num));
 
 	return !addr->dev_addr.bound_dev_if ||
 	       (net_eq(dev_net(net_dev), addr->dev_addr.net) &&
@@ -1518,7 +1498,7 @@ static struct rdma_id_private *cma_id_from_event(struct ib_cm_id *cm_id,
 		if (PTR_ERR(*net_dev) == -EAFNOSUPPORT) {
 			/* Assuming the protocol is AF_IB */
 			*net_dev = NULL;
-		} else if (cma_protocol_roce_dev_port(req.device, req.port)) {
+		} else if (rdma_protocol_roce(req.device, req.port)) {
 			/* TODO find the net dev matching the request parameters
 			 * through the RoCE GID table */
 			*net_dev = NULL;
@@ -1527,19 +1507,55 @@ static struct rdma_id_private *cma_id_from_event(struct ib_cm_id *cm_id,
 		}
 	}
 
+	/*
+	 * Net namespace might be getting deleted while route lookup,
+	 * cm_id lookup is in progress. Therefore, perform netdevice
+	 * validation, cm_id lookup under rcu lock.
+	 * RCU lock along with netdevice state check, synchronizes with
+	 * netdevice migrating to different net namespace and also avoids
+	 * case where net namespace doesn't get deleted while lookup is in
+	 * progress.
+	 * If the device state is not IFF_UP, its properties such as ifindex
+	 * and nd_net cannot be trusted to remain valid without rcu lock.
+	 * net/core/dev.c change_net_namespace() ensures to synchronize with
+	 * ongoing operations on net device after device is closed using
+	 * synchronize_net().
+	 */
+	rcu_read_lock();
+	if (*net_dev) {
+		/*
+		 * If netdevice is down, it is likely that it is administratively
+		 * down or it might be migrating to different namespace.
+		 * In that case avoid further processing, as the net namespace
+		 * or ifindex may change.
+		 */
+		if (((*net_dev)->flags & IFF_UP) == 0) {
+			id_priv = ERR_PTR(-EHOSTUNREACH);
+			goto err;
+		}
+
+		if (!validate_net_dev(*net_dev,
+				 (struct sockaddr *)&req.listen_addr_storage,
+				 (struct sockaddr *)&req.src_addr_storage)) {
+			id_priv = ERR_PTR(-EHOSTUNREACH);
+			goto err;
+		}
+	}
+
 	bind_list = cma_ps_find(*net_dev ? dev_net(*net_dev) : &init_net,
 				rdma_ps_from_service_id(req.service_id),
 				cma_port_from_service_id(req.service_id));
 	id_priv = cma_find_listener(bind_list, cm_id, ib_event, &req, *net_dev);
+err:
+	rcu_read_unlock();
 	if (IS_ERR(id_priv) && *net_dev) {
 		dev_put(*net_dev);
 		*net_dev = NULL;
 	}
-
 	return id_priv;
 }
 
-static inline int cma_user_data_offset(struct rdma_id_private *id_priv)
+static inline u8 cma_user_data_offset(struct rdma_id_private *id_priv)
 {
 	return cma_family(id_priv) == AF_IB ? 0 : sizeof(struct cma_hdr);
 }
@@ -1663,6 +1679,7 @@ void rdma_destroy_id(struct rdma_cm_id *id)
 	mutex_unlock(&id_priv->handler_mutex);
 
 	if (id_priv->cma_dev) {
+		rdma_restrack_del(&id_priv->res);
 		if (rdma_cap_ib_cm(id_priv->id.device, 1)) {
 			if (id_priv->cm_id.ib)
 				ib_destroy_cm_id(id_priv->cm_id.ib);
@@ -1812,6 +1829,7 @@ static struct rdma_id_private *cma_new_conn_id(struct rdma_cm_id *listen_id,
 					       struct ib_cm_event *ib_event,
 					       struct net_device *net_dev)
 {
+	struct rdma_id_private *listen_id_priv;
 	struct rdma_id_private *id_priv;
 	struct rdma_cm_id *id;
 	struct rdma_route *rt;
@@ -1821,9 +1839,11 @@ static struct rdma_id_private *cma_new_conn_id(struct rdma_cm_id *listen_id,
 		ib_event->param.req_rcvd.primary_path->service_id;
 	int ret;
 
-	id = rdma_create_id(listen_id->route.addr.dev_addr.net,
+	listen_id_priv = container_of(listen_id, struct rdma_id_private, id);
+	id = __rdma_create_id(listen_id->route.addr.dev_addr.net,
 			    listen_id->event_handler, listen_id->context,
-			    listen_id->ps, ib_event->param.req_rcvd.qp_type);
+			    listen_id->ps, ib_event->param.req_rcvd.qp_type,
+			    listen_id_priv->res.kern_name);
 	if (IS_ERR(id))
 		return NULL;
 
@@ -1835,8 +1855,8 @@ static struct rdma_id_private *cma_new_conn_id(struct rdma_cm_id *listen_id,
 
 	rt = &id->route;
 	rt->num_paths = ib_event->param.req_rcvd.alternate_path ? 2 : 1;
-	rt->path_rec = kmalloc(sizeof *rt->path_rec * rt->num_paths,
-			       GFP_KERNEL);
+	rt->path_rec = kmalloc_array(rt->num_paths, sizeof(*rt->path_rec),
+				     GFP_KERNEL);
 	if (!rt->path_rec)
 		goto err;
 
@@ -1845,9 +1865,7 @@ static struct rdma_id_private *cma_new_conn_id(struct rdma_cm_id *listen_id,
 		rt->path_rec[1] = *ib_event->param.req_rcvd.alternate_path;
 
 	if (net_dev) {
-		ret = rdma_copy_addr(&rt->addr.dev_addr, net_dev, NULL);
-		if (ret)
-			goto err;
+		rdma_copy_addr(&rt->addr.dev_addr, net_dev, NULL);
 	} else {
 		if (!cma_protocol_roce(listen_id) &&
 		    cma_any_addr(cma_src_addr(id_priv))) {
@@ -1874,14 +1892,17 @@ static struct rdma_id_private *cma_new_udp_id(struct rdma_cm_id *listen_id,
 					      struct ib_cm_event *ib_event,
 					      struct net_device *net_dev)
 {
+	struct rdma_id_private *listen_id_priv;
 	struct rdma_id_private *id_priv;
 	struct rdma_cm_id *id;
 	const sa_family_t ss_family = listen_id->route.addr.src_addr.ss_family;
 	struct net *net = listen_id->route.addr.dev_addr.net;
 	int ret;
 
-	id = rdma_create_id(net, listen_id->event_handler, listen_id->context,
-			    listen_id->ps, IB_QPT_UD);
+	listen_id_priv = container_of(listen_id, struct rdma_id_private, id);
+	id = __rdma_create_id(net, listen_id->event_handler, listen_id->context,
+			      listen_id->ps, IB_QPT_UD,
+			      listen_id_priv->res.kern_name);
 	if (IS_ERR(id))
 		return NULL;
 
@@ -1893,9 +1914,7 @@ static struct rdma_id_private *cma_new_udp_id(struct rdma_cm_id *listen_id,
 		goto err;
 
 	if (net_dev) {
-		ret = rdma_copy_addr(&id->route.addr.dev_addr, net_dev, NULL);
-		if (ret)
-			goto err;
+		rdma_copy_addr(&id->route.addr.dev_addr, net_dev, NULL);
 	} else {
 		if (!cma_any_addr(cma_src_addr(id_priv))) {
 			ret = cma_translate_addr(cma_src_addr(id_priv),
@@ -1941,7 +1960,8 @@ static int cma_req_handler(struct ib_cm_id *cm_id, struct ib_cm_event *ib_event)
 	struct rdma_id_private *listen_id, *conn_id = NULL;
 	struct rdma_cm_event event;
 	struct net_device *net_dev;
-	int offset, ret;
+	u8 offset;
+	int ret;
 
 	listen_id = cma_id_from_event(cm_id, ib_event, &net_dev);
 	if (IS_ERR(listen_id))
@@ -2037,6 +2057,33 @@ __be64 rdma_get_service_id(struct rdma_cm_id *id, struct sockaddr *addr)
 }
 EXPORT_SYMBOL(rdma_get_service_id);
 
+void rdma_read_gids(struct rdma_cm_id *cm_id, union ib_gid *sgid,
+		    union ib_gid *dgid)
+{
+	struct rdma_addr *addr = &cm_id->route.addr;
+
+	if (!cm_id->device) {
+		if (sgid)
+			memset(sgid, 0, sizeof(*sgid));
+		if (dgid)
+			memset(dgid, 0, sizeof(*dgid));
+		return;
+	}
+
+	if (rdma_protocol_roce(cm_id->device, cm_id->port_num)) {
+		if (sgid)
+			rdma_ip2gid((struct sockaddr *)&addr->src_addr, sgid);
+		if (dgid)
+			rdma_ip2gid((struct sockaddr *)&addr->dst_addr, dgid);
+	} else {
+		if (sgid)
+			rdma_addr_get_sgid(&addr->dev_addr, sgid);
+		if (dgid)
+			rdma_addr_get_dgid(&addr->dev_addr, dgid);
+	}
+}
+EXPORT_SYMBOL(rdma_read_gids);
+
 static int cma_iw_handler(struct iw_cm_id *iw_id, struct iw_cm_event *iw_event)
 {
 	struct rdma_id_private *id_priv = iw_id->context;
@@ -2083,7 +2130,7 @@ static int cma_iw_handler(struct iw_cm_id *iw_id, struct iw_cm_event *iw_event)
 		event.param.conn.responder_resources = iw_event->ord;
 		break;
 	default:
-		BUG_ON(1);
+		goto out;
 	}
 
 	event.status = iw_event->status;
@@ -2121,10 +2168,11 @@ static int iw_conn_req_handler(struct iw_cm_id *cm_id,
 		goto out;
 
 	/* Create a new RDMA id for the new IW CM ID */
-	new_cm_id = rdma_create_id(listen_id->id.route.addr.dev_addr.net,
-				   listen_id->id.event_handler,
-				   listen_id->id.context,
-				   RDMA_PS_TCP, IB_QPT_RC);
+	new_cm_id = __rdma_create_id(listen_id->id.route.addr.dev_addr.net,
+				     listen_id->id.event_handler,
+				     listen_id->id.context,
+				     RDMA_PS_TCP, IB_QPT_RC,
+				     listen_id->res.kern_name);
 	if (IS_ERR(new_cm_id)) {
 		ret = -ENOMEM;
 		goto out;
@@ -2133,7 +2181,7 @@ static int iw_conn_req_handler(struct iw_cm_id *cm_id,
 	mutex_lock_nested(&conn_id->handler_mutex, SINGLE_DEPTH_NESTING);
 	conn_id->state = RDMA_CM_CONNECT;
 
-	ret = rdma_translate_ip(laddr, &conn_id->id.route.addr.dev_addr, NULL);
+	ret = rdma_translate_ip(laddr, &conn_id->id.route.addr.dev_addr);
 	if (ret) {
 		mutex_unlock(&conn_id->handler_mutex);
 		rdma_destroy_id(new_cm_id);
@@ -2249,8 +2297,8 @@ static void cma_listen_on_dev(struct rdma_id_private *id_priv,
 	if (cma_family(id_priv) == AF_IB && !rdma_cap_ib_cm(cma_dev->device, 1))
 		return;
 
-	id = rdma_create_id(net, cma_listen_handler, id_priv, id_priv->id.ps,
-			    id_priv->id.qp_type);
+	id = __rdma_create_id(net, cma_listen_handler, id_priv, id_priv->id.ps,
+			      id_priv->id.qp_type, id_priv->res.kern_name);
 	if (IS_ERR(id))
 		return;
 
@@ -2415,6 +2463,26 @@ out:
 	kfree(work);
 }
 
+static void cma_init_resolve_route_work(struct cma_work *work,
+					struct rdma_id_private *id_priv)
+{
+	work->id = id_priv;
+	INIT_WORK(&work->work, cma_work_handler);
+	work->old_state = RDMA_CM_ROUTE_QUERY;
+	work->new_state = RDMA_CM_ROUTE_RESOLVED;
+	work->event.event = RDMA_CM_EVENT_ROUTE_RESOLVED;
+}
+
+static void cma_init_resolve_addr_work(struct cma_work *work,
+				       struct rdma_id_private *id_priv)
+{
+	work->id = id_priv;
+	INIT_WORK(&work->work, cma_work_handler);
+	work->old_state = RDMA_CM_ADDR_QUERY;
+	work->new_state = RDMA_CM_ADDR_RESOLVED;
+	work->event.event = RDMA_CM_EVENT_ADDR_RESOLVED;
+}
+
 static int cma_resolve_ib_route(struct rdma_id_private *id_priv, int timeout_ms)
 {
 	struct rdma_route *route = &id_priv->id.route;
@@ -2425,11 +2493,7 @@ static int cma_resolve_ib_route(struct rdma_id_private *id_priv, int timeout_ms)
 	if (!work)
 		return -ENOMEM;
 
-	work->id = id_priv;
-	INIT_WORK(&work->work, cma_work_handler);
-	work->old_state = RDMA_CM_ROUTE_QUERY;
-	work->new_state = RDMA_CM_ROUTE_RESOLVED;
-	work->event.event = RDMA_CM_EVENT_ROUTE_RESOLVED;
+	cma_init_resolve_route_work(work, id_priv);
 
 	route->path_rec = kmalloc(sizeof *route->path_rec, GFP_KERNEL);
 	if (!route->path_rec) {
@@ -2450,10 +2514,64 @@ err1:
 	return ret;
 }
 
-int rdma_set_ib_paths(struct rdma_cm_id *id,
-		      struct sa_path_rec *path_rec, int num_paths)
+static enum ib_gid_type cma_route_gid_type(enum rdma_network_type network_type,
+					   unsigned long supported_gids,
+					   enum ib_gid_type default_gid)
+{
+	if ((network_type == RDMA_NETWORK_IPV4 ||
+	     network_type == RDMA_NETWORK_IPV6) &&
+	    test_bit(IB_GID_TYPE_ROCE_UDP_ENCAP, &supported_gids))
+		return IB_GID_TYPE_ROCE_UDP_ENCAP;
+
+	return default_gid;
+}
+
+/*
+ * cma_iboe_set_path_rec_l2_fields() is helper function which sets
+ * path record type based on GID type.
+ * It also sets up other L2 fields which includes destination mac address
+ * netdev ifindex, of the path record.
+ * It returns the netdev of the bound interface for this path record entry.
+ */
+static struct net_device *
+cma_iboe_set_path_rec_l2_fields(struct rdma_id_private *id_priv)
+{
+	struct rdma_route *route = &id_priv->id.route;
+	enum ib_gid_type gid_type = IB_GID_TYPE_ROCE;
+	struct rdma_addr *addr = &route->addr;
+	unsigned long supported_gids;
+	struct net_device *ndev;
+
+	if (!addr->dev_addr.bound_dev_if)
+		return NULL;
+
+	ndev = dev_get_by_index(addr->dev_addr.net,
+				addr->dev_addr.bound_dev_if);
+	if (!ndev)
+		return NULL;
+
+	supported_gids = roce_gid_type_mask_support(id_priv->id.device,
+						    id_priv->id.port_num);
+	gid_type = cma_route_gid_type(addr->dev_addr.network,
+				      supported_gids,
+				      id_priv->gid_type);
+	/* Use the hint from IP Stack to select GID Type */
+	if (gid_type < ib_network_to_gid_type(addr->dev_addr.network))
+		gid_type = ib_network_to_gid_type(addr->dev_addr.network);
+	route->path_rec->rec_type = sa_conv_gid_to_pathrec_type(gid_type);
+
+	route->path_rec->roce.route_resolved = true;
+	sa_path_set_ndev(route->path_rec, addr->dev_addr.net);
+	sa_path_set_ifindex(route->path_rec, ndev->ifindex);
+	sa_path_set_dmac(route->path_rec, addr->dev_addr.dst_dev_addr);
+	return ndev;
+}
+
+int rdma_set_ib_path(struct rdma_cm_id *id,
+		     struct sa_path_rec *path_rec)
 {
 	struct rdma_id_private *id_priv;
+	struct net_device *ndev;
 	int ret;
 
 	id_priv = container_of(id, struct rdma_id_private, id);
@@ -2461,20 +2579,33 @@ int rdma_set_ib_paths(struct rdma_cm_id *id,
 			   RDMA_CM_ROUTE_RESOLVED))
 		return -EINVAL;
 
-	id->route.path_rec = kmemdup(path_rec, sizeof *path_rec * num_paths,
+	id->route.path_rec = kmemdup(path_rec, sizeof(*path_rec),
 				     GFP_KERNEL);
 	if (!id->route.path_rec) {
 		ret = -ENOMEM;
 		goto err;
 	}
 
-	id->route.num_paths = num_paths;
+	if (rdma_protocol_roce(id->device, id->port_num)) {
+		ndev = cma_iboe_set_path_rec_l2_fields(id_priv);
+		if (!ndev) {
+			ret = -ENODEV;
+			goto err_free;
+		}
+		dev_put(ndev);
+	}
+
+	id->route.num_paths = 1;
 	return 0;
+
+err_free:
+	kfree(id->route.path_rec);
+	id->route.path_rec = NULL;
 err:
 	cma_comp_exch(id_priv, RDMA_CM_ROUTE_RESOLVED, RDMA_CM_ADDR_RESOLVED);
 	return ret;
 }
-EXPORT_SYMBOL(rdma_set_ib_paths);
+EXPORT_SYMBOL(rdma_set_ib_path);
 
 static int cma_resolve_iw_route(struct rdma_id_private *id_priv, int timeout_ms)
 {
@@ -2484,11 +2615,7 @@ static int cma_resolve_iw_route(struct rdma_id_private *id_priv, int timeout_ms)
 	if (!work)
 		return -ENOMEM;
 
-	work->id = id_priv;
-	INIT_WORK(&work->work, cma_work_handler);
-	work->old_state = RDMA_CM_ROUTE_QUERY;
-	work->new_state = RDMA_CM_ROUTE_RESOLVED;
-	work->event.event = RDMA_CM_EVENT_ROUTE_RESOLVED;
+	cma_init_resolve_route_work(work, id_priv);
 	queue_work(cma_wq, &work->work);
 	return 0;
 }
@@ -2511,26 +2638,14 @@ static int iboe_tos_to_sl(struct net_device *ndev, int tos)
 	return 0;
 }
 
-static enum ib_gid_type cma_route_gid_type(enum rdma_network_type network_type,
-					   unsigned long supported_gids,
-					   enum ib_gid_type default_gid)
-{
-	if ((network_type == RDMA_NETWORK_IPV4 ||
-	     network_type == RDMA_NETWORK_IPV6) &&
-	    test_bit(IB_GID_TYPE_ROCE_UDP_ENCAP, &supported_gids))
-		return IB_GID_TYPE_ROCE_UDP_ENCAP;
-
-	return default_gid;
-}
-
 static int cma_resolve_iboe_route(struct rdma_id_private *id_priv)
 {
 	struct rdma_route *route = &id_priv->id.route;
 	struct rdma_addr *addr = &route->addr;
 	struct cma_work *work;
 	int ret;
-	struct net_device *ndev = NULL;
-	enum ib_gid_type gid_type = IB_GID_TYPE_IB;
+	struct net_device *ndev;
+
 	u8 default_roce_tos = id_priv->cma_dev->default_roce_tos[id_priv->id.port_num -
 					rdma_start_port(id_priv->cma_dev->device)];
 	u8 tos = id_priv->tos_set ? id_priv->tos : default_roce_tos;
@@ -2540,9 +2655,6 @@ static int cma_resolve_iboe_route(struct rdma_id_private *id_priv)
 	if (!work)
 		return -ENOMEM;
 
-	work->id = id_priv;
-	INIT_WORK(&work->work, cma_work_handler);
-
 	route->path_rec = kzalloc(sizeof *route->path_rec, GFP_KERNEL);
 	if (!route->path_rec) {
 		ret = -ENOMEM;
@@ -2551,41 +2663,16 @@ static int cma_resolve_iboe_route(struct rdma_id_private *id_priv)
 
 	route->num_paths = 1;
 
-	if (addr->dev_addr.bound_dev_if) {
-		unsigned long supported_gids;
-
-		ndev = dev_get_by_index(&init_net, addr->dev_addr.bound_dev_if);
-		if (!ndev) {
-			ret = -ENODEV;
-			goto err2;
-		}
-
-		supported_gids = roce_gid_type_mask_support(id_priv->id.device,
-							    id_priv->id.port_num);
-		gid_type = cma_route_gid_type(addr->dev_addr.network,
-					      supported_gids,
-					      id_priv->gid_type);
-		route->path_rec->rec_type =
-			sa_conv_gid_to_pathrec_type(gid_type);
-		sa_path_set_ndev(route->path_rec, &init_net);
-		sa_path_set_ifindex(route->path_rec, ndev->ifindex);
-	}
+	ndev = cma_iboe_set_path_rec_l2_fields(id_priv);
 	if (!ndev) {
 		ret = -ENODEV;
 		goto err2;
 	}
 
-	sa_path_set_dmac(route->path_rec, addr->dev_addr.dst_dev_addr);
-
 	rdma_ip2gid((struct sockaddr *)&id_priv->id.route.addr.src_addr,
 		    &route->path_rec->sgid);
 	rdma_ip2gid((struct sockaddr *)&id_priv->id.route.addr.dst_addr,
 		    &route->path_rec->dgid);
-
-	/* Use the hint from IP Stack to select GID Type */
-	if (gid_type < ib_network_to_gid_type(addr->dev_addr.network))
-		gid_type = ib_network_to_gid_type(addr->dev_addr.network);
-	route->path_rec->rec_type = sa_conv_gid_to_pathrec_type(gid_type);
 
 	if (((struct sockaddr *)&id_priv->id.route.addr.dst_addr)->sa_family != AF_IB)
 		/* TODO: get the hoplimit from the inet/inet6 device */
@@ -2608,11 +2695,7 @@ static int cma_resolve_iboe_route(struct rdma_id_private *id_priv)
 		goto err2;
 	}
 
-	work->old_state = RDMA_CM_ROUTE_QUERY;
-	work->new_state = RDMA_CM_ROUTE_RESOLVED;
-	work->event.event = RDMA_CM_EVENT_ROUTE_RESOLVED;
-	work->event.status = 0;
-
+	cma_init_resolve_route_work(work, id_priv);
 	queue_work(cma_wq, &work->work);
 
 	return 0;
@@ -2792,11 +2875,7 @@ static int cma_resolve_loopback(struct rdma_id_private *id_priv)
 	rdma_addr_get_sgid(&id_priv->id.route.addr.dev_addr, &gid);
 	rdma_addr_set_dgid(&id_priv->id.route.addr.dev_addr, &gid);
 
-	work->id = id_priv;
-	INIT_WORK(&work->work, cma_work_handler);
-	work->old_state = RDMA_CM_ADDR_QUERY;
-	work->new_state = RDMA_CM_ADDR_RESOLVED;
-	work->event.event = RDMA_CM_EVENT_ADDR_RESOLVED;
+	cma_init_resolve_addr_work(work, id_priv);
 	queue_work(cma_wq, &work->work);
 	return 0;
 err:
@@ -2822,11 +2901,7 @@ static int cma_resolve_ib_addr(struct rdma_id_private *id_priv)
 	rdma_addr_set_dgid(&id_priv->id.route.addr.dev_addr, (union ib_gid *)
 		&(((struct sockaddr_ib *) &id_priv->id.route.addr.dst_addr)->sib_addr));
 
-	work->id = id_priv;
-	INIT_WORK(&work->work, cma_work_handler);
-	work->old_state = RDMA_CM_ADDR_QUERY;
-	work->new_state = RDMA_CM_ADDR_RESOLVED;
-	work->event.event = RDMA_CM_EVENT_ADDR_RESOLVED;
+	cma_init_resolve_addr_work(work, id_priv);
 	queue_work(cma_wq, &work->work);
 	return 0;
 err:
@@ -2888,7 +2963,7 @@ int rdma_resolve_addr(struct rdma_cm_id *id, struct sockaddr *src_addr,
 		if (dst_addr->sa_family == AF_IB) {
 			ret = cma_resolve_ib_addr(id_priv);
 		} else {
-			ret = rdma_resolve_ip(&addr_client, cma_src_addr(id_priv),
+			ret = rdma_resolve_ip(cma_src_addr(id_priv),
 					      dst_addr, &id->route.addr.dev_addr,
 					      timeout_ms, addr_handler, id_priv);
 		}
@@ -2973,7 +3048,7 @@ static void cma_bind_port(struct rdma_bind_list *bind_list,
 	hlist_add_head(&id_priv->node, &bind_list->owners);
 }
 
-static int cma_alloc_port(enum rdma_port_space ps,
+static int cma_alloc_port(enum rdma_ucm_port_space ps,
 			  struct rdma_id_private *id_priv, unsigned short snum)
 {
 	struct rdma_bind_list *bind_list;
@@ -3014,7 +3089,8 @@ static int cma_port_is_unique(struct rdma_bind_list *bind_list,
 			continue;
 
 		/* different dest port -> unique */
-		if (!cma_any_port(cur_daddr) &&
+		if (!cma_any_port(daddr) &&
+		    !cma_any_port(cur_daddr) &&
 		    (dport != cur_dport))
 			continue;
 
@@ -3025,7 +3101,8 @@ static int cma_port_is_unique(struct rdma_bind_list *bind_list,
 			continue;
 
 		/* different dst address -> unique */
-		if (!cma_any_addr(cur_daddr) &&
+		if (!cma_any_addr(daddr) &&
+		    !cma_any_addr(cur_daddr) &&
 		    cma_addr_cmp(daddr, cur_daddr))
 			continue;
 
@@ -3034,7 +3111,7 @@ static int cma_port_is_unique(struct rdma_bind_list *bind_list,
 	return 0;
 }
 
-static int cma_alloc_any_port(enum rdma_port_space ps,
+static int cma_alloc_any_port(enum rdma_ucm_port_space ps,
 			      struct rdma_id_private *id_priv)
 {
 	static unsigned int last_used_port;
@@ -3112,7 +3189,7 @@ static int cma_check_port(struct rdma_bind_list *bind_list,
 	return 0;
 }
 
-static int cma_use_port(enum rdma_port_space ps,
+static int cma_use_port(enum rdma_ucm_port_space ps,
 			struct rdma_id_private *id_priv)
 {
 	struct rdma_bind_list *bind_list;
@@ -3146,8 +3223,8 @@ static int cma_bind_listen(struct rdma_id_private *id_priv)
 	return ret;
 }
 
-static enum rdma_port_space cma_select_inet_ps(
-		struct rdma_id_private *id_priv)
+static enum rdma_ucm_port_space
+cma_select_inet_ps(struct rdma_id_private *id_priv)
 {
 	switch (id_priv->id.ps) {
 	case RDMA_PS_TCP:
@@ -3161,9 +3238,10 @@ static enum rdma_port_space cma_select_inet_ps(
 	}
 }
 
-static enum rdma_port_space cma_select_ib_ps(struct rdma_id_private *id_priv)
+static enum rdma_ucm_port_space
+cma_select_ib_ps(struct rdma_id_private *id_priv)
 {
-	enum rdma_port_space ps = 0;
+	enum rdma_ucm_port_space ps = 0;
 	struct sockaddr_ib *sib;
 	u64 sid_ps, mask, sid;
 
@@ -3194,7 +3272,7 @@ static enum rdma_port_space cma_select_ib_ps(struct rdma_id_private *id_priv)
 
 static int cma_get_port(struct rdma_id_private *id_priv)
 {
-	enum rdma_port_space ps;
+	enum rdma_ucm_port_space ps;
 	int ret;
 
 	if (cma_family(id_priv) != AF_IB)
@@ -3323,17 +3401,19 @@ int rdma_bind_addr(struct rdma_cm_id *id, struct sockaddr *addr)
 		}
 #endif
 	}
+	daddr = cma_dst_addr(id_priv);
+	daddr->sa_family = addr->sa_family;
+
 	ret = cma_get_port(id_priv);
 	if (ret)
 		goto err2;
 
-	daddr = cma_dst_addr(id_priv);
-	daddr->sa_family = addr->sa_family;
-
 	return 0;
 err2:
-	if (id_priv->cma_dev)
+	if (id_priv->cma_dev) {
+		rdma_restrack_del(&id_priv->res);
 		cma_release_dev(id_priv);
+	}
 err1:
 	cma_comp_exch(id_priv, RDMA_CM_ADDR_BOUND, RDMA_CM_IDLE);
 	return ret;
@@ -3405,9 +3485,10 @@ static int cma_sidr_rep_handler(struct ib_cm_id *cm_id,
 			event.status = ret;
 			break;
 		}
-		ib_init_ah_from_path(id_priv->id.device, id_priv->id.port_num,
-				     id_priv->id.route.path_rec,
-				     &event.param.ud.ah_attr);
+		ib_init_ah_attr_from_path(id_priv->id.device,
+					  id_priv->id.port_num,
+					  id_priv->id.route.path_rec,
+					  &event.param.ud.ah_attr);
 		event.param.ud.qp_num = rep->qpn;
 		event.param.ud.qkey = rep->qkey;
 		event.event = RDMA_CM_EVENT_ESTABLISHED;
@@ -3439,7 +3520,8 @@ static int cma_resolve_ib_udp(struct rdma_id_private *id_priv,
 	struct ib_cm_sidr_req_param req;
 	struct ib_cm_id	*id;
 	void *private_data;
-	int offset, ret;
+	u8 offset;
+	int ret;
 
 	memset(&req, 0, sizeof req);
 	offset = cma_user_data_offset(id_priv);
@@ -3496,7 +3578,8 @@ static int cma_connect_ib(struct rdma_id_private *id_priv,
 	struct rdma_route *route;
 	void *private_data;
 	struct ib_cm_id	*id;
-	int offset, ret;
+	u8 offset;
+	int ret;
 
 	memset(&req, 0, sizeof req);
 	offset = cma_user_data_offset(id_priv);
@@ -3713,14 +3796,18 @@ static int cma_send_sidr_rep(struct rdma_id_private *id_priv,
 	return ib_send_cm_sidr_rep(id_priv->cm_id.ib, &rep);
 }
 
-int rdma_accept(struct rdma_cm_id *id, struct rdma_conn_param *conn_param)
+int __rdma_accept(struct rdma_cm_id *id, struct rdma_conn_param *conn_param,
+		  const char *caller)
 {
 	struct rdma_id_private *id_priv;
 	int ret;
 
 	id_priv = container_of(id, struct rdma_id_private, id);
 
-	id_priv->owner = task_pid_nr(current);
+	if (caller)
+		id_priv->res.kern_name = caller;
+	else
+		rdma_restrack_set_task(&id_priv->res, current);
 
 	if (!cma_comp(id_priv, RDMA_CM_CONNECT))
 		return -EINVAL;
@@ -3760,7 +3847,7 @@ reject:
 	rdma_reject(id, NULL, 0);
 	return ret;
 }
-EXPORT_SYMBOL(rdma_accept);
+EXPORT_SYMBOL(__rdma_accept);
 
 int rdma_notify(struct rdma_cm_id *id, enum ib_event_type event)
 {
@@ -3872,16 +3959,20 @@ static int cma_ib_mc_handler(int status, struct ib_sa_multicast *multicast)
 		struct rdma_dev_addr *dev_addr =
 			&id_priv->id.route.addr.dev_addr;
 		struct net_device *ndev =
-			dev_get_by_index(&init_net, dev_addr->bound_dev_if);
+			dev_get_by_index(dev_addr->net, dev_addr->bound_dev_if);
 		enum ib_gid_type gid_type =
 			id_priv->cma_dev->default_gid_type[id_priv->id.port_num -
 			rdma_start_port(id_priv->cma_dev->device)];
 
 		event.event = RDMA_CM_EVENT_MULTICAST_JOIN;
-		ib_init_ah_from_mcmember(id_priv->id.device,
-					 id_priv->id.port_num, &multicast->rec,
-					 ndev, gid_type,
-					 &event.param.ud.ah_attr);
+		ret = ib_init_ah_from_mcmember(id_priv->id.device,
+					       id_priv->id.port_num,
+					       &multicast->rec,
+					       ndev, gid_type,
+					       &event.param.ud.ah_attr);
+		if (ret)
+			event.event = RDMA_CM_EVENT_MULTICAST_ERROR;
+
 		event.param.ud.qp_num = 0xFFFFFF;
 		event.param.ud.qkey = be32_to_cpu(multicast->rec.qkey);
 		if (ndev)
@@ -3998,7 +4089,8 @@ static void iboe_mcast_work_handler(struct work_struct *work)
 	kfree(mw);
 }
 
-static void cma_iboe_set_mgid(struct sockaddr *addr, union ib_gid *mgid)
+static void cma_iboe_set_mgid(struct sockaddr *addr, union ib_gid *mgid,
+			      enum ib_gid_type gid_type)
 {
 	struct sockaddr_in *sin = (struct sockaddr_in *)addr;
 	struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)addr;
@@ -4008,8 +4100,10 @@ static void cma_iboe_set_mgid(struct sockaddr *addr, union ib_gid *mgid)
 	} else if (addr->sa_family == AF_INET6) {
 		memcpy(mgid, &sin6->sin6_addr, sizeof *mgid);
 	} else {
-		mgid->raw[0] = 0xff;
-		mgid->raw[1] = 0x0e;
+		mgid->raw[0] =
+			(gid_type == IB_GID_TYPE_ROCE_UDP_ENCAP) ? 0 : 0xff;
+		mgid->raw[1] =
+			(gid_type == IB_GID_TYPE_ROCE_UDP_ENCAP) ? 0 : 0x0e;
 		mgid->raw[2] = 0;
 		mgid->raw[3] = 0;
 		mgid->raw[4] = 0;
@@ -4050,14 +4144,16 @@ static int cma_iboe_join_multicast(struct rdma_id_private *id_priv,
 		goto out1;
 	}
 
-	cma_iboe_set_mgid(addr, &mc->multicast.ib->rec.mgid);
+	gid_type = id_priv->cma_dev->default_gid_type[id_priv->id.port_num -
+		   rdma_start_port(id_priv->cma_dev->device)];
+	cma_iboe_set_mgid(addr, &mc->multicast.ib->rec.mgid, gid_type);
 
 	mc->multicast.ib->rec.pkey = cpu_to_be16(0xffff);
 	if (id_priv->id.ps == RDMA_PS_UDP)
 		mc->multicast.ib->rec.qkey = cpu_to_be32(RDMA_UDP_QKEY);
 
 	if (dev_addr->bound_dev_if)
-		ndev = dev_get_by_index(&init_net, dev_addr->bound_dev_if);
+		ndev = dev_get_by_index(dev_addr->net, dev_addr->bound_dev_if);
 	if (!ndev) {
 		err = -ENODEV;
 		goto out2;
@@ -4066,8 +4162,6 @@ static int cma_iboe_join_multicast(struct rdma_id_private *id_priv,
 	mc->multicast.ib->rec.hop_limit = 1;
 	mc->multicast.ib->rec.mtu = iboe_get_mtu(ndev->mtu);
 
-	gid_type = id_priv->cma_dev->default_gid_type[id_priv->id.port_num -
-		   rdma_start_port(id_priv->cma_dev->device)];
 	if (addr->sa_family == AF_INET) {
 		if (gid_type == IB_GID_TYPE_ROCE_UDP_ENCAP) {
 			mc->multicast.ib->rec.hop_limit = IPV6_DEFAULT_HOPLIMIT;
@@ -4111,6 +4205,9 @@ int rdma_join_multicast(struct rdma_cm_id *id, struct sockaddr *addr,
 	struct rdma_id_private *id_priv;
 	struct cma_multicast *mc;
 	int ret;
+
+	if (!id->device)
+		return -EINVAL;
 
 	id_priv = container_of(id, struct rdma_id_private, id);
 	if (!cma_comp(id_priv, RDMA_CM_ADDR_BOUND) &&
@@ -4177,7 +4274,7 @@ void rdma_leave_multicast(struct rdma_cm_id *id, struct sockaddr *addr)
 					struct net_device *ndev = NULL;
 
 					if (dev_addr->bound_dev_if)
-						ndev = dev_get_by_index(&init_net,
+						ndev = dev_get_by_index(dev_addr->net,
 									dev_addr->bound_dev_if);
 					if (ndev) {
 						cma_igmp_send(ndev,
@@ -4233,7 +4330,7 @@ static int cma_netdev_callback(struct notifier_block *self, unsigned long event,
 	if (event != NETDEV_BONDING_FAILOVER)
 		return NOTIFY_DONE;
 
-	if (!(ndev->flags & IFF_MASTER) || !(ndev->priv_flags & IFF_BONDING))
+	if (!netif_is_bond_master(ndev))
 		return NOTIFY_DONE;
 
 	mutex_lock(&lock);
@@ -4280,8 +4377,12 @@ static void cma_add_one(struct ib_device *device)
 	for (i = rdma_start_port(device); i <= rdma_end_port(device); i++) {
 		supported_gids = roce_gid_type_mask_support(device, i);
 		WARN_ON(!supported_gids);
-		cma_dev->default_gid_type[i - rdma_start_port(device)] =
-			find_first_bit(&supported_gids, BITS_PER_LONG);
+		if (supported_gids & (1 << CMA_PREFERRED_ROCE_GID_TYPE))
+			cma_dev->default_gid_type[i - rdma_start_port(device)] =
+				CMA_PREFERRED_ROCE_GID_TYPE;
+		else
+			cma_dev->default_gid_type[i - rdma_start_port(device)] =
+				find_first_bit(&supported_gids, BITS_PER_LONG);
 		cma_dev->default_roce_tos[i - rdma_start_port(device)] = 0;
 	}
 
@@ -4426,18 +4527,19 @@ static int cma_get_id_stats(struct sk_buff *skb, struct netlink_callback *cb)
 					  RDMA_NL_RDMA_CM_ATTR_SRC_ADDR))
 				goto out;
 			if (ibnl_put_attr(skb, nlh,
-					  rdma_addr_size(cma_src_addr(id_priv)),
+					  rdma_addr_size(cma_dst_addr(id_priv)),
 					  cma_dst_addr(id_priv),
 					  RDMA_NL_RDMA_CM_ATTR_DST_ADDR))
 				goto out;
 
-			id_stats->pid		= id_priv->owner;
+			id_stats->pid	= task_pid_vnr(id_priv->res.task);
 			id_stats->port_space	= id->ps;
 			id_stats->cm_state	= id_priv->state;
 			id_stats->qp_num	= id_priv->qp_num;
 			id_stats->qp_type	= id->qp_type;
 
 			i_id++;
+			nlmsg_end(skb, nlh);
 		}
 
 		cb->args[1] = 0;
@@ -4452,9 +4554,8 @@ out:
 	return skb->len;
 }
 
-static const struct ibnl_client_cbs cma_cb_table[] = {
-	[RDMA_NL_RDMA_CM_ID_STATS] = { .dump = cma_get_id_stats,
-				       .module = THIS_MODULE },
+static const struct rdma_nl_cbs cma_cb_table[RDMA_NL_RDMA_CM_NUM_OPS] = {
+	[RDMA_NL_RDMA_CM_ID_STATS] = { .dump = cma_get_id_stats},
 };
 
 static int cma_init_net(struct net *net)
@@ -4499,23 +4600,19 @@ static int __init cma_init(void)
 		goto err_wq;
 
 	ib_sa_register_client(&sa_client);
-	rdma_addr_register_client(&addr_client);
 	register_netdevice_notifier(&cma_nb);
 
 	ret = ib_register_client(&cma_client);
 	if (ret)
 		goto err;
 
-	if (ibnl_add_client(RDMA_NL_RDMA_CM, ARRAY_SIZE(cma_cb_table),
-			    cma_cb_table))
-		pr_warn("RDMA CMA: failed to add netlink callback\n");
+	rdma_nl_register(RDMA_NL_RDMA_CM, cma_cb_table);
 	cma_configfs_init();
 
 	return 0;
 
 err:
 	unregister_netdevice_notifier(&cma_nb);
-	rdma_addr_unregister_client(&addr_client);
 	ib_sa_unregister_client(&sa_client);
 err_wq:
 	destroy_workqueue(cma_wq);
@@ -4525,14 +4622,15 @@ err_wq:
 static void __exit cma_cleanup(void)
 {
 	cma_configfs_exit();
-	ibnl_remove_client(RDMA_NL_RDMA_CM);
+	rdma_nl_unregister(RDMA_NL_RDMA_CM);
 	ib_unregister_client(&cma_client);
 	unregister_netdevice_notifier(&cma_nb);
-	rdma_addr_unregister_client(&addr_client);
 	ib_sa_unregister_client(&sa_client);
 	unregister_pernet_subsys(&cma_pernet_operations);
 	destroy_workqueue(cma_wq);
 }
+
+MODULE_ALIAS_RDMA_NETLINK(RDMA_NL_RDMA_CM, 1);
 
 module_init(cma_init);
 module_exit(cma_cleanup);

@@ -121,7 +121,7 @@ static int qxlhw_handle_to_bo(struct drm_file *file_priv, uint64_t handle,
 	qobj = gem_to_qxl_bo(gobj);
 
 	ret = qxl_release_list_add(release, qobj);
-	drm_gem_object_unreference_unlocked(gobj);
+	drm_gem_object_put_unlocked(gobj);
 	if (ret)
 		return ret;
 
@@ -163,7 +163,7 @@ static int qxl_process_single_command(struct qxl_device *qdev,
 		return -EINVAL;
 
 	if (!access_ok(VERIFY_READ,
-		       (void *)(unsigned long)cmd->command,
+		       u64_to_user_ptr(cmd->command),
 		       cmd->command_size))
 		return -EFAULT;
 
@@ -182,8 +182,10 @@ static int qxl_process_single_command(struct qxl_device *qdev,
 		goto out_free_reloc;
 
 	/* TODO copy slow path code from i915 */
-	fb_cmd = qxl_bo_kmap_atomic_page(qdev, cmd_bo, (release->release_offset & PAGE_SIZE));
-	unwritten = __copy_from_user_inatomic_nocache(fb_cmd + sizeof(union qxl_release_info) + (release->release_offset & ~PAGE_SIZE), (void *)(unsigned long)cmd->command, cmd->command_size);
+	fb_cmd = qxl_bo_kmap_atomic_page(qdev, cmd_bo, (release->release_offset & PAGE_MASK));
+	unwritten = __copy_from_user_inatomic_nocache
+		(fb_cmd + sizeof(union qxl_release_info) + (release->release_offset & ~PAGE_MASK),
+		 u64_to_user_ptr(cmd->command), cmd->command_size);
 
 	{
 		struct qxl_drawable *draw = fb_cmd;
@@ -201,10 +203,9 @@ static int qxl_process_single_command(struct qxl_device *qdev,
 	num_relocs = 0;
 	for (i = 0; i < cmd->relocs_num; ++i) {
 		struct drm_qxl_reloc reloc;
+		struct drm_qxl_reloc __user *u = u64_to_user_ptr(cmd->relocs);
 
-		if (copy_from_user(&reloc,
-				       &((struct drm_qxl_reloc *)(uintptr_t)cmd->relocs)[i],
-				       sizeof(reloc))) {
+		if (copy_from_user(&reloc, u + i, sizeof(reloc))) {
 			ret = -EFAULT;
 			goto out_free_bos;
 		}
@@ -282,10 +283,10 @@ static int qxl_execbuffer_ioctl(struct drm_device *dev, void *data,
 
 	for (cmd_num = 0; cmd_num < execbuffer->commands_num; ++cmd_num) {
 
-		struct drm_qxl_command *commands =
-			(struct drm_qxl_command *)(uintptr_t)execbuffer->commands;
+		struct drm_qxl_command __user *commands =
+			u64_to_user_ptr(execbuffer->commands);
 
-		if (copy_from_user(&user_cmd, &commands[cmd_num],
+		if (copy_from_user(&user_cmd, commands + cmd_num,
 				       sizeof(user_cmd)))
 			return -EFAULT;
 
@@ -308,6 +309,7 @@ static int qxl_update_area_ioctl(struct drm_device *dev, void *data,
 	int ret;
 	struct drm_gem_object *gobj = NULL;
 	struct qxl_bo *qobj = NULL;
+	struct ttm_operation_ctx ctx = { true, false };
 
 	if (update_area->left >= update_area->right ||
 	    update_area->top >= update_area->bottom)
@@ -325,8 +327,7 @@ static int qxl_update_area_ioctl(struct drm_device *dev, void *data,
 
 	if (!qobj->pin_count) {
 		qxl_ttm_placement_from_domain(qobj, qobj->type, false);
-		ret = ttm_bo_validate(&qobj->tbo, &qobj->placement,
-				      true, false);
+		ret = ttm_bo_validate(&qobj->tbo, &qobj->placement, &ctx);
 		if (unlikely(ret))
 			goto out;
 	}
@@ -342,7 +343,7 @@ out2:
 	qxl_bo_unreserve(qobj);
 
 out:
-	drm_gem_object_unreference_unlocked(gobj);
+	drm_gem_object_put_unlocked(gobj);
 	return ret;
 }
 

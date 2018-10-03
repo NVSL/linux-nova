@@ -27,7 +27,7 @@
 #include <linux/i2c.h>
 #include <linux/mutex.h>
 
-#include "dvb_frontend.h"
+#include <media/dvb_frontend.h>
 
 #include "dib0090.h"
 #include "dibx000_common.h"
@@ -1285,7 +1285,7 @@ int dib0090_gain_control(struct dvb_frontend *fe)
 #endif
 
 			if (*tune_state == CT_AGC_STEP_1) {	/* quickly go to the correct range of the ADC power */
-				if (ABS(adc_error) < 50 || state->agc_step++ > 5) {
+				if (abs(adc_error) < 50 || state->agc_step++ > 5) {
 
 #ifdef CONFIG_STANDARD_DAB
 					if (state->fe->dtv_property_cache.delivery_system == STANDARD_DAB) {
@@ -1754,7 +1754,7 @@ static int dib0090_dc_offset_calibration(struct dib0090_state *state, enum front
 			*tune_state = CT_TUNER_STEP_1;
 		} else {
 			/* the minimum was what we have seen in the step before */
-			if (ABS(state->adc_diff) > ABS(state->min_adc_diff)) {
+			if (abs(state->adc_diff) > abs(state->min_adc_diff)) {
 				dprintk("Since adc_diff N = %d  > adc_diff step N-1 = %d, Come back one step\n", state->adc_diff, state->min_adc_diff);
 				state->step--;
 			}
@@ -2052,7 +2052,7 @@ int dib0090_update_tuning_table_7090(struct dvb_frontend *fe,
 	struct dib0090_state *state = fe->tuner_priv;
 	const struct dib0090_tuning *tune =
 		dib0090_tuning_table_cband_7090e_sensitivity;
-	const struct dib0090_tuning dib0090_tuning_table_cband_7090e_aci[] = {
+	static const struct dib0090_tuning dib0090_tuning_table_cband_7090e_aci[] = {
 		{ 300000,  0 ,  3,  0x8165, 0x2c0, 0x2d12, 0xb84e, EN_CAB },
 		{ 650000,  0 ,  4,  0x815B, 0x280, 0x2d12, 0xb84e, EN_CAB },
 		{ 860000,  0 ,  5,  0x84EF, 0x280, 0x2d12, 0xb84e, EN_CAB },
@@ -2435,14 +2435,7 @@ static int dib0090_tune(struct dvb_frontend *fe)
 			Den = 1;
 
 			if (Rest > 0) {
-				if (state->config->analog_output)
-					lo6 |= (1 << 2) | 2;
-				else {
-					if (state->identity.in_soc)
-						lo6 |= (1 << 2) | 2;
-					else
-						lo6 |= (1 << 2) | 2;
-				}
+				lo6 |= (1 << 2) | 2;
 				Den = 255;
 			}
 			dib0090_write_reg(state, 0x15, (u16) FBDiv);

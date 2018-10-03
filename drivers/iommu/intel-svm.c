@@ -24,6 +24,11 @@
 #include <linux/pci-ats.h>
 #include <linux/dmar.h>
 #include <linux/interrupt.h>
+#include <asm/page.h>
+
+#define PASID_ENTRY_P		BIT_ULL(0)
+#define PASID_ENTRY_FLPM_5LP	BIT_ULL(9)
+#define PASID_ENTRY_SRE		BIT_ULL(11)
 
 static irqreturn_t prq_event_thread(int irq, void *d);
 
@@ -39,6 +44,14 @@ int intel_svm_alloc_pasid_tables(struct intel_iommu *iommu)
 {
 	struct page *pages;
 	int order;
+
+	if (cpu_feature_enabled(X86_FEATURE_GBPAGES) &&
+			!cap_fl1gp_support(iommu->cap))
+		return -EINVAL;
+
+	if (cpu_feature_enabled(X86_FEATURE_LA57) &&
+			!cap_5lp_support(iommu->cap))
+		return -EINVAL;
 
 	/* Start at 2 because it's defined as 2^(1+PSS) */
 	iommu->pasid_max = 2 << ecap_pss(iommu->ecap);
@@ -128,6 +141,7 @@ int intel_svm_enable_prq(struct intel_iommu *iommu)
 		pr_err("IOMMU: %s: Failed to request IRQ for page request queue\n",
 		       iommu->name);
 		dmar_free_hwirq(irq);
+		iommu->pr_irq = 0;
 		goto err;
 	}
 	dmar_writeq(iommu->reg + DMAR_PQH_REG, 0ULL);
@@ -143,9 +157,11 @@ int intel_svm_finish_prq(struct intel_iommu *iommu)
 	dmar_writeq(iommu->reg + DMAR_PQT_REG, 0ULL);
 	dmar_writeq(iommu->reg + DMAR_PQA_REG, 0ULL);
 
-	free_irq(iommu->pr_irq, iommu);
-	dmar_free_hwirq(iommu->pr_irq);
-	iommu->pr_irq = 0;
+	if (iommu->pr_irq) {
+		free_irq(iommu->pr_irq, iommu);
+		dmar_free_hwirq(iommu->pr_irq);
+		iommu->pr_irq = 0;
+	}
 
 	free_pages((unsigned long)iommu->prq, PRQ_ORDER);
 	iommu->prq = NULL;
@@ -189,7 +205,7 @@ static void intel_flush_svm_range_dev (struct intel_svm *svm, struct intel_svm_d
 			 * for example, an "address" value of 0x12345f000 will
 			 * flush from 0x123440000 to 0x12347ffff (256KiB). */
 			unsigned long last = address + ((unsigned long)(pages - 1) << VTD_PAGE_SHIFT);
-			unsigned long mask = __rounddown_pow_of_two(address ^ last);;
+			unsigned long mask = __rounddown_pow_of_two(address ^ last);
 
 			desc.high = QI_DEV_EIOTLB_ADDR((address & ~mask) | (mask - 1)) | QI_DEV_EIOTLB_SIZE;
 		} else {
@@ -275,6 +291,7 @@ static void intel_mm_release(struct mmu_notifier *mn, struct mm_struct *mm)
 }
 
 static const struct mmu_notifier_ops intel_mmuops = {
+	.flags = MMU_INVALIDATE_DOES_NOT_BLOCK,
 	.release = intel_mm_release,
 	.change_pte = intel_change_pte,
 	.invalidate_range = intel_invalidate_range,
@@ -288,10 +305,11 @@ int intel_svm_bind_mm(struct device *dev, int *pasid, int flags, struct svm_dev_
 	struct intel_svm_dev *sdev;
 	struct intel_svm *svm = NULL;
 	struct mm_struct *mm = NULL;
+	u64 pasid_entry_val;
 	int pasid_max;
 	int ret;
 
-	if (WARN_ON(!iommu))
+	if (WARN_ON(!iommu || !iommu->pasid_table))
 		return -EINVAL;
 
 	if (dev_is_pci(dev)) {
@@ -301,7 +319,7 @@ int intel_svm_bind_mm(struct device *dev, int *pasid, int flags, struct svm_dev_
 	} else
 		pasid_max = 1 << 20;
 
-	if ((flags & SVM_FLAG_SUPERVISOR_MODE)) {
+	if (flags & SVM_FLAG_SUPERVISOR_MODE) {
 		if (!ecap_srs(iommu->ecap))
 			return -EINVAL;
 	} else if (pasid) {
@@ -378,6 +396,7 @@ int intel_svm_bind_mm(struct device *dev, int *pasid, int flags, struct svm_dev_
 				pasid_max - 1, GFP_KERNEL);
 		if (ret < 0) {
 			kfree(svm);
+			kfree(sdev);
 			goto out;
 		}
 		svm->pasid = ret;
@@ -394,21 +413,23 @@ int intel_svm_bind_mm(struct device *dev, int *pasid, int flags, struct svm_dev_
 				kfree(sdev);
 				goto out;
 			}
-			iommu->pasid_table[svm->pasid].val = (u64)__pa(mm->pgd) | 1;
+			pasid_entry_val = (u64)__pa(mm->pgd) | PASID_ENTRY_P;
 		} else
-			iommu->pasid_table[svm->pasid].val = (u64)__pa(init_mm.pgd) | 1 | (1ULL << 11);
+			pasid_entry_val = (u64)__pa(init_mm.pgd) |
+					  PASID_ENTRY_P | PASID_ENTRY_SRE;
+		if (cpu_feature_enabled(X86_FEATURE_LA57))
+			pasid_entry_val |= PASID_ENTRY_FLPM_5LP;
+
+		iommu->pasid_table[svm->pasid].val = pasid_entry_val;
+
 		wmb();
-		/* In caching mode, we still have to flush with PASID 0 when
-		 * a PASID table entry becomes present. Not entirely clear
-		 * *why* that would be the case — surely we could just issue
-		 * a flush with the PASID value that we've changed? The PASID
-		 * is the index into the table, after all. It's not like domain
-		 * IDs in the case of the equivalent context-entry change in
-		 * caching mode. And for that matter it's not entirely clear why
-		 * a VMM would be in the business of caching the PASID table
-		 * anyway. Surely that can be left entirely to the guest? */
+
+		/*
+		 * Flush PASID cache when a PASID table entry becomes
+		 * present.
+		 */
 		if (cap_caching_mode(iommu->cap))
-			intel_flush_pasid_dev(svm, sdev, 0);
+			intel_flush_pasid_dev(svm, sdev, svm->pasid);
 	}
 	list_add_rcu(&sdev->list, &svm->devs);
 
@@ -457,6 +478,8 @@ int intel_svm_unbind_mm(struct device *dev, int pasid)
 				kfree_rcu(sdev, rcu);
 
 				if (list_empty(&svm->devs)) {
+					svm->iommu->pasid_table[svm->pasid].val = 0;
+					wmb();
 
 					idr_remove(&svm->iommu->pasid_idr, svm->pasid);
 					if (svm->mm)
@@ -546,6 +569,14 @@ static bool access_error(struct vm_area_struct *vma, struct page_req_dsc *req)
 	return (requested & ~vma->vm_flags) != 0;
 }
 
+static bool is_canonical_address(u64 addr)
+{
+	int shift = 64 - (__VIRTUAL_MASK_SHIFT + 1);
+	long saddr = (long) addr;
+
+	return (((saddr << shift) >> shift) == saddr);
+}
+
 static irqreturn_t prq_event_thread(int irq, void *d)
 {
 	struct intel_iommu *iommu = d;
@@ -603,6 +634,11 @@ static irqreturn_t prq_event_thread(int irq, void *d)
 		/* If the mm is already defunct, don't handle faults. */
 		if (!mmget_not_zero(svm->mm))
 			goto bad_req;
+
+		/* If address is not canonical, return invalid response */
+		if (!is_canonical_address(address))
+			goto bad_req;
+
 		down_read(&svm->mm->mmap_sem);
 		vma = find_extend_vma(svm->mm, address);
 		if (!vma || address < vma->vm_start)

@@ -13,6 +13,18 @@ documents into a coherent whole.  Please note that improvements to the
 documentation are welcome; join the linux-doc list at vger.kernel.org if
 you want to help out.
 
+Licensing documentation
+-----------------------
+
+The following describes the license of the Linux kernel source code
+(GPLv2), how to properly mark the license of individual files in the source
+tree, as well as links to the full license text.
+
+.. toctree::
+   :maxdepth: 2
+
+   process/license-rules.rst
+
 User-oriented documentation
 ---------------------------
 
@@ -33,7 +45,7 @@ the kernel interface as seen by application developers.
 .. toctree::
    :maxdepth: 2
 
-   userspace-api/index	      
+   userspace-api/index
 
 
 Introduction to kernel development
@@ -52,6 +64,8 @@ merged much easier.
    dev-tools/index
    doc-guide/index
    kernel-hacking/index
+   trace/index
+   maintainer/index
 
 Kernel API documentation
 ------------------------
@@ -75,6 +89,7 @@ needed).
    sound/index
    crypto/index
    filesystems/index
+   vm/index
 
 Architecture-specific documentation
 -----------------------------------

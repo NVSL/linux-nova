@@ -37,8 +37,6 @@
 #include <acpi/ghes.h>
 #include <ras/ras_event.h>
 
-#define INDENT_SP	" "
-
 static char rcd_decode_str[CPER_REC_LEN];
 
 /*
@@ -122,7 +120,7 @@ static const char * const proc_isa_strs[] = {
 	"ARM A64",
 };
 
-static const char * const proc_error_type_strs[] = {
+const char * const cper_proc_error_type_strs[] = {
 	"cache error",
 	"TLB error",
 	"bus error",
@@ -157,8 +155,8 @@ static void cper_print_proc_generic(const char *pfx,
 	if (proc->validation_bits & CPER_PROC_VALID_ERROR_TYPE) {
 		printk("%s""error_type: 0x%02x\n", pfx, proc->proc_error_type);
 		cper_print_bits(pfx, proc->proc_error_type,
-				proc_error_type_strs,
-				ARRAY_SIZE(proc_error_type_strs));
+				cper_proc_error_type_strs,
+				ARRAY_SIZE(cper_proc_error_type_strs));
 	}
 	if (proc->validation_bits & CPER_PROC_VALID_OPERATION)
 		printk("%s""operation: %d, %s\n", pfx, proc->operation,
@@ -187,122 +185,6 @@ static void cper_print_proc_generic(const char *pfx,
 	if (proc->validation_bits & CPER_PROC_VALID_IP)
 		printk("%s""IP: 0x%016llx\n", pfx, proc->ip);
 }
-
-#if defined(CONFIG_ARM64) || defined(CONFIG_ARM)
-static const char * const arm_reg_ctx_strs[] = {
-	"AArch32 general purpose registers",
-	"AArch32 EL1 context registers",
-	"AArch32 EL2 context registers",
-	"AArch32 secure context registers",
-	"AArch64 general purpose registers",
-	"AArch64 EL1 context registers",
-	"AArch64 EL2 context registers",
-	"AArch64 EL3 context registers",
-	"Misc. system register structure",
-};
-
-static void cper_print_proc_arm(const char *pfx,
-				const struct cper_sec_proc_arm *proc)
-{
-	int i, len, max_ctx_type;
-	struct cper_arm_err_info *err_info;
-	struct cper_arm_ctx_info *ctx_info;
-	char newpfx[64];
-
-	printk("%sMIDR: 0x%016llx\n", pfx, proc->midr);
-
-	len = proc->section_length - (sizeof(*proc) +
-		proc->err_info_num * (sizeof(*err_info)));
-	if (len < 0) {
-		printk("%ssection length: %d\n", pfx, proc->section_length);
-		printk("%ssection length is too small\n", pfx);
-		printk("%sfirmware-generated error record is incorrect\n", pfx);
-		printk("%sERR_INFO_NUM is %d\n", pfx, proc->err_info_num);
-		return;
-	}
-
-	if (proc->validation_bits & CPER_ARM_VALID_MPIDR)
-		printk("%sMultiprocessor Affinity Register (MPIDR): 0x%016llx\n",
-			pfx, proc->mpidr);
-
-	if (proc->validation_bits & CPER_ARM_VALID_AFFINITY_LEVEL)
-		printk("%serror affinity level: %d\n", pfx,
-			proc->affinity_level);
-
-	if (proc->validation_bits & CPER_ARM_VALID_RUNNING_STATE) {
-		printk("%srunning state: 0x%x\n", pfx, proc->running_state);
-		printk("%sPower State Coordination Interface state: %d\n",
-			pfx, proc->psci_state);
-	}
-
-	snprintf(newpfx, sizeof(newpfx), "%s%s", pfx, INDENT_SP);
-
-	err_info = (struct cper_arm_err_info *)(proc + 1);
-	for (i = 0; i < proc->err_info_num; i++) {
-		printk("%sError info structure %d:\n", pfx, i);
-
-		printk("%snum errors: %d\n", pfx, err_info->multiple_error + 1);
-
-		if (err_info->validation_bits & CPER_ARM_INFO_VALID_FLAGS) {
-			if (err_info->flags & CPER_ARM_INFO_FLAGS_FIRST)
-				printk("%sfirst error captured\n", newpfx);
-			if (err_info->flags & CPER_ARM_INFO_FLAGS_LAST)
-				printk("%slast error captured\n", newpfx);
-			if (err_info->flags & CPER_ARM_INFO_FLAGS_PROPAGATED)
-				printk("%spropagated error captured\n",
-				       newpfx);
-			if (err_info->flags & CPER_ARM_INFO_FLAGS_OVERFLOW)
-				printk("%soverflow occurred, error info is incomplete\n",
-				       newpfx);
-		}
-
-		printk("%serror_type: %d, %s\n", newpfx, err_info->type,
-			err_info->type < ARRAY_SIZE(proc_error_type_strs) ?
-			proc_error_type_strs[err_info->type] : "unknown");
-		if (err_info->validation_bits & CPER_ARM_INFO_VALID_ERR_INFO)
-			printk("%serror_info: 0x%016llx\n", newpfx,
-			       err_info->error_info);
-		if (err_info->validation_bits & CPER_ARM_INFO_VALID_VIRT_ADDR)
-			printk("%svirtual fault address: 0x%016llx\n",
-				newpfx, err_info->virt_fault_addr);
-		if (err_info->validation_bits & CPER_ARM_INFO_VALID_PHYSICAL_ADDR)
-			printk("%sphysical fault address: 0x%016llx\n",
-				newpfx, err_info->physical_fault_addr);
-		err_info += 1;
-	}
-
-	ctx_info = (struct cper_arm_ctx_info *)err_info;
-	max_ctx_type = ARRAY_SIZE(arm_reg_ctx_strs) - 1;
-	for (i = 0; i < proc->context_info_num; i++) {
-		int size = sizeof(*ctx_info) + ctx_info->size;
-
-		printk("%sContext info structure %d:\n", pfx, i);
-		if (len < size) {
-			printk("%ssection length is too small\n", newpfx);
-			printk("%sfirmware-generated error record is incorrect\n", pfx);
-			return;
-		}
-		if (ctx_info->type > max_ctx_type) {
-			printk("%sInvalid context type: %d (max: %d)\n",
-				newpfx, ctx_info->type, max_ctx_type);
-			return;
-		}
-		printk("%sregister context type: %s\n", newpfx,
-			arm_reg_ctx_strs[ctx_info->type]);
-		print_hex_dump(newpfx, "", DUMP_PREFIX_OFFSET, 16, 4,
-				(ctx_info + 1), ctx_info->size, 0);
-		len -= size;
-		ctx_info = (struct cper_arm_ctx_info *)((long)ctx_info + size);
-	}
-
-	if (len > 0) {
-		printk("%sVendor specific error info has %u bytes:\n", pfx,
-		       len);
-		print_hex_dump(newpfx, "", DUMP_PREFIX_OFFSET, 16, 4, ctx_info,
-				len, true);
-	}
-}
-#endif
 
 static const char * const mem_err_type_strs[] = {
 	"unknown",
@@ -534,7 +416,7 @@ static void
 cper_estatus_print_section(const char *pfx, struct acpi_hest_generic_data *gdata,
 			   int sec_no)
 {
-	uuid_le *sec_type = (uuid_le *)gdata->section_type;
+	guid_t *sec_type = (guid_t *)gdata->section_type;
 	__u16 severity;
 	char newpfx[64];
 
@@ -545,12 +427,12 @@ cper_estatus_print_section(const char *pfx, struct acpi_hest_generic_data *gdata
 	printk("%s""Error %d, type: %s\n", pfx, sec_no,
 	       cper_severity_str(severity));
 	if (gdata->validation_bits & CPER_SEC_VALID_FRU_ID)
-		printk("%s""fru_id: %pUl\n", pfx, (uuid_le *)gdata->fru_id);
+		printk("%s""fru_id: %pUl\n", pfx, gdata->fru_id);
 	if (gdata->validation_bits & CPER_SEC_VALID_FRU_TEXT)
 		printk("%s""fru_text: %.20s\n", pfx, gdata->fru_text);
 
-	snprintf(newpfx, sizeof(newpfx), "%s%s", pfx, INDENT_SP);
-	if (!uuid_le_cmp(*sec_type, CPER_SEC_PROC_GENERIC)) {
+	snprintf(newpfx, sizeof(newpfx), "%s ", pfx);
+	if (guid_equal(sec_type, &CPER_SEC_PROC_GENERIC)) {
 		struct cper_sec_proc_generic *proc_err = acpi_hest_get_payload(gdata);
 
 		printk("%s""section_type: general processor error\n", newpfx);
@@ -558,7 +440,7 @@ cper_estatus_print_section(const char *pfx, struct acpi_hest_generic_data *gdata
 			cper_print_proc_generic(newpfx, proc_err);
 		else
 			goto err_section_too_small;
-	} else if (!uuid_le_cmp(*sec_type, CPER_SEC_PLATFORM_MEM)) {
+	} else if (guid_equal(sec_type, &CPER_SEC_PLATFORM_MEM)) {
 		struct cper_sec_mem_err *mem_err = acpi_hest_get_payload(gdata);
 
 		printk("%s""section_type: memory error\n", newpfx);
@@ -568,7 +450,7 @@ cper_estatus_print_section(const char *pfx, struct acpi_hest_generic_data *gdata
 				       gdata->error_data_length);
 		else
 			goto err_section_too_small;
-	} else if (!uuid_le_cmp(*sec_type, CPER_SEC_PCIE)) {
+	} else if (guid_equal(sec_type, &CPER_SEC_PCIE)) {
 		struct cper_sec_pcie *pcie = acpi_hest_get_payload(gdata);
 
 		printk("%s""section_type: PCIe error\n", newpfx);
@@ -583,6 +465,16 @@ cper_estatus_print_section(const char *pfx, struct acpi_hest_generic_data *gdata
 		printk("%ssection_type: ARM processor error\n", newpfx);
 		if (gdata->error_data_length >= sizeof(*arm_err))
 			cper_print_proc_arm(newpfx, arm_err);
+		else
+			goto err_section_too_small;
+#endif
+#if defined(CONFIG_UEFI_CPER_X86)
+	} else if (guid_equal(sec_type, &CPER_SEC_PROC_IA)) {
+		struct cper_sec_proc_ia *ia_err = acpi_hest_get_payload(gdata);
+
+		printk("%ssection_type: IA32/X64 processor error\n", newpfx);
+		if (gdata->error_data_length >= sizeof(*ia_err))
+			cper_print_proc_ia(newpfx, ia_err);
 		else
 			goto err_section_too_small;
 #endif
@@ -606,7 +498,6 @@ void cper_estatus_print(const char *pfx,
 			const struct acpi_hest_generic_status *estatus)
 {
 	struct acpi_hest_generic_data *gdata;
-	unsigned int data_len;
 	int sec_no = 0;
 	char newpfx[64];
 	__u16 severity;
@@ -617,14 +508,10 @@ void cper_estatus_print(const char *pfx,
 		       "It has been corrected by h/w "
 		       "and requires no further action");
 	printk("%s""event severity: %s\n", pfx, cper_severity_str(severity));
-	data_len = estatus->data_length;
-	gdata = (struct acpi_hest_generic_data *)(estatus + 1);
-	snprintf(newpfx, sizeof(newpfx), "%s%s", pfx, INDENT_SP);
+	snprintf(newpfx, sizeof(newpfx), "%s ", pfx);
 
-	while (data_len >= acpi_hest_get_size(gdata)) {
+	apei_estatus_for_each_section(estatus, gdata) {
 		cper_estatus_print_section(newpfx, gdata, sec_no);
-		data_len -= acpi_hest_get_record_size(gdata);
-		gdata = acpi_hest_get_next(gdata);
 		sec_no++;
 	}
 }
@@ -653,15 +540,12 @@ int cper_estatus_check(const struct acpi_hest_generic_status *estatus)
 	if (rc)
 		return rc;
 	data_len = estatus->data_length;
-	gdata = (struct acpi_hest_generic_data *)(estatus + 1);
 
-	while (data_len >= acpi_hest_get_size(gdata)) {
+	apei_estatus_for_each_section(estatus, gdata) {
 		gedata_len = acpi_hest_get_error_length(gdata);
 		if (gedata_len > data_len - acpi_hest_get_size(gdata))
 			return -EINVAL;
-
 		data_len -= acpi_hest_get_record_size(gdata);
-		gdata = acpi_hest_get_next(gdata);
 	}
 	if (data_len)
 		return -EINVAL;

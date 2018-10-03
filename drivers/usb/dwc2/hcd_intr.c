@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR BSD-3-Clause)
 /*
  * hcd_intr.c - DesignWare HS OTG Controller host-mode interrupt handling
  *
@@ -51,6 +52,12 @@
 
 #include "core.h"
 #include "hcd.h"
+
+/*
+ * If we get this many NAKs on a split transaction we'll slow down
+ * retransmission.  A 1 here means delay after the first NAK.
+ */
+#define DWC2_NAKS_BEFORE_DELAY		3
 
 /* This function is for debug only */
 static void dwc2_track_missed_sofs(struct dwc2_hsotg *hsotg)
@@ -471,6 +478,12 @@ static u32 dwc2_get_actual_xfer_length(struct dwc2_hsotg *hsotg,
  * of the URB based on the number of bytes transferred via the host channel.
  * Sets the URB status if the data transfer is finished.
  *
+ * @hsotg: Programming view of the DWC_otg controller
+ * @chan: Programming view of host channel
+ * @chnum: Channel number
+ * @urb: Processing URB
+ * @qtd: Queue transfer descriptor
+ *
  * Return: 1 if the data transfer specified by the URB is completely finished,
  * 0 otherwise
  */
@@ -558,6 +571,12 @@ void dwc2_hcd_save_data_toggle(struct dwc2_hsotg *hsotg,
  * the frame descriptor array are set based on the transfer state and the input
  * halt_status. Completes the Isochronous URB if all the URB frames have been
  * completed.
+ *
+ * @hsotg: Programming view of the DWC_otg controller
+ * @chan: Programming view of host channel
+ * @chnum: Channel number
+ * @halt_status: Reason for halting a host channel
+ * @qtd: Queue transfer descriptor
  *
  * Return: DWC2_HC_XFER_COMPLETE if there are more frames remaining to be
  * transferred in the URB. Otherwise return DWC2_HC_XFER_URB_COMPLETE.
@@ -923,13 +942,20 @@ static int dwc2_xfercomp_isoc_split_in(struct dwc2_hsotg *hsotg,
 	frame_desc = &qtd->urb->iso_descs[qtd->isoc_frame_index];
 	len = dwc2_get_actual_xfer_length(hsotg, chan, chnum, qtd,
 					  DWC2_HC_XFER_COMPLETE, NULL);
-	if (!len) {
+	if (!len && !qtd->isoc_split_offset) {
 		qtd->complete_split = 0;
-		qtd->isoc_split_offset = 0;
 		return 0;
 	}
 
 	frame_desc->actual_length += len;
+
+	if (chan->align_buf) {
+		dev_vdbg(hsotg->dev, "non-aligned buffer\n");
+		dma_unmap_single(hsotg->dev, chan->qh->dw_align_buf_dma,
+				 DWC2_KMEM_UNALIGNED_BUF_SIZE, DMA_FROM_DEVICE);
+		memcpy(qtd->urb->buf + (chan->xfer_dma - qtd->urb->dma),
+		       chan->qh->dw_align_buf, len);
+	}
 
 	qtd->isoc_split_offset += len;
 
@@ -1200,11 +1226,30 @@ static void dwc2_hc_nak_intr(struct dwc2_hsotg *hsotg,
 	/*
 	 * Handle NAK for IN/OUT SSPLIT/CSPLIT transfers, bulk, control, and
 	 * interrupt. Re-start the SSPLIT transfer.
+	 *
+	 * Normally for non-periodic transfers we'll retry right away, but to
+	 * avoid interrupt storms we'll wait before retrying if we've got
+	 * several NAKs. If we didn't do this we'd retry directly from the
+	 * interrupt handler and could end up quickly getting another
+	 * interrupt (another NAK), which we'd retry. Note that we do not
+	 * delay retries for IN parts of control requests, as those are expected
+	 * to complete fairly quickly, and if we delay them we risk confusing
+	 * the device and cause it issue STALL.
+	 *
+	 * Note that in DMA mode software only gets involved to re-send NAKed
+	 * transfers for split transactions, so we only need to apply this
+	 * delaying logic when handling splits. In non-DMA mode presumably we
+	 * might want a similar delay if someone can demonstrate this problem
+	 * affects that code path too.
 	 */
 	if (chan->do_split) {
 		if (chan->complete_split)
 			qtd->error_count = 0;
 		qtd->complete_split = 0;
+		qtd->num_naks++;
+		qtd->qh->want_wait = qtd->num_naks >= DWC2_NAKS_BEFORE_DELAY &&
+				!(chan->ep_type == USB_ENDPOINT_XFER_CONTROL &&
+				  chan->ep_is_in);
 		dwc2_halt_channel(hsotg, chan, qtd, DWC2_HC_XFER_NAK);
 		goto handle_nak_done;
 	}

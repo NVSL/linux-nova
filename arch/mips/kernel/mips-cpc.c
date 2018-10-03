@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2013 Imagination Technologies
- * Author: Paul Burton <paul.burton@imgtec.com>
+ * Author: Paul Burton <paul.burton@mips.com>
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -10,10 +10,11 @@
 
 #include <linux/errno.h>
 #include <linux/percpu.h>
+#include <linux/of.h>
+#include <linux/of_address.h>
 #include <linux/spinlock.h>
 
-#include <asm/mips-cm.h>
-#include <asm/mips-cpc.h>
+#include <asm/mips-cps.h>
 
 void __iomem *mips_cpc_base;
 
@@ -23,6 +24,17 @@ static DEFINE_PER_CPU_ALIGNED(unsigned long, cpc_core_lock_flags);
 
 phys_addr_t __weak mips_cpc_default_phys_base(void)
 {
+	struct device_node *cpc_node;
+	struct resource res;
+	int err;
+
+	cpc_node = of_find_compatible_node(of_root, NULL, "mti,mips-cpc");
+	if (cpc_node) {
+		err = of_address_to_resource(cpc_node, 0, &res);
+		if (!err)
+			return res.start;
+	}
+
 	return 0;
 }
 
@@ -40,13 +52,13 @@ static phys_addr_t mips_cpc_phys_base(void)
 	if (!mips_cm_present())
 		return 0;
 
-	if (!(read_gcr_cpc_status() & CM_GCR_CPC_STATUS_EX_MSK))
+	if (!(read_gcr_cpc_status() & CM_GCR_CPC_STATUS_EX))
 		return 0;
 
 	/* If the CPC is already enabled, leave it so */
 	cpc_base = read_gcr_cpc_base();
-	if (cpc_base & CM_GCR_CPC_BASE_CPCEN_MSK)
-		return cpc_base & CM_GCR_CPC_BASE_CPCBASE_MSK;
+	if (cpc_base & CM_GCR_CPC_BASE_CPCEN)
+		return cpc_base & CM_GCR_CPC_BASE_CPCBASE;
 
 	/* Otherwise, use the default address */
 	cpc_base = mips_cpc_default_phys_base();
@@ -54,7 +66,7 @@ static phys_addr_t mips_cpc_phys_base(void)
 		return cpc_base;
 
 	/* Enable the CPC, mapped at the default address */
-	write_gcr_cpc_base(cpc_base | CM_GCR_CPC_BASE_CPCEN_MSK);
+	write_gcr_cpc_base(cpc_base | CM_GCR_CPC_BASE_CPCEN);
 	return cpc_base;
 }
 
@@ -86,10 +98,10 @@ void mips_cpc_lock_other(unsigned int core)
 		return;
 
 	preempt_disable();
-	curr_core = current_cpu_data.core;
+	curr_core = cpu_core(&current_cpu_data);
 	spin_lock_irqsave(&per_cpu(cpc_core_lock, curr_core),
 			  per_cpu(cpc_core_lock_flags, curr_core));
-	write_cpc_cl_other(core << CPC_Cx_OTHER_CORENUM_SHF);
+	write_cpc_cl_other(core << __ffs(CPC_Cx_OTHER_CORENUM));
 
 	/*
 	 * Ensure the core-other region reflects the appropriate core &
@@ -106,7 +118,7 @@ void mips_cpc_unlock_other(void)
 		/* Systems with CM >= 3 lock the CPC via mips_cm_lock_other */
 		return;
 
-	curr_core = current_cpu_data.core;
+	curr_core = cpu_core(&current_cpu_data);
 	spin_unlock_irqrestore(&per_cpu(cpc_core_lock, curr_core),
 			       per_cpu(cpc_core_lock_flags, curr_core));
 	preempt_enable();

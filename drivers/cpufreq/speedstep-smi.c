@@ -266,8 +266,9 @@ static int speedstep_cpu_init(struct cpufreq_policy *policy)
 			pr_debug("workaround worked.\n");
 	}
 
-	policy->cpuinfo.transition_latency = CPUFREQ_ETERNAL;
-	return cpufreq_table_validate_and_show(policy, speedstep_freqs);
+	policy->freq_table = speedstep_freqs;
+
+	return 0;
 }
 
 static unsigned int speedstep_get(unsigned int cpu)
@@ -290,6 +291,7 @@ static int speedstep_resume(struct cpufreq_policy *policy)
 
 static struct cpufreq_driver speedstep_driver = {
 	.name		= "speedstep-smi",
+	.flags		= CPUFREQ_NO_AUTO_DYNAMIC_SWITCHING,
 	.verify		= cpufreq_generic_frequency_table_verify,
 	.target_index	= speedstep_target,
 	.init		= speedstep_cpu_init,

@@ -347,26 +347,23 @@ static int iguanair_set_tx_mask(struct rc_dev *dev, uint32_t mask)
 static int iguanair_tx(struct rc_dev *dev, unsigned *txbuf, unsigned count)
 {
 	struct iguanair *ir = dev->priv;
-	uint8_t space;
-	unsigned i, size, periods, bytes;
+	unsigned int i, size, p, periods;
 	int rc;
 
 	mutex_lock(&ir->lock);
 
 	/* convert from us to carrier periods */
-	for (i = space = size = 0; i < count; i++) {
+	for (i = size = 0; i < count; i++) {
 		periods = DIV_ROUND_CLOSEST(txbuf[i] * ir->carrier, 1000000);
-		bytes = DIV_ROUND_UP(periods, 127);
-		if (size + bytes > ir->bufsize) {
-			rc = -EINVAL;
-			goto out;
-		}
 		while (periods) {
-			unsigned p = min(periods, 127u);
-			ir->packet->payload[size++] = p | space;
+			p = min(periods, 127u);
+			if (size >= ir->bufsize) {
+				rc = -EINVAL;
+				goto out;
+			}
+			ir->packet->payload[size++] = p | ((i & 1) ? 0x80 : 0);
 			periods -= p;
 		}
-		space ^= 0x80;
 	}
 
 	ir->packet->header.start = 0;
@@ -487,11 +484,11 @@ static int iguanair_probe(struct usb_interface *intf,
 
 	usb_make_path(ir->udev, ir->phys, sizeof(ir->phys));
 
-	rc->input_name = ir->name;
+	rc->device_name = ir->name;
 	rc->input_phys = ir->phys;
 	usb_to_input_id(ir->udev, &rc->input_id);
 	rc->dev.parent = &intf->dev;
-	rc->allowed_protocols = RC_BIT_ALL_IR_DECODER;
+	rc->allowed_protocols = RC_PROTO_BIT_ALL_IR_DECODER;
 	rc->priv = ir;
 	rc->open = iguanair_open;
 	rc->close = iguanair_close;

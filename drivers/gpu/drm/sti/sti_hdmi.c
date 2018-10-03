@@ -1,7 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) STMicroelectronics SA 2014
  * Author: Vincent Abriou <vincent.abriou@st.com> for STMicroelectronics.
- * License terms:  GNU General Public License (GPL), version 2
  */
 
 #include <linux/clk.h>
@@ -434,7 +434,7 @@ static int hdmi_avi_infoframe_config(struct sti_hdmi *hdmi)
 
 	DRM_DEBUG_DRIVER("\n");
 
-	ret = drm_hdmi_avi_infoframe_from_display_mode(&infoframe, mode);
+	ret = drm_hdmi_avi_infoframe_from_display_mode(&infoframe, mode, false);
 	if (ret < 0) {
 		DRM_ERROR("failed to setup AVI infoframe: %d\n", ret);
 		return ret;
@@ -515,7 +515,9 @@ static int hdmi_vendor_infoframe_config(struct sti_hdmi *hdmi)
 
 	DRM_DEBUG_DRIVER("\n");
 
-	ret = drm_hdmi_vendor_infoframe_from_display_mode(&infoframe, mode);
+	ret = drm_hdmi_vendor_infoframe_from_display_mode(&infoframe,
+							  hdmi->drm_connector,
+							  mode);
 	if (ret < 0) {
 		/*
 		 * Going into that statement does not means vendor infoframe
@@ -976,7 +978,6 @@ static int sti_hdmi_connector_get_modes(struct drm_connector *connector)
 
 	count = drm_add_edid_modes(connector, edid);
 	drm_mode_connector_update_edid_property(connector, edid);
-	drm_edid_to_eld(connector, edid);
 
 	kfree(edid);
 	return count;
@@ -1113,12 +1114,10 @@ static int sti_hdmi_late_register(struct drm_connector *connector)
 }
 
 static const struct drm_connector_funcs sti_hdmi_connector_funcs = {
-	.dpms = drm_atomic_helper_connector_dpms,
 	.fill_modes = drm_helper_probe_single_connector_modes,
 	.detect = sti_hdmi_connector_detect,
 	.destroy = drm_connector_cleanup,
 	.reset = drm_atomic_helper_connector_reset,
-	.set_property = drm_atomic_helper_connector_set_property,
 	.atomic_set_property = sti_hdmi_connector_set_property,
 	.atomic_get_property = sti_hdmi_connector_get_property,
 	.atomic_duplicate_state = drm_atomic_helper_connector_duplicate_state,
@@ -1416,6 +1415,11 @@ static int sti_hdmi_probe(struct platform_device *pdev)
 	init_waitqueue_head(&hdmi->wait_event);
 
 	hdmi->irq = platform_get_irq_byname(pdev, "irq");
+	if (hdmi->irq < 0) {
+		DRM_ERROR("Cannot get HDMI irq\n");
+		ret = hdmi->irq;
+		goto release_adapter;
+	}
 
 	ret = devm_request_threaded_irq(dev, hdmi->irq, hdmi_irq,
 			hdmi_irq_thread, IRQF_ONESHOT, dev_name(dev), hdmi);

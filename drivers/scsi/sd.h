@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _SCSI_DISK_H
 #define _SCSI_DISK_H
 
@@ -73,13 +74,12 @@ struct scsi_disk {
 	struct gendisk	*disk;
 	struct opal_dev *opal_dev;
 #ifdef CONFIG_BLK_DEV_ZONED
-	unsigned int	nr_zones;
-	unsigned int	zone_blocks;
-	unsigned int	zone_shift;
-	unsigned long	*zones_wlock;
-	unsigned int	zones_optimal_open;
-	unsigned int	zones_optimal_nonseq;
-	unsigned int	zones_max_open;
+	u32		nr_zones;
+	u32		zone_blocks;
+	u32		zone_shift;
+	u32		zones_optimal_open;
+	u32		zones_optimal_nonseq;
+	u32		zones_max_open;
 #endif
 	atomic_t	openers;
 	sector_t	capacity;	/* size in logical blocks */
@@ -282,8 +282,6 @@ static inline int sd_is_zoned(struct scsi_disk *sdkp)
 extern int sd_zbc_read_zones(struct scsi_disk *sdkp, unsigned char *buffer);
 extern void sd_zbc_remove(struct scsi_disk *sdkp);
 extern void sd_zbc_print_zones(struct scsi_disk *sdkp);
-extern int sd_zbc_write_lock_zone(struct scsi_cmnd *cmd);
-extern void sd_zbc_write_unlock_zone(struct scsi_cmnd *cmd);
 extern int sd_zbc_setup_report_cmnd(struct scsi_cmnd *cmd);
 extern int sd_zbc_setup_reset_cmnd(struct scsi_cmnd *cmd);
 extern void sd_zbc_complete(struct scsi_cmnd *cmd, unsigned int good_bytes,
@@ -300,14 +298,6 @@ static inline int sd_zbc_read_zones(struct scsi_disk *sdkp,
 static inline void sd_zbc_remove(struct scsi_disk *sdkp) {}
 
 static inline void sd_zbc_print_zones(struct scsi_disk *sdkp) {}
-
-static inline int sd_zbc_write_lock_zone(struct scsi_cmnd *cmd)
-{
-	/* Let the drive fail requests */
-	return BLKPREP_OK;
-}
-
-static inline void sd_zbc_write_unlock_zone(struct scsi_cmnd *cmd) {}
 
 static inline int sd_zbc_setup_report_cmnd(struct scsi_cmnd *cmd)
 {

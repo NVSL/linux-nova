@@ -20,6 +20,7 @@ perf-y += hists_cumulate.o
 perf-y += python-use.o
 perf-y += bp_signal.o
 perf-y += bp_signal_overflow.o
+perf-y += bp_account.o
 perf-y += task-exit.o
 perf-y += sw-clock.o
 perf-y += mmap-thread-lookup.o
@@ -34,6 +35,7 @@ perf-y += thread-map.o
 perf-y += llvm.o llvm-src-base.o llvm-src-kbuild.o llvm-src-prologue.o llvm-src-relocation.o
 perf-y += bpf.o
 perf-y += topology.o
+perf-y += mem.o
 perf-y += cpumap.o
 perf-y += stat.o
 perf-y += event_update.o
@@ -46,6 +48,7 @@ perf-y += bitmap.o
 perf-y += perf-hooks.o
 perf-y += clang.o
 perf-y += unit_number__scnprintf.o
+perf-y += mem2node.o
 
 $(OUTPUT)tests/llvm-src-base.c: tests/bpf-script-example.c tests/Build
 	$(call rule_mkdir)

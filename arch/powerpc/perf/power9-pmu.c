@@ -101,22 +101,61 @@ enum {
 #define POWER9_MMCRA_IFM2		0x0000000080000000UL
 #define POWER9_MMCRA_IFM3		0x00000000C0000000UL
 
+/* Nasty Power9 specific hack */
+#define PVR_POWER9_CUMULUS		0x00002000
+
 /* PowerISA v2.07 format attribute structure*/
 extern struct attribute_group isa207_pmu_format_group;
+
+int p9_dd21_bl_ev[] = {
+	PM_MRK_ST_DONE_L2,
+	PM_RADIX_PWC_L1_HIT,
+	PM_FLOP_CMPL,
+	PM_MRK_NTF_FIN,
+	PM_RADIX_PWC_L2_HIT,
+	PM_IFETCH_THROTTLE,
+	PM_MRK_L2_TM_ST_ABORT_SISTER,
+	PM_RADIX_PWC_L3_HIT,
+	PM_RUN_CYC_SMT2_MODE,
+	PM_TM_TX_PASS_RUN_INST,
+	PM_DISP_HELD_SYNC_HOLD,
+};
+
+int p9_dd22_bl_ev[] = {
+	PM_DTLB_MISS_16G,
+	PM_DERAT_MISS_2M,
+	PM_DTLB_MISS_2M,
+	PM_MRK_DTLB_MISS_1G,
+	PM_DTLB_MISS_4K,
+	PM_DERAT_MISS_1G,
+	PM_MRK_DERAT_MISS_2M,
+	PM_MRK_DTLB_MISS_4K,
+	PM_MRK_DTLB_MISS_16G,
+	PM_DTLB_MISS_64K,
+	PM_MRK_DERAT_MISS_1G,
+	PM_MRK_DTLB_MISS_64K,
+	PM_DISP_HELD_SYNC_HOLD,
+	PM_DTLB_MISS_16M,
+	PM_DTLB_MISS_1G,
+	PM_MRK_DTLB_MISS_16M,
+};
 
 /* Table of alternatives, sorted by column 0 */
 static const unsigned int power9_event_alternatives[][MAX_ALT] = {
 	{ PM_INST_DISP,			PM_INST_DISP_ALT },
 	{ PM_RUN_CYC_ALT,		PM_RUN_CYC },
 	{ PM_RUN_INST_CMPL_ALT,		PM_RUN_INST_CMPL },
+	{ PM_LD_MISS_L1,		PM_LD_MISS_L1_ALT },
+	{ PM_BR_2PATH,			PM_BR_2PATH_ALT },
 };
 
 static int power9_get_alternatives(u64 event, unsigned int flags, u64 alt[])
 {
 	int num_alt = 0;
 
-	num_alt = isa207_get_alternatives(event, alt, power9_event_alternatives,
-				(int)ARRAY_SIZE(power9_event_alternatives));
+	num_alt = isa207_get_alternatives(event, alt,
+					  ARRAY_SIZE(power9_event_alternatives), flags,
+					  power9_event_alternatives);
 
 	return num_alt;
 }
@@ -125,7 +164,7 @@ GENERIC_EVENT_ATTR(cpu-cycles,			PM_CYC);
 GENERIC_EVENT_ATTR(stalled-cycles-frontend,	PM_ICT_NOSLOT_CYC);
 GENERIC_EVENT_ATTR(stalled-cycles-backend,	PM_CMPLU_STALL);
 GENERIC_EVENT_ATTR(instructions,		PM_INST_CMPL);
-GENERIC_EVENT_ATTR(branch-instructions,		PM_BRU_CMPL);
+GENERIC_EVENT_ATTR(branch-instructions,		PM_BR_CMPL);
 GENERIC_EVENT_ATTR(branch-misses,		PM_BR_MPRED_CMPL);
 GENERIC_EVENT_ATTR(cache-references,		PM_LD_REF_L1);
 GENERIC_EVENT_ATTR(cache-misses,		PM_LD_MISS_L1_FIN);
@@ -143,7 +182,7 @@ CACHE_EVENT_ATTR(LLC-prefetches,		PM_L3_PREF_ALL);
 CACHE_EVENT_ATTR(LLC-store-misses,		PM_L2_ST_MISS);
 CACHE_EVENT_ATTR(LLC-stores,			PM_L2_ST);
 CACHE_EVENT_ATTR(branch-load-misses,		PM_BR_MPRED_CMPL);
-CACHE_EVENT_ATTR(branch-loads,			PM_BRU_CMPL);
+CACHE_EVENT_ATTR(branch-loads,			PM_BR_CMPL);
 CACHE_EVENT_ATTR(dTLB-load-misses,		PM_DTLB_MISS);
 CACHE_EVENT_ATTR(iTLB-load-misses,		PM_ITLB_MISS);
 
@@ -152,7 +191,7 @@ static struct attribute *power9_events_attr[] = {
 	GENERIC_EVENT_PTR(PM_ICT_NOSLOT_CYC),
 	GENERIC_EVENT_PTR(PM_CMPLU_STALL),
 	GENERIC_EVENT_PTR(PM_INST_CMPL),
-	GENERIC_EVENT_PTR(PM_BRU_CMPL),
+	GENERIC_EVENT_PTR(PM_BR_CMPL),
 	GENERIC_EVENT_PTR(PM_BR_MPRED_CMPL),
 	GENERIC_EVENT_PTR(PM_LD_REF_L1),
 	GENERIC_EVENT_PTR(PM_LD_MISS_L1_FIN),
@@ -169,7 +208,7 @@ static struct attribute *power9_events_attr[] = {
 	CACHE_EVENT_PTR(PM_L2_ST_MISS),
 	CACHE_EVENT_PTR(PM_L2_ST),
 	CACHE_EVENT_PTR(PM_BR_MPRED_CMPL),
-	CACHE_EVENT_PTR(PM_BRU_CMPL),
+	CACHE_EVENT_PTR(PM_BR_CMPL),
 	CACHE_EVENT_PTR(PM_DTLB_MISS),
 	CACHE_EVENT_PTR(PM_ITLB_MISS),
 	NULL
@@ -244,7 +283,7 @@ static int power9_generic_events[] = {
 	[PERF_COUNT_HW_STALLED_CYCLES_FRONTEND] =	PM_ICT_NOSLOT_CYC,
 	[PERF_COUNT_HW_STALLED_CYCLES_BACKEND] =	PM_CMPLU_STALL,
 	[PERF_COUNT_HW_INSTRUCTIONS] =			PM_INST_CMPL,
-	[PERF_COUNT_HW_BRANCH_INSTRUCTIONS] =		PM_BRU_CMPL,
+	[PERF_COUNT_HW_BRANCH_INSTRUCTIONS] =		PM_BR_CMPL,
 	[PERF_COUNT_HW_BRANCH_MISSES] =			PM_BR_MPRED_CMPL,
 	[PERF_COUNT_HW_CACHE_REFERENCES] =		PM_LD_REF_L1,
 	[PERF_COUNT_HW_CACHE_MISSES] =			PM_LD_MISS_L1_FIN,
@@ -370,7 +409,7 @@ static int power9_cache_events[C(MAX)][C(OP_MAX)][C(RESULT_MAX)] = {
 	},
 	[ C(BPU) ] = {
 		[ C(OP_READ) ] = {
-			[ C(RESULT_ACCESS) ] = PM_BRU_CMPL,
+			[ C(RESULT_ACCESS) ] = PM_BR_CMPL,
 			[ C(RESULT_MISS)   ] = PM_BR_MPRED_CMPL,
 		},
 		[ C(OP_WRITE) ] = {
@@ -443,11 +482,23 @@ static struct power_pmu power9_pmu = {
 static int __init init_power9_pmu(void)
 {
 	int rc = 0;
+	unsigned int pvr = mfspr(SPRN_PVR);
 
 	/* Comes from cpu_specs[] */
 	if (!cur_cpu_spec->oprofile_cpu_type ||
 	    strcmp(cur_cpu_spec->oprofile_cpu_type, "ppc64/power9"))
 		return -ENODEV;
+
+	/* Blacklist events */
+	if (!(pvr & PVR_POWER9_CUMULUS)) {
+		if ((PVR_CFG(pvr) == 2) && (PVR_MIN(pvr) == 1)) {
+			power9_pmu.blacklist_ev = p9_dd21_bl_ev;
+			power9_pmu.n_blacklist_ev = ARRAY_SIZE(p9_dd21_bl_ev);
+		} else if ((PVR_CFG(pvr) == 2) && (PVR_MIN(pvr) == 2)) {
+			power9_pmu.blacklist_ev = p9_dd22_bl_ev;
+			power9_pmu.n_blacklist_ev = ARRAY_SIZE(p9_dd22_bl_ev);
+		}
+	}
 
 	if (cpu_has_feature(CPU_FTR_POWER9_DD1)) {
 		/*
@@ -459,8 +510,8 @@ static int __init init_power9_pmu(void)
 		 * Power9 DD1 should use PM_BR_CMPL_ALT event code for
 		 * "branches" to provide correct counter value.
 		 */
-		EVENT_VAR(PM_BRU_CMPL, _g).id = PM_BR_CMPL_ALT;
-		EVENT_VAR(PM_BRU_CMPL, _c).id = PM_BR_CMPL_ALT;
+		EVENT_VAR(PM_BR_CMPL, _g).id = PM_BR_CMPL_ALT;
+		EVENT_VAR(PM_BR_CMPL, _c).id = PM_BR_CMPL_ALT;
 		rc = register_power_pmu(&power9_isa207_pmu);
 	} else {
 		rc = register_power_pmu(&power9_pmu);

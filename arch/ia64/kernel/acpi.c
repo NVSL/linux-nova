@@ -159,12 +159,12 @@ int acpi_request_vector(u32 int_type)
 	return vector;
 }
 
-char *__init __acpi_map_table(unsigned long phys_addr, unsigned long size)
+void __init __iomem *__acpi_map_table(unsigned long phys, unsigned long size)
 {
-	return __va(phys_addr);
+	return __va(phys);
 }
 
-void __init __acpi_unmap_table(char *map, unsigned long size)
+void __init __acpi_unmap_table(void __iomem *map, unsigned long size)
 {
 }
 
@@ -503,6 +503,11 @@ acpi_numa_memory_affinity_init(struct acpi_srat_mem_affinity *ma)
 	/* Ignore disabled entries */
 	if (!(ma->flags & ACPI_SRAT_MEM_ENABLED))
 		return -1;
+
+	if (num_node_memblks >= NR_NODE_MEMBLKS) {
+		pr_err("NUMA: too many memblk ranges\n");
+		return -EINVAL;
+	}
 
 	/* record this node in proximity bitmap */
 	pxm_bit_set(pxm);

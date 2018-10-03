@@ -166,8 +166,15 @@ typedef void (*v4l2_ctrl_notify_fnc)(struct v4l2_ctrl *ctrl, void *priv);
  *		empty strings ("") correspond to non-existing menu items (this
  *		is in addition to the menu_skip_mask above). The last entry
  *		must be NULL.
+ *		Used only if the @type is %V4L2_CTRL_TYPE_MENU.
+ * @qmenu_int:	A 64-bit integer array for with integer menu items.
+ *		The size of array must be equal to the menu size, e. g.:
+ *		:math:`ceil(\frac{maximum - minimum}{step}) + 1`.
+ *		Used only if the @type is %V4L2_CTRL_TYPE_INTEGER_MENU.
  * @flags:	The control's flags.
- * @cur:	The control's current value.
+ * @cur:	Structure to store the current value.
+ * @cur.val:	The control's current value, if the @type is represented via
+ *		a u32 integer (see &enum v4l2_ctrl_type).
  * @val:	The control's new s32 value.
  * @priv:	The control's private pointer. For use by the driver. It is
  *		untouched by the control framework. Note that this pointer is
@@ -340,17 +347,17 @@ struct v4l2_ctrl_config {
  * v4l2_ctrl_fill - Fill in the control fields based on the control ID.
  *
  * @id: ID of the control
- * @name: name of the control
- * @type: type of the control
- * @min: minimum value for the control
- * @max: maximum value for the control
- * @step: control step
- * @def: default value for the control
- * @flags: flags to be used on the control
+ * @name: pointer to be filled with a string with the name of the control
+ * @type: pointer for storing the type of the control
+ * @min: pointer for storing the minimum value for the control
+ * @max: pointer for storing the maximum value for the control
+ * @step: pointer for storing the control step
+ * @def: pointer for storing the default value for the control
+ * @flags: pointer for storing the flags to be used on the control
  *
  * This works for all standard V4L2 controls.
  * For non-standard controls it will only fill in the given arguments
- * and @name will be %NULL.
+ * and @name content will be set to %NULL.
  *
  * This function will overwrite the contents of @name, @type and @flags.
  * The contents of @min, @max, @step and @def may be modified depending on
@@ -754,8 +761,8 @@ void v4l2_ctrl_grab(struct v4l2_ctrl *ctrl, bool grabbed);
  * An error is returned if one of the range arguments is invalid for this
  * control type.
  *
- * This function assumes that the control handler is not locked and will
- * take the lock itself.
+ * The caller is responsible for acquiring the control handler mutex on behalf
+ * of __v4l2_ctrl_modify_range().
  */
 int __v4l2_ctrl_modify_range(struct v4l2_ctrl *ctrl,
 			     s64 min, s64 max, u64 step, s64 def);
@@ -1037,7 +1044,7 @@ int v4l2_ctrl_subscribe_event(struct v4l2_fh *fh,
  * @file: pointer to struct file
  * @wait: pointer to struct poll_table_struct
  */
-unsigned int v4l2_ctrl_poll(struct file *file, struct poll_table_struct *wait);
+__poll_t v4l2_ctrl_poll(struct file *file, struct poll_table_struct *wait);
 
 /* Helpers for ioctl_ops */
 
@@ -1139,7 +1146,7 @@ int v4l2_s_ext_ctrls(struct v4l2_fh *fh, struct v4l2_ctrl_handler *hdl,
 
 /**
  * v4l2_ctrl_subdev_subscribe_event - Helper function to implement
- * 	as a &struct v4l2_subdev_core_ops subscribe_event function
+ *	as a &struct v4l2_subdev_core_ops subscribe_event function
  *	that just subscribes control events.
  *
  * @sd: pointer to &struct v4l2_subdev

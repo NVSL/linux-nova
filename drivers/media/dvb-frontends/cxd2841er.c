@@ -29,9 +29,10 @@
 #include <linux/math64.h>
 #include <linux/log2.h>
 #include <linux/dynamic_debug.h>
+#include <linux/kernel.h>
 
-#include "dvb_math.h"
-#include "dvb_frontend.h"
+#include <media/dvb_math.h>
+#include <media/dvb_frontend.h>
 #include "cxd2841er.h"
 #include "cxd2841er_priv.h"
 
@@ -257,7 +258,9 @@ static int cxd2841er_write_regs(struct cxd2841er_priv *priv,
 static int cxd2841er_write_reg(struct cxd2841er_priv *priv,
 			       u8 addr, u8 reg, u8 val)
 {
-	return cxd2841er_write_regs(priv, addr, reg, &val, 1);
+	u8 tmp = val; /* see gcc.gnu.org/bugzilla/show_bug.cgi?id=81715 */
+
+	return cxd2841er_write_regs(priv, addr, reg, &tmp, 1);
 }
 
 static int cxd2841er_read_regs(struct cxd2841er_priv *priv,
@@ -486,6 +489,8 @@ static int cxd2841er_active_i_to_sleep_tc(struct cxd2841er_priv *priv);
 static int cxd2841er_sleep_tc_to_shutdown(struct cxd2841er_priv *priv);
 
 static int cxd2841er_shutdown_to_sleep_tc(struct cxd2841er_priv *priv);
+
+static int cxd2841er_sleep_tc(struct dvb_frontend *fe);
 
 static int cxd2841er_retune_active(struct cxd2841er_priv *priv,
 				   struct dtv_frontend_properties *p)
@@ -1694,12 +1699,10 @@ static u32 cxd2841er_dvbs_read_snr(struct cxd2841er_priv *priv,
 		min_index = 0;
 		if (delsys == SYS_DVBS) {
 			cn_data = s_cn_data;
-			max_index = sizeof(s_cn_data) /
-				sizeof(s_cn_data[0]) - 1;
+			max_index = ARRAY_SIZE(s_cn_data) - 1;
 		} else {
 			cn_data = s2_cn_data;
-			max_index = sizeof(s2_cn_data) /
-				sizeof(s2_cn_data[0]) - 1;
+			max_index = ARRAY_SIZE(s2_cn_data) - 1;
 		}
 		if (value >= cn_data[min_index].value) {
 			res = cn_data[min_index].cnr_x1000;
@@ -2178,42 +2181,42 @@ static int cxd2841er_sleep_tc_to_active_t2_band(struct cxd2841er_priv *priv,
 	u32 iffreq, ifhz;
 	u8 data[MAX_WRITE_REGSIZE];
 
-	const uint8_t nominalRate8bw[3][5] = {
+	static const uint8_t nominalRate8bw[3][5] = {
 		/* TRCG Nominal Rate [37:0] */
 		{0x11, 0xF0, 0x00, 0x00, 0x00}, /* 20.5MHz XTal */
 		{0x15, 0x00, 0x00, 0x00, 0x00}, /* 24MHz XTal */
 		{0x11, 0xF0, 0x00, 0x00, 0x00}  /* 41MHz XTal */
 	};
 
-	const uint8_t nominalRate7bw[3][5] = {
+	static const uint8_t nominalRate7bw[3][5] = {
 		/* TRCG Nominal Rate [37:0] */
 		{0x14, 0x80, 0x00, 0x00, 0x00}, /* 20.5MHz XTal */
 		{0x18, 0x00, 0x00, 0x00, 0x00}, /* 24MHz XTal */
 		{0x14, 0x80, 0x00, 0x00, 0x00}  /* 41MHz XTal */
 	};
 
-	const uint8_t nominalRate6bw[3][5] = {
+	static const uint8_t nominalRate6bw[3][5] = {
 		/* TRCG Nominal Rate [37:0] */
 		{0x17, 0xEA, 0xAA, 0xAA, 0xAA}, /* 20.5MHz XTal */
 		{0x1C, 0x00, 0x00, 0x00, 0x00}, /* 24MHz XTal */
 		{0x17, 0xEA, 0xAA, 0xAA, 0xAA}  /* 41MHz XTal */
 	};
 
-	const uint8_t nominalRate5bw[3][5] = {
+	static const uint8_t nominalRate5bw[3][5] = {
 		/* TRCG Nominal Rate [37:0] */
 		{0x1C, 0xB3, 0x33, 0x33, 0x33}, /* 20.5MHz XTal */
 		{0x21, 0x99, 0x99, 0x99, 0x99}, /* 24MHz XTal */
 		{0x1C, 0xB3, 0x33, 0x33, 0x33}  /* 41MHz XTal */
 	};
 
-	const uint8_t nominalRate17bw[3][5] = {
+	static const uint8_t nominalRate17bw[3][5] = {
 		/* TRCG Nominal Rate [37:0] */
 		{0x58, 0xE2, 0xAF, 0xE0, 0xBC}, /* 20.5MHz XTal */
 		{0x68, 0x0F, 0xA2, 0x32, 0xD0}, /* 24MHz XTal */
 		{0x58, 0xE2, 0xAF, 0xE0, 0xBC}  /* 41MHz XTal */
 	};
 
-	const uint8_t itbCoef8bw[3][14] = {
+	static const uint8_t itbCoef8bw[3][14] = {
 		{0x26, 0xAF, 0x06, 0xCD, 0x13, 0xBB, 0x28, 0xBA,
 			0x23, 0xA9, 0x1F, 0xA8, 0x2C, 0xC8}, /* 20.5MHz XTal */
 		{0x2F, 0xBA, 0x28, 0x9B, 0x28, 0x9D, 0x28, 0xA1,
@@ -2222,7 +2225,7 @@ static int cxd2841er_sleep_tc_to_active_t2_band(struct cxd2841er_priv *priv,
 			0x23, 0xA9, 0x1F, 0xA8, 0x2C, 0xC8}  /* 41MHz XTal   */
 	};
 
-	const uint8_t itbCoef7bw[3][14] = {
+	static const uint8_t itbCoef7bw[3][14] = {
 		{0x2C, 0xBD, 0x02, 0xCF, 0x04, 0xF8, 0x23, 0xA6,
 			0x29, 0xB0, 0x26, 0xA9, 0x21, 0xA5}, /* 20.5MHz XTal */
 		{0x30, 0xB1, 0x29, 0x9A, 0x28, 0x9C, 0x28, 0xA0,
@@ -2231,7 +2234,7 @@ static int cxd2841er_sleep_tc_to_active_t2_band(struct cxd2841er_priv *priv,
 			0x29, 0xB0, 0x26, 0xA9, 0x21, 0xA5}  /* 41MHz XTal   */
 	};
 
-	const uint8_t itbCoef6bw[3][14] = {
+	static const uint8_t itbCoef6bw[3][14] = {
 		{0x27, 0xA7, 0x28, 0xB3, 0x02, 0xF0, 0x01, 0xE8,
 			0x00, 0xCF, 0x00, 0xE6, 0x23, 0xA4}, /* 20.5MHz XTal */
 		{0x31, 0xA8, 0x29, 0x9B, 0x27, 0x9C, 0x28, 0x9E,
@@ -2240,7 +2243,7 @@ static int cxd2841er_sleep_tc_to_active_t2_band(struct cxd2841er_priv *priv,
 			0x00, 0xCF, 0x00, 0xE6, 0x23, 0xA4}  /* 41MHz XTal   */
 	};
 
-	const uint8_t itbCoef5bw[3][14] = {
+	static const uint8_t itbCoef5bw[3][14] = {
 		{0x27, 0xA7, 0x28, 0xB3, 0x02, 0xF0, 0x01, 0xE8,
 			0x00, 0xCF, 0x00, 0xE6, 0x23, 0xA4}, /* 20.5MHz XTal */
 		{0x31, 0xA8, 0x29, 0x9B, 0x27, 0x9C, 0x28, 0x9E,
@@ -2249,7 +2252,7 @@ static int cxd2841er_sleep_tc_to_active_t2_band(struct cxd2841er_priv *priv,
 			0x00, 0xCF, 0x00, 0xE6, 0x23, 0xA4}  /* 41MHz XTal   */
 	};
 
-	const uint8_t itbCoef17bw[3][14] = {
+	static const uint8_t itbCoef17bw[3][14] = {
 		{0x25, 0xA0, 0x36, 0x8D, 0x2E, 0x94, 0x28, 0x9B,
 			0x32, 0x90, 0x2C, 0x9D, 0x29, 0x99}, /* 20.5MHz XTal */
 		{0x33, 0x8E, 0x2B, 0x97, 0x2D, 0x95, 0x37, 0x8B,
@@ -2423,32 +2426,32 @@ static int cxd2841er_sleep_tc_to_active_t_band(
 {
 	u8 data[MAX_WRITE_REGSIZE];
 	u32 iffreq, ifhz;
-	u8 nominalRate8bw[3][5] = {
+	static const u8 nominalRate8bw[3][5] = {
 		/* TRCG Nominal Rate [37:0] */
 		{0x11, 0xF0, 0x00, 0x00, 0x00}, /* 20.5MHz XTal */
 		{0x15, 0x00, 0x00, 0x00, 0x00}, /* 24MHz XTal */
 		{0x11, 0xF0, 0x00, 0x00, 0x00}  /* 41MHz XTal */
 	};
-	u8 nominalRate7bw[3][5] = {
+	static const u8 nominalRate7bw[3][5] = {
 		/* TRCG Nominal Rate [37:0] */
 		{0x14, 0x80, 0x00, 0x00, 0x00}, /* 20.5MHz XTal */
 		{0x18, 0x00, 0x00, 0x00, 0x00}, /* 24MHz XTal */
 		{0x14, 0x80, 0x00, 0x00, 0x00}  /* 41MHz XTal */
 	};
-	u8 nominalRate6bw[3][5] = {
+	static const u8 nominalRate6bw[3][5] = {
 		/* TRCG Nominal Rate [37:0] */
 		{0x17, 0xEA, 0xAA, 0xAA, 0xAA}, /* 20.5MHz XTal */
 		{0x1C, 0x00, 0x00, 0x00, 0x00}, /* 24MHz XTal */
 		{0x17, 0xEA, 0xAA, 0xAA, 0xAA}  /* 41MHz XTal */
 	};
-	u8 nominalRate5bw[3][5] = {
+	static const u8 nominalRate5bw[3][5] = {
 		/* TRCG Nominal Rate [37:0] */
 		{0x1C, 0xB3, 0x33, 0x33, 0x33}, /* 20.5MHz XTal */
 		{0x21, 0x99, 0x99, 0x99, 0x99}, /* 24MHz XTal */
 		{0x1C, 0xB3, 0x33, 0x33, 0x33}  /* 41MHz XTal */
 	};
 
-	u8 itbCoef8bw[3][14] = {
+	static const u8 itbCoef8bw[3][14] = {
 		{0x26, 0xAF, 0x06, 0xCD, 0x13, 0xBB, 0x28, 0xBA, 0x23, 0xA9,
 			0x1F, 0xA8, 0x2C, 0xC8}, /* 20.5MHz XTal */
 		{0x2F, 0xBA, 0x28, 0x9B, 0x28, 0x9D, 0x28, 0xA1, 0x29, 0xA5,
@@ -2456,7 +2459,7 @@ static int cxd2841er_sleep_tc_to_active_t_band(
 		{0x26, 0xAF, 0x06, 0xCD, 0x13, 0xBB, 0x28, 0xBA, 0x23, 0xA9,
 			0x1F, 0xA8, 0x2C, 0xC8}  /* 41MHz XTal   */
 	};
-	u8 itbCoef7bw[3][14] = {
+	static const u8 itbCoef7bw[3][14] = {
 		{0x2C, 0xBD, 0x02, 0xCF, 0x04, 0xF8, 0x23, 0xA6, 0x29, 0xB0,
 			0x26, 0xA9, 0x21, 0xA5}, /* 20.5MHz XTal */
 		{0x30, 0xB1, 0x29, 0x9A, 0x28, 0x9C, 0x28, 0xA0, 0x29, 0xA2,
@@ -2464,7 +2467,7 @@ static int cxd2841er_sleep_tc_to_active_t_band(
 		{0x2C, 0xBD, 0x02, 0xCF, 0x04, 0xF8, 0x23, 0xA6, 0x29, 0xB0,
 			0x26, 0xA9, 0x21, 0xA5}  /* 41MHz XTal   */
 	};
-	u8 itbCoef6bw[3][14] = {
+	static const u8 itbCoef6bw[3][14] = {
 		{0x27, 0xA7, 0x28, 0xB3, 0x02, 0xF0, 0x01, 0xE8, 0x00, 0xCF,
 			0x00, 0xE6, 0x23, 0xA4}, /* 20.5MHz XTal */
 		{0x31, 0xA8, 0x29, 0x9B, 0x27, 0x9C, 0x28, 0x9E, 0x29, 0xA4,
@@ -2472,7 +2475,7 @@ static int cxd2841er_sleep_tc_to_active_t_band(
 		{0x27, 0xA7, 0x28, 0xB3, 0x02, 0xF0, 0x01, 0xE8, 0x00, 0xCF,
 			0x00, 0xE6, 0x23, 0xA4}  /* 41MHz XTal   */
 	};
-	u8 itbCoef5bw[3][14] = {
+	static const u8 itbCoef5bw[3][14] = {
 		{0x27, 0xA7, 0x28, 0xB3, 0x02, 0xF0, 0x01, 0xE8, 0x00, 0xCF,
 			0x00, 0xE6, 0x23, 0xA4}, /* 20.5MHz XTal */
 		{0x31, 0xA8, 0x29, 0x9B, 0x27, 0x9C, 0x28, 0x9E, 0x29, 0xA4,
@@ -2652,39 +2655,39 @@ static int cxd2841er_sleep_tc_to_active_i_band(
 	u8 data[3];
 
 	/* TRCG Nominal Rate */
-	u8 nominalRate8bw[3][5] = {
+	static const u8 nominalRate8bw[3][5] = {
 		{0x00, 0x00, 0x00, 0x00, 0x00}, /* 20.5MHz XTal */
 		{0x11, 0xB8, 0x00, 0x00, 0x00}, /* 24MHz XTal */
 		{0x00, 0x00, 0x00, 0x00, 0x00}  /* 41MHz XTal */
 	};
 
-	u8 nominalRate7bw[3][5] = {
+	static const u8 nominalRate7bw[3][5] = {
 		{0x00, 0x00, 0x00, 0x00, 0x00}, /* 20.5MHz XTal */
 		{0x14, 0x40, 0x00, 0x00, 0x00}, /* 24MHz XTal */
 		{0x00, 0x00, 0x00, 0x00, 0x00}  /* 41MHz XTal */
 	};
 
-	u8 nominalRate6bw[3][5] = {
+	static const u8 nominalRate6bw[3][5] = {
 		{0x14, 0x2E, 0x00, 0x00, 0x00}, /* 20.5MHz XTal */
 		{0x17, 0xA0, 0x00, 0x00, 0x00}, /* 24MHz XTal */
 		{0x14, 0x2E, 0x00, 0x00, 0x00}  /* 41MHz XTal */
 	};
 
-	u8 itbCoef8bw[3][14] = {
+	static const u8 itbCoef8bw[3][14] = {
 		{0x00}, /* 20.5MHz XTal */
 		{0x2F, 0xBA, 0x28, 0x9B, 0x28, 0x9D, 0x28, 0xA1, 0x29,
 			0xA5, 0x2A, 0xAC, 0x29, 0xB5}, /* 24MHz Xtal */
 		{0x0}, /* 41MHz XTal   */
 	};
 
-	u8 itbCoef7bw[3][14] = {
+	static const u8 itbCoef7bw[3][14] = {
 		{0x00}, /* 20.5MHz XTal */
 		{0x30, 0xB1, 0x29, 0x9A, 0x28, 0x9C, 0x28, 0xA0, 0x29,
 			0xA2, 0x2B, 0xA6, 0x2B, 0xAD}, /* 24MHz Xtal */
 		{0x00}, /* 41MHz XTal   */
 	};
 
-	u8 itbCoef6bw[3][14] = {
+	static const u8 itbCoef6bw[3][14] = {
 		{0x27, 0xA7, 0x28, 0xB3, 0x02, 0xF0, 0x01, 0xE8, 0x00,
 			0xCF, 0x00, 0xE6, 0x23, 0xA4}, /* 20.5MHz XTal */
 		{0x31, 0xA8, 0x29, 0x9B, 0x27, 0x9C, 0x28, 0x9E, 0x29,
@@ -3338,13 +3341,17 @@ static int cxd2841er_set_frontend_s(struct dvb_frontend *fe)
 
 	cxd2841er_tune_done(priv);
 	timeout = ((3000000 + (symbol_rate - 1)) / symbol_rate) + 150;
-	for (i = 0; i < timeout / CXD2841ER_DVBS_POLLING_INVL; i++) {
+
+	i = 0;
+	do {
 		usleep_range(CXD2841ER_DVBS_POLLING_INVL*1000,
 			(CXD2841ER_DVBS_POLLING_INVL + 2) * 1000);
 		cxd2841er_read_status_s(fe, &status);
 		if (status & FE_HAS_LOCK)
 			break;
-	}
+		i++;
+	} while (i < timeout / CXD2841ER_DVBS_POLLING_INVL);
+
 	if (status & FE_HAS_LOCK) {
 		if (cxd2841er_get_carrier_offset_s_s2(
 				priv, &carr_offset)) {
@@ -3377,6 +3384,14 @@ static int cxd2841er_set_frontend_tc(struct dvb_frontend *fe)
 
 	if (priv->flags & CXD2841ER_EARLY_TUNE)
 		cxd2841er_tuner_set(fe);
+
+	/* deconfigure/put demod to sleep on delsys switch if active */
+	if (priv->state == STATE_ACTIVE_TC &&
+	    priv->system != p->delivery_system) {
+		dev_dbg(&priv->i2c->dev, "%s(): old_delsys=%d, new_delsys=%d -> sleep\n",
+			 __func__, priv->system, p->delivery_system);
+		cxd2841er_sleep_tc(fe);
+	}
 
 	if (p->delivery_system == SYS_DVBT) {
 		priv->system = SYS_DVBT;
@@ -3594,6 +3609,7 @@ static int cxd2841er_sleep_tc(struct dvb_frontend *fe)
 	struct cxd2841er_priv *priv = fe->demodulator_priv;
 
 	dev_dbg(&priv->i2c->dev, "%s()\n", __func__);
+
 	if (priv->state == STATE_ACTIVE_TC) {
 		switch (priv->system) {
 		case SYS_DVBT:
@@ -3619,7 +3635,17 @@ static int cxd2841er_sleep_tc(struct dvb_frontend *fe)
 			__func__, priv->state);
 		return -EINVAL;
 	}
-	cxd2841er_sleep_tc_to_shutdown(priv);
+	return 0;
+}
+
+static int cxd2841er_shutdown_tc(struct dvb_frontend *fe)
+{
+	struct cxd2841er_priv *priv = fe->demodulator_priv;
+
+	dev_dbg(&priv->i2c->dev, "%s()\n", __func__);
+
+	if (!cxd2841er_sleep_tc(fe))
+		cxd2841er_sleep_tc_to_shutdown(priv);
 	return 0;
 }
 
@@ -3968,7 +3994,7 @@ static struct dvb_frontend_ops cxd2841er_t_c_ops = {
 		.symbol_rate_max = 11700000
 	},
 	.init = cxd2841er_init_tc,
-	.sleep = cxd2841er_sleep_tc,
+	.sleep = cxd2841er_shutdown_tc,
 	.release = cxd2841er_release,
 	.set_frontend = cxd2841er_set_frontend_tc,
 	.get_frontend = cxd2841er_get_frontend,
@@ -3978,6 +4004,6 @@ static struct dvb_frontend_ops cxd2841er_t_c_ops = {
 	.get_frontend_algo = cxd2841er_get_algo
 };
 
-MODULE_DESCRIPTION("Sony CXD2841ER/CXD2854ER DVB-C/C2/T/T2/S/S2 demodulator driver");
+MODULE_DESCRIPTION("Sony CXD2837/38/41/43/54ER DVB-C/C2/T/T2/S/S2 demodulator driver");
 MODULE_AUTHOR("Sergey Kozlov <serjk@netup.ru>, Abylay Ospan <aospan@netup.ru>");
 MODULE_LICENSE("GPL");

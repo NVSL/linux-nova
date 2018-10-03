@@ -88,18 +88,13 @@ void MMU_init(void);
 int __map_without_bats;
 int __map_without_ltlbs;
 
-/*
- * This tells the system to allow ioremapping memory marked as reserved.
- */
-int __allow_ioremap_reserved;
-
 /* max amount of low RAM to map in */
 unsigned long __max_low_memory = MAX_LOW_MEM;
 
 /*
  * Check for command-line options that affect what MMU_init will do.
  */
-void __init MMU_setup(void)
+static void __init MMU_setup(void)
 {
 	/* Check for nobats option (used in mapin_ram). */
 	if (strstr(boot_command_line, "nobats")) {
@@ -113,6 +108,12 @@ void __init MMU_setup(void)
 		__map_without_bats = 1;
 		__map_without_ltlbs = 1;
 	}
+#ifdef CONFIG_STRICT_KERNEL_RWX
+	if (rodata_enabled) {
+		__map_without_bats = 1;
+		__map_without_ltlbs = 1;
+	}
+#endif
 }
 
 /*
@@ -132,8 +133,6 @@ void __init MMU_init(void)
 	 * Reserve gigantic pages for hugetlb.  This MUST occur before
 	 * lowmem_end_addr is initialized below.
 	 */
-	reserve_hugetlb_gpages();
-
 	if (memblock.memory.cnt > 1) {
 #ifndef CONFIG_WII
 		memblock_enforce_memory_limit(memblock.memory.regions[0].size);

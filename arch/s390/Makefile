@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0
 #
 # s390/Makefile
 #
@@ -5,10 +6,6 @@
 # architecture-specific flags and dependencies. Remember to do have actions
 # for "archclean" and "archdep" for cleaning up and making dependencies for
 # this architecture
-#
-# This file is subject to the terms and conditions of the GNU General Public
-# License.  See the file "COPYING" in the main directory of this archive
-# for more details.
 #
 # Copyright (C) 1994 by Linus Torvalds
 #
@@ -31,7 +28,8 @@ mflags-$(CONFIG_MARCH_Z9_109) := -march=z9-109
 mflags-$(CONFIG_MARCH_Z10)    := -march=z10
 mflags-$(CONFIG_MARCH_Z196)   := -march=z196
 mflags-$(CONFIG_MARCH_ZEC12)  := -march=zEC12
-mflags-$(CONFIG_MARCH_Z13)   := -march=z13
+mflags-$(CONFIG_MARCH_Z13)    := -march=z13
+mflags-$(CONFIG_MARCH_Z14)    := -march=z14
 
 export CC_FLAGS_MARCH := $(mflags-y)
 
@@ -44,12 +42,10 @@ cflags-$(CONFIG_MARCH_Z9_109_TUNE)	+= -mtune=z9-109
 cflags-$(CONFIG_MARCH_Z10_TUNE)		+= -mtune=z10
 cflags-$(CONFIG_MARCH_Z196_TUNE)	+= -mtune=z196
 cflags-$(CONFIG_MARCH_ZEC12_TUNE)	+= -mtune=zEC12
-cflags-$(CONFIG_MARCH_Z13_TUNE)	+= -mtune=z13
+cflags-$(CONFIG_MARCH_Z13_TUNE)		+= -mtune=z13
+cflags-$(CONFIG_MARCH_Z14_TUNE)		+= -mtune=z14
 
 cflags-y += -Wa,-I$(srctree)/arch/$(ARCH)/include
-
-#KBUILD_IMAGE is necessary for make rpm
-KBUILD_IMAGE	:=arch/s390/boot/image
 
 #
 # Prevent tail-call optimizations, to get clearer backtraces:
@@ -79,6 +75,16 @@ ifeq ($(call cc-option-yn,-mwarn-dynamicstack),y)
 cflags-$(CONFIG_WARN_DYNAMIC_STACK) += -mwarn-dynamicstack
 endif
 
+ifdef CONFIG_EXPOLINE
+  ifeq ($(call cc-option-yn,$(CC_FLAGS_MARCH) -mindirect-branch=thunk),y)
+    CC_FLAGS_EXPOLINE := -mindirect-branch=thunk
+    CC_FLAGS_EXPOLINE += -mfunction-return=thunk
+    CC_FLAGS_EXPOLINE += -mindirect-branch-table
+    export CC_FLAGS_EXPOLINE
+    cflags-y += $(CC_FLAGS_EXPOLINE) -DCC_USING_EXPOLINE
+  endif
+endif
+
 ifdef CONFIG_FUNCTION_TRACER
 # make use of hotpatch feature if the compiler supports it
 cc_hotpatch	:= -mhotpatch=0,3
@@ -89,9 +95,13 @@ KBUILD_CFLAGS	+= -DCC_USING_HOTPATCH
 endif
 endif
 
+# Test CFI features of binutils
+cfi := $(call as-instr,.cfi_startproc\n.cfi_val_offset 15$(comma)-160\n.cfi_endproc,-DCONFIG_AS_CFI_VAL_OFFSET=1)
+
 KBUILD_CFLAGS	+= -mbackchain -msoft-float $(cflags-y)
 KBUILD_CFLAGS	+= -pipe -fno-strength-reduce -Wno-sign-compare
-KBUILD_AFLAGS	+= $(aflags-y)
+KBUILD_CFLAGS	+= -fno-asynchronous-unwind-tables $(cfi)
+KBUILD_AFLAGS	+= $(aflags-y) $(cfi)
 
 OBJCOPYFLAGS	:= -O binary
 
@@ -108,9 +118,13 @@ drivers-y	+= drivers/s390/
 drivers-$(CONFIG_OPROFILE)	+= arch/s390/oprofile/
 
 boot		:= arch/s390/boot
+syscalls	:= arch/s390/kernel/syscalls
 tools		:= arch/s390/tools
 
 all: image bzImage
+
+#KBUILD_IMAGE is necessary for packaging targets like rpm-pkg, deb-pkg...
+KBUILD_IMAGE	:= $(boot)/bzImage
 
 install: vmlinux
 	$(Q)$(MAKE) $(build)=$(boot) $@
@@ -129,8 +143,12 @@ archclean:
 	$(Q)$(MAKE) $(clean)=$(boot)
 	$(Q)$(MAKE) $(clean)=$(tools)
 
+archheaders:
+	$(Q)$(MAKE) $(build)=$(syscalls) uapi
+
 archprepare:
-	$(Q)$(MAKE) $(build)=$(tools) include/generated/facilities.h
+	$(Q)$(MAKE) $(build)=$(syscalls) kapi
+	$(Q)$(MAKE) $(build)=$(tools) kapi
 
 # Don't use tabs in echo arguments
 define archhelp

@@ -125,6 +125,13 @@ int is_fadump_boot_memory_area(u64 addr, ulong size)
 	return (addr + size) > RMA_START && addr <= fw_dump.boot_memory_size;
 }
 
+int should_fadump_crash(void)
+{
+	if (!fw_dump.dump_registered || !fw_dump.fadumphdr_addr)
+		return 0;
+	return 1;
+}
+
 int is_fadump_active(void)
 {
 	return fw_dump.dump_active;
@@ -328,6 +335,26 @@ static unsigned long get_fadump_area_size(void)
 	return size;
 }
 
+static void __init fadump_reserve_crash_area(unsigned long base,
+					     unsigned long size)
+{
+	struct memblock_region *reg;
+	unsigned long mstart, mend, msize;
+
+	for_each_memblock(memory, reg) {
+		mstart = max_t(unsigned long, base, reg->base);
+		mend = reg->base + reg->size;
+		mend = min(base + size, mend);
+
+		if (mstart < mend) {
+			msize = mend - mstart;
+			memblock_reserve(mstart, msize);
+			pr_info("Reserved %ldMB of memory at %#016lx for saving crash dump\n",
+				(msize >> 20), mstart);
+		}
+	}
+}
+
 int __init fadump_reserve_mem(void)
 {
 	unsigned long base, size, memory_boundary;
@@ -373,7 +400,16 @@ int __init fadump_reserve_mem(void)
 		memory_boundary = memblock_end_of_DRAM();
 
 	if (fw_dump.dump_active) {
-		printk(KERN_INFO "Firmware-assisted dump is active.\n");
+		pr_info("Firmware-assisted dump is active.\n");
+
+#ifdef CONFIG_HUGETLB_PAGE
+		/*
+		 * FADump capture kernel doesn't care much about hugepages.
+		 * In fact, handling hugepages in capture kernel is asking for
+		 * trouble. So, disable HugeTLB support when fadump is active.
+		 */
+		hugetlb_disabled = true;
+#endif
 		/*
 		 * If last boot has crashed then reserve all the memory
 		 * above boot_memory_size so that we don't touch it until
@@ -382,11 +418,7 @@ int __init fadump_reserve_mem(void)
 		 */
 		base = fw_dump.boot_memory_size;
 		size = memory_boundary - base;
-		memblock_reserve(base, size);
-		printk(KERN_INFO "Reserved %ldMB of memory at %ldMB "
-				"for saving crash dump\n",
-				(unsigned long)(size >> 20),
-				(unsigned long)(base >> 20));
+		fadump_reserve_crash_area(base, size);
 
 		fw_dump.fadumphdr_addr =
 				be64_to_cpu(fdm_active->rmr_region.destination_address) +
@@ -518,7 +550,7 @@ void crash_fadump(struct pt_regs *regs, const char *str)
 	struct fadump_crash_info_header *fdh = NULL;
 	int old_cpu, this_cpu;
 
-	if (!fw_dump.dump_registered || !fw_dump.fadumphdr_addr)
+	if (!should_fadump_crash())
 		return;
 
 	/*
@@ -1148,6 +1180,9 @@ void fadump_cleanup(void)
 		init_fadump_mem_struct(&fdm,
 			be64_to_cpu(fdm_active->cpu_state_data.destination_address));
 		fadump_invalidate_dump(&fdm);
+	} else if (fw_dump.dump_registered) {
+		/* Un-register Firmware-assisted dump if it was registered. */
+		fadump_unregister_dump(&fdm);
 	}
 }
 
@@ -1263,10 +1298,15 @@ static ssize_t fadump_release_memory_store(struct kobject *kobj,
 					struct kobj_attribute *attr,
 					const char *buf, size_t count)
 {
+	int input = -1;
+
 	if (!fw_dump.dump_active)
 		return -EPERM;
 
-	if (buf[0] == '1') {
+	if (kstrtoint(buf, 0, &input))
+		return -EINVAL;
+
+	if (input == 1) {
 		/*
 		 * Take away the '/proc/vmcore'. We are releasing the dump
 		 * memory, hence it will not be valid anymore.
@@ -1300,21 +1340,25 @@ static ssize_t fadump_register_store(struct kobject *kobj,
 					const char *buf, size_t count)
 {
 	int ret = 0;
+	int input = -1;
 
 	if (!fw_dump.fadump_enabled || fdm_active)
 		return -EPERM;
 
+	if (kstrtoint(buf, 0, &input))
+		return -EINVAL;
+
 	mutex_lock(&fadump_mutex);
 
-	switch (buf[0]) {
-	case '0':
+	switch (input) {
+	case 0:
 		if (fw_dump.dump_registered == 0) {
 			goto unlock_out;
 		}
 		/* Un-register Firmware-assisted dump */
 		fadump_unregister_dump(&fdm);
 		break;
-	case '1':
+	case 1:
 		if (fw_dump.dump_registered == 1) {
 			ret = -EEXIST;
 			goto unlock_out;

@@ -21,9 +21,10 @@
 #ifndef PMC_CORE_H
 #define PMC_CORE_H
 
+#define PMC_BASE_ADDR_DEFAULT			0xFE000000
+
 /* Sunrise Point Power Management Controller PCI Device ID */
 #define SPT_PMC_PCI_DEVICE_ID			0x9d21
-
 #define SPT_PMC_BASE_ADDR_OFFSET		0x48
 #define SPT_PMC_SLP_S0_RES_COUNTER_OFFSET	0x13c
 #define SPT_PMC_PM_CFG_OFFSET			0x18
@@ -38,7 +39,8 @@
 #define SPT_PMC_SLP_S0_RES_COUNTER_STEP		0x64
 #define PMC_BASE_ADDR_MASK			~(SPT_PMC_MMIO_REG_LEN - 1)
 #define MTPMC_MASK				0xffff0000
-#define NUM_ENTRIES				5
+#define PPFEAR_MAX_NUM_ENTRIES			5
+#define SPT_PPFEAR_NUM_ENTRIES			5
 #define SPT_PMC_READ_DISABLE_BIT		0x16
 #define SPT_PMC_MSG_FULL_STS_BIT		0x18
 #define NUM_RETRIES				100
@@ -121,25 +123,63 @@ enum ppfear_regs {
 #define SPT_PMC_BIT_MPHY_CMN_LANE2		BIT(2)
 #define SPT_PMC_BIT_MPHY_CMN_LANE3		BIT(3)
 
+/* Cannonlake Power Management Controller register offsets */
+#define CNP_PMC_SLP_S0_RES_COUNTER_OFFSET      0x193C
+#define CNP_PMC_LTR_IGNORE_OFFSET              0x1B0C
+#define CNP_PMC_PM_CFG_OFFSET                  0x1818
+/* Cannonlake: PGD PFET Enable Ack Status Register(s) start */
+#define CNP_PMC_HOST_PPFEAR0A                  0x1D90
+
+#define CNP_PMC_MMIO_REG_LEN                   0x2000
+#define CNP_PPFEAR_NUM_ENTRIES                 8
+#define CNP_PMC_READ_DISABLE_BIT               22
+
 struct pmc_bit_map {
 	const char *name;
 	u32 bit_mask;
 };
 
+/**
+ * struct pmc_reg_map - Structure used to define parameter unique to a
+			PCH family
+ * @pfear_sts:		Maps name of IP block to PPFEAR* bit
+ * @mphy_sts:		Maps name of MPHY lane to MPHY status lane status bit
+ * @pll_sts:		Maps name of PLL to corresponding bit status
+ * @slp_s0_offset:	PWRMBASE offset to read SLP_S0 residency
+ * @ltr_ignore_offset:	PWRMBASE offset to read/write LTR ignore bit
+ * @regmap_length:	Length of memory to map from PWRMBASE address to access
+ * @ppfear0_offset:	PWRMBASE offset to to read PPFEAR*
+ * @ppfear_buckets:	Number of 8 bits blocks to read all IP blocks from
+ *			PPFEAR
+ * @pm_cfg_offset:	PWRMBASE offset to PM_CFG register
+ * @pm_read_disable_bit: Bit index to read PMC_READ_DISABLE
+ *
+ * Each PCH has unique set of register offsets and bit indexes. This structure
+ * captures them to have a common implementation.
+ */
 struct pmc_reg_map {
 	const struct pmc_bit_map *pfear_sts;
 	const struct pmc_bit_map *mphy_sts;
 	const struct pmc_bit_map *pll_sts;
+	const u32 slp_s0_offset;
+	const u32 ltr_ignore_offset;
+	const int regmap_length;
+	const u32 ppfear0_offset;
+	const int ppfear_buckets;
+	const u32 pm_cfg_offset;
+	const int pm_read_disable_bit;
 };
 
 /**
  * struct pmc_dev - pmc device structure
- * @base_addr:		comtains pmc base address
+ * @base_addr:		contains pmc base address
  * @regbase:		pointer to io-remapped memory location
- * @dbgfs_dir:		path to debug fs interface
- * @feature_available:	flag to indicate whether
- *			the feature is available
- *			on a particular platform or not.
+ * @map:		pointer to pmc_reg_map struct that contains platform
+ *			specific attributes
+ * @dbgfs_dir:		path to debugfs interface
+ * @pmc_xram_read_bit:	flag to indicate whether PMC XRAM shadow registers
+ *			used to read MPHY PG and PLL status are available
+ * @mutex_lock:		mutex to complete one transcation
  *
  * pmc_dev contains info about power management controller device.
  */
@@ -150,7 +190,6 @@ struct pmc_dev {
 #if IS_ENABLED(CONFIG_DEBUG_FS)
 	struct dentry *dbgfs_dir;
 #endif /* CONFIG_DEBUG_FS */
-	bool has_slp_s0_res;
 	int pmc_xram_read_bit;
 	struct mutex lock; /* generic mutex lock for PMC Core */
 };

@@ -7,7 +7,7 @@
  */
 
 #include <linux/delay.h>
-#include <linux/module.h>	/* Modules 			*/
+#include <linux/module.h>	/* Modules			*/
 #include <linux/init.h>		/* Initdata			*/
 #include <linux/slab.h>
 #include <linux/ioport.h>	/* request_region		*/
@@ -197,7 +197,7 @@ static int fmr2_tea_ext_init(struct snd_tea575x *tea)
 	return 0;
 }
 
-static struct pnp_device_id fmr2_pnp_ids[] = {
+static const struct pnp_device_id fmr2_pnp_ids[] = {
 	{ .id = "MFRad13" }, /* tuner subdevice of SF16-FMD2 */
 	{ .id = "" }
 };

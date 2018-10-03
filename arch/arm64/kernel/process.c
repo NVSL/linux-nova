@@ -35,7 +35,6 @@
 #include <linux/delay.h>
 #include <linux/reboot.h>
 #include <linux/interrupt.h>
-#include <linux/kallsyms.h>
 #include <linux/init.h>
 #include <linux/cpu.h>
 #include <linux/elfcore.h>
@@ -49,6 +48,7 @@
 #include <linux/notifier.h>
 #include <trace/events/power.h>
 #include <linux/percpu.h>
+#include <linux/thread_info.h>
 
 #include <asm/alternative.h>
 #include <asm/compat.h>
@@ -59,7 +59,7 @@
 #include <asm/processor.h>
 #include <asm/stacktrace.h>
 
-#ifdef CONFIG_CC_STACKPROTECTOR
+#ifdef CONFIG_STACKPROTECTOR
 #include <linux/stackprotector.h>
 unsigned long __stack_chk_guard __read_mostly;
 EXPORT_SYMBOL(__stack_chk_guard);
@@ -170,6 +170,39 @@ void machine_restart(char *cmd)
 	while (1);
 }
 
+static void print_pstate(struct pt_regs *regs)
+{
+	u64 pstate = regs->pstate;
+
+	if (compat_user_mode(regs)) {
+		printk("pstate: %08llx (%c%c%c%c %c %s %s %c%c%c)\n",
+			pstate,
+			pstate & COMPAT_PSR_N_BIT ? 'N' : 'n',
+			pstate & COMPAT_PSR_Z_BIT ? 'Z' : 'z',
+			pstate & COMPAT_PSR_C_BIT ? 'C' : 'c',
+			pstate & COMPAT_PSR_V_BIT ? 'V' : 'v',
+			pstate & COMPAT_PSR_Q_BIT ? 'Q' : 'q',
+			pstate & COMPAT_PSR_T_BIT ? "T32" : "A32",
+			pstate & COMPAT_PSR_E_BIT ? "BE" : "LE",
+			pstate & COMPAT_PSR_A_BIT ? 'A' : 'a',
+			pstate & COMPAT_PSR_I_BIT ? 'I' : 'i',
+			pstate & COMPAT_PSR_F_BIT ? 'F' : 'f');
+	} else {
+		printk("pstate: %08llx (%c%c%c%c %c%c%c%c %cPAN %cUAO)\n",
+			pstate,
+			pstate & PSR_N_BIT ? 'N' : 'n',
+			pstate & PSR_Z_BIT ? 'Z' : 'z',
+			pstate & PSR_C_BIT ? 'C' : 'c',
+			pstate & PSR_V_BIT ? 'V' : 'v',
+			pstate & PSR_D_BIT ? 'D' : 'd',
+			pstate & PSR_A_BIT ? 'A' : 'a',
+			pstate & PSR_I_BIT ? 'I' : 'i',
+			pstate & PSR_F_BIT ? 'F' : 'f',
+			pstate & PSR_PAN_BIT ? '+' : '-',
+			pstate & PSR_UAO_BIT ? '+' : '-');
+	}
+}
+
 void __show_regs(struct pt_regs *regs)
 {
 	int i, top_reg;
@@ -186,10 +219,16 @@ void __show_regs(struct pt_regs *regs)
 	}
 
 	show_regs_print_info(KERN_DEFAULT);
-	print_symbol("PC is at %s\n", instruction_pointer(regs));
-	print_symbol("LR is at %s\n", lr);
-	printk("pc : [<%016llx>] lr : [<%016llx>] pstate: %08llx\n",
-	       regs->pc, lr, regs->pstate);
+	print_pstate(regs);
+
+	if (!user_mode(regs)) {
+		printk("pc : %pS\n", (void *)regs->pc);
+		printk("lr : %pS\n", (void *)lr);
+	} else {
+		printk("pc : %016llx\n", regs->pc);
+		printk("lr : %016llx\n", lr);
+	}
+
 	printk("sp : %016llx\n", sp);
 
 	i = top_reg;
@@ -218,7 +257,7 @@ static void tls_thread_flush(void)
 	write_sysreg(0, tpidr_el0);
 
 	if (is_compat_task()) {
-		current->thread.tp_value = 0;
+		current->thread.uw.tp_value = 0;
 
 		/*
 		 * We need to ensure ordering between the shadow state and the
@@ -241,11 +280,27 @@ void release_thread(struct task_struct *dead_task)
 {
 }
 
+void arch_release_task_struct(struct task_struct *tsk)
+{
+	fpsimd_release_task(tsk);
+}
+
+/*
+ * src and dst may temporarily have aliased sve_state after task_struct
+ * is copied.  We cannot fix this properly here, because src may have
+ * live SVE state and dst's thread_info may not exist yet, so tweaking
+ * either src's or dst's TIF_SVE is not safe.
+ *
+ * The unaliasing is done in copy_thread() instead.  This works because
+ * dst is not schedulable or traceable until both of these functions
+ * have been called.
+ */
 int arch_dup_task_struct(struct task_struct *dst, struct task_struct *src)
 {
 	if (current->mm)
 		fpsimd_preserve_current_state();
 	*dst = *src;
+
 	return 0;
 }
 
@@ -257,6 +312,22 @@ int copy_thread(unsigned long clone_flags, unsigned long stack_start,
 	struct pt_regs *childregs = task_pt_regs(p);
 
 	memset(&p->thread.cpu_context, 0, sizeof(struct cpu_context));
+
+	/*
+	 * Unalias p->thread.sve_state (if any) from the parent task
+	 * and disable discard SVE state for p:
+	 */
+	clear_tsk_thread_flag(p, TIF_SVE);
+	p->thread.sve_state = NULL;
+
+	/*
+	 * In case p was allocated the same task_struct pointer as some
+	 * other recently-exited task, make sure p is disassociated from
+	 * any cpu that may have run that now-exited task recently.
+	 * Otherwise we could erroneously skip reloading the FPSIMD
+	 * registers for p.
+	 */
+	fpsimd_flush_task_state(p);
 
 	if (likely(!(p->flags & PF_KTHREAD))) {
 		*childregs = *current_pt_regs();
@@ -280,7 +351,7 @@ int copy_thread(unsigned long clone_flags, unsigned long stack_start,
 		 * for the new thread.
 		 */
 		if (clone_flags & CLONE_SETTLS)
-			p->thread.tp_value = childregs->regs[3];
+			p->thread.uw.tp_value = childregs->regs[3];
 	} else {
 		memset(childregs, 0, sizeof(struct pt_regs));
 		childregs->pstate = PSR_MODE_EL1h;
@@ -305,16 +376,14 @@ void tls_preserve_current_state(void)
 
 static void tls_thread_switch(struct task_struct *next)
 {
-	unsigned long tpidr, tpidrro;
-
 	tls_preserve_current_state();
 
-	tpidr = *task_user_tls(next);
-	tpidrro = is_compat_thread(task_thread_info(next)) ?
-		  next->thread.tp_value : 0;
+	if (is_compat_thread(task_thread_info(next)))
+		write_sysreg(next->thread.uw.tp_value, tpidrro_el0);
+	else if (!arm64_kernel_unmapped_at_el0())
+		write_sysreg(0, tpidrro_el0);
 
-	write_sysreg(tpidr, tpidr_el0);
-	write_sysreg(tpidrro, tpidrro_el0);
+	write_sysreg(*task_user_tls(next), tpidr_el0);
 }
 
 /* Restore the UAO state depending on next's addr_limit */
@@ -360,6 +429,8 @@ __notrace_funcgraph struct task_struct *__switch_to(struct task_struct *prev,
 	/*
 	 * Complete any pending TLB or cache maintenance on this CPU in case
 	 * the thread migrates to a different CPU.
+	 * This full barrier is also required by the membarrier system
+	 * call.
 	 */
 	dsb(ish);
 
@@ -382,15 +453,12 @@ unsigned long get_wchan(struct task_struct *p)
 		return 0;
 
 	frame.fp = thread_saved_fp(p);
-	frame.sp = thread_saved_sp(p);
 	frame.pc = thread_saved_pc(p);
 #ifdef CONFIG_FUNCTION_GRAPH_TRACER
 	frame.graph = p->curr_ret_stack;
 #endif
 	do {
-		if (frame.sp < stack_page ||
-		    frame.sp >= stack_page + THREAD_SIZE ||
-		    unwind_frame(p, &frame))
+		if (unwind_frame(p, &frame))
 			goto out;
 		if (!in_sched_functions(frame.pc)) {
 			ret = frame.pc;
@@ -416,4 +484,12 @@ unsigned long arch_randomize_brk(struct mm_struct *mm)
 		return randomize_page(mm->brk, SZ_32M);
 	else
 		return randomize_page(mm->brk, SZ_1G);
+}
+
+/*
+ * Called from setup_new_exec() after (COMPAT_)SET_PERSONALITY.
+ */
+void arch_setup_new_exec(void)
+{
+	current->mm->context.flags = is_compat_task() ? MMCF_AARCH32 : 0;
 }

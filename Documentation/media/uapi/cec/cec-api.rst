@@ -10,7 +10,10 @@ Part V - Consumer Electronics Control API
 
 This part describes the CEC: Consumer Electronics Control
 
-.. class:: toc-title
+
+.. only:: html
+
+   .. class:: toc-title
 
         Table of Contents
 
@@ -20,6 +23,7 @@ This part describes the CEC: Consumer Electronics Control
 
     cec-intro
     cec-funcs
+    cec-pin-error-inj
     cec-header
 
 

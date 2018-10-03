@@ -2135,7 +2135,7 @@ static int pl022_probe(struct amba_device *adev, const struct amba_id *id)
 	pl022->master_info = platform_info;
 	pl022->adev = adev;
 	pl022->vendor = id->data;
-	pl022->chipselects = devm_kzalloc(dev, num_cs * sizeof(int),
+	pl022->chipselects = devm_kcalloc(dev, num_cs, sizeof(int),
 					  GFP_KERNEL);
 	if (!pl022->chipselects) {
 		status = -ENOMEM;
@@ -2429,7 +2429,7 @@ static struct vendor_data vendor_lsi = {
 	.internal_cs_ctrl = true,
 };
 
-static struct amba_id pl022_ids[] = {
+static const struct amba_id pl022_ids[] = {
 	{
 		/*
 		 * ARM PL022 variant, this has a 16bit wide

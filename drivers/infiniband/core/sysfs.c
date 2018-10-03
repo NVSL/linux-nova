@@ -108,8 +108,22 @@ static ssize_t port_attr_show(struct kobject *kobj,
 	return port_attr->show(p, port_attr, buf);
 }
 
+static ssize_t port_attr_store(struct kobject *kobj,
+			       struct attribute *attr,
+			       const char *buf, size_t count)
+{
+	struct port_attribute *port_attr =
+		container_of(attr, struct port_attribute, attr);
+	struct ib_port *p = container_of(kobj, struct ib_port, kobj);
+
+	if (!port_attr->store)
+		return -EIO;
+	return port_attr->store(p, port_attr, buf, count);
+}
+
 static const struct sysfs_ops port_sysfs_ops = {
-	.show = port_attr_show
+	.show	= port_attr_show,
+	.store	= port_attr_store
 };
 
 static ssize_t gid_attr_show(struct kobject *kobj,
@@ -259,6 +273,7 @@ static ssize_t rate_show(struct ib_port *p, struct port_attribute *unused,
 		break;
 	case IB_SPEED_SDR:
 	default:		/* default to SDR for invalid rates */
+		speed = " SDR";
 		rate = 25;
 		break;
 	}
@@ -374,14 +389,26 @@ static ssize_t show_port_gid(struct ib_port *p, struct port_attribute *attr,
 {
 	struct port_table_attribute *tab_attr =
 		container_of(attr, struct port_table_attribute, attr);
+	union ib_gid *pgid;
 	union ib_gid gid;
 	ssize_t ret;
 
 	ret = ib_query_gid(p->ibdev, p->port_num, tab_attr->index, &gid, NULL);
-	if (ret)
-		return ret;
 
-	return sprintf(buf, "%pI6\n", gid.raw);
+	/* If reading GID fails, it is likely due to GID entry being empty
+	 * (invalid) or reserved GID in the table.
+	 * User space expects to read GID table entries as long as it given
+	 * index is within GID table size.
+	 * Administrative/debugging tool fails to query rest of the GID entries
+	 * if it hits error while querying a GID of the given index.
+	 * To avoid user space throwing such error on fail to read gid, return
+	 * zero GID as before. This maintains backward compatibility.
+	 */
+	if (ret)
+		pgid = &zgid;
+	else
+		pgid = &gid;
+	return sprintf(buf, "%pI6\n", pgid->raw);
 }
 
 static ssize_t show_port_gid_attr_ndev(struct ib_port *p,
@@ -796,10 +823,15 @@ static ssize_t show_hw_stats(struct kobject *kobj, struct attribute *attr,
 		dev = port->ibdev;
 		stats = port->hw_stats;
 	}
+	mutex_lock(&stats->lock);
 	ret = update_hw_stats(dev, stats, hsa->port_num, hsa->index);
 	if (ret)
-		return ret;
-	return print_hw_stat(stats, hsa->index, buf);
+		goto unlock;
+	ret = print_hw_stat(stats, hsa->index, buf);
+unlock:
+	mutex_unlock(&stats->lock);
+
+	return ret;
 }
 
 static ssize_t show_stats_lifespan(struct kobject *kobj,
@@ -807,17 +839,25 @@ static ssize_t show_stats_lifespan(struct kobject *kobj,
 				   char *buf)
 {
 	struct hw_stats_attribute *hsa;
+	struct rdma_hw_stats *stats;
 	int msecs;
 
 	hsa = container_of(attr, struct hw_stats_attribute, attr);
 	if (!hsa->port_num) {
 		struct ib_device *dev = container_of((struct device *)kobj,
 						     struct ib_device, dev);
-		msecs = jiffies_to_msecs(dev->hw_stats->lifespan);
+
+		stats = dev->hw_stats;
 	} else {
 		struct ib_port *p = container_of(kobj, struct ib_port, kobj);
-		msecs = jiffies_to_msecs(p->hw_stats->lifespan);
+
+		stats = p->hw_stats;
 	}
+
+	mutex_lock(&stats->lock);
+	msecs = jiffies_to_msecs(stats->lifespan);
+	mutex_unlock(&stats->lock);
+
 	return sprintf(buf, "%d\n", msecs);
 }
 
@@ -826,6 +866,7 @@ static ssize_t set_stats_lifespan(struct kobject *kobj,
 				  const char *buf, size_t count)
 {
 	struct hw_stats_attribute *hsa;
+	struct rdma_hw_stats *stats;
 	int msecs;
 	int jiffies;
 	int ret;
@@ -840,11 +881,18 @@ static ssize_t set_stats_lifespan(struct kobject *kobj,
 	if (!hsa->port_num) {
 		struct ib_device *dev = container_of((struct device *)kobj,
 						     struct ib_device, dev);
-		dev->hw_stats->lifespan = jiffies;
+
+		stats = dev->hw_stats;
 	} else {
 		struct ib_port *p = container_of(kobj, struct ib_port, kobj);
-		p->hw_stats->lifespan = jiffies;
+
+		stats = p->hw_stats;
 	}
+
+	mutex_lock(&stats->lock);
+	stats->lifespan = jiffies;
+	mutex_unlock(&stats->lock);
+
 	return count;
 }
 
@@ -937,6 +985,7 @@ static void setup_hw_stats(struct ib_device *device, struct ib_port *port,
 		sysfs_attr_init(hsag->attrs[i]);
 	}
 
+	mutex_init(&stats->lock);
 	/* treat an error here as non-fatal */
 	hsag->attrs[i] = alloc_hsa_lifespan("lifespan", port_num);
 	if (hsag->attrs[i])
@@ -1210,8 +1259,8 @@ static ssize_t show_fw_ver(struct device *device, struct device_attribute *attr,
 {
 	struct ib_device *dev = container_of(device, struct ib_device, dev);
 
-	ib_get_device_fw_str(dev, buf, PAGE_SIZE);
-	strlcat(buf, "\n", PAGE_SIZE);
+	ib_get_device_fw_str(dev, buf);
+	strlcat(buf, "\n", IB_FW_VERSION_NAME_MAX);
 	return strlen(buf);
 }
 
@@ -1262,7 +1311,6 @@ int ib_device_register_sysfs(struct ib_device *device,
 	int ret;
 	int i;
 
-	WARN_ON_ONCE(!device->dev.parent);
 	ret = dev_set_name(class_dev, "%s", device->name);
 	if (ret)
 		return ret;

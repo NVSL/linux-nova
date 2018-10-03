@@ -145,7 +145,7 @@ feature enabled.]
 
 In this mode ``intel_pstate`` registers utilization update callbacks with the
 CPU scheduler in order to run a P-state selection algorithm, either
-``powersave`` or ``performance``, depending on the ``scaling_cur_freq`` policy
+``powersave`` or ``performance``, depending on the ``scaling_governor`` policy
 setting in ``sysfs``.  The current CPU frequency information to be made
 available from the ``scaling_cur_freq`` policy attribute in ``sysfs`` is
 periodically updated by those utilization update callbacks too.
@@ -167,35 +167,17 @@ is set.
 ``powersave``
 .............
 
-Without HWP, this P-state selection algorithm generally depends on the
-processor model and/or the system profile setting in the ACPI tables and there
-are two variants of it.
-
-One of them is used with processors from the Atom line and (regardless of the
-processor model) on platforms with the system profile in the ACPI tables set to
-"mobile" (laptops mostly), "tablet", "appliance PC", "desktop", or
-"workstation".  It is also used with processors supporting the HWP feature if
-that feature has not been enabled (that is, with the ``intel_pstate=no_hwp``
-argument in the kernel command line).  It is similar to the algorithm
+Without HWP, this P-state selection algorithm is similar to the algorithm
 implemented by the generic ``schedutil`` scaling governor except that the
 utilization metric used by it is based on numbers coming from feedback
 registers of the CPU.  It generally selects P-states proportional to the
-current CPU utilization, so it is referred to as the "proportional" algorithm.
+current CPU utilization.
 
-The second variant of the ``powersave`` P-state selection algorithm, used in all
-of the other cases (generally, on processors from the Core line, so it is
-referred to as the "Core" algorithm), is based on the values read from the APERF
-and MPERF feedback registers and the previously requested target P-state.
-It does not really take CPU utilization into account explicitly, but as a rule
-it causes the CPU P-state to ramp up very quickly in response to increased
-utilization which is generally desirable in server environments.
-
-Regardless of the variant, this algorithm is run by the driver's utilization
-update callback for the given CPU when it is invoked by the CPU scheduler, but
-not more often than every 10 ms (that can be tweaked via ``debugfs`` in `this
-particular case <Tuning Interface in debugfs_>`_).  Like in the ``performance``
-case, the hardware configuration is not touched if the new P-state turns out to
-be the same as the current one.
+This algorithm is run by the driver's utilization update callback for the
+given CPU when it is invoked by the CPU scheduler, but not more often than
+every 10 ms.  Like in the ``performance`` case, the hardware configuration
+is not touched if the new P-state turns out to be the same as the current
+one.
 
 This is the default P-state selection algorithm if the
 :c:macro:`CONFIG_CPU_FREQ_DEFAULT_GOV_PERFORMANCE` kernel configuration option
@@ -342,8 +324,7 @@ Global Attributes
 
 ``intel_pstate`` exposes several global attributes (files) in ``sysfs`` to
 control its functionality at the system level.  They are located in the
-``/sys/devices/system/cpu/cpufreq/intel_pstate/`` directory and affect all
-CPUs.
+``/sys/devices/system/cpu/intel_pstate/`` directory and affect all CPUs.
 
 Some of them are not present if the ``intel_pstate=per_cpu_perf_limits``
 argument is passed to the kernel in the command line.
@@ -397,6 +378,17 @@ argument is passed to the kernel in the command line.
 	but it affects the maximum possible value of per-policy P-state	limits
 	(see `Interpretation of Policy Attributes`_ below for details).
 
+``hwp_dynamic_boost``
+	This attribute is only present if ``intel_pstate`` works in the
+	`active mode with the HWP feature enabled <Active Mode With HWP_>`_ in
+	the processor.  If set (equal to 1), it causes the minimum P-state limit
+	to be increased dynamically for a short time whenever a task previously
+	waiting on I/O is selected to run on a given logical CPU (the purpose
+	of this mechanism is to improve performance).
+
+	This setting has no effect on logical CPUs whose minimum P-state limit
+	is directly set to the highest non-turbo P-state or above it.
+
 .. _status_attr:
 
 ``status``
@@ -428,7 +420,7 @@ argument is passed to the kernel in the command line.
 	That only is supported in some configurations, though (for example, if
 	the `HWP feature is enabled in the processor <Active Mode With HWP_>`_,
 	the operation mode of the driver cannot be changed), and if it is not
-	supported in the current configuration, writes to this attribute with
+	supported in the current configuration, writes to this attribute will
 	fail with an appropriate error.
 
 Interpretation of Policy Attributes
@@ -720,34 +712,7 @@ P-state is called, the ``ftrace`` filter can be set to to
       gnome-shell-3409  [001] ..s.  2537.650850: intel_pstate_set_pstate <-intel_pstate_timer_func
            <idle>-0     [000] ..s.  2537.654843: intel_pstate_set_pstate <-intel_pstate_timer_func
 
-Tuning Interface in ``debugfs``
--------------------------------
-
-The ``powersave`` algorithm provided by ``intel_pstate`` for `the Core line of
-processors in the active mode <powersave_>`_ is based on a `PID controller`_
-whose parameters were chosen to address a number of different use cases at the
-same time.  However, it still is possible to fine-tune it to a specific workload
-and the ``debugfs`` interface under ``/sys/kernel/debug/pstate_snb/`` is
-provided for this purpose.  [Note that the ``pstate_snb`` directory will be
-present only if the specific P-state selection algorithm matching the interface
-in it actually is in use.]
-
-The following files present in that directory can be used to modify the PID
-controller parameters at run time:
-
-| ``deadband``
-| ``d_gain_pct``
-| ``i_gain_pct``
-| ``p_gain_pct``
-| ``sample_rate_ms``
-| ``setpoint``
-
-Note, however, that achieving desirable results this way generally requires
-expert-level understanding of the power vs performance tradeoff, so extra care
-is recommended when attempting to do that.
-
 
 .. _LCEU2015: http://events.linuxfoundation.org/sites/events/files/slides/LinuxConEurope_2015.pdf
 .. _SDM: http://www.intel.com/content/www/us/en/architecture-and-technology/64-ia-32-architectures-software-developer-system-programming-manual-325384.html
 .. _ACPI specification: http://www.uefi.org/sites/default/files/resources/ACPI_6_1.pdf
-.. _PID controller: https://en.wikipedia.org/wiki/PID_controller

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __LINUX_UACCESS_H__
 #define __LINUX_UACCESS_H__
 
@@ -156,7 +157,7 @@ copy_to_user(void __user *to, const void *from, unsigned long n)
 }
 #ifdef CONFIG_COMPAT
 static __always_inline unsigned long __must_check
-copy_in_user(void __user *to, const void *from, unsigned long n)
+copy_in_user(void __user *to, const void __user *from, unsigned long n)
 {
 	might_fault();
 	if (access_ok(VERIFY_WRITE, to, n) && access_ok(VERIFY_READ, from, n))
@@ -270,6 +271,14 @@ extern long strncpy_from_unsafe(char *dst, const void *unsafe_addr, long count);
 #define user_access_end() do { } while (0)
 #define unsafe_get_user(x, ptr, err) do { if (unlikely(__get_user(x, ptr))) goto err; } while (0)
 #define unsafe_put_user(x, ptr, err) do { if (unlikely(__put_user(x, ptr))) goto err; } while (0)
+#endif
+
+#ifdef CONFIG_HARDENED_USERCOPY
+void usercopy_warn(const char *name, const char *detail, bool to_user,
+		   unsigned long offset, unsigned long len);
+void __noreturn usercopy_abort(const char *name, const char *detail,
+			       bool to_user, unsigned long offset,
+			       unsigned long len);
 #endif
 
 #endif		/* __LINUX_UACCESS_H__ */

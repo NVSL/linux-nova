@@ -1,6 +1,5 @@
 menuconfig MTD
 	tristate "Memory Technology Device (MTD) support"
-	depends on GENERIC_IO
 	help
 	  Memory Technology Devices are flash, RAM and similar chips, often
 	  used for solid state file systems on embedded devices. This option
@@ -333,8 +332,6 @@ source "drivers/mtd/maps/Kconfig"
 source "drivers/mtd/devices/Kconfig"
 
 source "drivers/mtd/nand/Kconfig"
-
-source "drivers/mtd/onenand/Kconfig"
 
 source "drivers/mtd/lpddr/Kconfig"
 

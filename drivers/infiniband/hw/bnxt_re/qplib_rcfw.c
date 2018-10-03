@@ -44,6 +44,9 @@
 #include "roce_hsi.h"
 #include "qplib_res.h"
 #include "qplib_rcfw.h"
+#include "qplib_sp.h"
+#include "qplib_fp.h"
+
 static void bnxt_qplib_service_creq(unsigned long data);
 
 /* Hardware communication channel */
@@ -85,13 +88,13 @@ static int __send_message(struct bnxt_qplib_rcfw *rcfw, struct cmdq_base *req,
 	unsigned long flags;
 	u32 size, opcode;
 	u16 cookie, cbit;
-	int pg, idx;
 	u8 *preq;
 
 	opcode = req->opcode;
 	if (!test_bit(FIRMWARE_INITIALIZED_FLAG, &rcfw->flags) &&
 	    (opcode != CMDQ_BASE_OPCODE_QUERY_FUNC &&
-	     opcode != CMDQ_BASE_OPCODE_INITIALIZE_FW)) {
+	     opcode != CMDQ_BASE_OPCODE_INITIALIZE_FW &&
+	     opcode != CMDQ_BASE_OPCODE_QUERY_VERSION)) {
 		dev_err(&rcfw->pdev->dev,
 			"QPLIB: RCFW not initialized, reject opcode 0x%x",
 			opcode);
@@ -103,6 +106,9 @@ static int __send_message(struct bnxt_qplib_rcfw *rcfw, struct cmdq_base *req,
 		dev_err(&rcfw->pdev->dev, "QPLIB: RCFW already initialized!");
 		return -EINVAL;
 	}
+
+	if (test_bit(FIRMWARE_TIMED_OUT, &rcfw->flags))
+		return -ETIMEDOUT;
 
 	/* Cmdq are in 16-byte units, each request can consume 1 or more
 	 * cmdqe
@@ -143,9 +149,6 @@ static int __send_message(struct bnxt_qplib_rcfw *rcfw, struct cmdq_base *req,
 	preq = (u8 *)req;
 	size = req->cmd_size * BNXT_QPLIB_CMDQE_UNITS;
 	do {
-		pg = 0;
-		idx = 0;
-
 		/* Locate the next cmdq slot */
 		sw_prod = HWQ_CMP(cmdq->prod, cmdq);
 		cmdqe = &cmdq_ptr[get_cmdq_pg(sw_prod)][get_cmdq_idx(sw_prod)];
@@ -166,14 +169,14 @@ static int __send_message(struct bnxt_qplib_rcfw *rcfw, struct cmdq_base *req,
 	rcfw->seq_num++;
 
 	cmdq_prod = cmdq->prod;
-	if (rcfw->flags & FIRMWARE_FIRST_FLAG) {
+	if (test_bit(FIRMWARE_FIRST_FLAG, &rcfw->flags)) {
 		/* The very first doorbell write
 		 * is required to set this flag
 		 * which prompts the FW to reset
 		 * its internal pointers
 		 */
-		cmdq_prod |= FIRMWARE_FIRST_FLAG;
-		rcfw->flags &= ~FIRMWARE_FIRST_FLAG;
+		cmdq_prod |= BIT(FIRMWARE_FIRST_FLAG);
+		clear_bit(FIRMWARE_FIRST_FLAG, &rcfw->flags);
 	}
 
 	/* ring CMDQ DB */
@@ -223,6 +226,7 @@ int bnxt_qplib_rcfw_send_message(struct bnxt_qplib_rcfw *rcfw,
 		/* timed out */
 		dev_err(&rcfw->pdev->dev, "QPLIB: cmdq[%#x]=%#x timedout (%d)msec",
 			cookie, opcode, RCFW_CMD_WAIT_TIME_MS);
+		set_bit(FIRMWARE_TIMED_OUT, &rcfw->flags);
 		return rc;
 	}
 
@@ -279,16 +283,30 @@ static int bnxt_qplib_process_qp_event(struct bnxt_qplib_rcfw *rcfw,
 				       struct creq_qp_event *qp_event)
 {
 	struct bnxt_qplib_hwq *cmdq = &rcfw->cmdq;
+	struct creq_qp_error_notification *err_event;
 	struct bnxt_qplib_crsq *crsqe;
 	unsigned long flags;
+	struct bnxt_qplib_qp *qp;
 	u16 cbit, blocked = 0;
 	u16 cookie;
 	__le16  mcookie;
+	u32 qp_id;
 
 	switch (qp_event->event) {
 	case CREQ_QP_EVENT_EVENT_QP_ERROR_NOTIFICATION:
+		err_event = (struct creq_qp_error_notification *)qp_event;
+		qp_id = le32_to_cpu(err_event->xid);
+		qp = rcfw->qp_tbl[qp_id].qp_handle;
 		dev_dbg(&rcfw->pdev->dev,
 			"QPLIB: Received QP error notification");
+		dev_dbg(&rcfw->pdev->dev,
+			"QPLIB: qpid 0x%x, req_err=0x%x, resp_err=0x%x\n",
+			qp_id, err_event->req_err_state_reason,
+			err_event->res_err_state_reason);
+		if (!qp)
+			break;
+		bnxt_qplib_mark_qp_error(qp);
+		rcfw->aeq_handler(rcfw, qp_event, qp);
 		break;
 	default:
 		/* Command Response */
@@ -341,6 +359,10 @@ static void bnxt_qplib_service_creq(unsigned long data)
 		creqe = &creq_ptr[get_creq_pg(sw_cons)][get_creq_idx(sw_cons)];
 		if (!CREQ_CMP_VALID(creqe, raw_cons, creq->max_elements))
 			break;
+		/* The valid test of the entry must be done first before
+		 * reading any further.
+		 */
+		dma_rmb();
 
 		type = creqe->type & CREQ_BASE_TYPE_MASK;
 		switch (type) {
@@ -437,7 +459,11 @@ int bnxt_qplib_init_rcfw(struct bnxt_qplib_rcfw *rcfw,
 	int rc;
 
 	RCFW_CMD_PREP(req, INITIALIZE_FW, cmd_flags);
-
+	/* Supply (log-base-2-of-host-page-size - base-page-shift)
+	 * to bono to adjust the doorbell page sizes.
+	 */
+	req.log2_dbr_pg_size = cpu_to_le16(PAGE_SHIFT -
+					   RCFW_DBR_BASE_PAGE_SHIFT);
 	/*
 	 * VFs need not setup the HW context area, PF
 	 * shall setup this area for VF. Skipping the
@@ -507,6 +533,7 @@ skip_ctx_setup:
 
 void bnxt_qplib_free_rcfw_channel(struct bnxt_qplib_rcfw *rcfw)
 {
+	kfree(rcfw->qp_tbl);
 	kfree(rcfw->crsqe_tbl);
 	bnxt_qplib_free_hwq(rcfw->pdev, &rcfw->cmdq);
 	bnxt_qplib_free_hwq(rcfw->pdev, &rcfw->creq);
@@ -514,7 +541,8 @@ void bnxt_qplib_free_rcfw_channel(struct bnxt_qplib_rcfw *rcfw)
 }
 
 int bnxt_qplib_alloc_rcfw_channel(struct pci_dev *pdev,
-				  struct bnxt_qplib_rcfw *rcfw)
+				  struct bnxt_qplib_rcfw *rcfw,
+				  int qp_tbl_sz)
 {
 	rcfw->pdev = pdev;
 	rcfw->creq.max_elements = BNXT_QPLIB_CREQE_MAX_CNT;
@@ -541,6 +569,12 @@ int bnxt_qplib_alloc_rcfw_channel(struct pci_dev *pdev,
 	if (!rcfw->crsqe_tbl)
 		goto fail;
 
+	rcfw->qp_tbl_size = qp_tbl_sz;
+	rcfw->qp_tbl = kcalloc(qp_tbl_sz, sizeof(struct bnxt_qplib_qp_node),
+			       GFP_KERNEL);
+	if (!rcfw->qp_tbl)
+		goto fail;
+
 	return 0;
 
 fail:
@@ -548,19 +582,29 @@ fail:
 	return -ENOMEM;
 }
 
-void bnxt_qplib_disable_rcfw_channel(struct bnxt_qplib_rcfw *rcfw)
+void bnxt_qplib_rcfw_stop_irq(struct bnxt_qplib_rcfw *rcfw, bool kill)
 {
-	unsigned long indx;
-
-	/* Make sure the HW channel is stopped! */
-	synchronize_irq(rcfw->vector);
 	tasklet_disable(&rcfw->worker);
-	tasklet_kill(&rcfw->worker);
+	/* Mask h/w interrupts */
+	CREQ_DB(rcfw->creq_bar_reg_iomem, rcfw->creq.cons,
+		rcfw->creq.max_elements);
+	/* Sync with last running IRQ-handler */
+	synchronize_irq(rcfw->vector);
+	if (kill)
+		tasklet_kill(&rcfw->worker);
 
 	if (rcfw->requested) {
 		free_irq(rcfw->vector, rcfw);
 		rcfw->requested = false;
 	}
+}
+
+void bnxt_qplib_disable_rcfw_channel(struct bnxt_qplib_rcfw *rcfw)
+{
+	unsigned long indx;
+
+	bnxt_qplib_rcfw_stop_irq(rcfw, true);
+
 	if (rcfw->cmdq_bar_reg_iomem)
 		iounmap(rcfw->cmdq_bar_reg_iomem);
 	rcfw->cmdq_bar_reg_iomem = NULL;
@@ -580,12 +624,37 @@ void bnxt_qplib_disable_rcfw_channel(struct bnxt_qplib_rcfw *rcfw)
 	rcfw->vector = 0;
 }
 
+int bnxt_qplib_rcfw_start_irq(struct bnxt_qplib_rcfw *rcfw, int msix_vector,
+			      bool need_init)
+{
+	int rc;
+
+	if (rcfw->requested)
+		return -EFAULT;
+
+	rcfw->vector = msix_vector;
+	if (need_init)
+		tasklet_init(&rcfw->worker,
+			     bnxt_qplib_service_creq, (unsigned long)rcfw);
+	else
+		tasklet_enable(&rcfw->worker);
+	rc = request_irq(rcfw->vector, bnxt_qplib_creq_irq, 0,
+			 "bnxt_qplib_creq", rcfw);
+	if (rc)
+		return rc;
+	rcfw->requested = true;
+	CREQ_DB_REARM(rcfw->creq_bar_reg_iomem, rcfw->creq.cons,
+		      rcfw->creq.max_elements);
+
+	return 0;
+}
+
 int bnxt_qplib_enable_rcfw_channel(struct pci_dev *pdev,
 				   struct bnxt_qplib_rcfw *rcfw,
 				   int msix_vector,
 				   int cp_bar_reg_off, int virt_fn,
 				   int (*aeq_handler)(struct bnxt_qplib_rcfw *,
-						      struct creq_func_event *))
+						      void *, void *))
 {
 	resource_size_t res_base;
 	struct cmdq_init init;
@@ -594,7 +663,7 @@ int bnxt_qplib_enable_rcfw_channel(struct pci_dev *pdev,
 
 	/* General */
 	rcfw->seq_num = 0;
-	rcfw->flags = FIRMWARE_FIRST_FLAG;
+	set_bit(FIRMWARE_FIRST_FLAG, &rcfw->flags);
 	bmap_size = BITS_TO_LONGS(RCFW_MAX_OUTSTANDING_CMD *
 				  sizeof(unsigned long));
 	rcfw->cmdq_bitmap = kzalloc(bmap_size, GFP_KERNEL);
@@ -641,27 +710,17 @@ int bnxt_qplib_enable_rcfw_channel(struct pci_dev *pdev,
 	rcfw->creq_qp_event_processed = 0;
 	rcfw->creq_func_event_processed = 0;
 
-	rcfw->vector = msix_vector;
 	if (aeq_handler)
 		rcfw->aeq_handler = aeq_handler;
+	init_waitqueue_head(&rcfw->waitq);
 
-	tasklet_init(&rcfw->worker, bnxt_qplib_service_creq,
-		     (unsigned long)rcfw);
-
-	rcfw->requested = false;
-	rc = request_irq(rcfw->vector, bnxt_qplib_creq_irq, 0,
-			 "bnxt_qplib_creq", rcfw);
+	rc = bnxt_qplib_rcfw_start_irq(rcfw, msix_vector, true);
 	if (rc) {
 		dev_err(&rcfw->pdev->dev,
 			"QPLIB: Failed to request IRQ for CREQ rc = 0x%x", rc);
 		bnxt_qplib_disable_rcfw_channel(rcfw);
 		return rc;
 	}
-	rcfw->requested = true;
-
-	init_waitqueue_head(&rcfw->waitq);
-
-	CREQ_DB_REARM(rcfw->creq_bar_reg_iomem, 0, rcfw->creq.max_elements);
 
 	init.cmdq_pbl = cpu_to_le64(rcfw->cmdq.pbl[PBL_LVL_0].pg_map_arr[0]);
 	init.cmdq_size_cmdq_lvl = cpu_to_le16(

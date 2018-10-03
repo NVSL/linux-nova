@@ -23,34 +23,10 @@
 #ifndef __AMD_SHARED_H__
 #define __AMD_SHARED_H__
 
-#define AMD_MAX_USEC_TIMEOUT		200000  /* 200 ms */
+#include <drm/amd_asic_type.h>
 
-/*
- * Supported ASIC types
- */
-enum amd_asic_type {
-	CHIP_TAHITI = 0,
-	CHIP_PITCAIRN,
-	CHIP_VERDE,
-	CHIP_OLAND,
-	CHIP_HAINAN,
-	CHIP_BONAIRE,
-	CHIP_KAVERI,
-	CHIP_KABINI,
-	CHIP_HAWAII,
-	CHIP_MULLINS,
-	CHIP_TOPAZ,
-	CHIP_TONGA,
-	CHIP_FIJI,
-	CHIP_CARRIZO,
-	CHIP_STONEY,
-	CHIP_POLARIS10,
-	CHIP_POLARIS11,
-	CHIP_POLARIS12,
-	CHIP_VEGA10,
-	CHIP_RAVEN,
-	CHIP_LAST,
-};
+
+#define AMD_MAX_USEC_TIMEOUT		200000  /* 200 ms */
 
 /*
  * Chip flags
@@ -84,65 +60,12 @@ enum amd_clockgating_state {
 	AMD_CG_STATE_UNGATE,
 };
 
-enum amd_dpm_forced_level {
-	AMD_DPM_FORCED_LEVEL_AUTO = 0x1,
-	AMD_DPM_FORCED_LEVEL_MANUAL = 0x2,
-	AMD_DPM_FORCED_LEVEL_LOW = 0x4,
-	AMD_DPM_FORCED_LEVEL_HIGH = 0x8,
-	AMD_DPM_FORCED_LEVEL_PROFILE_STANDARD = 0x10,
-	AMD_DPM_FORCED_LEVEL_PROFILE_MIN_SCLK = 0x20,
-	AMD_DPM_FORCED_LEVEL_PROFILE_MIN_MCLK = 0x40,
-	AMD_DPM_FORCED_LEVEL_PROFILE_PEAK = 0x80,
-	AMD_DPM_FORCED_LEVEL_PROFILE_EXIT = 0x100,
-};
 
 enum amd_powergating_state {
 	AMD_PG_STATE_GATE = 0,
 	AMD_PG_STATE_UNGATE,
 };
 
-struct amd_vce_state {
-	/* vce clocks */
-	u32 evclk;
-	u32 ecclk;
-	/* gpu clocks */
-	u32 sclk;
-	u32 mclk;
-	u8 clk_idx;
-	u8 pstate;
-};
-
-
-#define AMD_MAX_VCE_LEVELS 6
-
-enum amd_vce_level {
-	AMD_VCE_LEVEL_AC_ALL = 0,     /* AC, All cases */
-	AMD_VCE_LEVEL_DC_EE = 1,      /* DC, entropy encoding */
-	AMD_VCE_LEVEL_DC_LL_LOW = 2,  /* DC, low latency queue, res <= 720 */
-	AMD_VCE_LEVEL_DC_LL_HIGH = 3, /* DC, low latency queue, 1080 >= res > 720 */
-	AMD_VCE_LEVEL_DC_GP_LOW = 4,  /* DC, general purpose queue, res <= 720 */
-	AMD_VCE_LEVEL_DC_GP_HIGH = 5, /* DC, general purpose queue, 1080 >= res > 720 */
-};
-
-enum amd_pp_profile_type {
-	AMD_PP_GFX_PROFILE,
-	AMD_PP_COMPUTE_PROFILE,
-};
-
-struct amd_pp_profile {
-	enum amd_pp_profile_type type;
-	uint32_t min_sclk;
-	uint32_t min_mclk;
-	uint16_t activity_threshold;
-	uint8_t up_hyst;
-	uint8_t down_hyst;
-};
-
-enum amd_fan_ctrl_mode {
-	AMD_FAN_CTRL_NONE = 0,
-	AMD_FAN_CTRL_MANUAL = 1,
-	AMD_FAN_CTRL_AUTO = 2,
-};
 
 /* CG flags */
 #define AMD_CG_SUPPORT_GFX_MGCG			(1 << 0)
@@ -169,7 +92,7 @@ enum amd_fan_ctrl_mode {
 #define AMD_CG_SUPPORT_GFX_3D_CGLS		(1 << 21)
 #define AMD_CG_SUPPORT_DRM_MGCG			(1 << 22)
 #define AMD_CG_SUPPORT_DF_MGCG			(1 << 23)
-
+#define AMD_CG_SUPPORT_VCN_MGCG			(1 << 24)
 /* PG flags */
 #define AMD_PG_SUPPORT_GFX_PG			(1 << 0)
 #define AMD_PG_SUPPORT_GFX_SMG			(1 << 1)
@@ -185,26 +108,26 @@ enum amd_fan_ctrl_mode {
 #define AMD_PG_SUPPORT_GFX_QUICK_MG		(1 << 11)
 #define AMD_PG_SUPPORT_GFX_PIPELINE		(1 << 12)
 #define AMD_PG_SUPPORT_MMHUB			(1 << 13)
+#define AMD_PG_SUPPORT_VCN			(1 << 14)
 
-enum amd_pm_state_type {
-	/* not used for dpm */
-	POWER_STATE_TYPE_DEFAULT,
-	POWER_STATE_TYPE_POWERSAVE,
-	/* user selectable states */
-	POWER_STATE_TYPE_BATTERY,
-	POWER_STATE_TYPE_BALANCED,
-	POWER_STATE_TYPE_PERFORMANCE,
-	/* internal states */
-	POWER_STATE_TYPE_INTERNAL_UVD,
-	POWER_STATE_TYPE_INTERNAL_UVD_SD,
-	POWER_STATE_TYPE_INTERNAL_UVD_HD,
-	POWER_STATE_TYPE_INTERNAL_UVD_HD2,
-	POWER_STATE_TYPE_INTERNAL_UVD_MVC,
-	POWER_STATE_TYPE_INTERNAL_BOOT,
-	POWER_STATE_TYPE_INTERNAL_THERMAL,
-	POWER_STATE_TYPE_INTERNAL_ACPI,
-	POWER_STATE_TYPE_INTERNAL_ULV,
-	POWER_STATE_TYPE_INTERNAL_3DPERF,
+enum PP_FEATURE_MASK {
+	PP_SCLK_DPM_MASK = 0x1,
+	PP_MCLK_DPM_MASK = 0x2,
+	PP_PCIE_DPM_MASK = 0x4,
+	PP_SCLK_DEEP_SLEEP_MASK = 0x8,
+	PP_POWER_CONTAINMENT_MASK = 0x10,
+	PP_UVD_HANDSHAKE_MASK = 0x20,
+	PP_SMC_VOLTAGE_CONTROL_MASK = 0x40,
+	PP_VBI_TIME_SUPPORT_MASK = 0x80,
+	PP_ULV_MASK = 0x100,
+	PP_ENABLE_GFX_CG_THRU_SMU = 0x200,
+	PP_CLOCK_STRETCH_MASK = 0x400,
+	PP_OD_FUZZY_FAN_CONTROL_MASK = 0x800,
+	PP_SOCCLK_DPM_MASK = 0x1000,
+	PP_DCEFCLK_DPM_MASK = 0x2000,
+	PP_OVERDRIVE_MASK = 0x4000,
+	PP_GFXOFF_MASK = 0x8000,
+	PP_ACG_MASK = 0x10000,
 };
 
 struct amd_ip_funcs {
@@ -248,5 +171,6 @@ struct amd_ip_funcs {
 	/* get current clockgating status */
 	void (*get_clockgating_state)(void *handle, u32 *flags);
 };
+
 
 #endif /* __AMD_SHARED_H__ */

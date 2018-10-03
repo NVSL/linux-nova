@@ -85,7 +85,12 @@
  * (for a single member disk). New io_units are added to the end of the list
  * and the first io_unit is submitted, if it is not submitted already.
  * The current io_unit accepting new stripes is always at the end of the list.
+ *
+ * If write-back cache is enabled for any of the disks in the array, its data
+ * must be flushed before next io_unit is submitted.
  */
+
+#define PPL_SPACE_SIZE (128 * 1024)
 
 struct ppl_conf {
 	struct mddev *mddev;
@@ -100,8 +105,9 @@ struct ppl_conf {
 	atomic64_t seq;		/* current log write sequence number */
 
 	struct kmem_cache *io_kc;
-	mempool_t *io_pool;
-	struct bio_set *bs;
+	mempool_t io_pool;
+	struct bio_set bs;
+	struct bio_set flush_bs;
 
 	/* used only for recovery */
 	int recovered_entries;
@@ -122,6 +128,12 @@ struct ppl_log {
 					 * always at the end of io_list */
 	spinlock_t io_list_lock;
 	struct list_head io_list;	/* all io_units of this log */
+
+	sector_t next_io_sector;
+	unsigned int entry_space;
+	bool use_multippl;
+	bool wb_cache_on;
+	unsigned long disk_flush_bitmap;
 };
 
 #define PPL_IO_INLINE_BVECS 32
@@ -139,6 +151,7 @@ struct ppl_io_unit {
 
 	struct list_head stripe_list;	/* stripes added to the io_unit */
 	atomic_t pending_stripes;	/* how many stripes not written to raid */
+	atomic_t pending_flushes;	/* how many disk flushes are in progress */
 
 	bool submitted;			/* true if write to log started */
 
@@ -231,7 +244,7 @@ static struct ppl_io_unit *ppl_new_iounit(struct ppl_log *log,
 	struct ppl_header *pplhdr;
 	struct page *header_page;
 
-	io = mempool_alloc(ppl_conf->io_pool, GFP_NOWAIT);
+	io = mempool_alloc(&ppl_conf->io_pool, GFP_NOWAIT);
 	if (!io)
 		return NULL;
 
@@ -243,6 +256,7 @@ static struct ppl_io_unit *ppl_new_iounit(struct ppl_log *log,
 	INIT_LIST_HEAD(&io->log_sibling);
 	INIT_LIST_HEAD(&io->stripe_list);
 	atomic_set(&io->pending_stripes, 0);
+	atomic_set(&io->pending_flushes, 0);
 	bio_init(&io->bio, io->biovec, PPL_IO_INLINE_BVECS);
 
 	pplhdr = page_address(io->header_page);
@@ -264,13 +278,12 @@ static int ppl_log_stripe(struct ppl_log *log, struct stripe_head *sh)
 	int i;
 	sector_t data_sector = 0;
 	int data_disks = 0;
-	unsigned int entry_space = (log->rdev->ppl.size << 9) - PPL_HEADER_SIZE;
 	struct r5conf *conf = sh->raid_conf;
 
 	pr_debug("%s: stripe: %llu\n", __func__, (unsigned long long)sh->sector);
 
 	/* check if current io_unit is full */
-	if (io && (io->pp_size == entry_space ||
+	if (io && (io->pp_size == log->entry_space ||
 		   io->entries_count == PPL_HDR_MAX_ENTRIES)) {
 		pr_debug("%s: add io_unit blocked by seq: %llu\n",
 			 __func__, io->seq);
@@ -415,7 +428,7 @@ static void ppl_submit_iounit_bio(struct ppl_io_unit *io, struct bio *bio)
 	pr_debug("%s: seq: %llu size: %u sector: %llu dev: %s\n",
 		 __func__, io->seq, bio->bi_iter.bi_size,
 		 (unsigned long long)bio->bi_iter.bi_sector,
-		 bdevname(bio->bi_bdev, b));
+		 bio_devname(bio, b));
 
 	submit_bio(bio);
 }
@@ -451,13 +464,37 @@ static void ppl_submit_iounit(struct ppl_io_unit *io)
 	pplhdr->entries_count = cpu_to_le32(io->entries_count);
 	pplhdr->checksum = cpu_to_le32(~crc32c_le(~0, pplhdr, PPL_HEADER_SIZE));
 
+	/* Rewind the buffer if current PPL is larger then remaining space */
+	if (log->use_multippl &&
+	    log->rdev->ppl.sector + log->rdev->ppl.size - log->next_io_sector <
+	    (PPL_HEADER_SIZE + io->pp_size) >> 9)
+		log->next_io_sector = log->rdev->ppl.sector;
+
+
 	bio->bi_end_io = ppl_log_endio;
 	bio->bi_opf = REQ_OP_WRITE | REQ_FUA;
-	bio->bi_bdev = log->rdev->bdev;
-	bio->bi_iter.bi_sector = log->rdev->ppl.sector;
+	bio_set_dev(bio, log->rdev->bdev);
+	bio->bi_iter.bi_sector = log->next_io_sector;
 	bio_add_page(bio, io->header_page, PAGE_SIZE, 0);
 
+	pr_debug("%s: log->current_io_sector: %llu\n", __func__,
+	    (unsigned long long)log->next_io_sector);
+
+	if (log->use_multippl)
+		log->next_io_sector += (PPL_HEADER_SIZE + io->pp_size) >> 9;
+
+	WARN_ON(log->disk_flush_bitmap != 0);
+
 	list_for_each_entry(sh, &io->stripe_list, log_list) {
+		for (i = 0; i < sh->disks; i++) {
+			struct r5dev *dev = &sh->dev[i];
+
+			if ((ppl_conf->child_logs[i].wb_cache_on) &&
+			    (test_bit(R5_Wantwrite, &dev->flags))) {
+				set_bit(i, &log->disk_flush_bitmap);
+			}
+		}
+
 		/* entries for full stripe writes have no partial parity */
 		if (test_bit(STRIPE_FULL_WRITE, &sh->state))
 			continue;
@@ -466,9 +503,9 @@ static void ppl_submit_iounit(struct ppl_io_unit *io)
 			struct bio *prev = bio;
 
 			bio = bio_alloc_bioset(GFP_NOIO, BIO_MAX_PAGES,
-					       ppl_conf->bs);
+					       &ppl_conf->bs);
 			bio->bi_opf = prev->bi_opf;
-			bio->bi_bdev = prev->bi_bdev;
+			bio_copy_dev(bio, prev);
 			bio->bi_iter.bi_sector = bio_end_sector(prev);
 			bio_add_page(bio, sh->ppl_page, PAGE_SIZE, 0);
 
@@ -522,6 +559,7 @@ static void ppl_io_unit_finished(struct ppl_io_unit *io)
 {
 	struct ppl_log *log = io->log;
 	struct ppl_conf *ppl_conf = log->ppl_conf;
+	struct r5conf *conf = ppl_conf->mddev->private;
 	unsigned long flags;
 
 	pr_debug("%s: seq: %llu\n", __func__, io->seq);
@@ -532,7 +570,7 @@ static void ppl_io_unit_finished(struct ppl_io_unit *io)
 	list_del(&io->log_sibling);
 	spin_unlock(&log->io_list_lock);
 
-	mempool_free(io, ppl_conf->io_pool);
+	mempool_free(io, &ppl_conf->io_pool);
 
 	spin_lock(&ppl_conf->no_mem_stripes_lock);
 	if (!list_empty(&ppl_conf->no_mem_stripes)) {
@@ -547,6 +585,122 @@ static void ppl_io_unit_finished(struct ppl_io_unit *io)
 	spin_unlock(&ppl_conf->no_mem_stripes_lock);
 
 	local_irq_restore(flags);
+
+	wake_up(&conf->wait_for_quiescent);
+}
+
+static void ppl_flush_endio(struct bio *bio)
+{
+	struct ppl_io_unit *io = bio->bi_private;
+	struct ppl_log *log = io->log;
+	struct ppl_conf *ppl_conf = log->ppl_conf;
+	struct r5conf *conf = ppl_conf->mddev->private;
+	char b[BDEVNAME_SIZE];
+
+	pr_debug("%s: dev: %s\n", __func__, bio_devname(bio, b));
+
+	if (bio->bi_status) {
+		struct md_rdev *rdev;
+
+		rcu_read_lock();
+		rdev = md_find_rdev_rcu(conf->mddev, bio_dev(bio));
+		if (rdev)
+			md_error(rdev->mddev, rdev);
+		rcu_read_unlock();
+	}
+
+	bio_put(bio);
+
+	if (atomic_dec_and_test(&io->pending_flushes)) {
+		ppl_io_unit_finished(io);
+		md_wakeup_thread(conf->mddev->thread);
+	}
+}
+
+static void ppl_do_flush(struct ppl_io_unit *io)
+{
+	struct ppl_log *log = io->log;
+	struct ppl_conf *ppl_conf = log->ppl_conf;
+	struct r5conf *conf = ppl_conf->mddev->private;
+	int raid_disks = conf->raid_disks;
+	int flushed_disks = 0;
+	int i;
+
+	atomic_set(&io->pending_flushes, raid_disks);
+
+	for_each_set_bit(i, &log->disk_flush_bitmap, raid_disks) {
+		struct md_rdev *rdev;
+		struct block_device *bdev = NULL;
+
+		rcu_read_lock();
+		rdev = rcu_dereference(conf->disks[i].rdev);
+		if (rdev && !test_bit(Faulty, &rdev->flags))
+			bdev = rdev->bdev;
+		rcu_read_unlock();
+
+		if (bdev) {
+			struct bio *bio;
+			char b[BDEVNAME_SIZE];
+
+			bio = bio_alloc_bioset(GFP_NOIO, 0, &ppl_conf->flush_bs);
+			bio_set_dev(bio, bdev);
+			bio->bi_private = io;
+			bio->bi_opf = REQ_OP_WRITE | REQ_PREFLUSH;
+			bio->bi_end_io = ppl_flush_endio;
+
+			pr_debug("%s: dev: %s\n", __func__,
+				 bio_devname(bio, b));
+
+			submit_bio(bio);
+			flushed_disks++;
+		}
+	}
+
+	log->disk_flush_bitmap = 0;
+
+	for (i = flushed_disks ; i < raid_disks; i++) {
+		if (atomic_dec_and_test(&io->pending_flushes))
+			ppl_io_unit_finished(io);
+	}
+}
+
+static inline bool ppl_no_io_unit_submitted(struct r5conf *conf,
+					    struct ppl_log *log)
+{
+	struct ppl_io_unit *io;
+
+	io = list_first_entry_or_null(&log->io_list, struct ppl_io_unit,
+				      log_sibling);
+
+	return !io || !io->submitted;
+}
+
+void ppl_quiesce(struct r5conf *conf, int quiesce)
+{
+	struct ppl_conf *ppl_conf = conf->log_private;
+	int i;
+
+	if (quiesce) {
+		for (i = 0; i < ppl_conf->count; i++) {
+			struct ppl_log *log = &ppl_conf->child_logs[i];
+
+			spin_lock_irq(&log->io_list_lock);
+			wait_event_lock_irq(conf->wait_for_quiescent,
+					    ppl_no_io_unit_submitted(conf, log),
+					    log->io_list_lock);
+			spin_unlock_irq(&log->io_list_lock);
+		}
+	}
+}
+
+int ppl_handle_flush_request(struct r5l_log *log, struct bio *bio)
+{
+	if (bio->bi_iter.bi_size == 0) {
+		bio_endio(bio);
+		return 0;
+	}
+	bio->bi_opf &= ~REQ_PREFLUSH;
+	return -EAGAIN;
 }
 
 void ppl_stripe_write_finished(struct stripe_head *sh)
@@ -556,8 +710,12 @@ void ppl_stripe_write_finished(struct stripe_head *sh)
 	io = sh->ppl_io;
 	sh->ppl_io = NULL;
 
-	if (io && atomic_dec_and_test(&io->pending_stripes))
-		ppl_io_unit_finished(io);
+	if (io && atomic_dec_and_test(&io->pending_stripes)) {
+		if (io->log->disk_flush_bitmap)
+			ppl_do_flush(io);
+		else
+			ppl_io_unit_finished(io);
+	}
 }
 
 static void ppl_xor(int size, struct page *page1, struct page *page2)
@@ -740,7 +898,8 @@ static int ppl_recover_entry(struct ppl_log *log, struct ppl_header_entry *e,
 				 (unsigned long long)sector);
 
 			rdev = conf->disks[dd_idx].rdev;
-			if (!rdev) {
+			if (!rdev || (!test_bit(In_sync, &rdev->flags) &&
+				      sector >= rdev->recovery_offset)) {
 				pr_debug("%s:%*s data member disk %d missing\n",
 					 __func__, indent, "", dd_idx);
 				update_parity = false;
@@ -813,12 +972,14 @@ out:
 	return ret;
 }
 
-static int ppl_recover(struct ppl_log *log, struct ppl_header *pplhdr)
+static int ppl_recover(struct ppl_log *log, struct ppl_header *pplhdr,
+		       sector_t offset)
 {
 	struct ppl_conf *ppl_conf = log->ppl_conf;
 	struct md_rdev *rdev = log->rdev;
 	struct mddev *mddev = rdev->mddev;
-	sector_t ppl_sector = rdev->ppl.sector + (PPL_HEADER_SIZE >> 9);
+	sector_t ppl_sector = rdev->ppl.sector + offset +
+			      (PPL_HEADER_SIZE >> 9);
 	struct page *page;
 	int i;
 	int ret = 0;
@@ -902,6 +1063,9 @@ static int ppl_write_empty_header(struct ppl_log *log)
 		return -ENOMEM;
 
 	pplhdr = page_address(page);
+	/* zero out PPL space to avoid collision with old PPLs */
+	blkdev_issue_zeroout(rdev->bdev, rdev->ppl.sector,
+			    log->rdev->ppl.size, GFP_NOIO, 0);
 	memset(pplhdr->reserved, 0xff, PPL_HDR_RESERVED);
 	pplhdr->signature = cpu_to_le32(log->ppl_conf->signature);
 	pplhdr->checksum = cpu_to_le32(~crc32c_le(~0, pplhdr, PAGE_SIZE));
@@ -922,63 +1086,110 @@ static int ppl_load_distributed(struct ppl_log *log)
 	struct ppl_conf *ppl_conf = log->ppl_conf;
 	struct md_rdev *rdev = log->rdev;
 	struct mddev *mddev = rdev->mddev;
-	struct page *page;
-	struct ppl_header *pplhdr;
+	struct page *page, *page2, *tmp;
+	struct ppl_header *pplhdr = NULL, *prev_pplhdr = NULL;
 	u32 crc, crc_stored;
 	u32 signature;
-	int ret = 0;
+	int ret = 0, i;
+	sector_t pplhdr_offset = 0, prev_pplhdr_offset = 0;
 
 	pr_debug("%s: disk: %d\n", __func__, rdev->raid_disk);
-
-	/* read PPL header */
+	/* read PPL headers, find the recent one */
 	page = alloc_page(GFP_KERNEL);
 	if (!page)
 		return -ENOMEM;
 
-	if (!sync_page_io(rdev, rdev->ppl.sector - rdev->data_offset,
-			  PAGE_SIZE, page, REQ_OP_READ, 0, false)) {
-		md_error(mddev, rdev);
-		ret = -EIO;
-		goto out;
+	page2 = alloc_page(GFP_KERNEL);
+	if (!page2) {
+		__free_page(page);
+		return -ENOMEM;
 	}
-	pplhdr = page_address(page);
 
-	/* check header validity */
-	crc_stored = le32_to_cpu(pplhdr->checksum);
-	pplhdr->checksum = 0;
-	crc = ~crc32c_le(~0, pplhdr, PAGE_SIZE);
+	/* searching ppl area for latest ppl */
+	while (pplhdr_offset < rdev->ppl.size - (PPL_HEADER_SIZE >> 9)) {
+		if (!sync_page_io(rdev,
+				  rdev->ppl.sector - rdev->data_offset +
+				  pplhdr_offset, PAGE_SIZE, page, REQ_OP_READ,
+				  0, false)) {
+			md_error(mddev, rdev);
+			ret = -EIO;
+			/* if not able to read - don't recover any PPL */
+			pplhdr = NULL;
+			break;
+		}
+		pplhdr = page_address(page);
 
-	if (crc_stored != crc) {
-		pr_debug("%s: ppl header crc does not match: stored: 0x%x calculated: 0x%x\n",
-			 __func__, crc_stored, crc);
+		/* check header validity */
+		crc_stored = le32_to_cpu(pplhdr->checksum);
+		pplhdr->checksum = 0;
+		crc = ~crc32c_le(~0, pplhdr, PAGE_SIZE);
+
+		if (crc_stored != crc) {
+			pr_debug("%s: ppl header crc does not match: stored: 0x%x calculated: 0x%x (offset: %llu)\n",
+				 __func__, crc_stored, crc,
+				 (unsigned long long)pplhdr_offset);
+			pplhdr = prev_pplhdr;
+			pplhdr_offset = prev_pplhdr_offset;
+			break;
+		}
+
+		signature = le32_to_cpu(pplhdr->signature);
+
+		if (mddev->external) {
+			/*
+			 * For external metadata the header signature is set and
+			 * validated in userspace.
+			 */
+			ppl_conf->signature = signature;
+		} else if (ppl_conf->signature != signature) {
+			pr_debug("%s: ppl header signature does not match: stored: 0x%x configured: 0x%x (offset: %llu)\n",
+				 __func__, signature, ppl_conf->signature,
+				 (unsigned long long)pplhdr_offset);
+			pplhdr = prev_pplhdr;
+			pplhdr_offset = prev_pplhdr_offset;
+			break;
+		}
+
+		if (prev_pplhdr && le64_to_cpu(prev_pplhdr->generation) >
+		    le64_to_cpu(pplhdr->generation)) {
+			/* previous was newest */
+			pplhdr = prev_pplhdr;
+			pplhdr_offset = prev_pplhdr_offset;
+			break;
+		}
+
+		prev_pplhdr_offset = pplhdr_offset;
+		prev_pplhdr = pplhdr;
+
+		tmp = page;
+		page = page2;
+		page2 = tmp;
+
+		/* calculate next potential ppl offset */
+		for (i = 0; i < le32_to_cpu(pplhdr->entries_count); i++)
+			pplhdr_offset +=
+			    le32_to_cpu(pplhdr->entries[i].pp_size) >> 9;
+		pplhdr_offset += PPL_HEADER_SIZE >> 9;
+	}
+
+	/* no valid ppl found */
+	if (!pplhdr)
 		ppl_conf->mismatch_count++;
-		goto out;
-	}
-
-	signature = le32_to_cpu(pplhdr->signature);
-
-	if (mddev->external) {
-		/*
-		 * For external metadata the header signature is set and
-		 * validated in userspace.
-		 */
-		ppl_conf->signature = signature;
-	} else if (ppl_conf->signature != signature) {
-		pr_debug("%s: ppl header signature does not match: stored: 0x%x configured: 0x%x\n",
-			 __func__, signature, ppl_conf->signature);
-		ppl_conf->mismatch_count++;
-		goto out;
-	}
+	else
+		pr_debug("%s: latest PPL found at offset: %llu, with generation: %llu\n",
+		    __func__, (unsigned long long)pplhdr_offset,
+		    le64_to_cpu(pplhdr->generation));
 
 	/* attempt to recover from log if we are starting a dirty array */
-	if (!mddev->pers && mddev->recovery_cp != MaxSector)
-		ret = ppl_recover(log, pplhdr);
-out:
+	if (pplhdr && !mddev->pers && mddev->recovery_cp != MaxSector)
+		ret = ppl_recover(log, pplhdr, pplhdr_offset);
+
 	/* write empty header if we are starting the array */
 	if (!ret && !mddev->pers)
 		ret = ppl_write_empty_header(log);
 
 	__free_page(page);
+	__free_page(page2);
 
 	pr_debug("%s: return: %d mismatch_count: %d recovered_entries: %d\n",
 		 __func__, ret, ppl_conf->mismatch_count,
@@ -1031,12 +1242,13 @@ static int ppl_load(struct ppl_conf *ppl_conf)
 static void __ppl_exit_log(struct ppl_conf *ppl_conf)
 {
 	clear_bit(MD_HAS_PPL, &ppl_conf->mddev->flags);
+	clear_bit(MD_HAS_MULTIPLE_PPLS, &ppl_conf->mddev->flags);
 
 	kfree(ppl_conf->child_logs);
 
-	if (ppl_conf->bs)
-		bioset_free(ppl_conf->bs);
-	mempool_destroy(ppl_conf->io_pool);
+	bioset_exit(&ppl_conf->bs);
+	bioset_exit(&ppl_conf->flush_bs);
+	mempool_exit(&ppl_conf->io_pool);
 	kmem_cache_destroy(ppl_conf->io_kc);
 
 	kfree(ppl_conf);
@@ -1099,13 +1311,35 @@ static int ppl_validate_rdev(struct md_rdev *rdev)
 	return 0;
 }
 
+static void ppl_init_child_log(struct ppl_log *log, struct md_rdev *rdev)
+{
+	struct request_queue *q;
+
+	if ((rdev->ppl.size << 9) >= (PPL_SPACE_SIZE +
+				      PPL_HEADER_SIZE) * 2) {
+		log->use_multippl = true;
+		set_bit(MD_HAS_MULTIPLE_PPLS,
+			&log->ppl_conf->mddev->flags);
+		log->entry_space = PPL_SPACE_SIZE;
+	} else {
+		log->use_multippl = false;
+		log->entry_space = (log->rdev->ppl.size << 9) -
+				   PPL_HEADER_SIZE;
+	}
+	log->next_io_sector = rdev->ppl.sector;
+
+	q = bdev_get_queue(rdev->bdev);
+	if (test_bit(QUEUE_FLAG_WC, &q->queue_flags))
+		log->wb_cache_on = true;
+}
+
 int ppl_init_log(struct r5conf *conf)
 {
 	struct ppl_conf *ppl_conf;
 	struct mddev *mddev = conf->mddev;
 	int ret = 0;
+	int max_disks;
 	int i;
-	bool need_cache_flush = false;
 
 	pr_debug("md/raid:%s: enabling distributed Partial Parity Log\n",
 		 mdname(conf->mddev));
@@ -1131,6 +1365,14 @@ int ppl_init_log(struct r5conf *conf)
 		return -EINVAL;
 	}
 
+	max_disks = FIELD_SIZEOF(struct ppl_log, disk_flush_bitmap) *
+		BITS_PER_BYTE;
+	if (conf->raid_disks > max_disks) {
+		pr_warn("md/raid:%s PPL doesn't support over %d disks in the array\n",
+			mdname(mddev), max_disks);
+		return -EINVAL;
+	}
+
 	ppl_conf = kzalloc(sizeof(struct ppl_conf), GFP_KERNEL);
 	if (!ppl_conf)
 		return -ENOMEM;
@@ -1143,18 +1385,18 @@ int ppl_init_log(struct r5conf *conf)
 		goto err;
 	}
 
-	ppl_conf->io_pool = mempool_create(conf->raid_disks, ppl_io_pool_alloc,
-					   ppl_io_pool_free, ppl_conf->io_kc);
-	if (!ppl_conf->io_pool) {
-		ret = -ENOMEM;
+	ret = mempool_init(&ppl_conf->io_pool, conf->raid_disks, ppl_io_pool_alloc,
+			   ppl_io_pool_free, ppl_conf->io_kc);
+	if (ret)
 		goto err;
-	}
 
-	ppl_conf->bs = bioset_create(conf->raid_disks, 0, BIOSET_NEED_BVECS);
-	if (!ppl_conf->bs) {
-		ret = -ENOMEM;
+	ret = bioset_init(&ppl_conf->bs, conf->raid_disks, 0, BIOSET_NEED_BVECS);
+	if (ret)
 		goto err;
-	}
+
+	ret = bioset_init(&ppl_conf->flush_bs, conf->raid_disks, 0, 0);
+	if (ret)
+		goto err;
 
 	ppl_conf->count = conf->raid_disks;
 	ppl_conf->child_logs = kcalloc(ppl_conf->count, sizeof(struct ppl_log),
@@ -1187,29 +1429,20 @@ int ppl_init_log(struct r5conf *conf)
 		log->rdev = rdev;
 
 		if (rdev) {
-			struct request_queue *q;
-
 			ret = ppl_validate_rdev(rdev);
 			if (ret)
 				goto err;
 
-			q = bdev_get_queue(rdev->bdev);
-			if (test_bit(QUEUE_FLAG_WC, &q->queue_flags))
-				need_cache_flush = true;
+			ppl_init_child_log(log, rdev);
 		}
 	}
-
-	if (need_cache_flush)
-		pr_warn("md/raid:%s: Volatile write-back cache should be disabled on all member drives when using PPL!\n",
-			mdname(mddev));
 
 	/* load and possibly recover the logs from the member disks */
 	ret = ppl_load(ppl_conf);
 
 	if (ret) {
 		goto err;
-	} else if (!mddev->pers &&
-		   mddev->recovery_cp == 0 && !mddev->degraded &&
+	} else if (!mddev->pers && mddev->recovery_cp == 0 &&
 		   ppl_conf->recovered_entries > 0 &&
 		   ppl_conf->mismatch_count == 0) {
 		/*
@@ -1261,6 +1494,7 @@ int ppl_modify_log(struct r5conf *conf, struct md_rdev *rdev, bool add)
 		if (!ret) {
 			log->rdev = rdev;
 			ret = ppl_write_empty_header(log);
+			ppl_init_child_log(log, rdev);
 		}
 	} else {
 		log->rdev = NULL;

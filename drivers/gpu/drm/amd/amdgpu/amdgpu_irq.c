@@ -37,6 +37,10 @@
 
 #include <linux/pm_runtime.h>
 
+#ifdef CONFIG_DRM_AMD_DC
+#include "amdgpu_dm_irq.h"
+#endif
+
 #define AMDGPU_WAIT_IDLE_TIMEOUT 200
 
 /*
@@ -84,11 +88,11 @@ static void amdgpu_irq_reset_work_func(struct work_struct *work)
 						  reset_work);
 
 	if (!amdgpu_sriov_vf(adev))
-		amdgpu_gpu_reset(adev);
+		amdgpu_device_gpu_recover(adev, NULL, false);
 }
 
 /* Disable *all* interrupts */
-static void amdgpu_irq_disable_all(struct amdgpu_device *adev)
+void amdgpu_irq_disable_all(struct amdgpu_device *adev)
 {
 	unsigned long irqflags;
 	unsigned i, j, k;
@@ -116,55 +120,6 @@ static void amdgpu_irq_disable_all(struct amdgpu_device *adev)
 		}
 	}
 	spin_unlock_irqrestore(&adev->irq.lock, irqflags);
-}
-
-/**
- * amdgpu_irq_preinstall - drm irq preinstall callback
- *
- * @dev: drm dev pointer
- *
- * Gets the hw ready to enable irqs (all asics).
- * This function disables all interrupt sources on the GPU.
- */
-void amdgpu_irq_preinstall(struct drm_device *dev)
-{
-	struct amdgpu_device *adev = dev->dev_private;
-
-	/* Disable *all* interrupts */
-	amdgpu_irq_disable_all(adev);
-	/* Clear bits */
-	amdgpu_ih_process(adev);
-}
-
-/**
- * amdgpu_irq_postinstall - drm irq preinstall callback
- *
- * @dev: drm dev pointer
- *
- * Handles stuff to be done after enabling irqs (all asics).
- * Returns 0 on success.
- */
-int amdgpu_irq_postinstall(struct drm_device *dev)
-{
-	dev->max_vblank_count = 0x00ffffff;
-	return 0;
-}
-
-/**
- * amdgpu_irq_uninstall - drm irq uninstall callback
- *
- * @dev: drm dev pointer
- *
- * This function disables all interrupt sources on the GPU (all asics).
- */
-void amdgpu_irq_uninstall(struct drm_device *dev)
-{
-	struct amdgpu_device *adev = dev->dev_private;
-
-	if (adev == NULL) {
-		return;
-	}
-	amdgpu_irq_disable_all(adev);
 }
 
 /**
@@ -220,10 +175,6 @@ int amdgpu_irq_init(struct amdgpu_device *adev)
 	int r = 0;
 
 	spin_lock_init(&adev->irq.lock);
-	r = drm_vblank_init(adev->ddev, adev->mode_info.num_crtc);
-	if (r) {
-		return r;
-	}
 
 	/* enable msi */
 	adev->irq.msi_enabled = false;
@@ -232,23 +183,39 @@ int amdgpu_irq_init(struct amdgpu_device *adev)
 		int ret = pci_enable_msi(adev->pdev);
 		if (!ret) {
 			adev->irq.msi_enabled = true;
-			dev_info(adev->dev, "amdgpu: using MSI.\n");
+			dev_dbg(adev->dev, "amdgpu: using MSI.\n");
 		}
 	}
 
-	INIT_WORK(&adev->hotplug_work, amdgpu_hotplug_work_func);
+	if (!amdgpu_device_has_dc_support(adev)) {
+		if (!adev->enable_virtual_display)
+			/* Disable vblank irqs aggressively for power-saving */
+			/* XXX: can this be enabled for DC? */
+			adev->ddev->vblank_disable_immediate = true;
+
+		r = drm_vblank_init(adev->ddev, adev->mode_info.num_crtc);
+		if (r)
+			return r;
+
+		/* pre DCE11 */
+		INIT_WORK(&adev->hotplug_work,
+				amdgpu_hotplug_work_func);
+	}
+
 	INIT_WORK(&adev->reset_work, amdgpu_irq_reset_work_func);
 
 	adev->irq.installed = true;
 	r = drm_irq_install(adev->ddev, adev->ddev->pdev->irq);
 	if (r) {
 		adev->irq.installed = false;
-		flush_work(&adev->hotplug_work);
+		if (!amdgpu_device_has_dc_support(adev))
+			flush_work(&adev->hotplug_work);
 		cancel_work_sync(&adev->reset_work);
 		return r;
 	}
+	adev->ddev->max_vblank_count = 0x00ffffff;
 
-	DRM_INFO("amdgpu: irq initialized.\n");
+	DRM_DEBUG("amdgpu: irq initialized.\n");
 	return 0;
 }
 
@@ -263,13 +230,13 @@ void amdgpu_irq_fini(struct amdgpu_device *adev)
 {
 	unsigned i, j;
 
-	drm_vblank_cleanup(adev->ddev);
 	if (adev->irq.installed) {
 		drm_irq_uninstall(adev->ddev);
 		adev->irq.installed = false;
 		if (adev->irq.msi_enabled)
 			pci_disable_msi(adev->pdev);
-		flush_work(&adev->hotplug_work);
+		if (!amdgpu_device_has_dc_support(adev))
+			flush_work(&adev->hotplug_work);
 		cancel_work_sync(&adev->reset_work);
 	}
 
@@ -292,6 +259,7 @@ void amdgpu_irq_fini(struct amdgpu_device *adev)
 			}
 		}
 		kfree(adev->irq.client[i].sources);
+		adev->irq.client[i].sources = NULL;
 	}
 }
 

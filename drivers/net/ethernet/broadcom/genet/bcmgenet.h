@@ -16,6 +16,7 @@
 #include <linux/mii.h>
 #include <linux/if_vlan.h>
 #include <linux/phy.h>
+#include <linux/net_dim.h>
 
 /* total number of Buffer Descriptors, same for Rx/Tx */
 #define TOTAL_DESC				256
@@ -572,6 +573,14 @@ struct bcmgenet_tx_ring {
 	struct bcmgenet_priv *priv;
 };
 
+struct bcmgenet_net_dim {
+	u16		use_dim;
+	u16		event_ctr;
+	unsigned long	packets;
+	unsigned long	bytes;
+	struct net_dim	dim;
+};
+
 struct bcmgenet_rx_ring {
 	struct napi_struct napi;	/* Rx NAPI struct */
 	unsigned long	bytes;
@@ -586,6 +595,9 @@ struct bcmgenet_rx_ring {
 	unsigned int	cb_ptr;		/* Rx ring initial CB ptr */
 	unsigned int	end_ptr;	/* Rx ring end CB ptr */
 	unsigned int	old_discards;
+	struct bcmgenet_net_dim dim;
+	u32		rx_max_coalesced_frames;
+	u32		rx_coalesce_usecs;
 	void (*int_enable)(struct bcmgenet_rx_ring *);
 	void (*int_disable)(struct bcmgenet_rx_ring *);
 	struct bcmgenet_priv *priv;
@@ -617,7 +629,6 @@ struct bcmgenet_priv {
 
 	/* MDIO bus variables */
 	wait_queue_head_t wq;
-	struct phy_device *phydev;
 	bool internal_phy;
 	struct device_node *phy_dn;
 	struct device_node *mdio_dn;
@@ -657,6 +668,7 @@ struct bcmgenet_priv {
 
 	struct clk *clk;
 	struct platform_device *pdev;
+	struct platform_device *mii_pdev;
 
 	/* WOL */
 	struct clk *clk_wol;
@@ -671,12 +683,21 @@ struct bcmgenet_priv {
 static inline u32 bcmgenet_##name##_readl(struct bcmgenet_priv *priv,	\
 					u32 off)			\
 {									\
-	return __raw_readl(priv->base + offset + off);			\
+	/* MIPS chips strapped for BE will automagically configure the	\
+	 * peripheral registers for CPU-native byte order.		\
+	 */								\
+	if (IS_ENABLED(CONFIG_MIPS) && IS_ENABLED(CONFIG_CPU_BIG_ENDIAN)) \
+		return __raw_readl(priv->base + offset + off);		\
+	else								\
+		return readl_relaxed(priv->base + offset + off);	\
 }									\
 static inline void bcmgenet_##name##_writel(struct bcmgenet_priv *priv,	\
 					u32 val, u32 off)		\
 {									\
-	__raw_writel(val, priv->base + offset + off);			\
+	if (IS_ENABLED(CONFIG_MIPS) && IS_ENABLED(CONFIG_CPU_BIG_ENDIAN)) \
+		__raw_writel(val, priv->base + offset + off);		\
+	else								\
+		writel_relaxed(val, priv->base + offset + off);		\
 }
 
 GENET_IO_MACRO(ext, GENET_EXT_OFF);
@@ -701,7 +722,6 @@ int bcmgenet_mii_init(struct net_device *dev);
 int bcmgenet_mii_config(struct net_device *dev, bool init);
 int bcmgenet_mii_probe(struct net_device *dev);
 void bcmgenet_mii_exit(struct net_device *dev);
-void bcmgenet_mii_reset(struct net_device *dev);
 void bcmgenet_phy_power_set(struct net_device *dev, bool enable);
 void bcmgenet_mii_setup(struct net_device *dev);
 

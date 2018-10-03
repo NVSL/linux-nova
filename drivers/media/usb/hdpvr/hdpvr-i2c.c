@@ -32,35 +32,23 @@
 #define Z8F0811_IR_RX_I2C_ADDR	0x71
 
 
-struct i2c_client *hdpvr_register_ir_tx_i2c(struct hdpvr_device *dev)
+struct i2c_client *hdpvr_register_ir_i2c(struct hdpvr_device *dev)
 {
 	struct IR_i2c_init_data *init_data = &dev->ir_i2c_init_data;
-	struct i2c_board_info hdpvr_ir_tx_i2c_board_info = {
-		I2C_BOARD_INFO("ir_tx_z8f0811_hdpvr", Z8F0811_IR_TX_I2C_ADDR),
-	};
-
-	init_data->name = "HD-PVR";
-	hdpvr_ir_tx_i2c_board_info.platform_data = init_data;
-
-	return i2c_new_device(&dev->i2c_adapter, &hdpvr_ir_tx_i2c_board_info);
-}
-
-struct i2c_client *hdpvr_register_ir_rx_i2c(struct hdpvr_device *dev)
-{
-	struct IR_i2c_init_data *init_data = &dev->ir_i2c_init_data;
-	struct i2c_board_info hdpvr_ir_rx_i2c_board_info = {
-		I2C_BOARD_INFO("ir_rx_z8f0811_hdpvr", Z8F0811_IR_RX_I2C_ADDR),
+	struct i2c_board_info info = {
+		I2C_BOARD_INFO("ir_z8f0811_hdpvr", Z8F0811_IR_RX_I2C_ADDR),
 	};
 
 	/* Our default information for ir-kbd-i2c.c to use */
 	init_data->ir_codes = RC_MAP_HAUPPAUGE;
 	init_data->internal_get_key_func = IR_KBD_GET_KEY_HAUP_XVR;
-	init_data->type = RC_BIT_RC5 | RC_BIT_RC6_MCE | RC_BIT_RC6_6A_32;
+	init_data->type = RC_PROTO_BIT_RC5 | RC_PROTO_BIT_RC6_MCE |
+			  RC_PROTO_BIT_RC6_6A_32;
 	init_data->name = "HD-PVR";
 	init_data->polling_interval = 405; /* ms, duplicated from Windows */
-	hdpvr_ir_rx_i2c_board_info.platform_data = init_data;
+	info.platform_data = init_data;
 
-	return i2c_new_device(&dev->i2c_adapter, &hdpvr_ir_rx_i2c_board_info);
+	return i2c_new_device(&dev->i2c_adapter, &info);
 }
 
 static int hdpvr_i2c_read(struct hdpvr_device *dev, int bus,
@@ -184,8 +172,8 @@ static const struct i2c_algorithm hdpvr_algo = {
 	.functionality = hdpvr_functionality,
 };
 
-static struct i2c_adapter hdpvr_i2c_adapter_template = {
-	.name   = "Hauppage HD PVR I2C",
+static const struct i2c_adapter hdpvr_i2c_adapter_template = {
+	.name   = "Hauppauge HD PVR I2C",
 	.owner  = THIS_MODULE,
 	.algo   = &hdpvr_algo,
 };

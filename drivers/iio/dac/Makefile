@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0
 #
 # Makefile for industrial I/O DAC drivers
 #
@@ -19,10 +20,13 @@ obj-$(CONFIG_AD5761) += ad5761.o
 obj-$(CONFIG_AD5764) += ad5764.o
 obj-$(CONFIG_AD5791) += ad5791.o
 obj-$(CONFIG_AD5686) += ad5686.o
+obj-$(CONFIG_AD5686_SPI) += ad5686-spi.o
+obj-$(CONFIG_AD5696_I2C) += ad5696-i2c.o
 obj-$(CONFIG_AD7303) += ad7303.o
 obj-$(CONFIG_AD8801) += ad8801.o
 obj-$(CONFIG_CIO_DAC) += cio-dac.o
 obj-$(CONFIG_DPOT_DAC) += dpot-dac.o
+obj-$(CONFIG_DS4424) += ds4424.o
 obj-$(CONFIG_LPC18XX_DAC) += lpc18xx_dac.o
 obj-$(CONFIG_LTC2632) += ltc2632.o
 obj-$(CONFIG_M62332) += m62332.o
@@ -32,4 +36,6 @@ obj-$(CONFIG_MCP4725) += mcp4725.o
 obj-$(CONFIG_MCP4922) += mcp4922.o
 obj-$(CONFIG_STM32_DAC_CORE) += stm32-dac-core.o
 obj-$(CONFIG_STM32_DAC) += stm32-dac.o
+obj-$(CONFIG_TI_DAC082S085) += ti-dac082s085.o
+obj-$(CONFIG_TI_DAC5571) += ti-dac5571.o
 obj-$(CONFIG_VF610_DAC) += vf610_dac.o

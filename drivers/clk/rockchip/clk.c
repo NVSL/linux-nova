@@ -29,6 +29,7 @@
 #include <linux/mfd/syscon.h>
 #include <linux/regmap.h>
 #include <linux/reboot.h>
+#include <linux/rational.h>
 #include "clk.h"
 
 /**
@@ -56,6 +57,7 @@ static struct clk *rockchip_clk_register_branch(const char *name,
 	struct clk_divider *div = NULL;
 	const struct clk_ops *mux_ops = NULL, *div_ops = NULL,
 			     *gate_ops = NULL;
+	int ret;
 
 	if (num_parents > 1) {
 		mux = kzalloc(sizeof(*mux), GFP_KERNEL);
@@ -73,8 +75,10 @@ static struct clk *rockchip_clk_register_branch(const char *name,
 
 	if (gate_offset >= 0) {
 		gate = kzalloc(sizeof(*gate), GFP_KERNEL);
-		if (!gate)
+		if (!gate) {
+			ret = -ENOMEM;
 			goto err_gate;
+		}
 
 		gate->flags = gate_flags;
 		gate->reg = base + gate_offset;
@@ -85,8 +89,10 @@ static struct clk *rockchip_clk_register_branch(const char *name,
 
 	if (div_width > 0) {
 		div = kzalloc(sizeof(*div), GFP_KERNEL);
-		if (!div)
+		if (!div) {
+			ret = -ENOMEM;
 			goto err_div;
+		}
 
 		div->flags = div_flags;
 		div->reg = base + muxdiv_offset;
@@ -105,12 +111,19 @@ static struct clk *rockchip_clk_register_branch(const char *name,
 				     gate ? &gate->hw : NULL, gate_ops,
 				     flags);
 
+	if (IS_ERR(clk)) {
+		ret = PTR_ERR(clk);
+		goto err_composite;
+	}
+
 	return clk;
+err_composite:
+	kfree(div);
 err_div:
 	kfree(gate);
 err_gate:
 	kfree(mux);
-	return ERR_PTR(-ENOMEM);
+	return ERR_PTR(ret);
 }
 
 struct rockchip_clk_frac {
@@ -164,6 +177,40 @@ static int rockchip_clk_frac_notifier_cb(struct notifier_block *nb,
 	return notifier_from_errno(ret);
 }
 
+/**
+ * fractional divider must set that denominator is 20 times larger than
+ * numerator to generate precise clock frequency.
+ */
+static void rockchip_fractional_approximation(struct clk_hw *hw,
+		unsigned long rate, unsigned long *parent_rate,
+		unsigned long *m, unsigned long *n)
+{
+	struct clk_fractional_divider *fd = to_clk_fd(hw);
+	unsigned long p_rate, p_parent_rate;
+	struct clk_hw *p_parent;
+	unsigned long scale;
+
+	p_rate = clk_hw_get_rate(clk_hw_get_parent(hw));
+	if ((rate * 20 > p_rate) && (p_rate % rate != 0)) {
+		p_parent = clk_hw_get_parent(clk_hw_get_parent(hw));
+		p_parent_rate = clk_hw_get_rate(p_parent);
+		*parent_rate = p_parent_rate;
+	}
+
+	/*
+	 * Get rate closer to *parent_rate to guarantee there is no overflow
+	 * for m and n. In the result it will be the nearest rate left shifted
+	 * by (scale - fd->nwidth) bits.
+	 */
+	scale = fls_long(*parent_rate / rate - 1);
+	if (scale > fd->nwidth)
+		rate <<= scale - fd->nwidth;
+
+	rational_best_approximation(rate, *parent_rate,
+			GENMASK(fd->mwidth - 1, 0), GENMASK(fd->nwidth - 1, 0),
+			m, n);
+}
+
 static struct clk *rockchip_clk_register_frac_branch(
 		struct rockchip_clk_provider *ctx, const char *name,
 		const char *const *parent_names, u8 num_parents,
@@ -210,6 +257,7 @@ static struct clk *rockchip_clk_register_frac_branch(
 	div->nwidth = 16;
 	div->nmask = GENMASK(div->nwidth - 1, 0) << div->nshift;
 	div->lock = lock;
+	div->approximation = rockchip_fractional_approximation;
 	div_ops = &clk_fractional_divider_ops;
 
 	clk = clk_register_composite(NULL, name, parent_names, num_parents,
@@ -226,18 +274,10 @@ static struct clk *rockchip_clk_register_frac_branch(
 		struct clk_mux *frac_mux = &frac->mux;
 		struct clk_init_data init;
 		struct clk *mux_clk;
-		int i, ret;
+		int ret;
 
-		frac->mux_frac_idx = -1;
-		for (i = 0; i < child->num_parents; i++) {
-			if (!strcmp(name, child->parent_names[i])) {
-				pr_debug("%s: found fractional parent in mux at pos %d\n",
-					 __func__, i);
-				frac->mux_frac_idx = i;
-				break;
-			}
-		}
-
+		frac->mux_frac_idx = match_string(child->parent_names,
+						  child->num_parents, name);
 		frac->mux_ops = &clk_mux_ops;
 		frac->clk_nb.notifier_call = rockchip_clk_frac_notifier_cb;
 
@@ -255,13 +295,17 @@ static struct clk *rockchip_clk_register_frac_branch(
 		init.num_parents = child->num_parents;
 
 		mux_clk = clk_register(NULL, &frac_mux->hw);
-		if (IS_ERR(mux_clk))
+		if (IS_ERR(mux_clk)) {
+			kfree(frac);
 			return clk;
+		}
 
 		rockchip_clk_add_lookup(ctx, mux_clk, child->id);
 
 		/* notifier on the fraction divider to catch rate changes */
 		if (frac->mux_frac_idx >= 0) {
+			pr_debug("%s: found fractional parent in mux at pos %d\n",
+				 __func__, frac->mux_frac_idx);
 			ret = clk_notifier_register(clk, &frac->clk_nb);
 			if (ret)
 				pr_err("%s: failed to register clock notifier for %s\n",

@@ -4,11 +4,15 @@ config ATH10K
 	select ATH_COMMON
 	select CRC32
 	select WANT_DEV_COREDUMP
+	select ATH10K_CE
         ---help---
           This module adds support for wireless adapters based on
           Atheros IEEE 802.11ac family of chipsets.
 
           If you choose to build a module, it'll be called ath10k.
+
+config ATH10K_CE
+	bool
 
 config ATH10K_PCI
 	tristate "Atheros ath10k PCI support"
@@ -29,6 +33,21 @@ config ATH10K_SDIO
 	  This module adds experimental support for SDIO/MMC bus. Currently
 	  work in progress and will not fully work.
 
+config ATH10K_USB
+	tristate "Atheros ath10k USB support (EXPERIMENTAL)"
+	depends on ATH10K && USB
+	---help---
+	  This module adds experimental support for USB bus. Currently
+	  work in progress and will not fully work.
+
+config ATH10K_SNOC
+        tristate "Qualcomm ath10k SNOC support (EXPERIMENTAL)"
+        depends on ATH10K && ARCH_QCOM
+        ---help---
+          This module adds support for integrated WCN3990 chip connected
+          to system NOC(SNOC). Currently work in progress and will not
+          fully work.
+
 config ATH10K_DEBUG
 	bool "Atheros ath10k debugging"
 	depends on ATH10K
@@ -40,11 +59,18 @@ config ATH10K_DEBUG
 config ATH10K_DEBUGFS
 	bool "Atheros ath10k debugfs support"
 	depends on ATH10K && DEBUG_FS
-	select RELAY
 	---help---
 	  Enabled debugfs support
 
 	  If unsure, say Y to make it easier to debug problems.
+
+config ATH10K_SPECTRAL
+	bool "Atheros ath10k spectral scan support"
+	depends on ATH10K_DEBUGFS
+	select RELAY
+	default n
+	---help---
+	  Say Y to enable access to the FFT/spectral data via debugfs.
 
 config ATH10K_TRACING
 	bool "Atheros ath10k tracing support"

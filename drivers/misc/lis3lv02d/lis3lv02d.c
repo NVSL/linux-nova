@@ -651,14 +651,14 @@ out:
 	return retval;
 }
 
-static unsigned int lis3lv02d_misc_poll(struct file *file, poll_table *wait)
+static __poll_t lis3lv02d_misc_poll(struct file *file, poll_table *wait)
 {
 	struct lis3lv02d *lis3 = container_of(file->private_data,
 					      struct lis3lv02d, miscdev);
 
 	poll_wait(file, &lis3->misc_wait, wait);
 	if (atomic_read(&lis3->count))
-		return POLLIN | POLLRDNORM;
+		return EPOLLIN | EPOLLRDNORM;
 	return 0;
 }
 
@@ -856,7 +856,7 @@ static struct attribute *lis3lv02d_attributes[] = {
 	NULL
 };
 
-static struct attribute_group lis3lv02d_attribute_group = {
+static const struct attribute_group lis3lv02d_attribute_group = {
 	.attrs = lis3lv02d_attributes
 };
 

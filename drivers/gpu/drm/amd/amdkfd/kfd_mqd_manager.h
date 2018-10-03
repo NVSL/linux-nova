@@ -67,7 +67,8 @@ struct mqd_manager {
 
 	int	(*load_mqd)(struct mqd_manager *mm, void *mqd,
 				uint32_t pipe_id, uint32_t queue_id,
-				uint32_t __user *wptr);
+				struct queue_properties *p,
+				struct mm_struct *mms);
 
 	int	(*update_mqd)(struct mqd_manager *mm, void *mqd,
 				struct queue_properties *q);
@@ -83,6 +84,10 @@ struct mqd_manager {
 	bool	(*is_occupied)(struct mqd_manager *mm, void *mqd,
 				uint64_t queue_address,	uint32_t pipe_id,
 				uint32_t queue_id);
+
+#if defined(CONFIG_DEBUG_FS)
+	int	(*debugfs_show_mqd)(struct seq_file *m, void *data);
+#endif
 
 	struct mutex	mqd_mutex;
 	struct kfd_dev	*dev;

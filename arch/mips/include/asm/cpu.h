@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * cpu.h: Values of the PRId register used to match up
  *	  various MIPS cpu types.
@@ -286,11 +287,6 @@ enum cpu_type_enum {
 	CPU_R3081, CPU_R3081E,
 
 	/*
-	 * R6000 class processors
-	 */
-	CPU_R6000, CPU_R6000A,
-
-	/*
 	 * R4000 class processors
 	 */
 	CPU_R4000PC, CPU_R4000SC, CPU_R4000MC, CPU_R4200, CPU_R4300, CPU_R4310,
@@ -422,6 +418,8 @@ enum cpu_type_enum {
 				MBIT_ULL(54)	/* CPU shares FTLB RAM with another */
 #define MIPS_CPU_SHARED_FTLB_ENTRIES \
 				MBIT_ULL(55)	/* CPU shares FTLB entries with another */
+#define MIPS_CPU_MT_PER_TC_PERF_COUNTERS \
+				MBIT_ULL(56)	/* CPU has perf counters implemented per TC (MIPSMT ASE) */
 
 /*
  * CPU ASE encodings

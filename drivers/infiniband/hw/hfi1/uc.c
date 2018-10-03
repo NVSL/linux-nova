@@ -1,5 +1,5 @@
 /*
- * Copyright(c) 2015, 2016 Intel Corporation.
+ * Copyright(c) 2015 - 2018 Intel Corporation.
  *
  * This file is provided under a dual BSD/GPLv2 license.  When using or
  * redistributing this file, you may do so under either license.
@@ -65,22 +65,21 @@ int hfi1_make_uc_req(struct rvt_qp *qp, struct hfi1_pkt_state *ps)
 	struct hfi1_qp_priv *priv = qp->priv;
 	struct ib_other_headers *ohdr;
 	struct rvt_swqe *wqe;
-	u32 hwords = 5;
+	u32 hwords;
 	u32 bth0 = 0;
 	u32 len;
 	u32 pmtu = qp->pmtu;
 	int middle = 0;
 
 	ps->s_txreq = get_txreq(ps->dev, qp);
-	if (IS_ERR(ps->s_txreq))
+	if (!ps->s_txreq)
 		goto bail_no_tx;
 
 	if (!(ib_rvt_state_ops[qp->state] & RVT_PROCESS_SEND_OK)) {
 		if (!(ib_rvt_state_ops[qp->state] & RVT_FLUSH_SEND))
 			goto bail;
 		/* We are in the error state, flush the work request. */
-		smp_read_barrier_depends(); /* see post_one_send() */
-		if (qp->s_last == ACCESS_ONCE(qp->s_head))
+		if (qp->s_last == READ_ONCE(qp->s_head))
 			goto bail;
 		/* If DMAs are in progress, we can't flush immediately. */
 		if (iowait_sdma_pending(&priv->s_iowait)) {
@@ -93,9 +92,22 @@ int hfi1_make_uc_req(struct rvt_qp *qp, struct hfi1_pkt_state *ps)
 		goto done_free_tx;
 	}
 
-	ohdr = &ps->s_txreq->phdr.hdr.u.oth;
-	if (rdma_ah_get_ah_flags(&qp->remote_ah_attr) & IB_AH_GRH)
-		ohdr = &ps->s_txreq->phdr.hdr.u.l.oth;
+	if (priv->hdr_type == HFI1_PKT_TYPE_9B) {
+		/* header size in 32-bit words LRH+BTH = (8+12)/4. */
+		hwords = 5;
+		if (rdma_ah_get_ah_flags(&qp->remote_ah_attr) & IB_AH_GRH)
+			ohdr = &ps->s_txreq->phdr.hdr.ibh.u.l.oth;
+		else
+			ohdr = &ps->s_txreq->phdr.hdr.ibh.u.oth;
+	} else {
+		/* header size in 32-bit words 16B LRH+BTH = (16+12)/4. */
+		hwords = 7;
+		if ((rdma_ah_get_ah_flags(&qp->remote_ah_attr) & IB_AH_GRH) &&
+		    (hfi1_check_mcast(rdma_ah_get_dlid(&qp->remote_ah_attr))))
+			ohdr = &ps->s_txreq->phdr.hdr.opah.u.l.oth;
+		else
+			ohdr = &ps->s_txreq->phdr.hdr.opah.u.oth;
+	}
 
 	/* Get the next send request. */
 	wqe = rvt_get_swqe_ptr(qp, qp->s_cur);
@@ -106,8 +118,7 @@ int hfi1_make_uc_req(struct rvt_qp *qp, struct hfi1_pkt_state *ps)
 		    RVT_PROCESS_NEXT_SEND_OK))
 			goto bail;
 		/* Check if send work queue is empty. */
-		smp_read_barrier_depends(); /* see post_one_send() */
-		if (qp->s_cur == ACCESS_ONCE(qp->s_head)) {
+		if (qp->s_cur == READ_ONCE(qp->s_head)) {
 			clear_ahg(qp);
 			goto bail;
 		}
@@ -133,7 +144,6 @@ int hfi1_make_uc_req(struct rvt_qp *qp, struct hfi1_pkt_state *ps)
 							: IB_WC_SUCCESS);
 			if (local_ops)
 				atomic_dec(&qp->local_ops_pending);
-			qp->s_hdrwords = 0;
 			goto done_free_tx;
 		}
 		/*
@@ -256,14 +266,12 @@ int hfi1_make_uc_req(struct rvt_qp *qp, struct hfi1_pkt_state *ps)
 		break;
 	}
 	qp->s_len -= len;
-	qp->s_hdrwords = hwords;
+	ps->s_txreq->hdr_dwords = hwords;
 	ps->s_txreq->sde = priv->s_sde;
 	ps->s_txreq->ss = &qp->s_sge;
 	ps->s_txreq->s_cur_size = len;
 	hfi1_make_ruc_header(qp, ohdr, bth0 | (qp->s_state << 24),
 			     mask_psn(qp->s_psn++), middle, ps);
-	/* pbc */
-	ps->s_txreq->hdr_dwords = qp->s_hdrwords + 2;
 	return 1;
 
 done_free_tx:
@@ -277,7 +285,6 @@ bail:
 bail_no_tx:
 	ps->s_txreq = NULL;
 	qp->s_flags &= ~RVT_S_BUSY;
-	qp->s_hdrwords = 0;
 	return 0;
 }
 
@@ -297,31 +304,26 @@ bail_no_tx:
 void hfi1_uc_rcv(struct hfi1_packet *packet)
 {
 	struct hfi1_ibport *ibp = rcd_to_iport(packet->rcd);
-	struct ib_header *hdr = packet->hdr;
-	u32 rcv_flags = packet->rcv_flags;
-	void *data = packet->ebuf;
+	void *data = packet->payload;
 	u32 tlen = packet->tlen;
 	struct rvt_qp *qp = packet->qp;
 	struct ib_other_headers *ohdr = packet->ohdr;
-	u32 bth0, opcode;
+	u32 opcode = packet->opcode;
 	u32 hdrsize = packet->hlen;
 	u32 psn;
-	u32 pad;
+	u32 pad = packet->pad;
 	struct ib_wc wc;
 	u32 pmtu = qp->pmtu;
 	struct ib_reth *reth;
-	int has_grh = rcv_flags & HFI1_HAS_GRH;
 	int ret;
+	u8 extra_bytes = pad + packet->extra_byte + (SIZE_OF_CRC << 2);
 
-	bth0 = be32_to_cpu(ohdr->bth[0]);
-	if (hfi1_ruc_check_hdr(ibp, hdr, has_grh, qp, bth0))
+	if (hfi1_ruc_check_hdr(ibp, packet))
 		return;
 
 	process_ecn(qp, packet, true);
 
-	psn = be32_to_cpu(ohdr->bth[2]);
-	opcode = ib_bth_get_opcode(ohdr);
-
+	psn = ib_bth_get_psn(ohdr);
 	/* Compare the PSN verses the expected PSN. */
 	if (unlikely(cmp_psn(psn, qp->r_psn) != 0)) {
 		/*
@@ -395,7 +397,7 @@ send_first:
 		if (test_and_clear_bit(RVT_R_REWIND_SGE, &qp->r_aflags)) {
 			qp->r_sge = qp->s_rdma_read_sge;
 		} else {
-			ret = hfi1_rvt_get_rwqe(qp, 0);
+			ret = rvt_get_rwqe(qp, false);
 			if (ret < 0)
 				goto op_err;
 			if (!ret)
@@ -414,7 +416,12 @@ send_first:
 		/* FALLTHROUGH */
 	case OP(SEND_MIDDLE):
 		/* Check for invalid length PMTU or posted rwqe len. */
-		if (unlikely(tlen != (hdrsize + pmtu + 4)))
+		/*
+		 * There will be no padding for 9B packet but 16B packets
+		 * will come in with some padding since we always add
+		 * CRC and LT bytes which will need to be flit aligned
+		 */
+		if (unlikely(tlen != (hdrsize + pmtu + extra_bytes)))
 			goto rewind;
 		qp->r_rcv_len += pmtu;
 		if (unlikely(qp->r_rcv_len > qp->r_len))
@@ -432,14 +439,12 @@ no_immediate_data:
 		wc.ex.imm_data = 0;
 		wc.wc_flags = 0;
 send_last:
-		/* Get the number of bytes the message was padded by. */
-		pad = ib_bth_get_pad(ohdr);
 		/* Check for invalid length. */
 		/* LAST len should be >= 1 */
-		if (unlikely(tlen < (hdrsize + pad + 4)))
+		if (unlikely(tlen < (hdrsize + extra_bytes)))
 			goto rewind;
 		/* Don't count the CRC. */
-		tlen -= (hdrsize + pad + 4);
+		tlen -= (hdrsize + extra_bytes);
 		wc.byte_len = tlen + qp->r_rcv_len;
 		if (unlikely(wc.byte_len > qp->r_len))
 			goto rewind;
@@ -451,7 +456,7 @@ last_imm:
 		wc.status = IB_WC_SUCCESS;
 		wc.qp = &qp->ibqp;
 		wc.src_qp = qp->remote_qpn;
-		wc.slid = rdma_ah_get_dlid(&qp->remote_ah_attr);
+		wc.slid = rdma_ah_get_dlid(&qp->remote_ah_attr) & U16_MAX;
 		/*
 		 * It seems that IB mandates the presence of an SL in a
 		 * work completion only for the UD transport (see section
@@ -471,8 +476,7 @@ last_imm:
 		wc.port_num = 0;
 		/* Signal completion event if the solicited bit is set. */
 		rvt_cq_enter(ibcq_to_rvtcq(qp->ibqp.recv_cq), &wc,
-			     (ohdr->bth[0] &
-			      cpu_to_be32(IB_BTH_SOLICITED)) != 0);
+			     ib_bth_is_solicited(ohdr));
 		break;
 
 	case OP(RDMA_WRITE_FIRST):
@@ -527,20 +531,18 @@ rdma_first:
 rdma_last_imm:
 		wc.wc_flags = IB_WC_WITH_IMM;
 
-		/* Get the number of bytes the message was padded by. */
-		pad = ib_bth_get_pad(ohdr);
 		/* Check for invalid length. */
 		/* LAST len should be >= 1 */
 		if (unlikely(tlen < (hdrsize + pad + 4)))
 			goto drop;
 		/* Don't count the CRC. */
-		tlen -= (hdrsize + pad + 4);
+		tlen -= (hdrsize + extra_bytes);
 		if (unlikely(tlen + qp->r_rcv_len != qp->r_len))
 			goto drop;
 		if (test_and_clear_bit(RVT_R_REWIND_SGE, &qp->r_aflags)) {
 			rvt_put_ss(&qp->s_rdma_read_sge);
 		} else {
-			ret = hfi1_rvt_get_rwqe(qp, 1);
+			ret = rvt_get_rwqe(qp, true);
 			if (ret < 0)
 				goto op_err;
 			if (!ret)
@@ -554,14 +556,12 @@ rdma_last_imm:
 
 	case OP(RDMA_WRITE_LAST):
 rdma_last:
-		/* Get the number of bytes the message was padded by. */
-		pad = ib_bth_get_pad(ohdr);
 		/* Check for invalid length. */
 		/* LAST len should be >= 1 */
 		if (unlikely(tlen < (hdrsize + pad + 4)))
 			goto drop;
 		/* Don't count the CRC. */
-		tlen -= (hdrsize + pad + 4);
+		tlen -= (hdrsize + extra_bytes);
 		if (unlikely(tlen + qp->r_rcv_len != qp->r_len))
 			goto drop;
 		hfi1_copy_sge(&qp->r_sge, data, tlen, true, false);

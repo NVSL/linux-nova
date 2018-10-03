@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #include <sys/time.h>
 #include <sys/prctl.h>
 #include <errno.h>
@@ -257,16 +258,22 @@ static int process_events(struct perf_evlist *evlist,
 	unsigned pos, cnt = 0;
 	LIST_HEAD(events);
 	struct event_node *events_array, *node;
+	struct perf_mmap *md;
 	int i, ret;
 
 	for (i = 0; i < evlist->nr_mmaps; i++) {
-		while ((event = perf_evlist__mmap_read(evlist, i)) != NULL) {
+		md = &evlist->mmap[i];
+		if (perf_mmap__read_init(md) < 0)
+			continue;
+
+		while ((event = perf_mmap__read_event(md)) != NULL) {
 			cnt += 1;
 			ret = add_event(evlist, &events, event);
-			perf_evlist__mmap_consume(evlist, i);
+			 perf_mmap__consume(md);
 			if (ret < 0)
 				goto out_free_nodes;
 		}
+		perf_mmap__read_done(md);
 	}
 
 	events_array = calloc(cnt, sizeof(struct event_node));
@@ -306,7 +313,7 @@ out_free_nodes:
  * evsel->system_wide and evsel->tracking flags (respectively) with other events
  * sometimes enabled or disabled.
  */
-int test__switch_tracking(int subtest __maybe_unused)
+int test__switch_tracking(struct test *test __maybe_unused, int subtest __maybe_unused)
 {
 	const char *sched_switch = "sched:sched_switch";
 	struct switch_tracking switch_tracking = { .tids = NULL, };
@@ -448,7 +455,7 @@ int test__switch_tracking(int subtest __maybe_unused)
 		goto out;
 	}
 
-	err = perf_evlist__mmap(evlist, UINT_MAX, false);
+	err = perf_evlist__mmap(evlist, UINT_MAX);
 	if (err) {
 		pr_debug("perf_evlist__mmap failed!\n");
 		goto out_err;

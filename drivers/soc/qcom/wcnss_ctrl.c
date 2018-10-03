@@ -249,7 +249,7 @@ static int wcnss_download_nv(struct wcnss_ctrl *wcnss, bool *expect_cbc)
 		/* Increment for next fragment */
 		req->seq++;
 
-		data += req->hdr.len;
+		data += NV_FRAGMENT_SIZE;
 		left -= NV_FRAGMENT_SIZE;
 	} while (left > 0);
 
@@ -347,6 +347,7 @@ static const struct of_device_id wcnss_ctrl_of_match[] = {
 	{ .compatible = "qcom,wcnss", },
 	{}
 };
+MODULE_DEVICE_TABLE(of, wcnss_ctrl_of_match);
 
 static struct rpmsg_driver wcnss_ctrl_driver = {
 	.probe = wcnss_ctrl_probe,

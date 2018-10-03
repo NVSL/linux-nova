@@ -21,6 +21,7 @@
 #include "cxgb4.h"
 #include "t4_regs.h"
 #include "t4fw_api.h"
+#include "cxgb4_cudbg.h"
 
 #define EEPROM_MAGIC 0x38E2F10C
 
@@ -335,10 +336,10 @@ static void collect_adapter_stats(struct adapter *adap, struct adapter_stats *s)
 	memset(s, 0, sizeof(*s));
 
 	spin_lock(&adap->stats_lock);
-	t4_tp_get_tcp_stats(adap, &v4, &v6);
-	t4_tp_get_rdma_stats(adap, &rdma_stats);
-	t4_get_usm_stats(adap, &usm_stats);
-	t4_tp_get_err_stats(adap, &err_stats);
+	t4_tp_get_tcp_stats(adap, &v4, &v6, false);
+	t4_tp_get_rdma_stats(adap, &rdma_stats, false);
+	t4_get_usm_stats(adap, &usm_stats, false);
+	t4_tp_get_err_stats(adap, &err_stats, false);
 	spin_unlock(&adap->stats_lock);
 
 	s->db_drop = adap->db_stats.db_drop;
@@ -388,9 +389,9 @@ static void collect_channel_stats(struct adapter *adap, struct channel_stats *s,
 	memset(s, 0, sizeof(*s));
 
 	spin_lock(&adap->stats_lock);
-	t4_tp_get_cpl_stats(adap, &cpl_stats);
-	t4_tp_get_err_stats(adap, &err_stats);
-	t4_get_fcoe_stats(adap, i, &fcoe_stats);
+	t4_tp_get_cpl_stats(adap, &cpl_stats, false);
+	t4_tp_get_err_stats(adap, &err_stats, false);
+	t4_get_fcoe_stats(adap, i, &fcoe_stats, false);
 	spin_unlock(&adap->stats_lock);
 
 	s->cpl_req = cpl_stats.req[i];
@@ -516,7 +517,8 @@ static int from_fw_port_mod_type(enum fw_port_type port_type,
 		else
 			return PORT_OTHER;
 	} else if (port_type == FW_PORT_TYPE_KR4_100G ||
-		   port_type == FW_PORT_TYPE_KR_SFP28) {
+		   port_type == FW_PORT_TYPE_KR_SFP28 ||
+		   port_type == FW_PORT_TYPE_KR_XLAUI) {
 		return PORT_NONE;
 	}
 
@@ -533,17 +535,23 @@ static int from_fw_port_mod_type(enum fw_port_type port_type,
 static unsigned int speed_to_fw_caps(int speed)
 {
 	if (speed == 100)
-		return FW_PORT_CAP_SPEED_100M;
+		return FW_PORT_CAP32_SPEED_100M;
 	if (speed == 1000)
-		return FW_PORT_CAP_SPEED_1G;
+		return FW_PORT_CAP32_SPEED_1G;
 	if (speed == 10000)
-		return FW_PORT_CAP_SPEED_10G;
+		return FW_PORT_CAP32_SPEED_10G;
 	if (speed == 25000)
-		return FW_PORT_CAP_SPEED_25G;
+		return FW_PORT_CAP32_SPEED_25G;
 	if (speed == 40000)
-		return FW_PORT_CAP_SPEED_40G;
+		return FW_PORT_CAP32_SPEED_40G;
+	if (speed == 50000)
+		return FW_PORT_CAP32_SPEED_50G;
 	if (speed == 100000)
-		return FW_PORT_CAP_SPEED_100G;
+		return FW_PORT_CAP32_SPEED_100G;
+	if (speed == 200000)
+		return FW_PORT_CAP32_SPEED_200G;
+	if (speed == 400000)
+		return FW_PORT_CAP32_SPEED_400G;
 	return 0;
 }
 
@@ -560,12 +568,13 @@ static void fw_caps_to_lmm(enum fw_port_type port_type,
 			   unsigned int fw_caps,
 			   unsigned long *link_mode_mask)
 {
-	#define SET_LMM(__lmm_name) __set_bit(ETHTOOL_LINK_MODE_ ## __lmm_name \
-					## _BIT, link_mode_mask)
+	#define SET_LMM(__lmm_name) \
+		__set_bit(ETHTOOL_LINK_MODE_ ## __lmm_name ## _BIT, \
+			  link_mode_mask)
 
 	#define FW_CAPS_TO_LMM(__fw_name, __lmm_name) \
 		do { \
-			if (fw_caps & FW_PORT_CAP_ ## __fw_name) \
+			if (fw_caps & FW_PORT_CAP32_ ## __fw_name) \
 				SET_LMM(__lmm_name); \
 		} while (0)
 
@@ -588,22 +597,22 @@ static void fw_caps_to_lmm(enum fw_port_type port_type,
 
 	case FW_PORT_TYPE_KR:
 		SET_LMM(Backplane);
-		SET_LMM(10000baseKR_Full);
+		FW_CAPS_TO_LMM(SPEED_10G, 10000baseKR_Full);
 		break;
 
 	case FW_PORT_TYPE_BP_AP:
 		SET_LMM(Backplane);
-		SET_LMM(10000baseR_FEC);
-		SET_LMM(10000baseKR_Full);
-		SET_LMM(1000baseKX_Full);
+		FW_CAPS_TO_LMM(SPEED_1G, 1000baseKX_Full);
+		FW_CAPS_TO_LMM(SPEED_10G, 10000baseR_FEC);
+		FW_CAPS_TO_LMM(SPEED_10G, 10000baseKR_Full);
 		break;
 
 	case FW_PORT_TYPE_BP4_AP:
 		SET_LMM(Backplane);
-		SET_LMM(10000baseR_FEC);
-		SET_LMM(10000baseKR_Full);
-		SET_LMM(1000baseKX_Full);
-		SET_LMM(10000baseKX4_Full);
+		FW_CAPS_TO_LMM(SPEED_1G, 1000baseKX_Full);
+		FW_CAPS_TO_LMM(SPEED_10G, 10000baseR_FEC);
+		FW_CAPS_TO_LMM(SPEED_10G, 10000baseKR_Full);
+		FW_CAPS_TO_LMM(SPEED_10G, 10000baseKX4_Full);
 		break;
 
 	case FW_PORT_TYPE_FIBER_XFI:
@@ -619,7 +628,9 @@ static void fw_caps_to_lmm(enum fw_port_type port_type,
 	case FW_PORT_TYPE_BP40_BA:
 	case FW_PORT_TYPE_QSFP:
 		SET_LMM(FIBRE);
-		SET_LMM(40000baseSR4_Full);
+		FW_CAPS_TO_LMM(SPEED_1G, 1000baseT_Full);
+		FW_CAPS_TO_LMM(SPEED_10G, 10000baseT_Full);
+		FW_CAPS_TO_LMM(SPEED_40G, 40000baseSR4_Full);
 		break;
 
 	case FW_PORT_TYPE_CR_QSFP:
@@ -637,15 +648,27 @@ static void fw_caps_to_lmm(enum fw_port_type port_type,
 		FW_CAPS_TO_LMM(SPEED_25G, 25000baseKR_Full);
 		break;
 
+	case FW_PORT_TYPE_KR_XLAUI:
+		SET_LMM(Backplane);
+		FW_CAPS_TO_LMM(SPEED_1G, 1000baseKX_Full);
+		FW_CAPS_TO_LMM(SPEED_10G, 10000baseKR_Full);
+		FW_CAPS_TO_LMM(SPEED_40G, 40000baseKR4_Full);
+		break;
+
 	case FW_PORT_TYPE_CR2_QSFP:
 		SET_LMM(FIBRE);
-		SET_LMM(50000baseSR2_Full);
+		FW_CAPS_TO_LMM(SPEED_50G, 50000baseSR2_Full);
 		break;
 
 	case FW_PORT_TYPE_KR4_100G:
 	case FW_PORT_TYPE_CR4_QSFP:
 		SET_LMM(FIBRE);
-		SET_LMM(100000baseCR4_Full);
+		FW_CAPS_TO_LMM(SPEED_1G,  1000baseT_Full);
+		FW_CAPS_TO_LMM(SPEED_10G, 10000baseSR_Full);
+		FW_CAPS_TO_LMM(SPEED_40G, 40000baseSR4_Full);
+		FW_CAPS_TO_LMM(SPEED_25G, 25000baseCR_Full);
+		FW_CAPS_TO_LMM(SPEED_50G, 50000baseCR2_Full);
+		FW_CAPS_TO_LMM(SPEED_100G, 100000baseCR4_Full);
 		break;
 
 	default:
@@ -663,8 +686,7 @@ static void fw_caps_to_lmm(enum fw_port_type port_type,
 /**
  *	lmm_to_fw_caps - translate ethtool Link Mode Mask to Firmware
  *	capabilities
- *
- *	@link_mode_mask: ethtool Link Mode Mask
+ *	@et_lmm: ethtool Link Mode Mask
  *
  *	Translate ethtool Link Mode Mask into a Firmware Port capabilities
  *	value.
@@ -677,7 +699,7 @@ static unsigned int lmm_to_fw_caps(const unsigned long *link_mode_mask)
 		do { \
 			if (test_bit(ETHTOOL_LINK_MODE_ ## __lmm_name ## _BIT, \
 				     link_mode_mask)) \
-				fw_caps |= FW_PORT_CAP_ ## __fw_name; \
+				fw_caps |= FW_PORT_CAP32_ ## __fw_name; \
 		} while (0)
 
 	LMM_TO_FW_CAPS(100baseT_Full, SPEED_100M);
@@ -685,6 +707,7 @@ static unsigned int lmm_to_fw_caps(const unsigned long *link_mode_mask)
 	LMM_TO_FW_CAPS(10000baseT_Full, SPEED_10G);
 	LMM_TO_FW_CAPS(40000baseSR4_Full, SPEED_40G);
 	LMM_TO_FW_CAPS(25000baseCR_Full, SPEED_25G);
+	LMM_TO_FW_CAPS(50000baseCR2_Full, SPEED_50G);
 	LMM_TO_FW_CAPS(100000baseCR4_Full, SPEED_100G);
 
 	#undef LMM_TO_FW_CAPS
@@ -698,16 +721,16 @@ static int get_link_ksettings(struct net_device *dev,
 	struct port_info *pi = netdev_priv(dev);
 	struct ethtool_link_settings *base = &link_ksettings->base;
 
-	ethtool_link_ksettings_zero_link_mode(link_ksettings, supported);
-	ethtool_link_ksettings_zero_link_mode(link_ksettings, advertising);
-	ethtool_link_ksettings_zero_link_mode(link_ksettings, lp_advertising);
-
 	/* For the nonce, the Firmware doesn't send up Port State changes
 	 * when the Virtual Interface attached to the Port is down.  So
 	 * if it's down, let's grab any changes.
 	 */
 	if (!netif_running(dev))
 		(void)t4_update_port_info(pi);
+
+	ethtool_link_ksettings_zero_link_mode(link_ksettings, supported);
+	ethtool_link_ksettings_zero_link_mode(link_ksettings, advertising);
+	ethtool_link_ksettings_zero_link_mode(link_ksettings, lp_advertising);
 
 	base->port = from_fw_port_mod_type(pi->port_type, pi->mod_type);
 
@@ -721,11 +744,11 @@ static int get_link_ksettings(struct net_device *dev,
 		base->mdio_support = 0;
 	}
 
-	fw_caps_to_lmm(pi->port_type, pi->link_cfg.supported,
+	fw_caps_to_lmm(pi->port_type, pi->link_cfg.pcaps,
 		       link_ksettings->link_modes.supported);
-	fw_caps_to_lmm(pi->port_type, pi->link_cfg.advertising,
+	fw_caps_to_lmm(pi->port_type, pi->link_cfg.acaps,
 		       link_ksettings->link_modes.advertising);
-	fw_caps_to_lmm(pi->port_type, pi->link_cfg.lp_advertising,
+	fw_caps_to_lmm(pi->port_type, pi->link_cfg.lpacaps,
 		       link_ksettings->link_modes.lp_advertising);
 
 	if (netif_carrier_ok(dev)) {
@@ -736,8 +759,24 @@ static int get_link_ksettings(struct net_device *dev,
 		base->duplex = DUPLEX_UNKNOWN;
 	}
 
+	if (pi->link_cfg.fc & PAUSE_RX) {
+		if (pi->link_cfg.fc & PAUSE_TX) {
+			ethtool_link_ksettings_add_link_mode(link_ksettings,
+							     advertising,
+							     Pause);
+		} else {
+			ethtool_link_ksettings_add_link_mode(link_ksettings,
+							     advertising,
+							     Asym_Pause);
+		}
+	} else if (pi->link_cfg.fc & PAUSE_TX) {
+		ethtool_link_ksettings_add_link_mode(link_ksettings,
+						     advertising,
+						     Asym_Pause);
+	}
+
 	base->autoneg = pi->link_cfg.autoneg;
-	if (pi->link_cfg.supported & FW_PORT_CAP_ANEG)
+	if (pi->link_cfg.pcaps & FW_PORT_CAP32_ANEG)
 		ethtool_link_ksettings_add_link_mode(link_ksettings,
 						     supported, Autoneg);
 	if (pi->link_cfg.autoneg)
@@ -748,8 +787,7 @@ static int get_link_ksettings(struct net_device *dev,
 }
 
 static int set_link_ksettings(struct net_device *dev,
-			      const struct ethtool_link_ksettings
-						*link_ksettings)
+			    const struct ethtool_link_ksettings *link_ksettings)
 {
 	struct port_info *pi = netdev_priv(dev);
 	struct link_config *lc = &pi->link_cfg;
@@ -762,32 +800,27 @@ static int set_link_ksettings(struct net_device *dev,
 	if (base->duplex != DUPLEX_FULL)
 		return -EINVAL;
 
-	if (!(lc->supported & FW_PORT_CAP_ANEG)) {
-		/* PHY offers a single speed.  See if that's what's
-		 * being requested.
-		 */
-		if (base->autoneg == AUTONEG_DISABLE &&
-		    (lc->supported & speed_to_fw_caps(base->speed)))
-			return 0;
-		return -EINVAL;
-	}
-
 	old_lc = *lc;
-	if (base->autoneg == AUTONEG_DISABLE) {
+	if (!(lc->pcaps & FW_PORT_CAP32_ANEG) ||
+	    base->autoneg == AUTONEG_DISABLE) {
 		fw_caps = speed_to_fw_caps(base->speed);
 
-		if (!(lc->supported & fw_caps))
+		/* Must only specify a single speed which must be supported
+		 * as part of the Physical Port Capabilities.
+		 */
+		if ((fw_caps & (fw_caps - 1)) != 0 ||
+		    !(lc->pcaps & fw_caps))
 			return -EINVAL;
-		lc->requested_speed = fw_caps;
-		lc->advertising = 0;
+
+		lc->speed_caps = fw_caps;
+		lc->acaps = fw_caps;
 	} else {
 		fw_caps =
-			lmm_to_fw_caps(link_ksettings->link_modes.advertising);
-
-		if (!(lc->supported & fw_caps))
+			 lmm_to_fw_caps(link_ksettings->link_modes.advertising);
+		if (!(lc->pcaps & fw_caps))
 			return -EINVAL;
-		lc->requested_speed = 0;
-		lc->advertising = fw_caps | FW_PORT_CAP_ANEG;
+		lc->speed_caps = 0;
+		lc->acaps = fw_caps | FW_PORT_CAP32_ANEG;
 	}
 	lc->autoneg = base->autoneg;
 
@@ -798,6 +831,104 @@ static int set_link_ksettings(struct net_device *dev,
 	if (ret)
 		*lc = old_lc;
 
+	return ret;
+}
+
+/* Translate the Firmware FEC value into the ethtool value. */
+static inline unsigned int fwcap_to_eth_fec(unsigned int fw_fec)
+{
+	unsigned int eth_fec = 0;
+
+	if (fw_fec & FW_PORT_CAP32_FEC_RS)
+		eth_fec |= ETHTOOL_FEC_RS;
+	if (fw_fec & FW_PORT_CAP32_FEC_BASER_RS)
+		eth_fec |= ETHTOOL_FEC_BASER;
+
+	/* if nothing is set, then FEC is off */
+	if (!eth_fec)
+		eth_fec = ETHTOOL_FEC_OFF;
+
+	return eth_fec;
+}
+
+/* Translate Common Code FEC value into ethtool value. */
+static inline unsigned int cc_to_eth_fec(unsigned int cc_fec)
+{
+	unsigned int eth_fec = 0;
+
+	if (cc_fec & FEC_AUTO)
+		eth_fec |= ETHTOOL_FEC_AUTO;
+	if (cc_fec & FEC_RS)
+		eth_fec |= ETHTOOL_FEC_RS;
+	if (cc_fec & FEC_BASER_RS)
+		eth_fec |= ETHTOOL_FEC_BASER;
+
+	/* if nothing is set, then FEC is off */
+	if (!eth_fec)
+		eth_fec = ETHTOOL_FEC_OFF;
+
+	return eth_fec;
+}
+
+/* Translate ethtool FEC value into Common Code value. */
+static inline unsigned int eth_to_cc_fec(unsigned int eth_fec)
+{
+	unsigned int cc_fec = 0;
+
+	if (eth_fec & ETHTOOL_FEC_OFF)
+		return cc_fec;
+
+	if (eth_fec & ETHTOOL_FEC_AUTO)
+		cc_fec |= FEC_AUTO;
+	if (eth_fec & ETHTOOL_FEC_RS)
+		cc_fec |= FEC_RS;
+	if (eth_fec & ETHTOOL_FEC_BASER)
+		cc_fec |= FEC_BASER_RS;
+
+	return cc_fec;
+}
+
+static int get_fecparam(struct net_device *dev, struct ethtool_fecparam *fec)
+{
+	const struct port_info *pi = netdev_priv(dev);
+	const struct link_config *lc = &pi->link_cfg;
+
+	/* Translate the Firmware FEC Support into the ethtool value.  We
+	 * always support IEEE 802.3 "automatic" selection of Link FEC type if
+	 * any FEC is supported.
+	 */
+	fec->fec = fwcap_to_eth_fec(lc->pcaps);
+	if (fec->fec != ETHTOOL_FEC_OFF)
+		fec->fec |= ETHTOOL_FEC_AUTO;
+
+	/* Translate the current internal FEC parameters into the
+	 * ethtool values.
+	 */
+	fec->active_fec = cc_to_eth_fec(lc->fec);
+
+	return 0;
+}
+
+static int set_fecparam(struct net_device *dev, struct ethtool_fecparam *fec)
+{
+	struct port_info *pi = netdev_priv(dev);
+	struct link_config *lc = &pi->link_cfg;
+	struct link_config old_lc;
+	int ret;
+
+	/* Save old Link Configuration in case the L1 Configure below
+	 * fails.
+	 */
+	old_lc = *lc;
+
+	/* Try to perform the L1 Configure and return the result of that
+	 * effort.  If it fails, revert the attempted change.
+	 */
+	lc->requested_fec = eth_to_cc_fec(fec->fec);
+	ret = t4_link_l1cfg(pi->adapter, pi->adapter->mbox,
+			    pi->tx_chan, lc);
+	if (ret)
+		*lc = old_lc;
 	return ret;
 }
 
@@ -819,7 +950,7 @@ static int set_pauseparam(struct net_device *dev,
 
 	if (epause->autoneg == AUTONEG_DISABLE)
 		lc->requested_fc = 0;
-	else if (lc->supported & FW_PORT_CAP_ANEG)
+	else if (lc->pcaps & FW_PORT_CAP32_ANEG)
 		lc->requested_fc = PAUSE_AUTONEG;
 	else
 		return -EINVAL;
@@ -941,40 +1072,11 @@ static int get_coalesce(struct net_device *dev, struct ethtool_coalesce *c)
 	return 0;
 }
 
-/**
- *	eeprom_ptov - translate a physical EEPROM address to virtual
- *	@phys_addr: the physical EEPROM address
- *	@fn: the PCI function number
- *	@sz: size of function-specific area
- *
- *	Translate a physical EEPROM address to virtual.  The first 1K is
- *	accessed through virtual addresses starting at 31K, the rest is
- *	accessed through virtual addresses starting at 0.
- *
- *	The mapping is as follows:
- *	[0..1K) -> [31K..32K)
- *	[1K..1K+A) -> [31K-A..31K)
- *	[1K+A..ES) -> [0..ES-A-1K)
- *
- *	where A = @fn * @sz, and ES = EEPROM size.
- */
-static int eeprom_ptov(unsigned int phys_addr, unsigned int fn, unsigned int sz)
-{
-	fn *= sz;
-	if (phys_addr < 1024)
-		return phys_addr + (31 << 10);
-	if (phys_addr < 1024 + fn)
-		return 31744 - fn + phys_addr - 1024;
-	if (phys_addr < EEPROMSIZE)
-		return phys_addr - 1024 - fn;
-	return -EINVAL;
-}
-
 /* The next two routines implement eeprom read/write from physical addresses.
  */
 static int eeprom_rd_phys(struct adapter *adap, unsigned int phys_addr, u32 *v)
 {
-	int vaddr = eeprom_ptov(phys_addr, adap->pf, EEPROMPFSIZE);
+	int vaddr = t4_eeprom_ptov(phys_addr, adap->pf, EEPROMPFSIZE);
 
 	if (vaddr >= 0)
 		vaddr = pci_read_vpd(adap->pdev, vaddr, sizeof(u32), v);
@@ -983,7 +1085,7 @@ static int eeprom_rd_phys(struct adapter *adap, unsigned int phys_addr, u32 *v)
 
 static int eeprom_wr_phys(struct adapter *adap, unsigned int phys_addr, u32 v)
 {
-	int vaddr = eeprom_ptov(phys_addr, adap->pf, EEPROMPFSIZE);
+	int vaddr = t4_eeprom_ptov(phys_addr, adap->pf, EEPROMPFSIZE);
 
 	if (vaddr >= 0)
 		vaddr = pci_write_vpd(adap->pdev, vaddr, sizeof(u32), &v);
@@ -1252,9 +1354,156 @@ static int get_rxnfc(struct net_device *dev, struct ethtool_rxnfc *info,
 	return -EOPNOTSUPP;
 }
 
+static int set_dump(struct net_device *dev, struct ethtool_dump *eth_dump)
+{
+	struct adapter *adapter = netdev2adap(dev);
+	u32 len = 0;
+
+	len = sizeof(struct cudbg_hdr) +
+	      sizeof(struct cudbg_entity_hdr) * CUDBG_MAX_ENTITY;
+	len += cxgb4_get_dump_length(adapter, eth_dump->flag);
+
+	adapter->eth_dump.flag = eth_dump->flag;
+	adapter->eth_dump.len = len;
+	return 0;
+}
+
+static int get_dump_flag(struct net_device *dev, struct ethtool_dump *eth_dump)
+{
+	struct adapter *adapter = netdev2adap(dev);
+
+	eth_dump->flag = adapter->eth_dump.flag;
+	eth_dump->len = adapter->eth_dump.len;
+	eth_dump->version = adapter->eth_dump.version;
+	return 0;
+}
+
+static int get_dump_data(struct net_device *dev, struct ethtool_dump *eth_dump,
+			 void *buf)
+{
+	struct adapter *adapter = netdev2adap(dev);
+	u32 len = 0;
+	int ret = 0;
+
+	if (adapter->eth_dump.flag == CXGB4_ETH_DUMP_NONE)
+		return -ENOENT;
+
+	len = sizeof(struct cudbg_hdr) +
+	      sizeof(struct cudbg_entity_hdr) * CUDBG_MAX_ENTITY;
+	len += cxgb4_get_dump_length(adapter, adapter->eth_dump.flag);
+	if (eth_dump->len < len)
+		return -ENOMEM;
+
+	ret = cxgb4_cudbg_collect(adapter, buf, &len, adapter->eth_dump.flag);
+	if (ret)
+		return ret;
+
+	eth_dump->flag = adapter->eth_dump.flag;
+	eth_dump->len = len;
+	eth_dump->version = adapter->eth_dump.version;
+	return 0;
+}
+
+static int cxgb4_get_module_info(struct net_device *dev,
+				 struct ethtool_modinfo *modinfo)
+{
+	struct port_info *pi = netdev_priv(dev);
+	u8 sff8472_comp, sff_diag_type, sff_rev;
+	struct adapter *adapter = pi->adapter;
+	int ret;
+
+	if (!t4_is_inserted_mod_type(pi->mod_type))
+		return -EINVAL;
+
+	switch (pi->port_type) {
+	case FW_PORT_TYPE_SFP:
+	case FW_PORT_TYPE_QSA:
+	case FW_PORT_TYPE_SFP28:
+		ret = t4_i2c_rd(adapter, adapter->mbox, pi->tx_chan,
+				I2C_DEV_ADDR_A0, SFF_8472_COMP_ADDR,
+				SFF_8472_COMP_LEN, &sff8472_comp);
+		if (ret)
+			return ret;
+		ret = t4_i2c_rd(adapter, adapter->mbox, pi->tx_chan,
+				I2C_DEV_ADDR_A0, SFP_DIAG_TYPE_ADDR,
+				SFP_DIAG_TYPE_LEN, &sff_diag_type);
+		if (ret)
+			return ret;
+
+		if (!sff8472_comp || (sff_diag_type & 4)) {
+			modinfo->type = ETH_MODULE_SFF_8079;
+			modinfo->eeprom_len = ETH_MODULE_SFF_8079_LEN;
+		} else {
+			modinfo->type = ETH_MODULE_SFF_8472;
+			modinfo->eeprom_len = ETH_MODULE_SFF_8472_LEN;
+		}
+		break;
+
+	case FW_PORT_TYPE_QSFP:
+	case FW_PORT_TYPE_QSFP_10G:
+	case FW_PORT_TYPE_CR_QSFP:
+	case FW_PORT_TYPE_CR2_QSFP:
+	case FW_PORT_TYPE_CR4_QSFP:
+		ret = t4_i2c_rd(adapter, adapter->mbox, pi->tx_chan,
+				I2C_DEV_ADDR_A0, SFF_REV_ADDR,
+				SFF_REV_LEN, &sff_rev);
+		/* For QSFP type ports, revision value >= 3
+		 * means the SFP is 8636 compliant.
+		 */
+		if (ret)
+			return ret;
+		if (sff_rev >= 0x3) {
+			modinfo->type = ETH_MODULE_SFF_8636;
+			modinfo->eeprom_len = ETH_MODULE_SFF_8636_LEN;
+		} else {
+			modinfo->type = ETH_MODULE_SFF_8436;
+			modinfo->eeprom_len = ETH_MODULE_SFF_8436_LEN;
+		}
+		break;
+
+	default:
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static int cxgb4_get_module_eeprom(struct net_device *dev,
+				   struct ethtool_eeprom *eprom, u8 *data)
+{
+	int ret = 0, offset = eprom->offset, len = eprom->len;
+	struct port_info *pi = netdev_priv(dev);
+	struct adapter *adapter = pi->adapter;
+
+	memset(data, 0, eprom->len);
+	if (offset + len <= I2C_PAGE_SIZE)
+		return t4_i2c_rd(adapter, adapter->mbox, pi->tx_chan,
+				 I2C_DEV_ADDR_A0, offset, len, data);
+
+	/* offset + len spans 0xa0 and 0xa1 pages */
+	if (offset <= I2C_PAGE_SIZE) {
+		/* read 0xa0 page */
+		len = I2C_PAGE_SIZE - offset;
+		ret =  t4_i2c_rd(adapter, adapter->mbox, pi->tx_chan,
+				 I2C_DEV_ADDR_A0, offset, len, data);
+		if (ret)
+			return ret;
+		offset = I2C_PAGE_SIZE;
+		/* Remaining bytes to be read from second page =
+		 * Total length - bytes read from first page
+		 */
+		len = eprom->len - len;
+	}
+	/* Read additional optical diagnostics from page 0xa2 if supported */
+	return t4_i2c_rd(adapter, adapter->mbox, pi->tx_chan, I2C_DEV_ADDR_A2,
+			 offset, len, &data[eprom->len - len]);
+}
+
 static const struct ethtool_ops cxgb_ethtool_ops = {
 	.get_link_ksettings = get_link_ksettings,
 	.set_link_ksettings = set_link_ksettings,
+	.get_fecparam      = get_fecparam,
+	.set_fecparam      = set_fecparam,
 	.get_drvinfo       = get_drvinfo,
 	.get_msglevel      = get_msglevel,
 	.set_msglevel      = set_msglevel,
@@ -1280,7 +1529,12 @@ static const struct ethtool_ops cxgb_ethtool_ops = {
 	.get_rxfh	   = get_rss_table,
 	.set_rxfh	   = set_rss_table,
 	.flash_device      = set_flash,
-	.get_ts_info       = get_ts_info
+	.get_ts_info       = get_ts_info,
+	.set_dump          = set_dump,
+	.get_dump_flag     = get_dump_flag,
+	.get_dump_data     = get_dump_data,
+	.get_module_info   = cxgb4_get_module_info,
+	.get_module_eeprom = cxgb4_get_module_eeprom,
 };
 
 void cxgb4_set_ethtool_ops(struct net_device *netdev)

@@ -172,7 +172,7 @@ struct drm_mm {
 	 * according to the (increasing) start address of the memory node. */
 	struct drm_mm_node head_node;
 	/* Keep an interval_tree for fast lookup of drm_mm_nodes by address. */
-	struct rb_root interval_tree;
+	struct rb_root_cached interval_tree;
 	struct rb_root holes_size;
 	struct rb_root holes_addr;
 
@@ -386,7 +386,7 @@ int drm_mm_insert_node_in_range(struct drm_mm *mm,
  * @color: opaque tag value to use for this node
  * @mode: fine-tune the allocation search and placement
  *
- * This is a simplified version of drm_mm_insert_node_in_range_generic() with no
+ * This is a simplified version of drm_mm_insert_node_in_range() with no
  * range restrictions applied.
  *
  * The preallocated node must be cleared to 0.

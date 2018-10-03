@@ -253,6 +253,7 @@ static void bond_delete_netdev_default_gids(struct ib_device *ib_dev,
 					    struct net_device *rdma_ndev)
 {
 	struct net_device *real_dev = rdma_vlan_dev_real_dev(event_ndev);
+	unsigned long gid_type_mask;
 
 	if (!rdma_ndev)
 		return;
@@ -262,21 +263,22 @@ static void bond_delete_netdev_default_gids(struct ib_device *ib_dev,
 
 	rcu_read_lock();
 
-	if (rdma_is_upper_dev_rcu(rdma_ndev, event_ndev) &&
-	    is_eth_active_slave_of_bonding_rcu(rdma_ndev, real_dev) ==
-	    BONDING_SLAVE_STATE_INACTIVE) {
-		unsigned long gid_type_mask;
-
+	if (((rdma_ndev != event_ndev &&
+	      !rdma_is_upper_dev_rcu(rdma_ndev, event_ndev)) ||
+	     is_eth_active_slave_of_bonding_rcu(rdma_ndev, real_dev)
+						 ==
+	     BONDING_SLAVE_STATE_INACTIVE)) {
 		rcu_read_unlock();
-
-		gid_type_mask = roce_gid_type_mask_support(ib_dev, port);
-
-		ib_cache_gid_set_default_gid(ib_dev, port, rdma_ndev,
-					     gid_type_mask,
-					     IB_CACHE_GID_DEFAULT_MODE_DELETE);
-	} else {
-		rcu_read_unlock();
+		return;
 	}
+
+	rcu_read_unlock();
+
+	gid_type_mask = roce_gid_type_mask_support(ib_dev, port);
+
+	ib_cache_gid_set_default_gid(ib_dev, port, rdma_ndev,
+				     gid_type_mask,
+				     IB_CACHE_GID_DEFAULT_MODE_DELETE);
 }
 
 static void enum_netdev_ipv4_ips(struct ib_device *ib_dev,
@@ -401,22 +403,27 @@ static void enum_all_gids_of_dev_cb(struct ib_device *ib_dev,
 	 * our feet
 	 */
 	rtnl_lock();
+	down_read(&net_rwsem);
 	for_each_net(net)
 		for_each_netdev(net, ndev)
 			if (is_eth_port_of_netdev(ib_dev, port, rdma_ndev, ndev))
 				add_netdev_ips(ib_dev, port, rdma_ndev, ndev);
+	up_read(&net_rwsem);
 	rtnl_unlock();
 }
 
-/* This function will rescan all of the network devices in the system
- * and add their gids, as needed, to the relevant RoCE devices. */
-int roce_rescan_device(struct ib_device *ib_dev)
+/**
+ * rdma_roce_rescan_device - Rescan all of the network devices in the system
+ * and add their gids, as needed, to the relevant RoCE devices.
+ *
+ * @device:         the rdma device
+ */
+void rdma_roce_rescan_device(struct ib_device *ib_dev)
 {
 	ib_enum_roce_netdev(ib_dev, pass_all_filter, NULL,
 			    enum_all_gids_of_dev_cb, NULL);
-
-	return 0;
 }
+EXPORT_SYMBOL(rdma_roce_rescan_device);
 
 static void callback_for_addr_gid_device_scan(struct ib_device *device,
 					      u8 port,

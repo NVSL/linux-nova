@@ -1,17 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (c) 1996, 2003 VIA Networking Technologies, Inc.
  * All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
  *
  * File: usbpipe.c
  *
@@ -44,7 +34,7 @@
 #define USB_CTL_WAIT	500 /* ms */
 
 int vnt_control_out(struct vnt_private *priv, u8 request, u16 value,
-		     u16 index, u16 length, u8 *buffer)
+		    u16 index, u16 length, u8 *buffer)
 {
 	int status = 0;
 	u8 *usb_buffer;
@@ -82,7 +72,7 @@ void vnt_control_out_u8(struct vnt_private *priv, u8 reg, u8 reg_off, u8 data)
 }
 
 int vnt_control_in(struct vnt_private *priv, u8 request, u16 value,
-		    u16 index, u16 length, u8 *buffer)
+		   u16 index, u16 length, u8 *buffer)
 {
 	int status;
 	u8 *usb_buffer;
@@ -204,9 +194,6 @@ static void vnt_submit_rx_urb_complete(struct urb *urb)
 		if (vnt_rx_data(priv, rcb, urb->actual_length)) {
 			rcb->skb = dev_alloc_skb(priv->rx_buf_sz);
 			if (!rcb->skb) {
-				dev_dbg(&priv->usb->dev,
-					"Failed to re-alloc rx skb\n");
-
 				rcb->in_use = false;
 				return;
 			}

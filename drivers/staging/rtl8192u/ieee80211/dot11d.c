@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /* Implement 802.11d. */
 
 #include "dot11d.h"
@@ -10,7 +11,7 @@ void Dot11d_Init(struct ieee80211_device *ieee)
 
 	pDot11dInfo->State = DOT11D_STATE_NONE;
 	pDot11dInfo->CountryIeLen = 0;
-	memset(pDot11dInfo->channel_map, 0, MAX_CHANNEL_NUMBER+1);
+	memset(pDot11dInfo->channel_map, 0, MAX_CHANNEL_NUMBER + 1);
 	memset(pDot11dInfo->MaxTxPwrDbmList, 0xFF, MAX_CHANNEL_NUMBER+1);
 	RESET_CIE_WATCHDOG(ieee);
 

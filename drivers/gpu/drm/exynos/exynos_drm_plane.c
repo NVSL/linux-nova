@@ -132,7 +132,7 @@ static void exynos_drm_plane_reset(struct drm_plane *plane)
 	if (plane->state) {
 		exynos_state = to_exynos_plane_state(plane->state);
 		if (exynos_state->base.fb)
-			drm_framebuffer_unreference(exynos_state->base.fb);
+			drm_framebuffer_put(exynos_state->base.fb);
 		kfree(exynos_state);
 		plane->state = NULL;
 	}
@@ -173,11 +173,33 @@ static struct drm_plane_funcs exynos_plane_funcs = {
 	.update_plane	= drm_atomic_helper_update_plane,
 	.disable_plane	= drm_atomic_helper_disable_plane,
 	.destroy	= drm_plane_cleanup,
-	.set_property	= drm_atomic_helper_plane_set_property,
 	.reset		= exynos_drm_plane_reset,
 	.atomic_duplicate_state = exynos_drm_plane_duplicate_state,
 	.atomic_destroy_state = exynos_drm_plane_destroy_state,
 };
+
+static int
+exynos_drm_plane_check_format(const struct exynos_drm_plane_config *config,
+			      struct exynos_drm_plane_state *state)
+{
+	struct drm_framebuffer *fb = state->base.fb;
+
+	switch (fb->modifier) {
+	case DRM_FORMAT_MOD_SAMSUNG_64_32_TILE:
+		if (!(config->capabilities & EXYNOS_DRM_PLANE_CAP_TILE))
+			return -ENOTSUPP;
+		break;
+
+	case DRM_FORMAT_MOD_LINEAR:
+		break;
+
+	default:
+		DRM_ERROR("unsupported pixel format modifier");
+		return -ENOTSUPP;
+	}
+
+	return 0;
+}
 
 static int
 exynos_drm_plane_check_size(const struct exynos_drm_plane_config *config,
@@ -223,6 +245,10 @@ static int exynos_plane_atomic_check(struct drm_plane *plane,
 	/* translate state into exynos_state */
 	exynos_plane_mode_set(exynos_state);
 
+	ret = exynos_drm_plane_check_format(exynos_plane->config, exynos_state);
+	if (ret)
+		return ret;
+
 	ret = exynos_drm_plane_check_size(exynos_plane->config, exynos_state);
 	return ret;
 }
@@ -263,13 +289,12 @@ static const struct drm_plane_helper_funcs plane_helper_funcs = {
 };
 
 static void exynos_plane_attach_zpos_property(struct drm_plane *plane,
-					      bool immutable)
+					      int zpos, bool immutable)
 {
-	/* FIXME */
 	if (immutable)
-		drm_plane_create_zpos_immutable_property(plane, 0);
+		drm_plane_create_zpos_immutable_property(plane, zpos);
 	else
-		drm_plane_create_zpos_property(plane, 0, 0, MAX_PLANE - 1);
+		drm_plane_create_zpos_property(plane, zpos, 0, MAX_PLANE - 1);
 }
 
 int exynos_plane_init(struct drm_device *dev,
@@ -283,7 +308,7 @@ int exynos_plane_init(struct drm_device *dev,
 				       &exynos_plane_funcs,
 				       config->pixel_formats,
 				       config->num_pixel_formats,
-				       config->type, NULL);
+				       NULL, config->type, NULL);
 	if (err) {
 		DRM_ERROR("failed to initialize plane\n");
 		return err;
@@ -294,7 +319,7 @@ int exynos_plane_init(struct drm_device *dev,
 	exynos_plane->index = index;
 	exynos_plane->config = config;
 
-	exynos_plane_attach_zpos_property(&exynos_plane->base,
+	exynos_plane_attach_zpos_property(&exynos_plane->base, config->zpos,
 			   !(config->capabilities & EXYNOS_DRM_PLANE_CAP_ZPOS));
 
 	return 0;

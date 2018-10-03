@@ -107,15 +107,15 @@ static inline u32 inotify_mask_to_arg(__u32 mask)
 }
 
 /* intofiy userspace file descriptor functions */
-static unsigned int inotify_poll(struct file *file, poll_table *wait)
+static __poll_t inotify_poll(struct file *file, poll_table *wait)
 {
 	struct fsnotify_group *group = file->private_data;
-	int ret = 0;
+	__poll_t ret = 0;
 
 	poll_wait(file, &group->notification_waitq, wait);
 	spin_lock(&group->notification_lock);
 	if (!fsnotify_notify_queue_is_empty(group))
-		ret = POLLIN | POLLRDNORM;
+		ret = EPOLLIN | EPOLLRDNORM;
 	spin_unlock(&group->notification_lock);
 
 	return ret;
@@ -307,6 +307,20 @@ static long inotify_ioctl(struct file *file, unsigned int cmd,
 		spin_unlock(&group->notification_lock);
 		ret = put_user(send_len, (int __user *) p);
 		break;
+#ifdef CONFIG_CHECKPOINT_RESTORE
+	case INOTIFY_IOC_SETNEXTWD:
+		ret = -EINVAL;
+		if (arg >= 1 && arg <= INT_MAX) {
+			struct inotify_group_private_data *data;
+
+			data = &group->inotify_data;
+			spin_lock(&data->idr_lock);
+			idr_set_cursor(&data->idr, (unsigned int)arg);
+			spin_unlock(&data->idr_lock);
+			ret = 0;
+		}
+		break;
+#endif /* CONFIG_CHECKPOINT_RESTORE */
 	}
 
 	return ret;
@@ -376,7 +390,7 @@ static struct inotify_inode_mark *inotify_idr_find_locked(struct fsnotify_group 
 
 		fsnotify_get_mark(fsn_mark);
 		/* One ref for being in the idr, one ref we just took */
-		BUG_ON(atomic_read(&fsn_mark->refcnt) < 2);
+		BUG_ON(refcount_read(&fsn_mark->refcnt) < 2);
 	}
 
 	return i_mark;
@@ -446,7 +460,7 @@ static void inotify_remove_from_idr(struct fsnotify_group *group,
 	 * One ref for being in the idr
 	 * one ref grabbed by inotify_idr_find
 	 */
-	if (unlikely(atomic_read(&i_mark->fsn_mark.refcnt) < 2)) {
+	if (unlikely(refcount_read(&i_mark->fsn_mark.refcnt) < 2)) {
 		printk(KERN_ERR "%s: i_mark=%p i_mark->wd=%d i_mark->group=%p\n",
 			 __func__, i_mark, i_mark->wd, i_mark->fsn_mark.group);
 		/* we can't really recover with bad ref cnting.. */
@@ -471,10 +485,14 @@ void inotify_ignored_and_remove_idr(struct fsnotify_mark *fsn_mark,
 				    struct fsnotify_group *group)
 {
 	struct inotify_inode_mark *i_mark;
+	struct fsnotify_iter_info iter_info = { };
+
+	fsnotify_iter_set_report_type_mark(&iter_info, FSNOTIFY_OBJ_TYPE_INODE,
+					   fsn_mark);
 
 	/* Queue ignore event for the watch */
-	inotify_handle_event(group, NULL, fsn_mark, NULL, FS_IN_IGNORED,
-			     NULL, FSNOTIFY_EVENT_NONE, NULL, 0, NULL);
+	inotify_handle_event(group, NULL, FS_IN_IGNORED, NULL,
+			     FSNOTIFY_EVENT_NONE, NULL, 0, &iter_info);
 
 	i_mark = container_of(fsn_mark, struct inotify_inode_mark, fsn_mark);
 	/* remove this mark from the idr */
@@ -564,7 +582,7 @@ static int inotify_new_watch(struct fsnotify_group *group,
 	}
 
 	/* we are on the idr, now get on the inode */
-	ret = fsnotify_add_mark_locked(&tmp_i_mark->fsn_mark, inode, NULL, 0);
+	ret = fsnotify_add_inode_mark_locked(&tmp_i_mark->fsn_mark, inode, 0);
 	if (ret) {
 		/* we failed to get on the inode, get off the idr */
 		inotify_remove_from_idr(group, tmp_i_mark);
@@ -635,7 +653,7 @@ static struct fsnotify_group *inotify_new_group(unsigned int max_events)
 
 
 /* inotify syscalls */
-SYSCALL_DEFINE1(inotify_init1, int, flags)
+static int do_inotify_init(int flags)
 {
 	struct fsnotify_group *group;
 	int ret;
@@ -660,9 +678,14 @@ SYSCALL_DEFINE1(inotify_init1, int, flags)
 	return ret;
 }
 
+SYSCALL_DEFINE1(inotify_init1, int, flags)
+{
+	return do_inotify_init(flags);
+}
+
 SYSCALL_DEFINE0(inotify_init)
 {
-	return sys_inotify_init1(0);
+	return do_inotify_init(0);
 }
 
 SYSCALL_DEFINE3(inotify_add_watch, int, fd, const char __user *, pathname,

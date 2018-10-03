@@ -13,15 +13,18 @@ Demux Function Calls
     dmx-fclose
     dmx-fread
     dmx-fwrite
+    dmx-mmap
+    dmx-munmap
     dmx-start
     dmx-stop
     dmx-set-filter
     dmx-set-pes-filter
     dmx-set-buffer-size
-    dmx-get-event
     dmx-get-stc
     dmx-get-pes-pids
-    dmx-get-caps
-    dmx-set-source
     dmx-add-pid
     dmx-remove-pid
+    dmx-reqbufs
+    dmx-querybuf
+    dmx-expbuf
+    dmx-qbuf

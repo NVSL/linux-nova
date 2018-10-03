@@ -163,7 +163,15 @@ struct sa_path_rec_ib {
 	u8           raw_traffic;
 };
 
+/**
+ * struct sa_path_rec_roce - RoCE specific portion of the path record entry
+ * @route_resolved:	When set, it indicates that this route is already
+ *			resolved for this path record entry.
+ * @dmac:		Destination mac address for the given DGID entry
+ *			of the path record entry.
+ */
 struct sa_path_rec_roce {
+	bool	route_resolved;
 	u8           dmac[ETH_ALEN];
 	/* ignored in IB */
 	int	     ifindex;
@@ -549,12 +557,12 @@ int ib_init_ah_from_mcmember(struct ib_device *device, u8 port_num,
 			     struct rdma_ah_attr *ah_attr);
 
 /**
- * ib_init_ah_from_path - Initialize address handle attributes based on an SA
- *   path record.
+ * ib_init_ah_attr_from_path - Initialize address handle attributes based on
+ *   an SA path record.
  */
-int ib_init_ah_from_path(struct ib_device *device, u8 port_num,
-			 struct sa_path_rec *rec,
-			 struct rdma_ah_attr *ah_attr);
+int ib_init_ah_attr_from_path(struct ib_device *device, u8 port_num,
+			      struct sa_path_rec *rec,
+			      struct rdma_ah_attr *ah_attr);
 
 /**
  * ib_sa_pack_path - Conert a path record from struct ib_sa_path_rec
@@ -590,20 +598,25 @@ static inline bool sa_path_is_roce(struct sa_path_rec *rec)
 		(rec->rec_type == SA_PATH_REC_TYPE_ROCE_V2));
 }
 
-static inline void sa_path_set_slid(struct sa_path_rec *rec, __be32 slid)
+static inline bool sa_path_is_opa(struct sa_path_rec *rec)
 {
-	if (rec->rec_type == SA_PATH_REC_TYPE_IB)
-		rec->ib.slid = htons(ntohl(slid));
-	else if (rec->rec_type == SA_PATH_REC_TYPE_OPA)
-		rec->opa.slid = slid;
+	return (rec->rec_type == SA_PATH_REC_TYPE_OPA);
 }
 
-static inline void sa_path_set_dlid(struct sa_path_rec *rec, __be32 dlid)
+static inline void sa_path_set_slid(struct sa_path_rec *rec, u32 slid)
 {
 	if (rec->rec_type == SA_PATH_REC_TYPE_IB)
-		rec->ib.dlid = htons(ntohl(dlid));
+		rec->ib.slid = cpu_to_be16(slid);
 	else if (rec->rec_type == SA_PATH_REC_TYPE_OPA)
-		rec->opa.dlid = dlid;
+		rec->opa.slid = cpu_to_be32(slid);
+}
+
+static inline void sa_path_set_dlid(struct sa_path_rec *rec, u32 dlid)
+{
+	if (rec->rec_type == SA_PATH_REC_TYPE_IB)
+		rec->ib.dlid = cpu_to_be16(dlid);
+	else if (rec->rec_type == SA_PATH_REC_TYPE_OPA)
+		rec->opa.dlid = cpu_to_be32(dlid);
 }
 
 static inline void sa_path_set_raw_traffic(struct sa_path_rec *rec,

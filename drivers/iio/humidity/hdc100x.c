@@ -1,18 +1,16 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * hdc100x.c - Support for the TI HDC100x temperature + humidity sensors
  *
- * Copyright (C) 2015 Matt Ranostay <mranostay@gmail.com>
+ * Copyright (C) 2015, 2018
+ * Author: Matt Ranostay <matt.ranostay@konsulko.com>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- * GNU General Public License for more details.
- *
+ * Datasheets:
+ * http://www.ti.com/product/HDC1000/datasheet
+ * http://www.ti.com/product/HDC1008/datasheet
+ * http://www.ti.com/product/HDC1010/datasheet
+ * http://www.ti.com/product/HDC1050/datasheet
+ * http://www.ti.com/product/HDC1080/datasheet
  */
 
 #include <linux/delay.h>
@@ -351,7 +349,6 @@ static const struct iio_info hdc100x_info = {
 	.read_raw = hdc100x_read_raw,
 	.write_raw = hdc100x_write_raw,
 	.attrs = &hdc100x_attribute_group,
-	.driver_module = THIS_MODULE,
 };
 
 static int hdc100x_probe(struct i2c_client *client,
@@ -414,13 +411,29 @@ static int hdc100x_remove(struct i2c_client *client)
 
 static const struct i2c_device_id hdc100x_id[] = {
 	{ "hdc100x", 0 },
+	{ "hdc1000", 0 },
+	{ "hdc1008", 0 },
+	{ "hdc1010", 0 },
+	{ "hdc1050", 0 },
+	{ "hdc1080", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, hdc100x_id);
 
+static const struct of_device_id hdc100x_dt_ids[] = {
+	{ .compatible = "ti,hdc1000" },
+	{ .compatible = "ti,hdc1008" },
+	{ .compatible = "ti,hdc1010" },
+	{ .compatible = "ti,hdc1050" },
+	{ .compatible = "ti,hdc1080" },
+	{ }
+};
+MODULE_DEVICE_TABLE(of, hdc100x_dt_ids);
+
 static struct i2c_driver hdc100x_driver = {
 	.driver = {
 		.name	= "hdc100x",
+		.of_match_table = of_match_ptr(hdc100x_dt_ids),
 	},
 	.probe = hdc100x_probe,
 	.remove = hdc100x_remove,
@@ -428,6 +441,6 @@ static struct i2c_driver hdc100x_driver = {
 };
 module_i2c_driver(hdc100x_driver);
 
-MODULE_AUTHOR("Matt Ranostay <mranostay@gmail.com>");
+MODULE_AUTHOR("Matt Ranostay <matt.ranostay@konsulko.com>");
 MODULE_DESCRIPTION("TI HDC100x humidity and temperature sensor driver");
 MODULE_LICENSE("GPL");

@@ -17,22 +17,16 @@
 #define _RC_CORE
 
 #include <linux/spinlock.h>
+#include <linux/cdev.h>
 #include <linux/kfifo.h>
 #include <linux/time.h>
 #include <linux/timer.h>
 #include <media/rc-map.h>
 
-extern int rc_core_debug;
-#define IR_dprintk(level, fmt, ...)				\
-do {								\
-	if (rc_core_debug >= level)				\
-		printk(KERN_DEBUG pr_fmt(fmt), ##__VA_ARGS__);	\
-} while (0)
-
 /**
- * enum rc_driver_type - type of the RC output
+ * enum rc_driver_type - type of the RC driver.
  *
- * @RC_DRIVER_SCANCODE:	 Driver or hardware generates a scancode
+ * @RC_DRIVER_SCANCODE:	 Driver or hardware generates a scancode.
  * @RC_DRIVER_IR_RAW:	 Driver or hardware generates pulse/space sequences.
  *			 It needs a Infra-Red pulse/space decoder
  * @RC_DRIVER_IR_RAW_TX: Device transmitter only,
@@ -68,11 +62,38 @@ enum rc_filter_type {
 };
 
 /**
+ * struct lirc_fh - represents an open lirc file
+ * @list: list of open file handles
+ * @rc: rcdev for this lirc chardev
+ * @carrier_low: when setting the carrier range, first the low end must be
+ *	set with an ioctl and then the high end with another ioctl
+ * @send_timeout_reports: report timeouts in lirc raw IR.
+ * @rawir: queue for incoming raw IR
+ * @scancodes: queue for incoming decoded scancodes
+ * @wait_poll: poll struct for lirc device
+ * @send_mode: lirc mode for sending, either LIRC_MODE_SCANCODE or
+ *	LIRC_MODE_PULSE
+ * @rec_mode: lirc mode for receiving, either LIRC_MODE_SCANCODE or
+ *	LIRC_MODE_MODE2
+ */
+struct lirc_fh {
+	struct list_head list;
+	struct rc_dev *rc;
+	int				carrier_low;
+	bool				send_timeout_reports;
+	DECLARE_KFIFO_PTR(rawir, unsigned int);
+	DECLARE_KFIFO_PTR(scancodes, struct lirc_scancode);
+	wait_queue_head_t		wait_poll;
+	u8				send_mode;
+	u8				rec_mode;
+};
+
+/**
  * struct rc_dev - represents a remote control device
  * @dev: driver model's view of this device
  * @managed_alloc: devm_rc_allocate_device was used to create rc_dev
  * @sysfs_groups: sysfs attribute groups
- * @input_name: name of the input child device
+ * @device_name: name of the rc child device
  * @input_phys: physical path to the input child device
  * @input_id: id of the input child device (struct input_id)
  * @driver_name: name of the hardware driver which registered this device
@@ -87,11 +108,12 @@ enum rc_filter_type {
  * @idle: used to keep track of RX state
  * @encode_wakeup: wakeup filtering uses IR encode API, therefore the allowed
  *	wakeup protocols is the set of all raw encoders
- * @allowed_protocols: bitmask with the supported RC_BIT_* protocols
- * @enabled_protocols: bitmask with the enabled RC_BIT_* protocols
- * @allowed_wakeup_protocols: bitmask with the supported RC_BIT_* wakeup protocols
- * @wakeup_protocol: the enabled RC_TYPE_* wakeup protocol or
- *	RC_TYPE_UNKNOWN if disabled.
+ * @allowed_protocols: bitmask with the supported RC_PROTO_BIT_* protocols
+ * @enabled_protocols: bitmask with the enabled RC_PROTO_BIT_* protocols
+ * @allowed_wakeup_protocols: bitmask with the supported RC_PROTO_BIT_* wakeup
+ *	protocols
+ * @wakeup_protocol: the enabled RC_PROTO_* wakeup protocol or
+ *	RC_PROTO_UNKNOWN if disabled.
  * @scancode_filter: scancode filter
  * @scancode_wakeup_filter: scancode wakeup filters
  * @scancode_mask: some hardware decoders are not capable of providing the full
@@ -105,6 +127,8 @@ enum rc_filter_type {
  * @keypressed: whether a key is currently pressed
  * @keyup_jiffies: time (in jiffies) when the current keypress should be released
  * @timer_keyup: timer for releasing a keypress
+ * @timer_repeat: timer for autorepeat events. This is needed for CEC, which
+ *	has non-standard repeats.
  * @last_keycode: keycode of last keypress
  * @last_protocol: protocol of last keypress
  * @last_scancode: scancode of last keypress
@@ -114,6 +138,15 @@ enum rc_filter_type {
  * @max_timeout: maximum timeout supported by device
  * @rx_resolution : resolution (in ns) of input sampler
  * @tx_resolution: resolution (in ns) of output sampler
+ * @lirc_dev: lirc device
+ * @lirc_cdev: lirc char cdev
+ * @gap_start: time when gap starts
+ * @gap_duration: duration of initial gap
+ * @gap: true if we're in a gap
+ * @lirc_fh_lock: protects lirc_fh list
+ * @lirc_fh: list of open files
+ * @registered: set to true by rc_register_device(), false by
+ *	rc_unregister_device
  * @change_protocol: allow changing the protocol used on hardware decoders
  * @open: callback to allow drivers to enable polling/irq when IR input device
  *	is opened.
@@ -138,10 +171,10 @@ struct rc_dev {
 	struct device			dev;
 	bool				managed_alloc;
 	const struct attribute_group	*sysfs_groups[5];
-	const char			*input_name;
+	const char			*device_name;
 	const char			*input_phys;
 	struct input_id			input_id;
-	char				*driver_name;
+	const char			*driver_name;
 	const char			*map_name;
 	struct rc_map			rc_map;
 	struct mutex			lock;
@@ -154,7 +187,7 @@ struct rc_dev {
 	u64				allowed_protocols;
 	u64				enabled_protocols;
 	u64				allowed_wakeup_protocols;
-	enum rc_type			wakeup_protocol;
+	enum rc_proto			wakeup_protocol;
 	struct rc_scancode_filter	scancode_filter;
 	struct rc_scancode_filter	scancode_wakeup_filter;
 	u32				scancode_mask;
@@ -164,8 +197,9 @@ struct rc_dev {
 	bool				keypressed;
 	unsigned long			keyup_jiffies;
 	struct timer_list		timer_keyup;
+	struct timer_list		timer_repeat;
 	u32				last_keycode;
-	enum rc_type			last_protocol;
+	enum rc_proto			last_protocol;
 	u32				last_scancode;
 	u8				last_toggle;
 	u32				timeout;
@@ -173,7 +207,17 @@ struct rc_dev {
 	u32				max_timeout;
 	u32				rx_resolution;
 	u32				tx_resolution;
-	int				(*change_protocol)(struct rc_dev *dev, u64 *rc_type);
+#ifdef CONFIG_LIRC
+	struct device			lirc_dev;
+	struct cdev			lirc_cdev;
+	ktime_t				gap_start;
+	u64				gap_duration;
+	bool				gap;
+	spinlock_t			lirc_fh_lock;
+	struct list_head		lirc_fh;
+#endif
+	bool				registered;
+	int				(*change_protocol)(struct rc_dev *dev, u64 *rc_proto);
 	int				(*open)(struct rc_dev *dev);
 	void				(*close)(struct rc_dev *dev);
 	int				(*s_tx_mask)(struct rc_dev *dev, u32 mask);
@@ -247,23 +291,11 @@ int devm_rc_register_device(struct device *parent, struct rc_dev *dev);
  */
 void rc_unregister_device(struct rc_dev *dev);
 
-/**
- * rc_open - Opens a RC device
- *
- * @rdev: pointer to struct rc_dev.
- */
-int rc_open(struct rc_dev *rdev);
-
-/**
- * rc_close - Closes a RC device
- *
- * @rdev: pointer to struct rc_dev.
- */
-void rc_close(struct rc_dev *rdev);
-
 void rc_repeat(struct rc_dev *dev);
-void rc_keydown(struct rc_dev *dev, enum rc_type protocol, u32 scancode, u8 toggle);
-void rc_keydown_notimeout(struct rc_dev *dev, enum rc_type protocol, u32 scancode, u8 toggle);
+void rc_keydown(struct rc_dev *dev, enum rc_proto protocol, u32 scancode,
+		u8 toggle);
+void rc_keydown_notimeout(struct rc_dev *dev, enum rc_proto protocol,
+			  u32 scancode, u8 toggle);
 void rc_keyup(struct rc_dev *dev);
 u32 rc_g_keycode_from_table(struct rc_dev *dev, u32 scancode);
 
@@ -272,14 +304,6 @@ u32 rc_g_keycode_from_table(struct rc_dev *dev, u32 scancode);
  * The Raw interface is specific to InfraRed. It may be a good idea to
  * split it later into a separate header.
  */
-
-enum raw_event_type {
-	IR_SPACE        = (1 << 0),
-	IR_PULSE        = (1 << 1),
-	IR_START_EVENT  = (1 << 2),
-	IR_STOP_EVENT   = (1 << 3),
-};
-
 struct ir_raw_event {
 	union {
 		u32             duration;
@@ -308,18 +332,22 @@ static inline void init_ir_raw_event(struct ir_raw_event *ev)
 
 void ir_raw_event_handle(struct rc_dev *dev);
 int ir_raw_event_store(struct rc_dev *dev, struct ir_raw_event *ev);
-int ir_raw_event_store_edge(struct rc_dev *dev, enum raw_event_type type);
+int ir_raw_event_store_edge(struct rc_dev *dev, bool pulse);
 int ir_raw_event_store_with_filter(struct rc_dev *dev,
-				struct ir_raw_event *ev);
+				   struct ir_raw_event *ev);
+int ir_raw_event_store_with_timeout(struct rc_dev *dev,
+				    struct ir_raw_event *ev);
 void ir_raw_event_set_idle(struct rc_dev *dev, bool idle);
-int ir_raw_encode_scancode(enum rc_type protocol, u32 scancode,
+int ir_raw_encode_scancode(enum rc_proto protocol, u32 scancode,
 			   struct ir_raw_event *events, unsigned int max);
+int ir_raw_encode_carrier(enum rc_proto protocol);
 
 static inline void ir_raw_event_reset(struct rc_dev *dev)
 {
 	struct ir_raw_event ev = { .reset = true };
 
 	ir_raw_event_store(dev, &ev);
+	dev->idle = true;
 	ir_raw_event_handle(dev);
 }
 
@@ -338,6 +366,37 @@ static inline u32 ir_extract_bits(u32 data, u32 mask)
 	} while (mask >>= 1);
 
 	return value;
+}
+
+/* Get NEC scancode and protocol type from address and command bytes */
+static inline u32 ir_nec_bytes_to_scancode(u8 address, u8 not_address,
+					   u8 command, u8 not_command,
+					   enum rc_proto *protocol)
+{
+	u32 scancode;
+
+	if ((command ^ not_command) != 0xff) {
+		/* NEC transport, but modified protocol, used by at
+		 * least Apple and TiVo remotes
+		 */
+		scancode = not_address << 24 |
+			address     << 16 |
+			not_command <<  8 |
+			command;
+		*protocol = RC_PROTO_NEC32;
+	} else if ((address ^ not_address) != 0xff) {
+		/* Extended NEC */
+		scancode = address     << 16 |
+			   not_address <<  8 |
+			   command;
+		*protocol = RC_PROTO_NECX;
+	} else {
+		/* Normal NEC */
+		scancode = address << 8 | command;
+		*protocol = RC_PROTO_NEC;
+	}
+
+	return scancode;
 }
 
 #endif /* _RC_CORE */

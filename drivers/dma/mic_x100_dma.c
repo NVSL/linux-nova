@@ -385,7 +385,8 @@ static int mic_dma_alloc_desc_ring(struct mic_dma_chan *ch)
 	if (dma_mapping_error(dev, ch->desc_ring_micpa))
 		goto map_error;
 
-	ch->tx_array = vzalloc(MIC_DMA_DESC_RX_SIZE * sizeof(*ch->tx_array));
+	ch->tx_array = vzalloc(array_size(MIC_DMA_DESC_RX_SIZE,
+					  sizeof(*ch->tx_array)));
 	if (!ch->tx_array)
 		goto tx_error;
 	return 0;
@@ -480,9 +481,7 @@ static int mic_dma_setup_irq(struct mic_dma_chan *ch)
 		to_mbus_hw_ops(ch)->request_threaded_irq(to_mbus_device(ch),
 			mic_dma_intr_handler, mic_dma_thread_fn,
 			"mic dma_channel", ch, ch->ch_num);
-	if (IS_ERR(ch->cookie))
-		return PTR_ERR(ch->cookie);
-	return 0;
+	return PTR_ERR_OR_ZERO(ch->cookie);
 }
 
 static inline void mic_dma_free_irq(struct mic_dma_chan *ch)

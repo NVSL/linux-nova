@@ -35,6 +35,7 @@
 	 A3XX_INT0_CP_RB_INT |             \
 	 A3XX_INT0_CP_REG_PROTECT_FAULT |  \
 	 A3XX_INT0_CP_AHB_ERROR_HALT |     \
+	 A3XX_INT0_CACHE_FLUSH_TS |        \
 	 A3XX_INT0_UCHE_OOB_ACCESS)
 
 extern bool hang_debug;
@@ -44,7 +45,7 @@ static bool a3xx_idle(struct msm_gpu *gpu);
 
 static bool a3xx_me_init(struct msm_gpu *gpu)
 {
-	struct msm_ringbuffer *ring = gpu->rb;
+	struct msm_ringbuffer *ring = gpu->rb[0];
 
 	OUT_PKT3(ring, CP_ME_INIT, 17);
 	OUT_RING(ring, 0x000003f7);
@@ -65,7 +66,7 @@ static bool a3xx_me_init(struct msm_gpu *gpu)
 	OUT_RING(ring, 0x00000000);
 	OUT_RING(ring, 0x00000000);
 
-	gpu->funcs->flush(gpu);
+	gpu->funcs->flush(gpu, ring);
 	return a3xx_idle(gpu);
 }
 
@@ -256,8 +257,8 @@ static int a3xx_hw_init(struct msm_gpu *gpu)
 	 */
 
 	/* Load PM4: */
-	ptr = (uint32_t *)(adreno_gpu->pm4->data);
-	len = adreno_gpu->pm4->size / 4;
+	ptr = (uint32_t *)(adreno_gpu->fw[ADRENO_FW_PM4]->data);
+	len = adreno_gpu->fw[ADRENO_FW_PM4]->size / 4;
 	DBG("loading PM4 ucode version: %x", ptr[1]);
 
 	gpu_write(gpu, REG_AXXX_CP_DEBUG,
@@ -268,8 +269,8 @@ static int a3xx_hw_init(struct msm_gpu *gpu)
 		gpu_write(gpu, REG_AXXX_CP_ME_RAM_DATA, ptr[i]);
 
 	/* Load PFP: */
-	ptr = (uint32_t *)(adreno_gpu->pfp->data);
-	len = adreno_gpu->pfp->size / 4;
+	ptr = (uint32_t *)(adreno_gpu->fw[ADRENO_FW_PFP]->data);
+	len = adreno_gpu->fw[ADRENO_FW_PFP]->size / 4;
 	DBG("loading PFP ucode version: %x", ptr[5]);
 
 	gpu_write(gpu, REG_A3XX_CP_PFP_UCODE_ADDR, 0);
@@ -339,7 +340,7 @@ static void a3xx_destroy(struct msm_gpu *gpu)
 static bool a3xx_idle(struct msm_gpu *gpu)
 {
 	/* wait for ringbuffer to drain: */
-	if (!adreno_idle(gpu))
+	if (!adreno_idle(gpu, gpu->rb[0]))
 		return false;
 
 	/* then wait for GPU to finish: */
@@ -444,9 +445,9 @@ static const struct adreno_gpu_funcs funcs = {
 		.pm_suspend = msm_gpu_pm_suspend,
 		.pm_resume = msm_gpu_pm_resume,
 		.recover = a3xx_recover,
-		.last_fence = adreno_last_fence,
 		.submit = adreno_submit,
 		.flush = adreno_flush,
+		.active_ring = adreno_active_ring,
 		.irq = a3xx_irq,
 		.destroy = a3xx_destroy,
 #ifdef CONFIG_DEBUG_FS
@@ -486,15 +487,13 @@ struct msm_gpu *a3xx_gpu_init(struct drm_device *dev)
 	adreno_gpu = &a3xx_gpu->base;
 	gpu = &adreno_gpu->base;
 
-	a3xx_gpu->pdev = pdev;
-
 	gpu->perfcntrs = perfcntrs;
 	gpu->num_perfcntrs = ARRAY_SIZE(perfcntrs);
 
 	adreno_gpu->registers = a3xx_registers;
 	adreno_gpu->reg_offsets = a3xx_register_offsets;
 
-	ret = adreno_gpu_init(dev, pdev, adreno_gpu, &funcs);
+	ret = adreno_gpu_init(dev, pdev, adreno_gpu, &funcs, 1);
 	if (ret)
 		goto fail;
 

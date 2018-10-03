@@ -37,6 +37,9 @@ static DEFINE_MUTEX(mutex);
 
 static unsigned long evm_set_key_flags;
 
+static char * const evm_hmac = "hmac(sha1)";
+static char * const evm_hash = "sha1";
+
 /**
  * evm_set_key() - set EVM HMAC key from the kernel
  * @key: pointer to a buffer with the key data
@@ -80,7 +83,7 @@ static struct shash_desc *init_desc(char type)
 
 	if (type == EVM_XATTR_HMAC) {
 		if (!(evm_initialized & EVM_INIT_HMAC)) {
-			pr_err("HMAC key is not set\n");
+			pr_err_once("HMAC key is not set\n");
 			return ERR_PTR(-ENOKEY);
 		}
 		tfm = &hmac_tfm;
@@ -138,7 +141,7 @@ out:
  * protection.)
  */
 static void hmac_add_misc(struct shash_desc *desc, struct inode *inode,
-			  char *digest)
+			  char type, char *digest)
 {
 	struct h_misc {
 		unsigned long ino;
@@ -149,8 +152,13 @@ static void hmac_add_misc(struct shash_desc *desc, struct inode *inode,
 	} hmac_misc;
 
 	memset(&hmac_misc, 0, sizeof(hmac_misc));
-	hmac_misc.ino = inode->i_ino;
-	hmac_misc.generation = inode->i_generation;
+	/* Don't include the inode or generation number in portable
+	 * signatures
+	 */
+	if (type != EVM_XATTR_PORTABLE_DIGSIG) {
+		hmac_misc.ino = inode->i_ino;
+		hmac_misc.generation = inode->i_generation;
+	}
 	/* The hmac uid and gid must be encoded in the initial user
 	 * namespace (not the filesystems user namespace) as encoding
 	 * them in the filesystems user namespace allows an attack
@@ -163,7 +171,8 @@ static void hmac_add_misc(struct shash_desc *desc, struct inode *inode,
 	hmac_misc.gid = from_kgid(&init_user_ns, inode->i_gid);
 	hmac_misc.mode = inode->i_mode;
 	crypto_shash_update(desc, (const u8 *)&hmac_misc, sizeof(hmac_misc));
-	if (evm_hmac_attrs & EVM_ATTR_FSUUID)
+	if ((evm_hmac_attrs & EVM_ATTR_FSUUID) &&
+	    type != EVM_XATTR_PORTABLE_DIGSIG)
 		crypto_shash_update(desc, &inode->i_sb->s_uuid.b[0],
 				    sizeof(inode->i_sb->s_uuid));
 	crypto_shash_final(desc, digest);
@@ -183,14 +192,16 @@ static int evm_calc_hmac_or_hash(struct dentry *dentry,
 				char type, char *digest)
 {
 	struct inode *inode = d_backing_inode(dentry);
+	struct xattr_list *xattr;
 	struct shash_desc *desc;
-	char **xattrname;
 	size_t xattr_size = 0;
 	char *xattr_value = NULL;
 	int error;
 	int size;
+	bool ima_present = false;
 
-	if (!(inode->i_opflags & IOP_XATTR))
+	if (!(inode->i_opflags & IOP_XATTR) ||
+	    inode->i_sb->s_user_ns != &init_user_ns)
 		return -EOPNOTSUPP;
 
 	desc = init_desc(type);
@@ -198,15 +209,22 @@ static int evm_calc_hmac_or_hash(struct dentry *dentry,
 		return PTR_ERR(desc);
 
 	error = -ENODATA;
-	for (xattrname = evm_config_xattrnames; *xattrname != NULL; xattrname++) {
+	list_for_each_entry_rcu(xattr, &evm_config_xattrnames, list) {
+		bool is_ima = false;
+
+		if (strcmp(xattr->name, XATTR_NAME_IMA) == 0)
+			is_ima = true;
+
 		if ((req_xattr_name && req_xattr_value)
-		    && !strcmp(*xattrname, req_xattr_name)) {
+		    && !strcmp(xattr->name, req_xattr_name)) {
 			error = 0;
 			crypto_shash_update(desc, (const u8 *)req_xattr_value,
 					     req_xattr_value_len);
+			if (is_ima)
+				ima_present = true;
 			continue;
 		}
-		size = vfs_getxattr_alloc(dentry, *xattrname,
+		size = vfs_getxattr_alloc(dentry, xattr->name,
 					  &xattr_value, xattr_size, GFP_NOFS);
 		if (size == -ENOMEM) {
 			error = -ENOMEM;
@@ -218,9 +236,14 @@ static int evm_calc_hmac_or_hash(struct dentry *dentry,
 		error = 0;
 		xattr_size = size;
 		crypto_shash_update(desc, (const u8 *)xattr_value, xattr_size);
+		if (is_ima)
+			ima_present = true;
 	}
-	hmac_add_misc(desc, inode, digest);
+	hmac_add_misc(desc, inode, type, digest);
 
+	/* Portable EVM signatures must include an IMA hash */
+	if (type == EVM_XATTR_PORTABLE_DIGSIG && !ima_present)
+		return -EPERM;
 out:
 	kfree(xattr_value);
 	kfree(desc);
@@ -232,16 +255,44 @@ int evm_calc_hmac(struct dentry *dentry, const char *req_xattr_name,
 		  char *digest)
 {
 	return evm_calc_hmac_or_hash(dentry, req_xattr_name, req_xattr_value,
-				req_xattr_value_len, EVM_XATTR_HMAC, digest);
+			       req_xattr_value_len, EVM_XATTR_HMAC, digest);
 }
 
 int evm_calc_hash(struct dentry *dentry, const char *req_xattr_name,
 		  const char *req_xattr_value, size_t req_xattr_value_len,
-		  char *digest)
+		  char type, char *digest)
 {
 	return evm_calc_hmac_or_hash(dentry, req_xattr_name, req_xattr_value,
-				req_xattr_value_len, IMA_XATTR_DIGEST, digest);
+				     req_xattr_value_len, type, digest);
 }
+
+static int evm_is_immutable(struct dentry *dentry, struct inode *inode)
+{
+	const struct evm_ima_xattr_data *xattr_data = NULL;
+	struct integrity_iint_cache *iint;
+	int rc = 0;
+
+	iint = integrity_iint_find(inode);
+	if (iint && (iint->flags & EVM_IMMUTABLE_DIGSIG))
+		return 1;
+
+	/* Do this the hard way */
+	rc = vfs_getxattr_alloc(dentry, XATTR_NAME_EVM, (char **)&xattr_data, 0,
+				GFP_NOFS);
+	if (rc <= 0) {
+		if (rc == -ENODATA)
+			return 0;
+		return rc;
+	}
+	if (xattr_data->type == EVM_XATTR_PORTABLE_DIGSIG)
+		rc = 1;
+	else
+		rc = 0;
+
+	kfree(xattr_data);
+	return rc;
+}
+
 
 /*
  * Calculate the hmac and update security.evm xattr
@@ -254,6 +305,16 @@ int evm_update_evmxattr(struct dentry *dentry, const char *xattr_name,
 	struct inode *inode = d_backing_inode(dentry);
 	struct evm_ima_xattr_data xattr_data;
 	int rc = 0;
+
+	/*
+	 * Don't permit any transformation of the EVM xattr if the signature
+	 * is of an immutable type
+	 */
+	rc = evm_is_immutable(dentry, inode);
+	if (rc < 0)
+		return rc;
+	if (rc)
+		return -EPERM;
 
 	rc = evm_calc_hmac(dentry, xattr_name, xattr_value,
 			   xattr_value_len, xattr_data.digest);
@@ -280,7 +341,7 @@ int evm_init_hmac(struct inode *inode, const struct xattr *lsm_xattr,
 	}
 
 	crypto_shash_update(desc, lsm_xattr->value, lsm_xattr->value_len);
-	hmac_add_misc(desc, inode, hmac_val);
+	hmac_add_misc(desc, inode, EVM_XATTR_HMAC, hmac_val);
 	kfree(desc);
 	return 0;
 }

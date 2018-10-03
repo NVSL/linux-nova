@@ -46,7 +46,7 @@ MODULE_PARM_DESC(mfg_mode, "manufacturing mode enable:1, disable:0");
 
 bool aggr_ctrl;
 module_param(aggr_ctrl, bool, 0000);
-MODULE_PARM_DESC(aggr_ctrl, "usb tx aggreataon enable:1, disable:0");
+MODULE_PARM_DESC(aggr_ctrl, "usb tx aggregation enable:1, disable:0");
 
 /*
  * This function registers the device and performs all the necessary
@@ -100,8 +100,7 @@ static int mwifiex_register(void *card, struct device *dev,
 	}
 	mwifiex_init_lock_list(adapter);
 
-	setup_timer(&adapter->cmd_timer, mwifiex_cmd_timeout_func,
-		    (unsigned long)adapter);
+	timer_setup(&adapter->cmd_timer, mwifiex_cmd_timeout_func, 0);
 
 	return 0;
 
@@ -588,7 +587,7 @@ static int _mwifiex_fw_dpc(const struct firmware *firmware, void *context)
 	if (mwifiex_init_channel_scan_gap(adapter)) {
 		mwifiex_dbg(adapter, ERROR,
 			    "could not init channel stats table\n");
-		goto err_init_fw;
+		goto err_init_chan_scan;
 	}
 
 	if (driver_mode) {
@@ -636,6 +635,7 @@ static int _mwifiex_fw_dpc(const struct firmware *firmware, void *context)
 
 err_add_intf:
 	vfree(adapter->chan_stats);
+err_init_chan_scan:
 	wiphy_unregister(adapter->wiphy);
 	wiphy_free(adapter->wiphy);
 err_init_fw:
@@ -653,6 +653,7 @@ err_dnld_fw:
 	if (adapter->hw_status == MWIFIEX_HW_STATUS_READY) {
 		pr_debug("info: %s: shutdown mwifiex\n", __func__);
 		mwifiex_shutdown_drv(adapter);
+		mwifiex_free_cmd_buffers(adapter);
 	}
 
 	init_failed = true;
@@ -665,8 +666,11 @@ done:
 		release_firmware(adapter->firmware);
 		adapter->firmware = NULL;
 	}
-	if (init_failed)
+	if (init_failed) {
+		if (adapter->irq_wakeup >= 0)
+			device_init_wakeup(adapter->dev, false);
 		mwifiex_free_adapter(adapter);
+	}
 	/* Tell all current and future waiters we're finished */
 	complete_all(fw_done);
 
@@ -854,7 +858,7 @@ mwifiex_clone_skb_for_tx_status(struct mwifiex_private *priv,
 /*
  * CFG802.11 network device handler for data transmission.
  */
-static int
+static netdev_tx_t
 mwifiex_hard_start_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	struct mwifiex_private *priv = mwifiex_netdev_get_priv(dev);
@@ -935,31 +939,60 @@ mwifiex_hard_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	return 0;
 }
 
-/*
- * CFG802.11 network device handler for setting MAC address.
- */
-static int
-mwifiex_set_mac_address(struct net_device *dev, void *addr)
+int mwifiex_set_mac_address(struct mwifiex_private *priv,
+			    struct net_device *dev, bool external,
+			    u8 *new_mac)
 {
-	struct mwifiex_private *priv = mwifiex_netdev_get_priv(dev);
-	struct sockaddr *hw_addr = addr;
 	int ret;
+	u64 mac_addr, old_mac_addr;
 
-	memcpy(priv->curr_addr, hw_addr->sa_data, ETH_ALEN);
+	old_mac_addr = ether_addr_to_u64(priv->curr_addr);
+
+	if (external) {
+		mac_addr = ether_addr_to_u64(new_mac);
+	} else {
+		/* Internal mac address change */
+		if (priv->bss_type == MWIFIEX_BSS_TYPE_ANY)
+			return -ENOTSUPP;
+
+		mac_addr = old_mac_addr;
+
+		if (priv->bss_type == MWIFIEX_BSS_TYPE_P2P)
+			mac_addr |= BIT_ULL(MWIFIEX_MAC_LOCAL_ADMIN_BIT);
+
+		if (mwifiex_get_intf_num(priv->adapter, priv->bss_type) > 1) {
+			/* Set mac address based on bss_type/bss_num */
+			mac_addr ^= BIT_ULL(priv->bss_type + 8);
+			mac_addr += priv->bss_num;
+		}
+	}
+
+	u64_to_ether_addr(mac_addr, priv->curr_addr);
 
 	/* Send request to firmware */
 	ret = mwifiex_send_cmd(priv, HostCmd_CMD_802_11_MAC_ADDRESS,
 			       HostCmd_ACT_GEN_SET, 0, NULL, true);
 
-	if (!ret)
-		memcpy(priv->netdev->dev_addr, priv->curr_addr, ETH_ALEN);
-	else
+	if (ret) {
+		u64_to_ether_addr(old_mac_addr, priv->curr_addr);
 		mwifiex_dbg(priv->adapter, ERROR,
 			    "set mac address failed: ret=%d\n", ret);
+		return ret;
+	}
 
-	memcpy(dev->dev_addr, priv->curr_addr, ETH_ALEN);
+	ether_addr_copy(dev->dev_addr, priv->curr_addr);
+	return 0;
+}
 
-	return ret;
+/* CFG802.11 network device handler for setting MAC address.
+ */
+static int
+mwifiex_ndo_set_mac_address(struct net_device *dev, void *addr)
+{
+	struct mwifiex_private *priv = mwifiex_netdev_get_priv(dev);
+	struct sockaddr *hw_addr = addr;
+
+	return mwifiex_set_mac_address(priv, dev, true, hw_addr->sa_data);
 }
 
 /*
@@ -1034,9 +1067,30 @@ void mwifiex_multi_chan_resync(struct mwifiex_adapter *adapter)
 }
 EXPORT_SYMBOL_GPL(mwifiex_multi_chan_resync);
 
-int mwifiex_drv_info_dump(struct mwifiex_adapter *adapter, void **drv_info)
+void mwifiex_upload_device_dump(struct mwifiex_adapter *adapter)
 {
-	void *p;
+	/* Dump all the memory data into single file, a userspace script will
+	 * be used to split all the memory data to multiple files
+	 */
+	mwifiex_dbg(adapter, MSG,
+		    "== mwifiex dump information to /sys/class/devcoredump start\n");
+	dev_coredumpv(adapter->dev, adapter->devdump_data, adapter->devdump_len,
+		      GFP_KERNEL);
+	mwifiex_dbg(adapter, MSG,
+		    "== mwifiex dump information to /sys/class/devcoredump end\n");
+
+	/* Device dump data will be freed in device coredump release function
+	 * after 5 min. Here reset adapter->devdump_data and ->devdump_len
+	 * to avoid it been accidentally reused.
+	 */
+	adapter->devdump_data = NULL;
+	adapter->devdump_len = 0;
+}
+EXPORT_SYMBOL_GPL(mwifiex_upload_device_dump);
+
+void mwifiex_drv_info_dump(struct mwifiex_adapter *adapter)
+{
+	char *p;
 	char drv_version[64];
 	struct usb_card_rec *cardp;
 	struct sdio_mmc_card *sdio_card;
@@ -1044,17 +1098,12 @@ int mwifiex_drv_info_dump(struct mwifiex_adapter *adapter, void **drv_info)
 	int i, idx;
 	struct netdev_queue *txq;
 	struct mwifiex_debug_info *debug_info;
-	void *drv_info_dump;
 
 	mwifiex_dbg(adapter, MSG, "===mwifiex driverinfo dump start===\n");
 
-	/* memory allocate here should be free in mwifiex_upload_device_dump*/
-	drv_info_dump = vzalloc(MWIFIEX_DRV_INFO_SIZE_MAX);
-
-	if (!drv_info_dump)
-		return 0;
-
-	p = (char *)(drv_info_dump);
+	p = adapter->devdump_data;
+	strcpy(p, "========Start dump driverinfo========\n");
+	p += strlen("========Start dump driverinfo========\n");
 	p += sprintf(p, "driver_name = " "\"mwifiex\"\n");
 
 	mwifiex_drv_get_driver_version(adapter, drv_version,
@@ -1138,21 +1187,18 @@ int mwifiex_drv_info_dump(struct mwifiex_adapter *adapter, void **drv_info)
 		kfree(debug_info);
 	}
 
+	strcpy(p, "\n========End dump========\n");
+	p += strlen("\n========End dump========\n");
 	mwifiex_dbg(adapter, MSG, "===mwifiex driverinfo dump end===\n");
-	*drv_info = drv_info_dump;
-	return p - drv_info_dump;
+	adapter->devdump_len = p - (char *)adapter->devdump_data;
 }
 EXPORT_SYMBOL_GPL(mwifiex_drv_info_dump);
 
-void mwifiex_upload_device_dump(struct mwifiex_adapter *adapter, void *drv_info,
-				int drv_info_size)
+void mwifiex_prepare_fw_dump_info(struct mwifiex_adapter *adapter)
 {
-	u8 idx, *dump_data, *fw_dump_ptr;
-	u32 dump_len;
-
-	dump_len = (strlen("========Start dump driverinfo========\n") +
-		       drv_info_size +
-		       strlen("\n========End dump========\n"));
+	u8 idx;
+	char *fw_dump_ptr;
+	u32 dump_len = 0;
 
 	for (idx = 0; idx < adapter->num_mem_types; idx++) {
 		struct memory_type_mapping *entry =
@@ -1167,24 +1213,24 @@ void mwifiex_upload_device_dump(struct mwifiex_adapter *adapter, void *drv_info,
 		}
 	}
 
-	dump_data = vzalloc(dump_len + 1);
-	if (!dump_data)
-		goto done;
+	if (dump_len + 1 + adapter->devdump_len > MWIFIEX_FW_DUMP_SIZE) {
+		/* Realloc in case buffer overflow */
+		fw_dump_ptr = vzalloc(dump_len + 1 + adapter->devdump_len);
+		mwifiex_dbg(adapter, MSG, "Realloc device dump data.\n");
+		if (!fw_dump_ptr) {
+			vfree(adapter->devdump_data);
+			mwifiex_dbg(adapter, ERROR,
+				    "vzalloc devdump data failure!\n");
+			return;
+		}
 
-	fw_dump_ptr = dump_data;
+		memmove(fw_dump_ptr, adapter->devdump_data,
+			adapter->devdump_len);
+		vfree(adapter->devdump_data);
+		adapter->devdump_data = fw_dump_ptr;
+	}
 
-	/* Dump all the memory data into single file, a userspace script will
-	 * be used to split all the memory data to multiple files
-	 */
-	mwifiex_dbg(adapter, MSG,
-		    "== mwifiex dump information to /sys/class/devcoredump start");
-
-	strcpy(fw_dump_ptr, "========Start dump driverinfo========\n");
-	fw_dump_ptr += strlen("========Start dump driverinfo========\n");
-	memcpy(fw_dump_ptr, drv_info, drv_info_size);
-	fw_dump_ptr += drv_info_size;
-	strcpy(fw_dump_ptr, "\n========End dump========\n");
-	fw_dump_ptr += strlen("\n========End dump========\n");
+	fw_dump_ptr = (char *)adapter->devdump_data + adapter->devdump_len;
 
 	for (idx = 0; idx < adapter->num_mem_types; idx++) {
 		struct memory_type_mapping *entry =
@@ -1208,14 +1254,8 @@ void mwifiex_upload_device_dump(struct mwifiex_adapter *adapter, void *drv_info,
 		}
 	}
 
-	/* device dump data will be free in device coredump release function
-	 * after 5 min
-	 */
-	dev_coredumpv(adapter->dev, dump_data, dump_len, GFP_KERNEL);
-	mwifiex_dbg(adapter, MSG,
-		    "== mwifiex dump information to /sys/class/devcoredump end");
+	adapter->devdump_len = fw_dump_ptr - (char *)adapter->devdump_data;
 
-done:
 	for (idx = 0; idx < adapter->num_mem_types; idx++) {
 		struct memory_type_mapping *entry =
 			&adapter->mem_type_mapping_tbl[idx];
@@ -1224,10 +1264,8 @@ done:
 		entry->mem_ptr = NULL;
 		entry->mem_size = 0;
 	}
-
-	vfree(drv_info);
 }
-EXPORT_SYMBOL_GPL(mwifiex_upload_device_dump);
+EXPORT_SYMBOL_GPL(mwifiex_prepare_fw_dump_info);
 
 /*
  * CFG802.11 network device handler for statistics retrieval.
@@ -1252,7 +1290,7 @@ static const struct net_device_ops mwifiex_netdev_ops = {
 	.ndo_open = mwifiex_open,
 	.ndo_stop = mwifiex_close,
 	.ndo_start_xmit = mwifiex_hard_start_xmit,
-	.ndo_set_mac_address = mwifiex_set_mac_address,
+	.ndo_set_mac_address = mwifiex_ndo_set_mac_address,
 	.ndo_validate_addr = eth_validate_addr,
 	.ndo_tx_timeout = mwifiex_tx_timeout,
 	.ndo_get_stats = mwifiex_get_stats,
@@ -1295,8 +1333,10 @@ void mwifiex_init_priv_params(struct mwifiex_private *priv,
 	priv->assocresp_idx = MWIFIEX_AUTO_IDX_MASK;
 	priv->gen_idx = MWIFIEX_AUTO_IDX_MASK;
 	priv->num_tx_timeout = 0;
-	ether_addr_copy(priv->curr_addr, priv->adapter->perm_addr);
-	memcpy(dev->dev_addr, priv->curr_addr, ETH_ALEN);
+	if (is_valid_ether_addr(dev->dev_addr))
+		ether_addr_copy(priv->curr_addr, dev->dev_addr);
+	else
+		ether_addr_copy(priv->curr_addr, priv->adapter->perm_addr);
 
 	if (GET_BSS_ROLE(priv) == MWIFIEX_BSS_ROLE_STA ||
 	    GET_BSS_ROLE(priv) == MWIFIEX_BSS_ROLE_UAP) {
@@ -1352,25 +1392,11 @@ static void mwifiex_main_work_queue(struct work_struct *work)
 	mwifiex_main_process(adapter);
 }
 
-/*
- * This function gets called during PCIe function level reset. Required
- * code is extracted from mwifiex_remove_card()
- */
-int
-mwifiex_shutdown_sw(struct mwifiex_adapter *adapter)
+/* Common teardown code used for both device removal and reset */
+static void mwifiex_uninit_sw(struct mwifiex_adapter *adapter)
 {
 	struct mwifiex_private *priv;
 	int i;
-
-	if (!adapter)
-		goto exit_return;
-
-	wait_for_completion(adapter->fw_done);
-	/* Caller should ensure we aren't suspending while this happens */
-	reinit_completion(adapter->fw_done);
-
-	priv = mwifiex_get_priv(adapter, MWIFIEX_BSS_ROLE_ANY);
-	mwifiex_deauthenticate(priv, NULL);
 
 	/* We can no longer handle interrupts once we start doing the teardown
 	 * below.
@@ -1380,6 +1406,7 @@ mwifiex_shutdown_sw(struct mwifiex_adapter *adapter)
 
 	adapter->surprise_removed = true;
 	mwifiex_terminate_workqueue(adapter);
+	adapter->int_status = 0;
 
 	/* Stop data */
 	for (i = 0; i < adapter->priv_num; i++) {
@@ -1393,12 +1420,9 @@ mwifiex_shutdown_sw(struct mwifiex_adapter *adapter)
 	}
 
 	mwifiex_dbg(adapter, CMD, "cmd: calling mwifiex_shutdown_drv...\n");
-
 	mwifiex_shutdown_drv(adapter);
-	if (adapter->if_ops.down_dev)
-		adapter->if_ops.down_dev(adapter);
-
 	mwifiex_dbg(adapter, CMD, "cmd: mwifiex_shutdown_drv done\n");
+
 	if (atomic_read(&adapter->rx_pending) ||
 	    atomic_read(&adapter->tx_pending) ||
 	    atomic_read(&adapter->cmd_pending)) {
@@ -1420,10 +1444,37 @@ mwifiex_shutdown_sw(struct mwifiex_adapter *adapter)
 			mwifiex_del_virtual_intf(adapter->wiphy, &priv->wdev);
 		rtnl_unlock();
 	}
-	vfree(adapter->chan_stats);
 
-	mwifiex_dbg(adapter, INFO, "%s, successful\n", __func__);
-exit_return:
+	wiphy_unregister(adapter->wiphy);
+	wiphy_free(adapter->wiphy);
+	adapter->wiphy = NULL;
+
+	vfree(adapter->chan_stats);
+	mwifiex_free_cmd_buffers(adapter);
+}
+
+/*
+ * This function gets called during PCIe function level reset.
+ */
+int mwifiex_shutdown_sw(struct mwifiex_adapter *adapter)
+{
+	struct mwifiex_private *priv;
+
+	if (!adapter)
+		return 0;
+
+	wait_for_completion(adapter->fw_done);
+	/* Caller should ensure we aren't suspending while this happens */
+	reinit_completion(adapter->fw_done);
+
+	priv = mwifiex_get_priv(adapter, MWIFIEX_BSS_ROLE_ANY);
+	mwifiex_deauthenticate(priv, NULL);
+
+	mwifiex_uninit_sw(adapter);
+
+	if (adapter->if_ops.down_dev)
+		adapter->if_ops.down_dev(adapter);
+
 	return 0;
 }
 EXPORT_SYMBOL_GPL(mwifiex_shutdown_sw);
@@ -1506,6 +1557,7 @@ err_kmalloc:
 		mwifiex_dbg(adapter, ERROR,
 			    "info: %s: shutdown mwifiex\n", __func__);
 		mwifiex_shutdown_drv(adapter);
+		mwifiex_free_cmd_buffers(adapter);
 	}
 
 	complete_all(adapter->fw_done);
@@ -1605,10 +1657,8 @@ mwifiex_add_card(void *card, struct completion *fw_done,
 	adapter->cmd_wait_q.status = 0;
 	adapter->scan_wait_q_woken = false;
 
-	if ((num_possible_cpus() > 1) || adapter->iface_type == MWIFIEX_USB) {
+	if ((num_possible_cpus() > 1) || adapter->iface_type == MWIFIEX_USB)
 		adapter->rx_work_enabled = true;
-		pr_notice("rx work enabled, cpus %d\n", num_possible_cpus());
-	}
 
 	adapter->workqueue =
 		alloc_workqueue("MWIFIEX_WORK_QUEUE",
@@ -1653,8 +1703,11 @@ err_registerdev:
 	if (adapter->hw_status == MWIFIEX_HW_STATUS_READY) {
 		pr_debug("info: %s: shutdown mwifiex\n", __func__);
 		mwifiex_shutdown_drv(adapter);
+		mwifiex_free_cmd_buffers(adapter);
 	}
 err_kmalloc:
+	if (adapter->irq_wakeup >= 0)
+		device_init_wakeup(adapter->dev, false);
 	mwifiex_free_adapter(adapter);
 
 err_init_sw:
@@ -1676,64 +1729,10 @@ EXPORT_SYMBOL_GPL(mwifiex_add_card);
  */
 int mwifiex_remove_card(struct mwifiex_adapter *adapter)
 {
-	struct mwifiex_private *priv = NULL;
-	int i;
-
 	if (!adapter)
-		goto exit_remove;
+		return 0;
 
-	/* We can no longer handle interrupts once we start doing the teardown
-	 * below. */
-	if (adapter->if_ops.disable_int)
-		adapter->if_ops.disable_int(adapter);
-
-	adapter->surprise_removed = true;
-
-	mwifiex_terminate_workqueue(adapter);
-
-	/* Stop data */
-	for (i = 0; i < adapter->priv_num; i++) {
-		priv = adapter->priv[i];
-		if (priv && priv->netdev) {
-			mwifiex_stop_net_dev_queue(priv->netdev, adapter);
-			if (netif_carrier_ok(priv->netdev))
-				netif_carrier_off(priv->netdev);
-		}
-	}
-
-	mwifiex_dbg(adapter, CMD,
-		    "cmd: calling mwifiex_shutdown_drv...\n");
-
-	mwifiex_shutdown_drv(adapter);
-	mwifiex_dbg(adapter, CMD,
-		    "cmd: mwifiex_shutdown_drv done\n");
-	if (atomic_read(&adapter->rx_pending) ||
-	    atomic_read(&adapter->tx_pending) ||
-	    atomic_read(&adapter->cmd_pending)) {
-		mwifiex_dbg(adapter, ERROR,
-			    "rx_pending=%d, tx_pending=%d,\t"
-			    "cmd_pending=%d\n",
-			    atomic_read(&adapter->rx_pending),
-			    atomic_read(&adapter->tx_pending),
-			    atomic_read(&adapter->cmd_pending));
-	}
-
-	for (i = 0; i < adapter->priv_num; i++) {
-		priv = adapter->priv[i];
-
-		if (!priv)
-			continue;
-
-		rtnl_lock();
-		if (priv->netdev &&
-		    priv->wdev.iftype != NL80211_IFTYPE_UNSPECIFIED)
-			mwifiex_del_virtual_intf(adapter->wiphy, &priv->wdev);
-		rtnl_unlock();
-	}
-	vfree(adapter->chan_stats);
-
-	wiphy_unregister(adapter->wiphy);
-	wiphy_free(adapter->wiphy);
+	mwifiex_uninit_sw(adapter);
 
 	if (adapter->irq_wakeup >= 0)
 		device_init_wakeup(adapter->dev, false);
@@ -1748,7 +1747,6 @@ int mwifiex_remove_card(struct mwifiex_adapter *adapter)
 		    "info: free adapter\n");
 	mwifiex_free_adapter(adapter);
 
-exit_remove:
 	return 0;
 }
 EXPORT_SYMBOL_GPL(mwifiex_remove_card);

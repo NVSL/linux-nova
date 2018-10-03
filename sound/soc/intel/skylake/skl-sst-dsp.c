@@ -47,7 +47,7 @@ void skl_dsp_init_core_state(struct sst_dsp *ctx)
 	skl->cores.state[SKL_DSP_CORE0_ID] = SKL_DSP_RUNNING;
 	skl->cores.usage_count[SKL_DSP_CORE0_ID] = 1;
 
-	for (i = SKL_DSP_CORE0_ID + 1; i < SKL_DSP_CORES_MAX; i++) {
+	for (i = SKL_DSP_CORE0_ID + 1; i < skl->cores.count; i++) {
 		skl->cores.state[i] = SKL_DSP_RESET;
 		skl->cores.usage_count[i] = 0;
 	}
@@ -351,6 +351,8 @@ int skl_dsp_get_core(struct sst_dsp *ctx, unsigned int core_id)
 		return -EINVAL;
 	}
 
+	skl->cores.usage_count[core_id]++;
+
 	if (skl->cores.state[core_id] == SKL_DSP_RESET) {
 		ret = ctx->fw_ops.set_state_D0(ctx, core_id);
 		if (ret < 0) {
@@ -358,8 +360,6 @@ int skl_dsp_get_core(struct sst_dsp *ctx, unsigned int core_id)
 			goto out;
 		}
 	}
-
-	skl->cores.usage_count[core_id]++;
 
 out:
 	dev_dbg(ctx->dev, "core id %d state %d usage_count %d\n",
@@ -435,16 +435,22 @@ struct sst_dsp *skl_dsp_ctx_init(struct device *dev,
 			return NULL;
 	}
 
+	return sst;
+}
+
+int skl_dsp_acquire_irq(struct sst_dsp *sst)
+{
+	struct sst_dsp_device *sst_dev = sst->sst_dev;
+	int ret;
+
 	/* Register the ISR */
 	ret = request_threaded_irq(sst->irq, sst->ops->irq_handler,
 		sst_dev->thread, IRQF_SHARED, "AudioDSP", sst);
-	if (ret) {
+	if (ret)
 		dev_err(sst->dev, "unable to grab threaded IRQ %d, disabling device\n",
 			       sst->irq);
-		return NULL;
-	}
 
-	return sst;
+	return ret;
 }
 
 void skl_dsp_free(struct sst_dsp *dsp)

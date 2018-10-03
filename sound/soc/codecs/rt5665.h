@@ -1628,6 +1628,27 @@
 #define RT5665_PWR_CLK1M_PD			(0x0 << 8)
 #define RT5665_PWR_CLK1M_PU			(0x1 << 8)
 
+/* I2S Master Mode Clock Control 1 (0x00a0) */
+#define RT5665_CLK_SRC_MCLK			(0x0)
+#define RT5665_CLK_SRC_PLL1			(0x1)
+#define RT5665_CLK_SRC_RCCLK			(0x2)
+#define RT5665_I2S_PD_1				(0x0)
+#define RT5665_I2S_PD_2				(0x1)
+#define RT5665_I2S_PD_3				(0x2)
+#define RT5665_I2S_PD_4				(0x3)
+#define RT5665_I2S_PD_6				(0x4)
+#define RT5665_I2S_PD_8				(0x5)
+#define RT5665_I2S_PD_12			(0x6)
+#define RT5665_I2S_PD_16			(0x7)
+#define RT5665_I2S2_SRC_MASK			(0x3 << 12)
+#define RT5665_I2S2_SRC_SFT			12
+#define RT5665_I2S2_M_PD_MASK			(0x7 << 8)
+#define RT5665_I2S2_M_PD_SFT			8
+#define RT5665_I2S3_SRC_MASK			(0x3 << 4)
+#define RT5665_I2S3_SRC_SFT			4
+#define RT5665_I2S3_M_PD_MASK			(0x7 << 0)
+#define RT5665_I2S3_M_PD_SFT			0
+
 
 /* EQ Control 1 (0x00b0) */
 #define RT5665_EQ_SRC_DAC			(0x0 << 15)
@@ -1957,7 +1978,6 @@ enum {
 enum {
 	CODEC_5665,
 	CODEC_5666,
-	CODEC_5668,
 };
 
 /* filter mask */
@@ -1982,7 +2002,7 @@ enum {
 	RT5665_CLK_SEL_SYS4,
 };
 
-int rt5665_sel_asrc_clk_src(struct snd_soc_codec *codec,
+int rt5665_sel_asrc_clk_src(struct snd_soc_component *component,
 		unsigned int filter_mask, unsigned int clk_src);
 
 #endif /* __RT5665_H__ */

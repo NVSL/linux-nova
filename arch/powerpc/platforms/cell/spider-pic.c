@@ -323,8 +323,8 @@ static void __init spider_init_one(struct device_node *of_node, int chip,
 	irq_set_handler_data(virq, pic);
 	irq_set_chained_handler(virq, spider_irq_cascade);
 
-	printk(KERN_INFO "spider_pic: node %d, addr: 0x%lx %s\n",
-	       pic->node_id, addr, of_node->full_name);
+	printk(KERN_INFO "spider_pic: node %d, addr: 0x%lx %pOF\n",
+	       pic->node_id, addr, of_node);
 
 	/* Enable the interrupt detection enable bit. Do this last! */
 	out_be32(pic->regs + TIR_DEN, in_be32(pic->regs + TIR_DEN) | 0x1);
@@ -343,8 +343,7 @@ void __init spider_init_IRQ(void)
 	 * device-tree is bogus anyway) so all we can do is pray or maybe test
 	 * the address and deduce the node-id
 	 */
-	for (dn = NULL;
-	     (dn = of_find_node_by_name(dn, "interrupt-controller"));) {
+	for_each_node_by_name(dn, "interrupt-controller") {
 		if (of_device_is_compatible(dn, "CBEA,platform-spider-pic")) {
 			if (of_address_to_resource(dn, 0, &r)) {
 				printk(KERN_WARNING "spider-pic: Failed\n");

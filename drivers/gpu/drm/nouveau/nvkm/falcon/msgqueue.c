@@ -251,7 +251,7 @@ cmd_write(struct nvkm_msgqueue *priv, struct nvkm_msgqueue_hdr *cmd,
 	  struct nvkm_msgqueue_queue *queue)
 {
 	const struct nvkm_subdev *subdev = priv->falcon->owner;
-	static unsigned long timeout = ~0;
+	static unsigned timeout = 2000;
 	unsigned long end_jiffies = jiffies + msecs_to_jiffies(timeout);
 	int ret = -EAGAIN;
 	bool commit = true;
@@ -505,6 +505,8 @@ nvkm_msgqueue_new(u32 version, struct nvkm_falcon *falcon,
 		ret = msgqueue_0137bca5_new(falcon, sb, queue);
 		break;
 	case 0x0148cdec:
+	case 0x015ccf3e:
+	case 0x0167d263:
 		ret = msgqueue_0148cdec_new(falcon, sb, queue);
 		break;
 	default:

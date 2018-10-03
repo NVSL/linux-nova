@@ -23,6 +23,8 @@
 
 #define MAX_RECOVERY 1	/* Maximum number of regions recovered in parallel. */
 
+#define MAX_NR_MIRRORS	(DM_KCOPYD_MAX_REGIONS + 1)
+
 #define DM_RAID1_HANDLE_ERRORS	0x01
 #define DM_RAID1_KEEP_LOG	0x02
 #define errors_handled(p)	((p)->features & DM_RAID1_HANDLE_ERRORS)
@@ -94,9 +96,9 @@ static void wakeup_mirrord(void *context)
 	queue_work(ms->kmirrord_wq, &ms->kmirrord_work);
 }
 
-static void delayed_wake_fn(unsigned long data)
+static void delayed_wake_fn(struct timer_list *t)
 {
-	struct mirror_set *ms = (struct mirror_set *) data;
+	struct mirror_set *ms = from_timer(ms, t, timer);
 
 	clear_bit(0, &ms->timer_pending);
 	wakeup_mirrord(ms);
@@ -108,8 +110,6 @@ static void delayed_wake(struct mirror_set *ms)
 		return;
 
 	ms->timer.expires = jiffies + HZ / 5;
-	ms->timer.data = (unsigned long) ms;
-	ms->timer.function = delayed_wake_fn;
 	add_timer(&ms->timer);
 }
 
@@ -145,7 +145,7 @@ static void dispatch_bios(void *context, struct bio_list *bio_list)
 
 struct dm_raid1_bio_record {
 	struct mirror *m;
-	/* if details->bi_bdev == NULL, details were not saved */
+	/* if details->bi_disk == NULL, details were not saved */
 	struct dm_bio_details details;
 	region_t write_region;
 };
@@ -257,7 +257,7 @@ static int mirror_flush(struct dm_target *ti)
 	unsigned long error_bits;
 
 	unsigned int i;
-	struct dm_io_region io[ms->nr_mirrors];
+	struct dm_io_region io[MAX_NR_MIRRORS];
 	struct mirror *m;
 	struct dm_io_request io_req = {
 		.bi_op = REQ_OP_WRITE,
@@ -464,7 +464,7 @@ static sector_t map_sector(struct mirror *m, struct bio *bio)
 
 static void map_bio(struct mirror *m, struct bio *bio)
 {
-	bio->bi_bdev = m->dev->bdev;
+	bio_set_dev(bio, m->dev->bdev);
 	bio->bi_iter.bi_sector = map_sector(m, bio);
 }
 
@@ -653,7 +653,7 @@ static void write_callback(unsigned long error, void *context)
 static void do_write(struct mirror_set *ms, struct bio *bio)
 {
 	unsigned int i;
-	struct dm_io_region io[ms->nr_mirrors], *dest = io;
+	struct dm_io_region io[MAX_NR_MIRRORS], *dest = io;
 	struct mirror *m;
 	struct dm_io_request io_req = {
 		.bi_op = REQ_OP_WRITE,
@@ -1085,7 +1085,7 @@ static int mirror_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	argc -= args_used;
 
 	if (!argc || sscanf(argv[0], "%u%c", &nr_mirrors, &dummy) != 1 ||
-	    nr_mirrors < 2 || nr_mirrors > DM_KCOPYD_MAX_REGIONS + 1) {
+	    nr_mirrors < 2 || nr_mirrors > MAX_NR_MIRRORS) {
 		ti->error = "Invalid number of mirrors";
 		dm_dirty_log_destroy(dl);
 		return -EINVAL;
@@ -1133,7 +1133,7 @@ static int mirror_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		goto err_free_context;
 	}
 	INIT_WORK(&ms->kmirrord_work, do_mirror);
-	init_timer(&ms->timer);
+	timer_setup(&ms->timer, delayed_wake_fn, 0);
 	ms->timer_pending = 0;
 	INIT_WORK(&ms->trigger_event, trigger_event);
 
@@ -1199,7 +1199,7 @@ static int mirror_map(struct dm_target *ti, struct bio *bio)
 	struct dm_raid1_bio_record *bio_record =
 	  dm_per_bio_data(bio, sizeof(struct dm_raid1_bio_record));
 
-	bio_record->details.bi_bdev = NULL;
+	bio_record->details.bi_disk = NULL;
 
 	if (rw == WRITE) {
 		/* Save region for mirror_end_io() handler */
@@ -1266,7 +1266,7 @@ static int mirror_end_io(struct dm_target *ti, struct bio *bio,
 		goto out;
 
 	if (unlikely(*error)) {
-		if (!bio_record->details.bi_bdev) {
+		if (!bio_record->details.bi_disk) {
 			/*
 			 * There wasn't enough memory to record necessary
 			 * information for a retry or there was no other
@@ -1291,7 +1291,7 @@ static int mirror_end_io(struct dm_target *ti, struct bio *bio,
 			bd = &bio_record->details;
 
 			dm_bio_restore(bd, bio);
-			bio_record->details.bi_bdev = NULL;
+			bio_record->details.bi_disk = NULL;
 			bio->bi_status = 0;
 
 			queue_bio(ms, bio, rw);
@@ -1301,7 +1301,7 @@ static int mirror_end_io(struct dm_target *ti, struct bio *bio,
 	}
 
 out:
-	bio_record->details.bi_bdev = NULL;
+	bio_record->details.bi_disk = NULL;
 
 	return DM_ENDIO_DONE;
 }
@@ -1406,7 +1406,7 @@ static void mirror_status(struct dm_target *ti, status_type_t type,
 	int num_feature_args = 0;
 	struct mirror_set *ms = (struct mirror_set *) ti->private;
 	struct dm_dirty_log *log = dm_rh_dirty_log(ms->rh);
-	char buffer[ms->nr_mirrors + 1];
+	char buffer[MAX_NR_MIRRORS + 1];
 
 	switch (type) {
 	case STATUSTYPE_INFO:

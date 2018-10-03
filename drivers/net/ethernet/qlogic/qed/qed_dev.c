@@ -298,8 +298,8 @@ static void qed_init_qm_params(struct qed_hwfn *p_hwfn)
 	qm_info->start_vport = (u8) RESC_START(p_hwfn, QED_VPORT);
 
 	/* rate limiting and weighted fair queueing are always enabled */
-	qm_info->vport_rl_en = 1;
-	qm_info->vport_wfq_en = 1;
+	qm_info->vport_rl_en = true;
+	qm_info->vport_wfq_en = true;
 
 	/* TC config is different for AH 4 port */
 	four_port = p_hwfn->cdev->num_ports_in_engine == MAX_NUM_PORTS_K2;
@@ -407,6 +407,7 @@ static void qed_init_qm_pq(struct qed_hwfn *p_hwfn,
 		       "pq overflow! pq %d, max pq %d\n", pq_idx, max_pq);
 
 	/* init pq params */
+	qm_info->qm_pq_params[pq_idx].port_id = p_hwfn->port_id;
 	qm_info->qm_pq_params[pq_idx].vport_id = qm_info->start_vport +
 	    qm_info->num_vports;
 	qm_info->qm_pq_params[pq_idx].tc_id = tc;
@@ -727,8 +728,9 @@ static void qed_dp_init_qm_params(struct qed_hwfn *p_hwfn)
 		pq = &(qm_info->qm_pq_params[i]);
 		DP_VERBOSE(p_hwfn,
 			   NETIF_MSG_HW,
-			   "pq idx %d, vport_id %d, tc %d, wrr_grp %d, rl_valid %d\n",
+			   "pq idx %d, port %d, vport_id %d, tc %d, wrr_grp %d, rl_valid %d\n",
 			   qm_info->start_pq + i,
+			   pq->port_id,
 			   pq->vport_id,
 			   pq->tc_id, pq->wrr_group, pq->rl_valid);
 	}
@@ -758,7 +760,7 @@ static void qed_init_qm_info(struct qed_hwfn *p_hwfn)
 /* This function reconfigures the QM pf on the fly.
  * For this purpose we:
  * 1. reconfigure the QM database
- * 2. set new values to runtime arrat
+ * 2. set new values to runtime array
  * 3. send an sdm_qm_cmd through the rbc interface to stop the QM
  * 4. activate init tool in QM_PF stage
  * 5. send an sdm_qm_cmd through rbc interface to release the QM
@@ -784,7 +786,7 @@ int qed_qm_reconf(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt)
 	qed_init_clear_rt_data(p_hwfn);
 
 	/* prepare QM portion of runtime array */
-	qed_qm_init_pf(p_hwfn, p_ptt);
+	qed_qm_init_pf(p_hwfn, p_ptt, false);
 
 	/* activate init tool on runtime array */
 	rc = qed_init_run(p_hwfn, p_ptt, PHASE_QM_PF, p_hwfn->rel_pf_id,
@@ -812,26 +814,26 @@ static int qed_alloc_qm_data(struct qed_hwfn *p_hwfn)
 	if (rc)
 		goto alloc_err;
 
-	qm_info->qm_pq_params = kzalloc(sizeof(*qm_info->qm_pq_params) *
-					qed_init_qm_get_num_pqs(p_hwfn),
+	qm_info->qm_pq_params = kcalloc(qed_init_qm_get_num_pqs(p_hwfn),
+					sizeof(*qm_info->qm_pq_params),
 					GFP_KERNEL);
 	if (!qm_info->qm_pq_params)
 		goto alloc_err;
 
-	qm_info->qm_vport_params = kzalloc(sizeof(*qm_info->qm_vport_params) *
-					   qed_init_qm_get_num_vports(p_hwfn),
+	qm_info->qm_vport_params = kcalloc(qed_init_qm_get_num_vports(p_hwfn),
+					   sizeof(*qm_info->qm_vport_params),
 					   GFP_KERNEL);
 	if (!qm_info->qm_vport_params)
 		goto alloc_err;
 
-	qm_info->qm_port_params = kzalloc(sizeof(*qm_info->qm_port_params) *
-					  p_hwfn->cdev->num_ports_in_engine,
+	qm_info->qm_port_params = kcalloc(p_hwfn->cdev->num_ports_in_engine,
+					  sizeof(*qm_info->qm_port_params),
 					  GFP_KERNEL);
 	if (!qm_info->qm_port_params)
 		goto alloc_err;
 
-	qm_info->wfq_data = kzalloc(sizeof(*qm_info->wfq_data) *
-				    qed_init_qm_get_num_vports(p_hwfn),
+	qm_info->wfq_data = kcalloc(qed_init_qm_get_num_vports(p_hwfn),
+				    sizeof(*qm_info->wfq_data),
 				    GFP_KERNEL);
 	if (!qm_info->wfq_data)
 		goto alloc_err;
@@ -1096,7 +1098,7 @@ int qed_final_cleanup(struct qed_hwfn *p_hwfn,
 	}
 
 	DP_VERBOSE(p_hwfn, QED_MSG_IOV,
-		   "Sending final cleanup for PFVF[%d] [Command %08x\n]",
+		   "Sending final cleanup for PFVF[%d] [Command %08x]\n",
 		   id, command);
 
 	qed_wr(p_hwfn, p_ptt, XSDM_REG_OPERATION_GEN, command);
@@ -1147,18 +1149,10 @@ static int qed_calc_hw_mode(struct qed_hwfn *p_hwfn)
 		return -EINVAL;
 	}
 
-	switch (p_hwfn->cdev->mf_mode) {
-	case QED_MF_DEFAULT:
-	case QED_MF_NPAR:
-		hw_mode |= 1 << MODE_MF_SI;
-		break;
-	case QED_MF_OVLAN:
+	if (test_bit(QED_MF_OVLAN_CLSS, &p_hwfn->cdev->mf_bits))
 		hw_mode |= 1 << MODE_MF_SD;
-		break;
-	default:
-		DP_NOTICE(p_hwfn, "Unsupported MF mode, init as DEFAULT\n");
+	else
 		hw_mode |= 1 << MODE_MF_SI;
-	}
 
 	hw_mode |= 1 << MODE_ASIC;
 
@@ -1276,9 +1270,9 @@ static int qed_hw_init_common(struct qed_hwfn *p_hwfn,
 
 	if (p_hwfn->mcp_info) {
 		if (p_hwfn->mcp_info->func_info.bandwidth_max)
-			qm_info->pf_rl_en = 1;
+			qm_info->pf_rl_en = true;
 		if (p_hwfn->mcp_info->func_info.bandwidth_min)
-			qm_info->pf_wfq_en = 1;
+			qm_info->pf_wfq_en = true;
 	}
 
 	memset(&params, 0, sizeof(params));
@@ -1505,6 +1499,11 @@ static int qed_hw_init_pf(struct qed_hwfn *p_hwfn,
 		STORE_RT_REG(p_hwfn, NIG_REG_LLH_FUNC_TAG_EN_RT_OFFSET, 1);
 		STORE_RT_REG(p_hwfn, NIG_REG_LLH_FUNC_TAG_VALUE_RT_OFFSET,
 			     p_hwfn->hw_info.ovlan);
+
+		DP_VERBOSE(p_hwfn, NETIF_MSG_HW,
+			   "Configuring LLH_FUNC_FILTER_HDR_SEL\n");
+		STORE_RT_REG(p_hwfn, NIG_REG_LLH_FUNC_FILTER_HDR_SEL_RT_OFFSET,
+			     1);
 	}
 
 	/* Enable classification by MAC if needed */
@@ -1515,7 +1514,7 @@ static int qed_hw_init_pf(struct qed_hwfn *p_hwfn,
 			     NIG_REG_LLH_FUNC_TAGMAC_CLS_TYPE_RT_OFFSET, 1);
 	}
 
-	/* Protocl Configuration  */
+	/* Protocol Configuration */
 	STORE_RT_REG(p_hwfn, PRS_REG_SEARCH_TCP_RT_OFFSET,
 		     (p_hwfn->hw_info.personality == QED_PCI_ISCSI) ? 1 : 0);
 	STORE_RT_REG(p_hwfn, PRS_REG_SEARCH_FCOE_RT_OFFSET,
@@ -1524,6 +1523,11 @@ static int qed_hw_init_pf(struct qed_hwfn *p_hwfn,
 
 	/* Cleanup chip from previous driver if such remains exist */
 	rc = qed_final_cleanup(p_hwfn, p_ptt, rel_pf_id, false);
+	if (rc)
+		return rc;
+
+	/* Sanity check before the PF init sequence that uses DMAE */
+	rc = qed_dmae_sanity(p_hwfn, p_ptt, "pf_phase");
 	if (rc)
 		return rc;
 
@@ -1550,7 +1554,6 @@ static int qed_hw_init_pf(struct qed_hwfn *p_hwfn,
 
 		/* send function start command */
 		rc = qed_sp_pf_start(p_hwfn, p_ptt, p_tunn,
-				     p_hwfn->cdev->mf_mode,
 				     allow_npar_tx_switch);
 		if (rc) {
 			DP_NOTICE(p_hwfn, "Function start ramrod failed\n");
@@ -1625,7 +1628,7 @@ static int qed_vf_start(struct qed_hwfn *p_hwfn,
 		qed_vf_pf_tunnel_param_update(p_hwfn, p_params->p_tunn);
 	}
 
-	p_hwfn->b_int_enabled = 1;
+	p_hwfn->b_int_enabled = true;
 
 	return 0;
 }
@@ -1637,6 +1640,7 @@ int qed_hw_init(struct qed_dev *cdev, struct qed_hw_init_params *p_params)
 	bool b_default_mtu = true;
 	struct qed_hwfn *p_hwfn;
 	int rc = 0, mfw_rc, i;
+	u16 ether_type;
 
 	if ((p_params->int_mode == QED_INT_MODE_MSI) && (cdev->num_hwfns > 1)) {
 		DP_NOTICE(cdev, "MSI mode is not supported for CMT devices\n");
@@ -1670,6 +1674,24 @@ int qed_hw_init(struct qed_dev *cdev, struct qed_hw_init_params *p_params)
 		if (rc)
 			return rc;
 
+		if (IS_PF(cdev) && (test_bit(QED_MF_8021Q_TAGGING,
+					     &cdev->mf_bits) ||
+				    test_bit(QED_MF_8021AD_TAGGING,
+					     &cdev->mf_bits))) {
+			if (test_bit(QED_MF_8021Q_TAGGING, &cdev->mf_bits))
+				ether_type = ETH_P_8021Q;
+			else
+				ether_type = ETH_P_8021AD;
+			STORE_RT_REG(p_hwfn, PRS_REG_TAG_ETHERTYPE_0_RT_OFFSET,
+				     ether_type);
+			STORE_RT_REG(p_hwfn, NIG_REG_TAG_ETHERTYPE_0_RT_OFFSET,
+				     ether_type);
+			STORE_RT_REG(p_hwfn, PBF_REG_TAG_ETHERTYPE_0_RT_OFFSET,
+				     ether_type);
+			STORE_RT_REG(p_hwfn, DORQ_REG_TAG1_ETHERTYPE_RT_OFFSET,
+				     ether_type);
+		}
+
 		qed_fill_load_req_params(&load_req_params,
 					 p_params->p_drv_load_params);
 		rc = qed_mcp_load_req(p_hwfn, p_hwfn->p_main_ptt,
@@ -1683,6 +1705,8 @@ int qed_hw_init(struct qed_dev *cdev, struct qed_hw_init_params *p_params)
 		DP_VERBOSE(p_hwfn, QED_MSG_SP,
 			   "Load request was sent. Load code: 0x%x\n",
 			   load_code);
+
+		qed_mcp_set_capabilities(p_hwfn, p_hwfn->p_main_ptt);
 
 		qed_reset_mb_shadow(p_hwfn, p_hwfn->p_main_ptt);
 
@@ -1780,7 +1804,7 @@ int qed_hw_init(struct qed_dev *cdev, struct qed_hw_init_params *p_params)
 			DP_INFO(p_hwfn, "Failed to update driver state\n");
 
 		rc = qed_mcp_ov_update_eswitch(p_hwfn, p_hwfn->p_main_ptt,
-					       QED_OV_ESWITCH_VEB);
+					       QED_OV_ESWITCH_NONE);
 		if (rc)
 			DP_INFO(p_hwfn, "Failed to update eswitch mode\n");
 	}
@@ -2190,7 +2214,7 @@ qed_hw_set_soft_resc_size(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt)
 			/* No need for a case for QED_CMDQS_CQS since
 			 * CNQ/CMDQS are the same resource.
 			 */
-			resc_max_val = NUM_OF_CMDQS_CQS;
+			resc_max_val = NUM_OF_GLOBAL_QUEUES;
 			break;
 		case QED_RDMA_STATS_QUEUE:
 			resc_max_val = b_ah ? RDMA_NUM_STATISTIC_COUNTERS_K2
@@ -2265,7 +2289,7 @@ int qed_hw_get_dflt_resc(struct qed_hwfn *p_hwfn,
 	case QED_RDMA_CNQ_RAM:
 	case QED_CMDQS_CQS:
 		/* CNQ/CMDQS are the same resource */
-		*p_resc_num = NUM_OF_CMDQS_CQS / num_funcs;
+		*p_resc_num = NUM_OF_GLOBAL_QUEUES / num_funcs;
 		break;
 	case QED_RDMA_STATS_QUEUE:
 		*p_resc_num = (b_ah ? RDMA_NUM_STATISTIC_COUNTERS_K2 :
@@ -2472,6 +2496,7 @@ static int qed_hw_get_nvm_info(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt)
 {
 	u32 port_cfg_addr, link_temp, nvm_cfg_addr, device_capabilities;
 	u32 nvm_cfg1_offset, mf_mode, addr, generic_cont0, core_cfg;
+	struct qed_mcp_link_capabilities *p_caps;
 	struct qed_mcp_link_params *link;
 
 	/* Read global nvm_cfg address */
@@ -2534,6 +2559,7 @@ static int qed_hw_get_nvm_info(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt)
 
 	/* Read default link configuration */
 	link = &p_hwfn->mcp_info->link_input;
+	p_caps = &p_hwfn->mcp_info->link_capabilities;
 	port_cfg_addr = MCP_REG_SCRATCH + nvm_cfg1_offset +
 			offsetof(struct nvm_cfg1, port[MFW_PORT(p_hwfn)]);
 	link_temp = qed_rd(p_hwfn, p_ptt,
@@ -2588,36 +2614,97 @@ static int qed_hw_get_nvm_info(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt)
 				   NVM_CFG1_PORT_DRV_FLOW_CONTROL_TX);
 	link->loopback_mode = 0;
 
-	DP_VERBOSE(p_hwfn, NETIF_MSG_LINK,
-		   "Read default link: Speed 0x%08x, Adv. Speed 0x%08x, AN: 0x%02x, PAUSE AN: 0x%02x\n",
-		   link->speed.forced_speed, link->speed.advertised_speeds,
-		   link->speed.autoneg, link->pause.autoneg);
+	if (p_hwfn->mcp_info->capabilities & FW_MB_PARAM_FEATURE_SUPPORT_EEE) {
+		link_temp = qed_rd(p_hwfn, p_ptt, port_cfg_addr +
+				   offsetof(struct nvm_cfg1_port, ext_phy));
+		link_temp &= NVM_CFG1_PORT_EEE_POWER_SAVING_MODE_MASK;
+		link_temp >>= NVM_CFG1_PORT_EEE_POWER_SAVING_MODE_OFFSET;
+		p_caps->default_eee = QED_MCP_EEE_ENABLED;
+		link->eee.enable = true;
+		switch (link_temp) {
+		case NVM_CFG1_PORT_EEE_POWER_SAVING_MODE_DISABLED:
+			p_caps->default_eee = QED_MCP_EEE_DISABLED;
+			link->eee.enable = false;
+			break;
+		case NVM_CFG1_PORT_EEE_POWER_SAVING_MODE_BALANCED:
+			p_caps->eee_lpi_timer = EEE_TX_TIMER_USEC_BALANCED_TIME;
+			break;
+		case NVM_CFG1_PORT_EEE_POWER_SAVING_MODE_AGGRESSIVE:
+			p_caps->eee_lpi_timer =
+			    EEE_TX_TIMER_USEC_AGGRESSIVE_TIME;
+			break;
+		case NVM_CFG1_PORT_EEE_POWER_SAVING_MODE_LOW_LATENCY:
+			p_caps->eee_lpi_timer = EEE_TX_TIMER_USEC_LATENCY_TIME;
+			break;
+		}
 
-	/* Read Multi-function information from shmem */
-	addr = MCP_REG_SCRATCH + nvm_cfg1_offset +
-	       offsetof(struct nvm_cfg1, glob) +
-	       offsetof(struct nvm_cfg1_glob, generic_cont0);
-
-	generic_cont0 = qed_rd(p_hwfn, p_ptt, addr);
-
-	mf_mode = (generic_cont0 & NVM_CFG1_GLOB_MF_MODE_MASK) >>
-		  NVM_CFG1_GLOB_MF_MODE_OFFSET;
-
-	switch (mf_mode) {
-	case NVM_CFG1_GLOB_MF_MODE_MF_ALLOWED:
-		p_hwfn->cdev->mf_mode = QED_MF_OVLAN;
-		break;
-	case NVM_CFG1_GLOB_MF_MODE_NPAR1_0:
-		p_hwfn->cdev->mf_mode = QED_MF_NPAR;
-		break;
-	case NVM_CFG1_GLOB_MF_MODE_DEFAULT:
-		p_hwfn->cdev->mf_mode = QED_MF_DEFAULT;
-		break;
+		link->eee.tx_lpi_timer = p_caps->eee_lpi_timer;
+		link->eee.tx_lpi_enable = link->eee.enable;
+		link->eee.adv_caps = QED_EEE_1G_ADV | QED_EEE_10G_ADV;
+	} else {
+		p_caps->default_eee = QED_MCP_EEE_UNSUPPORTED;
 	}
-	DP_INFO(p_hwfn, "Multi function mode is %08x\n",
-		p_hwfn->cdev->mf_mode);
 
-	/* Read Multi-function information from shmem */
+	DP_VERBOSE(p_hwfn,
+		   NETIF_MSG_LINK,
+		   "Read default link: Speed 0x%08x, Adv. Speed 0x%08x, AN: 0x%02x, PAUSE AN: 0x%02x EEE: %02x [%08x usec]\n",
+		   link->speed.forced_speed,
+		   link->speed.advertised_speeds,
+		   link->speed.autoneg,
+		   link->pause.autoneg,
+		   p_caps->default_eee, p_caps->eee_lpi_timer);
+
+	if (IS_LEAD_HWFN(p_hwfn)) {
+		struct qed_dev *cdev = p_hwfn->cdev;
+
+		/* Read Multi-function information from shmem */
+		addr = MCP_REG_SCRATCH + nvm_cfg1_offset +
+		       offsetof(struct nvm_cfg1, glob) +
+		       offsetof(struct nvm_cfg1_glob, generic_cont0);
+
+		generic_cont0 = qed_rd(p_hwfn, p_ptt, addr);
+
+		mf_mode = (generic_cont0 & NVM_CFG1_GLOB_MF_MODE_MASK) >>
+			  NVM_CFG1_GLOB_MF_MODE_OFFSET;
+
+		switch (mf_mode) {
+		case NVM_CFG1_GLOB_MF_MODE_MF_ALLOWED:
+			cdev->mf_bits = BIT(QED_MF_OVLAN_CLSS);
+			break;
+		case NVM_CFG1_GLOB_MF_MODE_UFP:
+			cdev->mf_bits = BIT(QED_MF_OVLAN_CLSS) |
+					BIT(QED_MF_LLH_PROTO_CLSS) |
+					BIT(QED_MF_UFP_SPECIFIC) |
+					BIT(QED_MF_8021Q_TAGGING);
+			break;
+		case NVM_CFG1_GLOB_MF_MODE_BD:
+			cdev->mf_bits = BIT(QED_MF_OVLAN_CLSS) |
+					BIT(QED_MF_LLH_PROTO_CLSS) |
+					BIT(QED_MF_8021AD_TAGGING);
+			break;
+		case NVM_CFG1_GLOB_MF_MODE_NPAR1_0:
+			cdev->mf_bits = BIT(QED_MF_LLH_MAC_CLSS) |
+					BIT(QED_MF_LLH_PROTO_CLSS) |
+					BIT(QED_MF_LL2_NON_UNICAST) |
+					BIT(QED_MF_INTER_PF_SWITCH);
+			break;
+		case NVM_CFG1_GLOB_MF_MODE_DEFAULT:
+			cdev->mf_bits = BIT(QED_MF_LLH_MAC_CLSS) |
+					BIT(QED_MF_LLH_PROTO_CLSS) |
+					BIT(QED_MF_LL2_NON_UNICAST);
+			if (QED_IS_BB(p_hwfn->cdev))
+				cdev->mf_bits |= BIT(QED_MF_NEED_DEF_PF);
+			break;
+		}
+
+		DP_INFO(p_hwfn, "Multi function mode is 0x%lx\n",
+			cdev->mf_bits);
+	}
+
+	DP_INFO(p_hwfn, "Multi function mode is 0x%lx\n",
+		p_hwfn->cdev->mf_bits);
+
+	/* Read device capabilities information from shmem */
 	addr = MCP_REG_SCRATCH + nvm_cfg1_offset +
 		offsetof(struct nvm_cfg1, glob) +
 		offsetof(struct nvm_cfg1_glob, device_capabilities);
@@ -2705,7 +2792,7 @@ static void qed_hw_info_port_num_bb(struct qed_hwfn *p_hwfn,
 {
 	u32 port_mode;
 
-	port_mode = qed_rd(p_hwfn, p_ptt, CNIG_REG_NW_PORT_MODE_BB_B0);
+	port_mode = qed_rd(p_hwfn, p_ptt, CNIG_REG_NW_PORT_MODE_BB);
 
 	if (port_mode < 3) {
 		p_hwfn->cdev->num_ports_in_engine = 1;
@@ -2751,6 +2838,27 @@ static void qed_hw_info_port_num(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt)
 		qed_hw_info_port_num_ah(p_hwfn, p_ptt);
 }
 
+static void qed_get_eee_caps(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt)
+{
+	struct qed_mcp_link_capabilities *p_caps;
+	u32 eee_status;
+
+	p_caps = &p_hwfn->mcp_info->link_capabilities;
+	if (p_caps->default_eee == QED_MCP_EEE_UNSUPPORTED)
+		return;
+
+	p_caps->eee_speed_caps = 0;
+	eee_status = qed_rd(p_hwfn, p_ptt, p_hwfn->mcp_info->port_addr +
+			    offsetof(struct public_port, eee_status));
+	eee_status = (eee_status & EEE_SUPPORTED_SPEED_MASK) >>
+			EEE_SUPPORTED_SPEED_OFFSET;
+
+	if (eee_status & EEE_1G_SUPPORTED)
+		p_caps->eee_speed_caps |= QED_EEE_1G_ADV;
+	if (eee_status & EEE_10G_ADV)
+		p_caps->eee_speed_caps |= QED_EEE_10G_ADV;
+}
+
 static int
 qed_get_hw_info(struct qed_hwfn *p_hwfn,
 		struct qed_ptt *p_ptt,
@@ -2766,6 +2874,8 @@ qed_get_hw_info(struct qed_hwfn *p_hwfn,
 	}
 
 	qed_hw_info_port_num(p_hwfn, p_ptt);
+
+	qed_mcp_get_capabilities(p_hwfn, p_ptt);
 
 	qed_hw_get_nvm_info(p_hwfn, p_ptt);
 
@@ -2785,6 +2895,10 @@ qed_get_hw_info(struct qed_hwfn *p_hwfn,
 				p_hwfn->mcp_info->func_info.ovlan;
 
 		qed_mcp_cmd_port_init(p_hwfn, p_ptt);
+
+		qed_get_eee_caps(p_hwfn, p_ptt);
+
+		qed_mcp_read_ufp_config(p_hwfn, p_ptt);
 	}
 
 	if (qed_mcp_is_init(p_hwfn)) {
@@ -2861,6 +2975,12 @@ static int qed_get_dev_info(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt)
 	return 0;
 }
 
+static void qed_nvm_info_free(struct qed_hwfn *p_hwfn)
+{
+	kfree(p_hwfn->nvm_info.image_att);
+	p_hwfn->nvm_info.image_att = NULL;
+}
+
 static int qed_hw_prepare_single(struct qed_hwfn *p_hwfn,
 				 void __iomem *p_regview,
 				 void __iomem *p_doorbells,
@@ -2924,12 +3044,25 @@ static int qed_hw_prepare_single(struct qed_hwfn *p_hwfn,
 			DP_NOTICE(p_hwfn, "Failed to initiate PF FLR\n");
 	}
 
+	/* NVRAM info initialization and population */
+	if (IS_LEAD_HWFN(p_hwfn)) {
+		rc = qed_mcp_nvm_info_populate(p_hwfn);
+		if (rc) {
+			DP_NOTICE(p_hwfn,
+				  "Failed to populate nvm info shadow\n");
+			goto err2;
+		}
+	}
+
 	/* Allocate the init RT array and initialize the init-ops engine */
 	rc = qed_init_alloc(p_hwfn);
 	if (rc)
-		goto err2;
+		goto err3;
 
 	return rc;
+err3:
+	if (IS_LEAD_HWFN(p_hwfn))
+		qed_nvm_info_free(p_hwfn);
 err2:
 	if (IS_LEAD_HWFN(p_hwfn))
 		qed_iov_free_hw_info(p_hwfn->cdev);
@@ -2985,6 +3118,7 @@ int qed_hw_prepare(struct qed_dev *cdev,
 		if (rc) {
 			if (IS_PF(cdev)) {
 				qed_init_free(p_hwfn);
+				qed_nvm_info_free(p_hwfn);
 				qed_mcp_free(p_hwfn);
 				qed_hw_hwfn_free(p_hwfn);
 			}
@@ -3017,6 +3151,8 @@ void qed_hw_remove(struct qed_dev *cdev)
 	}
 
 	qed_iov_free_hw_info(cdev);
+
+	qed_nvm_info_free(p_hwfn);
 }
 
 static void qed_chain_free_next_ptr(struct qed_dev *cdev,
@@ -3369,7 +3505,7 @@ int qed_llh_add_mac_filter(struct qed_hwfn *p_hwfn,
 	u32 high = 0, low = 0, en;
 	int i;
 
-	if (!(IS_MF_SI(p_hwfn) || IS_MF_DEFAULT(p_hwfn)))
+	if (!test_bit(QED_MF_LLH_MAC_CLSS, &p_hwfn->cdev->mf_bits))
 		return 0;
 
 	qed_llh_mac_to_filter(&high, &low, p_filter);
@@ -3414,7 +3550,7 @@ void qed_llh_remove_mac_filter(struct qed_hwfn *p_hwfn,
 	u32 high = 0, low = 0;
 	int i;
 
-	if (!(IS_MF_SI(p_hwfn) || IS_MF_DEFAULT(p_hwfn)))
+	if (!test_bit(QED_MF_LLH_MAC_CLSS, &p_hwfn->cdev->mf_bits))
 		return;
 
 	qed_llh_mac_to_filter(&high, &low, p_filter);
@@ -3456,7 +3592,7 @@ qed_llh_add_protocol_filter(struct qed_hwfn *p_hwfn,
 	u32 high = 0, low = 0, en;
 	int i;
 
-	if (!(IS_MF_SI(p_hwfn) || IS_MF_DEFAULT(p_hwfn)))
+	if (!test_bit(QED_MF_LLH_PROTO_CLSS, &p_hwfn->cdev->mf_bits))
 		return 0;
 
 	switch (type) {
@@ -3554,7 +3690,7 @@ qed_llh_remove_protocol_filter(struct qed_hwfn *p_hwfn,
 	u32 high = 0, low = 0;
 	int i;
 
-	if (!(IS_MF_SI(p_hwfn) || IS_MF_DEFAULT(p_hwfn)))
+	if (!test_bit(QED_MF_LLH_PROTO_CLSS, &p_hwfn->cdev->mf_bits))
 		return;
 
 	switch (type) {
@@ -3630,7 +3766,7 @@ static int qed_set_coalesce(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt,
 	}
 
 	p_coal_timeset = p_eth_qzone;
-	memset(p_coal_timeset, 0, eth_qzone_size);
+	memset(p_eth_qzone, 0, eth_qzone_size);
 	SET_FIELD(p_coal_timeset->value, COALESCING_TIMESET_TIMESET, timeset);
 	SET_FIELD(p_coal_timeset->value, COALESCING_TIMESET_VALID, 1);
 	qed_memcpy_to(p_hwfn, p_ptt, hw_addr, p_eth_qzone, eth_qzone_size);
@@ -3638,12 +3774,46 @@ static int qed_set_coalesce(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt,
 	return 0;
 }
 
-int qed_set_rxq_coalesce(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt,
-			 u16 coalesce, u16 qid, u16 sb_id)
+int qed_set_queue_coalesce(u16 rx_coal, u16 tx_coal, void *p_handle)
+{
+	struct qed_queue_cid *p_cid = p_handle;
+	struct qed_hwfn *p_hwfn;
+	struct qed_ptt *p_ptt;
+	int rc = 0;
+
+	p_hwfn = p_cid->p_owner;
+
+	if (IS_VF(p_hwfn->cdev))
+		return qed_vf_pf_set_coalesce(p_hwfn, rx_coal, tx_coal, p_cid);
+
+	p_ptt = qed_ptt_acquire(p_hwfn);
+	if (!p_ptt)
+		return -EAGAIN;
+
+	if (rx_coal) {
+		rc = qed_set_rxq_coalesce(p_hwfn, p_ptt, rx_coal, p_cid);
+		if (rc)
+			goto out;
+		p_hwfn->cdev->rx_coalesce_usecs = rx_coal;
+	}
+
+	if (tx_coal) {
+		rc = qed_set_txq_coalesce(p_hwfn, p_ptt, tx_coal, p_cid);
+		if (rc)
+			goto out;
+		p_hwfn->cdev->tx_coalesce_usecs = tx_coal;
+	}
+out:
+	qed_ptt_release(p_hwfn, p_ptt);
+	return rc;
+}
+
+int qed_set_rxq_coalesce(struct qed_hwfn *p_hwfn,
+			 struct qed_ptt *p_ptt,
+			 u16 coalesce, struct qed_queue_cid *p_cid)
 {
 	struct ustorm_eth_queue_zone eth_qzone;
 	u8 timeset, timer_res;
-	u16 fw_qid = 0;
 	u32 address;
 	int rc;
 
@@ -3660,32 +3830,29 @@ int qed_set_rxq_coalesce(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt,
 	}
 	timeset = (u8)(coalesce >> timer_res);
 
-	rc = qed_fw_l2_queue(p_hwfn, qid, &fw_qid);
-	if (rc)
-		return rc;
-
-	rc = qed_int_set_timer_res(p_hwfn, p_ptt, timer_res, sb_id, false);
+	rc = qed_int_set_timer_res(p_hwfn, p_ptt, timer_res,
+				   p_cid->sb_igu_id, false);
 	if (rc)
 		goto out;
 
-	address = BAR0_MAP_REG_USDM_RAM + USTORM_ETH_QUEUE_ZONE_OFFSET(fw_qid);
+	address = BAR0_MAP_REG_USDM_RAM +
+		  USTORM_ETH_QUEUE_ZONE_OFFSET(p_cid->abs.queue_id);
 
 	rc = qed_set_coalesce(p_hwfn, p_ptt, address, &eth_qzone,
 			      sizeof(struct ustorm_eth_queue_zone), timeset);
 	if (rc)
 		goto out;
 
-	p_hwfn->cdev->rx_coalesce_usecs = coalesce;
 out:
 	return rc;
 }
 
-int qed_set_txq_coalesce(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt,
-			 u16 coalesce, u16 qid, u16 sb_id)
+int qed_set_txq_coalesce(struct qed_hwfn *p_hwfn,
+			 struct qed_ptt *p_ptt,
+			 u16 coalesce, struct qed_queue_cid *p_cid)
 {
 	struct xstorm_eth_queue_zone eth_qzone;
 	u8 timeset, timer_res;
-	u16 fw_qid = 0;
 	u32 address;
 	int rc;
 
@@ -3702,22 +3869,16 @@ int qed_set_txq_coalesce(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt,
 	}
 	timeset = (u8)(coalesce >> timer_res);
 
-	rc = qed_fw_l2_queue(p_hwfn, qid, &fw_qid);
-	if (rc)
-		return rc;
-
-	rc = qed_int_set_timer_res(p_hwfn, p_ptt, timer_res, sb_id, true);
+	rc = qed_int_set_timer_res(p_hwfn, p_ptt, timer_res,
+				   p_cid->sb_igu_id, true);
 	if (rc)
 		goto out;
 
-	address = BAR0_MAP_REG_XSDM_RAM + XSTORM_ETH_QUEUE_ZONE_OFFSET(fw_qid);
+	address = BAR0_MAP_REG_XSDM_RAM +
+		  XSTORM_ETH_QUEUE_ZONE_OFFSET(p_cid->abs.queue_id);
 
 	rc = qed_set_coalesce(p_hwfn, p_ptt, address, &eth_qzone,
 			      sizeof(struct xstorm_eth_queue_zone), timeset);
-	if (rc)
-		goto out;
-
-	p_hwfn->cdev->tx_coalesce_usecs = coalesce;
 out:
 	return rc;
 }

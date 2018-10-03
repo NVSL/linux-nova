@@ -28,20 +28,6 @@ struct gpcv2_irqchip_data {
 
 static struct gpcv2_irqchip_data *imx_gpcv2_instance;
 
-/*
- * Interface for the low level wakeup code.
- */
-u32 imx_gpcv2_get_wakeup_source(u32 **sources)
-{
-	if (!imx_gpcv2_instance)
-		return 0;
-
-	if (sources)
-		*sources = imx_gpcv2_instance->wakeup_sources;
-
-	return IMR_NUM;
-}
-
 static int gpcv2_wakeup_source_save(void)
 {
 	struct gpcv2_irqchip_data *cd;
@@ -214,13 +200,13 @@ static int __init imx_gpcv2_irqchip_init(struct device_node *node,
 	int i;
 
 	if (!parent) {
-		pr_err("%s: no parent, giving up\n", node->full_name);
+		pr_err("%pOF: no parent, giving up\n", node);
 		return -ENODEV;
 	}
 
 	parent_domain = irq_find_host(parent);
 	if (!parent_domain) {
-		pr_err("%s: unable to get parent domain\n", node->full_name);
+		pr_err("%pOF: unable to get parent domain\n", node);
 		return -ENXIO;
 	}
 

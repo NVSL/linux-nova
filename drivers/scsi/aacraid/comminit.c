@@ -42,6 +42,8 @@
 #include <linux/completion.h>
 #include <linux/mm.h>
 #include <scsi/scsi_host.h>
+#include <scsi/scsi_device.h>
+#include <scsi/scsi_cmnd.h>
 
 #include "aacraid.h"
 
@@ -284,6 +286,38 @@ static void aac_queue_init(struct aac_dev * dev, struct aac_queue * q, u32 *mem,
 	q->entries = qsize;
 }
 
+static void aac_wait_for_io_completion(struct aac_dev *aac)
+{
+	unsigned long flagv = 0;
+	int i = 0;
+
+	for (i = 60; i; --i) {
+		struct scsi_device *dev;
+		struct scsi_cmnd *command;
+		int active = 0;
+
+		__shost_for_each_device(dev, aac->scsi_host_ptr) {
+			spin_lock_irqsave(&dev->list_lock, flagv);
+			list_for_each_entry(command, &dev->cmd_list, list) {
+				if (command->SCp.phase == AAC_OWNER_FIRMWARE) {
+					active++;
+					break;
+				}
+			}
+			spin_unlock_irqrestore(&dev->list_lock, flagv);
+			if (active)
+				break;
+
+		}
+		/*
+		 * We can exit If all the commands are complete
+		 */
+		if (active == 0)
+			break;
+		ssleep(1);
+	}
+}
+
 /**
  *	aac_send_shutdown		-	shutdown an adapter
  *	@dev: Adapter to shutdown
@@ -295,16 +329,23 @@ int aac_send_shutdown(struct aac_dev * dev)
 {
 	struct fib * fibctx;
 	struct aac_close *cmd;
-	int status;
+	int status = 0;
+
+	if (aac_adapter_check_health(dev))
+		return status;
+
+	if (!dev->adapter_shutdown) {
+		mutex_lock(&dev->ioctl_mutex);
+		dev->adapter_shutdown = 1;
+		mutex_unlock(&dev->ioctl_mutex);
+	}
+
+	aac_wait_for_io_completion(dev);
 
 	fibctx = aac_fib_alloc(dev);
 	if (!fibctx)
 		return -ENOMEM;
 	aac_fib_init(fibctx);
-
-	mutex_lock(&dev->ioctl_mutex);
-	dev->adapter_shutdown = 1;
-	mutex_unlock(&dev->ioctl_mutex);
 
 	cmd = (struct aac_close *) fib_data(fibctx);
 	cmd->command = cpu_to_le32(VM_CloseAll);
@@ -520,9 +561,9 @@ struct aac_dev *aac_init_adapter(struct aac_dev *dev)
 			dev->raw_io_64 = 1;
 		dev->sync_mode = aac_sync_mode;
 		if (dev->a_ops.adapter_comm &&
-			(status[1] & AAC_OPT_NEW_COMM)) {
-				dev->comm_interface = AAC_COMM_MESSAGE;
-				dev->raw_io_interface = 1;
+		    (status[1] & AAC_OPT_NEW_COMM)) {
+			dev->comm_interface = AAC_COMM_MESSAGE;
+			dev->raw_io_interface = 1;
 			if ((status[1] & AAC_OPT_NEW_COMM_TYPE1)) {
 				/* driver supports TYPE1 (Tupelo) */
 				dev->comm_interface = AAC_COMM_MESSAGE_TYPE1;

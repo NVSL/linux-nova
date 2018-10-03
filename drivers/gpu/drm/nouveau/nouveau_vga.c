@@ -1,8 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0
 #include <linux/vgaarb.h>
 #include <linux/vga_switcheroo.h>
 
 #include <drm/drmP.h>
 #include <drm/drm_crtc_helper.h>
+#include <drm/drm_fb_helper.h>
 
 #include "nouveau_drv.h"
 #include "nouveau_acpi.h"
@@ -60,7 +62,7 @@ static void
 nouveau_switcheroo_reprobe(struct pci_dev *pdev)
 {
 	struct drm_device *dev = pci_get_drvdata(pdev);
-	nouveau_fbcon_output_poll_changed(dev);
+	drm_fb_helper_output_poll_changed(dev);
 }
 
 static bool

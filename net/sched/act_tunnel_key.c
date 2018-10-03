@@ -20,8 +20,6 @@
 #include <linux/tc_act/tc_tunnel_key.h>
 #include <net/tc_act/tc_tunnel_key.h>
 
-#define TUNNEL_KEY_TAB_MASK     15
-
 static unsigned int tunnel_key_net_id;
 static struct tc_action_ops act_tunnel_key_ops;
 
@@ -38,7 +36,7 @@ static int tunnel_key_act(struct sk_buff *skb, const struct tc_action *a,
 
 	tcf_lastuse_update(&t->tcf_tm);
 	bstats_cpu_update(this_cpu_ptr(t->common.cpu_bstats), skb);
-	action = params->action;
+	action = READ_ONCE(t->tcf_action);
 
 	switch (params->tcft_action) {
 	case TCA_TUNNEL_KEY_ACT_RELEASE:
@@ -72,7 +70,7 @@ static const struct nla_policy tunnel_key_policy[TCA_TUNNEL_KEY_MAX + 1] = {
 
 static int tunnel_key_init(struct net *net, struct nlattr *nla,
 			   struct nlattr *est, struct tc_action **a,
-			   int ovr, int bind)
+			   int ovr, int bind, struct netlink_ext_ack *extack)
 {
 	struct tc_action_net *tn = net_generic(net, tunnel_key_net_id);
 	struct nlattr *tb[TCA_TUNNEL_KEY_MAX + 1];
@@ -100,7 +98,7 @@ static int tunnel_key_init(struct net *net, struct nlattr *nla,
 		return -EINVAL;
 
 	parm = nla_data(tb[TCA_TUNNEL_KEY_PARMS]);
-	exists = tcf_hash_check(tn, parm->index, a, bind);
+	exists = tcf_idr_check(tn, parm->index, a, bind);
 	if (exists && bind)
 		return 0;
 
@@ -155,18 +153,19 @@ static int tunnel_key_init(struct net *net, struct nlattr *nla,
 		metadata->u.tun_info.mode |= IP_TUNNEL_INFO_TX;
 		break;
 	default:
+		ret = -EINVAL;
 		goto err_out;
 	}
 
 	if (!exists) {
-		ret = tcf_hash_create(tn, parm->index, est, a,
-				      &act_tunnel_key_ops, bind, true);
+		ret = tcf_idr_create(tn, parm->index, est, a,
+				     &act_tunnel_key_ops, bind, true);
 		if (ret)
 			return ret;
 
 		ret = ACT_P_CREATED;
 	} else {
-		tcf_hash_release(*a, bind);
+		tcf_idr_release(*a, bind);
 		if (!ovr)
 			return -EEXIST;
 	}
@@ -177,13 +176,13 @@ static int tunnel_key_init(struct net *net, struct nlattr *nla,
 	params_new = kzalloc(sizeof(*params_new), GFP_KERNEL);
 	if (unlikely(!params_new)) {
 		if (ret == ACT_P_CREATED)
-			tcf_hash_release(*a, bind);
+			tcf_idr_release(*a, bind);
 		return -ENOMEM;
 	}
 
 	params_old = rtnl_dereference(t->params);
 
-	params_new->action = parm->action;
+	t->tcf_action = parm->action;
 	params_new->tcft_action = parm->t_action;
 	params_new->tcft_enc_metadata = metadata;
 
@@ -193,27 +192,28 @@ static int tunnel_key_init(struct net *net, struct nlattr *nla,
 		kfree_rcu(params_old, rcu);
 
 	if (ret == ACT_P_CREATED)
-		tcf_hash_insert(tn, *a);
+		tcf_idr_insert(tn, *a);
 
 	return ret;
 
 err_out:
 	if (exists)
-		tcf_hash_release(*a, bind);
+		tcf_idr_release(*a, bind);
 	return ret;
 }
 
-static void tunnel_key_release(struct tc_action *a, int bind)
+static void tunnel_key_release(struct tc_action *a)
 {
 	struct tcf_tunnel_key *t = to_tunnel_key(a);
 	struct tcf_tunnel_key_params *params;
 
 	params = rcu_dereference_protected(t->params, 1);
+	if (params) {
+		if (params->tcft_action == TCA_TUNNEL_KEY_ACT_SET)
+			dst_release(&params->tcft_enc_metadata->dst);
 
-	if (params->tcft_action == TCA_TUNNEL_KEY_ACT_SET)
-		dst_release(&params->tcft_enc_metadata->dst);
-
-	kfree_rcu(params, rcu);
+		kfree_rcu(params, rcu);
+	}
 }
 
 static int tunnel_key_dump_addresses(struct sk_buff *skb,
@@ -254,13 +254,13 @@ static int tunnel_key_dump(struct sk_buff *skb, struct tc_action *a,
 		.index    = t->tcf_index,
 		.refcnt   = t->tcf_refcnt - ref,
 		.bindcnt  = t->tcf_bindcnt - bind,
+		.action   = t->tcf_action,
 	};
 	struct tcf_t tm;
 
 	params = rtnl_dereference(t->params);
 
 	opt.t_action = params->tcft_action;
-	opt.action = params->action;
 
 	if (nla_put(skb, TCA_TUNNEL_KEY_PARMS, sizeof(opt), &opt))
 		goto nla_put_failure;
@@ -293,18 +293,20 @@ nla_put_failure:
 
 static int tunnel_key_walker(struct net *net, struct sk_buff *skb,
 			     struct netlink_callback *cb, int type,
-			     const struct tc_action_ops *ops)
+			     const struct tc_action_ops *ops,
+			     struct netlink_ext_ack *extack)
 {
 	struct tc_action_net *tn = net_generic(net, tunnel_key_net_id);
 
-	return tcf_generic_walker(tn, skb, cb, type, ops);
+	return tcf_generic_walker(tn, skb, cb, type, ops, extack);
 }
 
-static int tunnel_key_search(struct net *net, struct tc_action **a, u32 index)
+static int tunnel_key_search(struct net *net, struct tc_action **a, u32 index,
+			     struct netlink_ext_ack *extack)
 {
 	struct tc_action_net *tn = net_generic(net, tunnel_key_net_id);
 
-	return tcf_hash_search(tn, a, index);
+	return tcf_idr_search(tn, a, index);
 }
 
 static struct tc_action_ops act_tunnel_key_ops = {
@@ -324,19 +326,17 @@ static __net_init int tunnel_key_init_net(struct net *net)
 {
 	struct tc_action_net *tn = net_generic(net, tunnel_key_net_id);
 
-	return tc_action_net_init(tn, &act_tunnel_key_ops, TUNNEL_KEY_TAB_MASK);
+	return tc_action_net_init(tn, &act_tunnel_key_ops);
 }
 
-static void __net_exit tunnel_key_exit_net(struct net *net)
+static void __net_exit tunnel_key_exit_net(struct list_head *net_list)
 {
-	struct tc_action_net *tn = net_generic(net, tunnel_key_net_id);
-
-	tc_action_net_exit(tn);
+	tc_action_net_exit(net_list, tunnel_key_net_id);
 }
 
 static struct pernet_operations tunnel_key_net_ops = {
 	.init = tunnel_key_init_net,
-	.exit = tunnel_key_exit_net,
+	.exit_batch = tunnel_key_exit_net,
 	.id   = &tunnel_key_net_id,
 	.size = sizeof(struct tc_action_net),
 };

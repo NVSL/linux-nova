@@ -62,7 +62,7 @@ struct device_node *k2_skiplist[2];
 
 static int __init fixup_one_level_bus_range(struct device_node *node, int higher)
 {
-	for (; node != 0;node = node->sibling) {
+	for (; node; node = node->sibling) {
 		const int * bus_range;
 		const unsigned int *class_code;
 		int len;
@@ -783,7 +783,7 @@ static int __init pmac_add_bridge(struct device_node *dev)
 	const int *bus_range;
 	int primary = 1, has_address = 0;
 
-	DBG("Adding PCI host bridge %s\n", dev->full_name);
+	DBG("Adding PCI host bridge %pOF\n", dev);
 
 	/* Fetch host bridge registers address */
 	has_address = (of_address_to_resource(dev, 0, &rsrc) == 0);
@@ -791,8 +791,8 @@ static int __init pmac_add_bridge(struct device_node *dev)
 	/* Get bus range if any */
 	bus_range = of_get_property(dev, "bus-range", &len);
 	if (bus_range == NULL || len < 2 * sizeof(int)) {
-		printk(KERN_WARNING "Can't get bus-range for %s, assume"
-		       " bus 0\n", dev->full_name);
+		printk(KERN_WARNING "Can't get bus-range for %pOF, assume"
+		       " bus 0\n", dev);
 	}
 
 	hose = pcibios_alloc_controller(dev);
@@ -1219,7 +1219,7 @@ static void fixup_u4_pcie(struct pci_dev* dev)
 			region = r;
 	}
 	/* Nothing found, bail */
-	if (region == 0)
+	if (!region)
 		return;
 
 	/* Print things out */

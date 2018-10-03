@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __POWERNV_PCI_H
 #define __POWERNV_PCI_H
 
@@ -11,9 +12,10 @@ struct pci_dn;
 #define NV_NMMU_ATSD_REGS 8
 
 enum pnv_phb_type {
-	PNV_PHB_IODA1	= 0,
-	PNV_PHB_IODA2	= 1,
-	PNV_PHB_NPU	= 2,
+	PNV_PHB_IODA1		= 0,
+	PNV_PHB_IODA2		= 1,
+	PNV_PHB_NPU_NVLINK	= 2,
+	PNV_PHB_NPU_OCAPI	= 3,
 };
 
 /* Precise PHB model for error management */
@@ -77,6 +79,9 @@ struct pnv_ioda_pe {
 	/* PEs in compound case */
 	struct pnv_ioda_pe	*master;
 	struct list_head	slaves;
+
+	/* PCI peer-to-peer*/
+	int			p2p_initiator_count;
 
 	/* Link in list of PE#s */
 	struct list_head	list;
@@ -184,11 +189,15 @@ struct pnv_phb {
 
 		/* Bitmask for MMIO register usage */
 		unsigned long mmio_atsd_usage;
+
+		/* Do we need to explicitly flush the nest mmu? */
+		bool nmmu_flush;
 	} npu;
 
 #ifdef CONFIG_CXL_BASE
 	struct cxl_afu *cxl_afu;
 #endif
+	int p2p_target_count;
 };
 
 extern struct pci_ops pnv_pci_ops;
@@ -219,6 +228,7 @@ extern void pnv_pci_setup_iommu_table(struct iommu_table *tbl,
 extern void pnv_pci_init_ioda_hub(struct device_node *np);
 extern void pnv_pci_init_ioda2_phb(struct device_node *np);
 extern void pnv_pci_init_npu_phb(struct device_node *np);
+extern void pnv_pci_init_npu2_opencapi_phb(struct device_node *np);
 extern void pnv_pci_reset_secondary_bus(struct pci_dev *dev);
 extern int pnv_eeh_phb_reset(struct pci_controller *hose, int option);
 
@@ -229,6 +239,8 @@ extern void pnv_teardown_msi_irqs(struct pci_dev *pdev);
 extern struct pnv_ioda_pe *pnv_ioda_get_pe(struct pci_dev *dev);
 extern void pnv_set_msi_irq_chip(struct pnv_phb *phb, unsigned int virq);
 extern bool pnv_pci_enable_device_hook(struct pci_dev *dev);
+extern void pnv_pci_ioda2_set_bypass(struct pnv_ioda_pe *pe, bool enable);
+extern int pnv_eeh_post_init(void);
 
 extern void pe_level_printk(const struct pnv_ioda_pe *pe, const char *level,
 			    const char *fmt, ...);

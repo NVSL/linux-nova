@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Infinity Unlimited USB Phoenix driver
  *
@@ -7,13 +8,7 @@
  *
  * Original code taken from iuutool (Copyright (C) 2006 Juan Carlos BorrÃ¡s)
  *
- *	This program is free software; you can redistribute it and/or modify
- *	it under the terms of the GNU General Public License as published by
- *	the Free Software Foundation; either version 2 of the License, or
- *	(at your option) any later version.
- *
  *  And tested with help of WB Electronics
- *
  */
 #include <linux/kernel.h>
 #include <linux/errno.h>
@@ -477,7 +472,6 @@ static int iuu_clk(struct usb_serial_port *port, int dwFrq)
 				}
 	}
 	P2 = ((P - PO) / 2) - 4;
-	DIV = DIV;
 	PUMP = 0x04;
 	PBmsb = (P2 >> 8 & 0x03);
 	PBlsb = P2 & 0xFF;
@@ -742,7 +736,7 @@ static int iuu_uart_on(struct usb_serial_port *port)
 	int status;
 	u8 *buf;
 
-	buf = kmalloc(sizeof(u8) * 4, GFP_KERNEL);
+	buf = kmalloc(4, GFP_KERNEL);
 
 	if (!buf)
 		return -ENOMEM;
@@ -796,7 +790,7 @@ static int iuu_uart_baud(struct usb_serial_port *port, u32 baud_base,
 	unsigned int T1FrekvensHZ = 0;
 
 	dev_dbg(&port->dev, "%s - enter baud_base=%d\n", __func__, baud_base);
-	dataout = kmalloc(sizeof(u8) * 5, GFP_KERNEL);
+	dataout = kmalloc(5, GFP_KERNEL);
 
 	if (!dataout)
 		return -ENOMEM;

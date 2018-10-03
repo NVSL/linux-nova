@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0
 config NIOS2
 	def_bool y
 	select TIMER_OF
@@ -151,7 +152,6 @@ menu "Advanced setup"
 
 config ADVANCED_OPTIONS
 	bool "Prompt for advanced kernel configuration options"
-	help
 
 comment "Default settings for advanced configuration options are used"
 	depends on !ADVANCED_OPTIONS

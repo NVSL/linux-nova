@@ -40,6 +40,7 @@
 #include <linux/string.h>
 #include <linux/etherdevice.h>
 #include "qed.h"
+#include "qed_cxt.h"
 #include "qed_dcbx.h"
 #include "qed_hsi.h"
 #include "qed_hw.h"
@@ -565,6 +566,34 @@ int qed_mcp_cmd(struct qed_hwfn *p_hwfn,
 
 	*o_mcp_resp = mb_params.mcp_resp;
 	*o_mcp_param = mb_params.mcp_param;
+
+	return 0;
+}
+
+int qed_mcp_nvm_wr_cmd(struct qed_hwfn *p_hwfn,
+		       struct qed_ptt *p_ptt,
+		       u32 cmd,
+		       u32 param,
+		       u32 *o_mcp_resp,
+		       u32 *o_mcp_param, u32 i_txn_size, u32 *i_buf)
+{
+	struct qed_mcp_mb_params mb_params;
+	int rc;
+
+	memset(&mb_params, 0, sizeof(mb_params));
+	mb_params.cmd = cmd;
+	mb_params.param = param;
+	mb_params.p_data_src = i_buf;
+	mb_params.data_src_size = (u8)i_txn_size;
+	rc = qed_mcp_cmd_and_union(p_hwfn, p_ptt, &mb_params);
+	if (rc)
+		return rc;
+
+	*o_mcp_resp = mb_params.mcp_resp;
+	*o_mcp_param = mb_params.mcp_param;
+
+	/* nvm_info needs to be updated */
+	p_hwfn->nvm_info.valid = false;
 
 	return 0;
 }
@@ -1097,6 +1126,31 @@ static void qed_mcp_handle_transceiver_change(struct qed_hwfn *p_hwfn,
 		DP_NOTICE(p_hwfn, "Transceiver is unplugged.\n");
 }
 
+static void qed_mcp_read_eee_config(struct qed_hwfn *p_hwfn,
+				    struct qed_ptt *p_ptt,
+				    struct qed_mcp_link_state *p_link)
+{
+	u32 eee_status, val;
+
+	p_link->eee_adv_caps = 0;
+	p_link->eee_lp_adv_caps = 0;
+	eee_status = qed_rd(p_hwfn,
+			    p_ptt,
+			    p_hwfn->mcp_info->port_addr +
+			    offsetof(struct public_port, eee_status));
+	p_link->eee_active = !!(eee_status & EEE_ACTIVE_BIT);
+	val = (eee_status & EEE_LD_ADV_STATUS_MASK) >> EEE_LD_ADV_STATUS_OFFSET;
+	if (val & EEE_1G_ADV)
+		p_link->eee_adv_caps |= QED_EEE_1G_ADV;
+	if (val & EEE_10G_ADV)
+		p_link->eee_adv_caps |= QED_EEE_10G_ADV;
+	val = (eee_status & EEE_LP_ADV_STATUS_MASK) >> EEE_LP_ADV_STATUS_OFFSET;
+	if (val & EEE_1G_ADV)
+		p_link->eee_lp_adv_caps |= QED_EEE_1G_ADV;
+	if (val & EEE_10G_ADV)
+		p_link->eee_lp_adv_caps |= QED_EEE_10G_ADV;
+}
+
 static void qed_mcp_handle_link_change(struct qed_hwfn *p_hwfn,
 				       struct qed_ptt *p_ptt, bool b_reset)
 {
@@ -1157,6 +1211,7 @@ static void qed_mcp_handle_link_change(struct qed_hwfn *p_hwfn,
 		break;
 	default:
 		p_link->speed = 0;
+		p_link->link_up = 0;
 	}
 
 	if (p_link->link_up && p_link->speed)
@@ -1228,6 +1283,9 @@ static void qed_mcp_handle_link_change(struct qed_hwfn *p_hwfn,
 
 	p_link->sfp_tx_fault = !!(status & LINK_STATUS_SFP_TX_FAULT);
 
+	if (p_hwfn->mcp_info->capabilities & FW_MB_PARAM_FEATURE_SUPPORT_EEE)
+		qed_mcp_read_eee_config(p_hwfn, p_ptt, p_link);
+
 	qed_link_update(p_hwfn);
 out:
 	spin_unlock_bh(&p_hwfn->mcp_info->link_lock);
@@ -1251,6 +1309,25 @@ int qed_mcp_set_link(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt, bool b_up)
 	phy_cfg.pause |= (params->pause.forced_tx) ? ETH_PAUSE_TX : 0;
 	phy_cfg.adv_speed = params->speed.advertised_speeds;
 	phy_cfg.loopback_mode = params->loopback_mode;
+
+	/* There are MFWs that share this capability regardless of whether
+	 * this is feasible or not. And given that at the very least adv_caps
+	 * would be set internally by qed, we want to make sure LFA would
+	 * still work.
+	 */
+	if ((p_hwfn->mcp_info->capabilities &
+	     FW_MB_PARAM_FEATURE_SUPPORT_EEE) && params->eee.enable) {
+		phy_cfg.eee_cfg |= EEE_CFG_EEE_ENABLED;
+		if (params->eee.tx_lpi_enable)
+			phy_cfg.eee_cfg |= EEE_CFG_TX_LPI;
+		if (params->eee.adv_caps & QED_EEE_1G_ADV)
+			phy_cfg.eee_cfg |= EEE_CFG_ADV_SPEED_1G;
+		if (params->eee.adv_caps & QED_EEE_10G_ADV)
+			phy_cfg.eee_cfg |= EEE_CFG_ADV_SPEED_10G;
+		phy_cfg.eee_cfg |= (params->eee.tx_lpi_timer <<
+				    EEE_TX_TIMER_USEC_OFFSET) &
+				   EEE_TX_TIMER_USEC_MASK;
+	}
 
 	p_hwfn->b_drv_link_init = b_up;
 
@@ -1420,6 +1497,81 @@ static void qed_mcp_update_stag(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt)
 		    &resp, &param);
 }
 
+void qed_mcp_read_ufp_config(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt)
+{
+	struct public_func shmem_info;
+	u32 port_cfg, val;
+
+	if (!test_bit(QED_MF_UFP_SPECIFIC, &p_hwfn->cdev->mf_bits))
+		return;
+
+	memset(&p_hwfn->ufp_info, 0, sizeof(p_hwfn->ufp_info));
+	port_cfg = qed_rd(p_hwfn, p_ptt, p_hwfn->mcp_info->port_addr +
+			  offsetof(struct public_port, oem_cfg_port));
+	val = (port_cfg & OEM_CFG_CHANNEL_TYPE_MASK) >>
+		OEM_CFG_CHANNEL_TYPE_OFFSET;
+	if (val != OEM_CFG_CHANNEL_TYPE_STAGGED)
+		DP_NOTICE(p_hwfn, "Incorrect UFP Channel type  %d\n", val);
+
+	val = (port_cfg & OEM_CFG_SCHED_TYPE_MASK) >> OEM_CFG_SCHED_TYPE_OFFSET;
+	if (val == OEM_CFG_SCHED_TYPE_ETS) {
+		p_hwfn->ufp_info.mode = QED_UFP_MODE_ETS;
+	} else if (val == OEM_CFG_SCHED_TYPE_VNIC_BW) {
+		p_hwfn->ufp_info.mode = QED_UFP_MODE_VNIC_BW;
+	} else {
+		p_hwfn->ufp_info.mode = QED_UFP_MODE_UNKNOWN;
+		DP_NOTICE(p_hwfn, "Unknown UFP scheduling mode %d\n", val);
+	}
+
+	qed_mcp_get_shmem_func(p_hwfn, p_ptt, &shmem_info, MCP_PF_ID(p_hwfn));
+	val = (shmem_info.oem_cfg_func & OEM_CFG_FUNC_TC_MASK) >>
+		OEM_CFG_FUNC_TC_OFFSET;
+	p_hwfn->ufp_info.tc = (u8)val;
+	val = (shmem_info.oem_cfg_func & OEM_CFG_FUNC_HOST_PRI_CTRL_MASK) >>
+		OEM_CFG_FUNC_HOST_PRI_CTRL_OFFSET;
+	if (val == OEM_CFG_FUNC_HOST_PRI_CTRL_VNIC) {
+		p_hwfn->ufp_info.pri_type = QED_UFP_PRI_VNIC;
+	} else if (val == OEM_CFG_FUNC_HOST_PRI_CTRL_OS) {
+		p_hwfn->ufp_info.pri_type = QED_UFP_PRI_OS;
+	} else {
+		p_hwfn->ufp_info.pri_type = QED_UFP_PRI_UNKNOWN;
+		DP_NOTICE(p_hwfn, "Unknown Host priority control %d\n", val);
+	}
+
+	DP_NOTICE(p_hwfn,
+		  "UFP shmem config: mode = %d tc = %d pri_type = %d\n",
+		  p_hwfn->ufp_info.mode,
+		  p_hwfn->ufp_info.tc, p_hwfn->ufp_info.pri_type);
+}
+
+static int
+qed_mcp_handle_ufp_event(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt)
+{
+	qed_mcp_read_ufp_config(p_hwfn, p_ptt);
+
+	if (p_hwfn->ufp_info.mode == QED_UFP_MODE_VNIC_BW) {
+		p_hwfn->qm_info.ooo_tc = p_hwfn->ufp_info.tc;
+		p_hwfn->hw_info.offload_tc = p_hwfn->ufp_info.tc;
+
+		qed_qm_reconf(p_hwfn, p_ptt);
+	} else if (p_hwfn->ufp_info.mode == QED_UFP_MODE_ETS) {
+		/* Merge UFP TC with the dcbx TC data */
+		qed_dcbx_mib_update_event(p_hwfn, p_ptt,
+					  QED_DCBX_OPERATIONAL_MIB);
+	} else {
+		DP_ERR(p_hwfn, "Invalid sched type, discard the UFP config\n");
+		return -EINVAL;
+	}
+
+	/* update storm FW with negotiation results */
+	qed_sp_pf_update_ufp(p_hwfn);
+
+	/* update stag pcp value */
+	qed_sp_pf_update_stag(p_hwfn);
+
+	return 0;
+}
+
 int qed_mcp_handle_events(struct qed_hwfn *p_hwfn,
 			  struct qed_ptt *p_ptt)
 {
@@ -1463,6 +1615,9 @@ int qed_mcp_handle_events(struct qed_hwfn *p_hwfn,
 			qed_dcbx_mib_update_event(p_hwfn, p_ptt,
 						  QED_DCBX_OPERATIONAL_MIB);
 			break;
+		case MFW_DRV_MSG_OEM_CFG_UPDATE:
+			qed_mcp_handle_ufp_event(p_hwfn, p_ptt);
+			break;
 		case MFW_DRV_MSG_TRANSCEIVER_STATE_CHANGE:
 			qed_mcp_handle_transceiver_change(p_hwfn, p_ptt);
 			break;
@@ -1478,6 +1633,8 @@ int qed_mcp_handle_events(struct qed_hwfn *p_hwfn,
 		case MFW_DRV_MSG_S_TAG_UPDATE:
 			qed_mcp_update_stag(p_hwfn, p_ptt);
 			break;
+		case MFW_DRV_MSG_GET_TLV_REQ:
+			qed_mfw_tlv_req(p_hwfn);
 			break;
 		default:
 			DP_INFO(p_hwfn, "Unimplemented MFW message %d\n", i);
@@ -1650,12 +1807,12 @@ qed_mcp_get_shmem_proto_mfw(struct qed_hwfn *p_hwfn,
 	case FW_MB_PARAM_GET_PF_RDMA_ROCE:
 		*p_proto = QED_PCI_ETH_ROCE;
 		break;
-	case FW_MB_PARAM_GET_PF_RDMA_BOTH:
-		DP_NOTICE(p_hwfn,
-			  "Current day drivers don't support RoCE & iWARP. Default to RoCE-only\n");
-		*p_proto = QED_PCI_ETH_ROCE;
-		break;
 	case FW_MB_PARAM_GET_PF_RDMA_IWARP:
+		*p_proto = QED_PCI_ETH_IWARP;
+		break;
+	case FW_MB_PARAM_GET_PF_RDMA_BOTH:
+		*p_proto = QED_PCI_ETH_RDMA;
+		break;
 	default:
 		DP_NOTICE(p_hwfn,
 			  "MFW answers GET_PF_RDMA_PROTOCOL but param is %08x\n",
@@ -2193,7 +2350,7 @@ int qed_mcp_nvm_read(struct qed_dev *cdev, u32 addr, u8 *p_buf, u32 len)
 					DRV_MSG_CODE_NVM_READ_NVRAM,
 					addr + offset +
 					(bytes_to_copy <<
-					 DRV_MB_PARAM_NVM_LEN_SHIFT),
+					 DRV_MB_PARAM_NVM_LEN_OFFSET),
 					&resp, &resp_param,
 					&read_len,
 					(u32 *)(p_buf + offset));
@@ -2215,6 +2372,102 @@ int qed_mcp_nvm_read(struct qed_dev *cdev, u32 addr, u8 *p_buf, u32 len)
 	}
 
 	cdev->mcp_nvm_resp = resp;
+	qed_ptt_release(p_hwfn, p_ptt);
+
+	return rc;
+}
+
+int qed_mcp_nvm_resp(struct qed_dev *cdev, u8 *p_buf)
+{
+	struct qed_hwfn *p_hwfn = QED_LEADING_HWFN(cdev);
+	struct qed_ptt *p_ptt;
+
+	p_ptt = qed_ptt_acquire(p_hwfn);
+	if (!p_ptt)
+		return -EBUSY;
+
+	memcpy(p_buf, &cdev->mcp_nvm_resp, sizeof(cdev->mcp_nvm_resp));
+	qed_ptt_release(p_hwfn, p_ptt);
+
+	return 0;
+}
+
+int qed_mcp_nvm_put_file_begin(struct qed_dev *cdev, u32 addr)
+{
+	struct qed_hwfn *p_hwfn = QED_LEADING_HWFN(cdev);
+	struct qed_ptt *p_ptt;
+	u32 resp, param;
+	int rc;
+
+	p_ptt = qed_ptt_acquire(p_hwfn);
+	if (!p_ptt)
+		return -EBUSY;
+	rc = qed_mcp_cmd(p_hwfn, p_ptt, DRV_MSG_CODE_NVM_PUT_FILE_BEGIN, addr,
+			 &resp, &param);
+	cdev->mcp_nvm_resp = resp;
+	qed_ptt_release(p_hwfn, p_ptt);
+
+	return rc;
+}
+
+int qed_mcp_nvm_write(struct qed_dev *cdev,
+		      u32 cmd, u32 addr, u8 *p_buf, u32 len)
+{
+	u32 buf_idx = 0, buf_size, nvm_cmd, nvm_offset, resp = 0, param;
+	struct qed_hwfn *p_hwfn = QED_LEADING_HWFN(cdev);
+	struct qed_ptt *p_ptt;
+	int rc = -EINVAL;
+
+	p_ptt = qed_ptt_acquire(p_hwfn);
+	if (!p_ptt)
+		return -EBUSY;
+
+	switch (cmd) {
+	case QED_PUT_FILE_DATA:
+		nvm_cmd = DRV_MSG_CODE_NVM_PUT_FILE_DATA;
+		break;
+	case QED_NVM_WRITE_NVRAM:
+		nvm_cmd = DRV_MSG_CODE_NVM_WRITE_NVRAM;
+		break;
+	default:
+		DP_NOTICE(p_hwfn, "Invalid nvm write command 0x%x\n", cmd);
+		rc = -EINVAL;
+		goto out;
+	}
+
+	while (buf_idx < len) {
+		buf_size = min_t(u32, (len - buf_idx), MCP_DRV_NVM_BUF_LEN);
+		nvm_offset = ((buf_size << DRV_MB_PARAM_NVM_LEN_OFFSET) |
+			      addr) + buf_idx;
+		rc = qed_mcp_nvm_wr_cmd(p_hwfn, p_ptt, nvm_cmd, nvm_offset,
+					&resp, &param, buf_size,
+					(u32 *)&p_buf[buf_idx]);
+		if (rc) {
+			DP_NOTICE(cdev, "nvm write failed, rc = %d\n", rc);
+			resp = FW_MSG_CODE_ERROR;
+			break;
+		}
+
+		if (resp != FW_MSG_CODE_OK &&
+		    resp != FW_MSG_CODE_NVM_OK &&
+		    resp != FW_MSG_CODE_NVM_PUT_FILE_FINISH_OK) {
+			DP_NOTICE(cdev,
+				  "nvm write failed, resp = 0x%08x\n", resp);
+			rc = -EINVAL;
+			break;
+		}
+
+		/* This can be a lengthy process, and it's possible scheduler
+		 * isn't pre-emptable. Sleep a bit to prevent CPU hogging.
+		 */
+		if (buf_idx % 0x1000 > (buf_idx + buf_size) % 0x1000)
+			usleep_range(1000, 2000);
+
+		buf_idx += buf_size;
+	}
+
+	cdev->mcp_nvm_resp = resp;
+out:
 	qed_ptt_release(p_hwfn, p_ptt);
 
 	return rc;
@@ -2262,9 +2515,9 @@ int qed_mcp_bist_clock_test(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt)
 	return rc;
 }
 
-int qed_mcp_bist_nvm_test_get_num_images(struct qed_hwfn *p_hwfn,
-					 struct qed_ptt *p_ptt,
-					 u32 *num_images)
+int qed_mcp_bist_nvm_get_num_images(struct qed_hwfn *p_hwfn,
+				    struct qed_ptt *p_ptt,
+				    u32 *num_images)
 {
 	u32 drv_mb_param = 0, rsp;
 	int rc = 0;
@@ -2283,10 +2536,10 @@ int qed_mcp_bist_nvm_test_get_num_images(struct qed_hwfn *p_hwfn,
 	return rc;
 }
 
-int qed_mcp_bist_nvm_test_get_image_att(struct qed_hwfn *p_hwfn,
-					struct qed_ptt *p_ptt,
-					struct bist_nvm_image_att *p_image_att,
-					u32 image_index)
+int qed_mcp_bist_nvm_get_image_att(struct qed_hwfn *p_hwfn,
+				   struct qed_ptt *p_ptt,
+				   struct bist_nvm_image_att *p_image_att,
+				   u32 image_index)
 {
 	u32 buf_size = 0, param, resp = 0, resp_param = 0;
 	int rc;
@@ -2310,16 +2563,81 @@ int qed_mcp_bist_nvm_test_get_image_att(struct qed_hwfn *p_hwfn,
 	return rc;
 }
 
-static int
+int qed_mcp_nvm_info_populate(struct qed_hwfn *p_hwfn)
+{
+	struct qed_nvm_image_info nvm_info;
+	struct qed_ptt *p_ptt;
+	int rc;
+	u32 i;
+
+	if (p_hwfn->nvm_info.valid)
+		return 0;
+
+	p_ptt = qed_ptt_acquire(p_hwfn);
+	if (!p_ptt) {
+		DP_ERR(p_hwfn, "failed to acquire ptt\n");
+		return -EBUSY;
+	}
+
+	/* Acquire from MFW the amount of available images */
+	nvm_info.num_images = 0;
+	rc = qed_mcp_bist_nvm_get_num_images(p_hwfn,
+					     p_ptt, &nvm_info.num_images);
+	if (rc == -EOPNOTSUPP) {
+		DP_INFO(p_hwfn, "DRV_MSG_CODE_BIST_TEST is not supported\n");
+		goto out;
+	} else if (rc || !nvm_info.num_images) {
+		DP_ERR(p_hwfn, "Failed getting number of images\n");
+		goto err0;
+	}
+
+	nvm_info.image_att = kmalloc_array(nvm_info.num_images,
+					   sizeof(struct bist_nvm_image_att),
+					   GFP_KERNEL);
+	if (!nvm_info.image_att) {
+		rc = -ENOMEM;
+		goto err0;
+	}
+
+	/* Iterate over images and get their attributes */
+	for (i = 0; i < nvm_info.num_images; i++) {
+		rc = qed_mcp_bist_nvm_get_image_att(p_hwfn, p_ptt,
+						    &nvm_info.image_att[i], i);
+		if (rc) {
+			DP_ERR(p_hwfn,
+			       "Failed getting image index %d attributes\n", i);
+			goto err1;
+		}
+
+		DP_VERBOSE(p_hwfn, QED_MSG_SP, "image index %d, size %x\n", i,
+			   nvm_info.image_att[i].len);
+	}
+out:
+	/* Update hwfn's nvm_info */
+	if (nvm_info.num_images) {
+		p_hwfn->nvm_info.num_images = nvm_info.num_images;
+		kfree(p_hwfn->nvm_info.image_att);
+		p_hwfn->nvm_info.image_att = nvm_info.image_att;
+		p_hwfn->nvm_info.valid = true;
+	}
+
+	qed_ptt_release(p_hwfn, p_ptt);
+	return 0;
+
+err1:
+	kfree(nvm_info.image_att);
+err0:
+	qed_ptt_release(p_hwfn, p_ptt);
+	return rc;
+}
+
+int
 qed_mcp_get_nvm_image_att(struct qed_hwfn *p_hwfn,
-			  struct qed_ptt *p_ptt,
 			  enum qed_nvm_images image_id,
 			  struct qed_nvm_image_att *p_image_att)
 {
-	struct bist_nvm_image_att mfw_image_att;
 	enum nvm_image_type type;
-	u32 num_images, i;
-	int rc;
+	u32 i;
 
 	/* Translate image_id into MFW definitions */
 	switch (image_id) {
@@ -2329,41 +2647,39 @@ qed_mcp_get_nvm_image_att(struct qed_hwfn *p_hwfn,
 	case QED_NVM_IMAGE_FCOE_CFG:
 		type = NVM_TYPE_FCOE_CFG;
 		break;
+	case QED_NVM_IMAGE_NVM_CFG1:
+		type = NVM_TYPE_NVM_CFG1;
+		break;
+	case QED_NVM_IMAGE_DEFAULT_CFG:
+		type = NVM_TYPE_DEFAULT_CFG;
+		break;
+	case QED_NVM_IMAGE_NVM_META:
+		type = NVM_TYPE_META;
+		break;
 	default:
 		DP_NOTICE(p_hwfn, "Unknown request of image_id %08x\n",
 			  image_id);
 		return -EINVAL;
 	}
 
-	/* Learn number of images, then traverse and see if one fits */
-	rc = qed_mcp_bist_nvm_test_get_num_images(p_hwfn, p_ptt, &num_images);
-	if (rc || !num_images)
-		return -EINVAL;
-
-	for (i = 0; i < num_images; i++) {
-		rc = qed_mcp_bist_nvm_test_get_image_att(p_hwfn, p_ptt,
-							 &mfw_image_att, i);
-		if (rc)
-			return rc;
-
-		if (type == mfw_image_att.image_type)
+	qed_mcp_nvm_info_populate(p_hwfn);
+	for (i = 0; i < p_hwfn->nvm_info.num_images; i++)
+		if (type == p_hwfn->nvm_info.image_att[i].image_type)
 			break;
-	}
-	if (i == num_images) {
+	if (i == p_hwfn->nvm_info.num_images) {
 		DP_VERBOSE(p_hwfn, QED_MSG_STORAGE,
 			   "Failed to find nvram image of type %08x\n",
 			   image_id);
-		return -EINVAL;
+		return -ENOENT;
 	}
 
-	p_image_att->start_addr = mfw_image_att.nvm_start_addr;
-	p_image_att->length = mfw_image_att.len;
+	p_image_att->start_addr = p_hwfn->nvm_info.image_att[i].nvm_start_addr;
+	p_image_att->length = p_hwfn->nvm_info.image_att[i].len;
 
 	return 0;
 }
 
 int qed_mcp_get_nvm_image(struct qed_hwfn *p_hwfn,
-			  struct qed_ptt *p_ptt,
 			  enum qed_nvm_images image_id,
 			  u8 *p_buffer, u32 buffer_len)
 {
@@ -2372,7 +2688,7 @@ int qed_mcp_get_nvm_image(struct qed_hwfn *p_hwfn,
 
 	memset(p_buffer, 0, buffer_len);
 
-	rc = qed_mcp_get_nvm_image_att(p_hwfn, p_ptt, image_id, &image_att);
+	rc = qed_mcp_get_nvm_image_att(p_hwfn, image_id, &image_att);
 	if (rc)
 		return rc;
 
@@ -2383,9 +2699,6 @@ int qed_mcp_get_nvm_image(struct qed_hwfn *p_hwfn,
 			   image_id, image_att.length);
 		return -EINVAL;
 	}
-
-	/* Each NVM image is suffixed by CRC; Upper-layer has no need for it */
-	image_att.length -= 4;
 
 	if (image_att.length > buffer_len) {
 		DP_VERBOSE(p_hwfn,
@@ -2821,4 +3134,29 @@ void qed_mcp_resc_lock_default_init(struct qed_resc_lock_params *p_lock,
 		memset(p_unlock, 0, sizeof(*p_unlock));
 		p_unlock->resource = resource;
 	}
+}
+
+int qed_mcp_get_capabilities(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt)
+{
+	u32 mcp_resp;
+	int rc;
+
+	rc = qed_mcp_cmd(p_hwfn, p_ptt, DRV_MSG_CODE_GET_MFW_FEATURE_SUPPORT,
+			 0, &mcp_resp, &p_hwfn->mcp_info->capabilities);
+	if (!rc)
+		DP_VERBOSE(p_hwfn, (QED_MSG_SP | NETIF_MSG_PROBE),
+			   "MFW supported features: %08x\n",
+			   p_hwfn->mcp_info->capabilities);
+
+	return rc;
+}
+
+int qed_mcp_set_capabilities(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt)
+{
+	u32 mcp_resp, mcp_param, features;
+
+	features = DRV_MB_PARAM_FEATURE_SUPPORT_PORT_EEE;
+
+	return qed_mcp_cmd(p_hwfn, p_ptt, DRV_MSG_CODE_FEATURE_SUPPORT,
+			   features, &mcp_resp, &mcp_param);
 }

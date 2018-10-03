@@ -12,8 +12,9 @@
  * 2 of the License, or (at your option) any later version.
  */
 
+#include <linux/interrupt.h>
+#include <linux/pci.h>
 #include <linux/syscalls.h>
-#include <misc/cxl.h>
 #include <asm/unaligned.h>
 #include <asm/bitsperlong.h>
 
@@ -428,12 +429,14 @@ static int write_same16(struct scsi_device *sdev,
 	u8 *sense_buf = NULL;
 	int rc = 0;
 	int result = 0;
-	int ws_limit = SISLITE_MAX_WS_BLOCKS;
 	u64 offset = lba;
 	int left = nblks;
-	u32 to = sdev->request_queue->rq_timeout;
 	struct cxlflash_cfg *cfg = shost_priv(sdev->host);
 	struct device *dev = &cfg->dev->dev;
+	const u32 s = ilog2(sdev->sector_size) - 9;
+	const u32 to = sdev->request_queue->rq_timeout;
+	const u32 ws_limit = blk_queue_get_max_sectors(sdev->request_queue,
+						       REQ_OP_WRITE_SAME) >> s;
 
 	cmd_buf = kzalloc(CMD_BUFSIZE, GFP_KERNEL);
 	scsi_cmd = kzalloc(MAX_COMMAND_SIZE, GFP_KERNEL);
@@ -694,11 +697,7 @@ static int shrink_lxt(struct afu *afu,
 	/* Free LBAs allocated to freed chunks */
 	mutex_lock(&blka->mutex);
 	for (i = delta - 1; i >= 0; i--) {
-		/* Mask the higher 48 bits before shifting, even though
-		 * it is a noop
-		 */
-		aun = (lxt_old[my_new_size + i].rlba_base & SISL_ASTATUS_MASK);
-		aun = (aun >> MC_CHUNK_SHIFT);
+		aun = lxt_old[my_new_size + i].rlba_base >> MC_CHUNK_SHIFT;
 		if (needs_ws)
 			write_same16(sdev, aun, MC_CHUNK_SIZE);
 		ba_free(&blka->ba_lun, aun);

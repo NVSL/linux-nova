@@ -15,6 +15,7 @@
 #include <asm/firmware.h>
 #include <asm/kexec.h>
 #include <asm/xics.h>
+#include <asm/xive.h>
 #include <asm/smp.h>
 #include <asm/plpar_wrappers.h>
 
@@ -22,7 +23,12 @@
 
 void pseries_kexec_cpu_down(int crash_shutdown, int secondary)
 {
-	/* Don't risk a hypervisor call if we're crashing */
+	/*
+	 * Don't risk a hypervisor call if we're crashing
+	 * XXX: Why? The hypervisor is not crashing. It might be better
+	 * to at least attempt unregister to avoid the hypervisor stepping
+	 * on our memory.
+	 */
 	if (firmware_has_feature(FW_FEATURE_SPLPAR) && !crash_shutdown) {
 		int ret;
 		int cpu = smp_processor_id();
@@ -51,5 +57,11 @@ void pseries_kexec_cpu_down(int crash_shutdown, int secondary)
 		}
 	}
 
-	xics_kexec_teardown_cpu(secondary);
+	if (xive_enabled()) {
+		xive_kexec_teardown_cpu(secondary);
+
+		if (!secondary)
+			xive_shutdown();
+	} else
+		xics_kexec_teardown_cpu(secondary);
 }

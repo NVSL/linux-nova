@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 #ifndef _ASM_X86_BOOTPARAM_H
 #define _ASM_X86_BOOTPARAM_H
 
@@ -8,6 +9,7 @@
 #define SETUP_PCI			3
 #define SETUP_EFI			4
 #define SETUP_APPLE_PROPERTIES		5
+#define SETUP_JAILHOUSE			6
 
 /* ram_size flags */
 #define RAMDISK_IMAGE_START_MASK	0x07FF
@@ -125,6 +127,27 @@ struct boot_e820_entry {
 	__u32 type;
 } __attribute__((packed));
 
+/*
+ * Smallest compatible version of jailhouse_setup_data required by this kernel.
+ */
+#define JAILHOUSE_SETUP_REQUIRED_VERSION	1
+
+/*
+ * The boot loader is passing platform information via this Jailhouse-specific
+ * setup data structure.
+ */
+struct jailhouse_setup_data {
+	__u16	version;
+	__u16	compatible_version;
+	__u16	pm_timer_address;
+	__u16	num_cpus;
+	__u64	pci_mmconfig_base;
+	__u32	tsc_khz;
+	__u32	apic_khz;
+	__u8	standard_ioapic;
+	__u8	cpu_ids[255];
+} __attribute__((packed));
+
 /* The so-called "zeropage" */
 struct boot_params {
 	struct screen_info screen_info;			/* 0x000 */
@@ -201,7 +224,7 @@ struct boot_params {
  *
  * @X86_SUBARCH_PC: Should be used if the hardware is enumerable using standard
  *	PC mechanisms (PCI, ACPI) and doesn't need a special boot flow.
- * @X86_SUBARCH_LGUEST: Used for x86 hypervisor demo, lguest
+ * @X86_SUBARCH_LGUEST: Used for x86 hypervisor demo, lguest, deprecated
  * @X86_SUBARCH_XEN: Used for Xen guest types which follow the PV boot path,
  * 	which start at asm startup_xen() entry point and later jump to the C
  * 	xen_start_kernel() entry point. Both domU and dom0 type of guests are

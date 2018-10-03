@@ -133,8 +133,7 @@ static inline void emac_report_timeout_error(struct emac_instance *dev,
 				  EMAC_FTR_440EP_PHY_CLK_FIX))
 		DBG(dev, "%s" NL, error);
 	else if (net_ratelimit())
-		printk(KERN_ERR "%s: %s\n", dev->ofdev->dev.of_node->full_name,
-			error);
+		printk(KERN_ERR "%pOF: %s\n", dev->ofdev->dev.of_node, error);
 }
 
 /* EMAC PHY clock workaround:
@@ -200,18 +199,18 @@ static void __emac_set_multicast_list(struct emac_instance *dev);
 
 static inline int emac_phy_supports_gige(int phy_mode)
 {
-	return  phy_mode == PHY_MODE_GMII ||
-		phy_mode == PHY_MODE_RGMII ||
-		phy_mode == PHY_MODE_SGMII ||
-		phy_mode == PHY_MODE_TBI ||
-		phy_mode == PHY_MODE_RTBI;
+	return  phy_interface_mode_is_rgmii(phy_mode) ||
+		phy_mode == PHY_INTERFACE_MODE_GMII ||
+		phy_mode == PHY_INTERFACE_MODE_SGMII ||
+		phy_mode == PHY_INTERFACE_MODE_TBI ||
+		phy_mode == PHY_INTERFACE_MODE_RTBI;
 }
 
 static inline int emac_phy_gpcs(int phy_mode)
 {
-	return  phy_mode == PHY_MODE_SGMII ||
-		phy_mode == PHY_MODE_TBI ||
-		phy_mode == PHY_MODE_RTBI;
+	return  phy_mode == PHY_INTERFACE_MODE_SGMII ||
+		phy_mode == PHY_INTERFACE_MODE_TBI ||
+		phy_mode == PHY_INTERFACE_MODE_RTBI;
 }
 
 static inline void emac_tx_enable(struct emac_instance *dev)
@@ -495,6 +494,9 @@ static u32 __emac_calc_base_mr1(struct emac_instance *dev, int tx_size, int rx_s
 	case 16384:
 		ret |= EMAC_MR1_RFS_16K;
 		break;
+	case 8192:
+		ret |= EMAC4_MR1_RFS_8K;
+		break;
 	case 4096:
 		ret |= EMAC_MR1_RFS_4K;
 		break;
@@ -516,6 +518,9 @@ static u32 __emac4_calc_base_mr1(struct emac_instance *dev, int tx_size, int rx_
 	switch(tx_size) {
 	case 16384:
 		ret |= EMAC4_MR1_TFS_16K;
+		break;
+	case 8192:
+		ret |= EMAC4_MR1_TFS_8K;
 		break;
 	case 4096:
 		ret |= EMAC4_MR1_TFS_4K;
@@ -2258,8 +2263,8 @@ static void emac_ethtool_get_drvinfo(struct net_device *ndev,
 
 	strlcpy(info->driver, "ibm_emac", sizeof(info->driver));
 	strlcpy(info->version, DRV_VERSION, sizeof(info->version));
-	snprintf(info->bus_info, sizeof(info->bus_info), "PPC 4xx EMAC-%d %s",
-		 dev->cell_index, dev->ofdev->dev.of_node->full_name);
+	snprintf(info->bus_info, sizeof(info->bus_info), "PPC 4xx EMAC-%d %pOF",
+		 dev->cell_index, dev->ofdev->dev.of_node);
 }
 
 static const struct ethtool_ops emac_ethtool_ops = {
@@ -2431,8 +2436,8 @@ static int emac_read_uint_prop(struct device_node *np, const char *name,
 	const u32 *prop = of_get_property(np, name, &len);
 	if (prop == NULL || len < sizeof(u32)) {
 		if (fatal)
-			printk(KERN_ERR "%s: missing %s property\n",
-			       np->full_name, name);
+			printk(KERN_ERR "%pOF: missing %s property\n",
+			       np, name);
 		return -ENODEV;
 	}
 	*val = *prop;
@@ -2768,7 +2773,7 @@ static int emac_init_phy(struct emac_instance *dev)
 #endif
 	mutex_unlock(&emac_phy_map_lock);
 	if (i == 0x20) {
-		printk(KERN_WARNING "%s: can't find PHY!\n", np->full_name);
+		printk(KERN_WARNING "%pOF: can't find PHY!\n", np);
 		return -ENXIO;
 	}
 
@@ -2866,7 +2871,7 @@ static int emac_init_config(struct emac_instance *dev)
 	/* PHY mode needs some decoding */
 	dev->phy_mode = of_get_phy_mode(np);
 	if (dev->phy_mode < 0)
-		dev->phy_mode = PHY_MODE_NA;
+		dev->phy_mode = PHY_INTERFACE_MODE_NA;
 
 	/* Check EMAC version */
 	if (of_device_is_compatible(np, "ibm,emac4sync")) {
@@ -2894,8 +2899,8 @@ static int emac_init_config(struct emac_instance *dev)
 #ifdef CONFIG_IBM_EMAC_NO_FLOW_CTRL
 			dev->features |= EMAC_FTR_NO_FLOW_CONTROL_40x;
 #else
-			printk(KERN_ERR "%s: Flow control not disabled!\n",
-					np->full_name);
+			printk(KERN_ERR "%pOF: Flow control not disabled!\n",
+					np);
 			return -ENXIO;
 #endif
 		}
@@ -2918,8 +2923,7 @@ static int emac_init_config(struct emac_instance *dev)
 #ifdef CONFIG_IBM_EMAC_TAH
 		dev->features |= EMAC_FTR_HAS_TAH;
 #else
-		printk(KERN_ERR "%s: TAH support not enabled !\n",
-		       np->full_name);
+		printk(KERN_ERR "%pOF: TAH support not enabled !\n", np);
 		return -ENXIO;
 #endif
 	}
@@ -2928,8 +2932,7 @@ static int emac_init_config(struct emac_instance *dev)
 #ifdef CONFIG_IBM_EMAC_ZMII
 		dev->features |= EMAC_FTR_HAS_ZMII;
 #else
-		printk(KERN_ERR "%s: ZMII support not enabled !\n",
-		       np->full_name);
+		printk(KERN_ERR "%pOF: ZMII support not enabled !\n", np);
 		return -ENXIO;
 #endif
 	}
@@ -2938,8 +2941,7 @@ static int emac_init_config(struct emac_instance *dev)
 #ifdef CONFIG_IBM_EMAC_RGMII
 		dev->features |= EMAC_FTR_HAS_RGMII;
 #else
-		printk(KERN_ERR "%s: RGMII support not enabled !\n",
-		       np->full_name);
+		printk(KERN_ERR "%pOF: RGMII support not enabled !\n", np);
 		return -ENXIO;
 #endif
 	}
@@ -2947,8 +2949,8 @@ static int emac_init_config(struct emac_instance *dev)
 	/* Read MAC-address */
 	p = of_get_property(np, "local-mac-address", NULL);
 	if (p == NULL) {
-		printk(KERN_ERR "%s: Can't find local-mac-address property\n",
-		       np->full_name);
+		printk(KERN_ERR "%pOF: Can't find local-mac-address property\n",
+		       np);
 		return -ENXIO;
 	}
 	memcpy(dev->ndev->dev_addr, p, ETH_ALEN);
@@ -3036,30 +3038,24 @@ static int emac_probe(struct platform_device *ofdev)
 
 	/* Init various config data based on device-tree */
 	err = emac_init_config(dev);
-	if (err != 0)
+	if (err)
 		goto err_free;
 
 	/* Get interrupts. EMAC irq is mandatory, WOL irq is optional */
 	dev->emac_irq = irq_of_parse_and_map(np, 0);
 	dev->wol_irq = irq_of_parse_and_map(np, 1);
 	if (!dev->emac_irq) {
-		printk(KERN_ERR "%s: Can't map main interrupt\n", np->full_name);
+		printk(KERN_ERR "%pOF: Can't map main interrupt\n", np);
+		err = -ENODEV;
 		goto err_free;
 	}
 	ndev->irq = dev->emac_irq;
 
 	/* Map EMAC regs */
-	if (of_address_to_resource(np, 0, &dev->rsrc_regs)) {
-		printk(KERN_ERR "%s: Can't get registers address\n",
-		       np->full_name);
-		goto err_irq_unmap;
-	}
-	// TODO : request_mem_region
-	dev->emacp = ioremap(dev->rsrc_regs.start,
-			     resource_size(&dev->rsrc_regs));
+	// TODO : platform_get_resource() and devm_ioremap_resource()
+	dev->emacp = of_iomap(np, 0);
 	if (dev->emacp == NULL) {
-		printk(KERN_ERR "%s: Can't map device registers!\n",
-		       np->full_name);
+		printk(KERN_ERR "%pOF: Can't map device registers!\n", np);
 		err = -ENOMEM;
 		goto err_irq_unmap;
 	}
@@ -3068,8 +3064,7 @@ static int emac_probe(struct platform_device *ofdev)
 	err = emac_wait_deps(dev);
 	if (err) {
 		printk(KERN_ERR
-		       "%s: Timeout waiting for dependent devices\n",
-		       np->full_name);
+		       "%pOF: Timeout waiting for dependent devices\n", np);
 		/*  display more info about what's missing ? */
 		goto err_reg_unmap;
 	}
@@ -3084,8 +3079,8 @@ static int emac_probe(struct platform_device *ofdev)
 	dev->commac.rx_chan_mask = MAL_CHAN_MASK(dev->mal_rx_chan);
 	err = mal_register_commac(dev->mal, &dev->commac);
 	if (err) {
-		printk(KERN_ERR "%s: failed to register with mal %s!\n",
-		       np->full_name, dev->mal_dev->dev.of_node->full_name);
+		printk(KERN_ERR "%pOF: failed to register with mal %pOF!\n",
+		       np, dev->mal_dev->dev.of_node);
 		goto err_rel_deps;
 	}
 	dev->rx_skb_size = emac_rx_skb_size(ndev->mtu);
@@ -3161,8 +3156,8 @@ static int emac_probe(struct platform_device *ofdev)
 
 	err = register_netdev(ndev);
 	if (err) {
-		printk(KERN_ERR "%s: failed to register net device (%d)!\n",
-		       np->full_name, err);
+		printk(KERN_ERR "%pOF: failed to register net device (%d)!\n",
+		       np, err);
 		goto err_detach_tah;
 	}
 
@@ -3176,10 +3171,10 @@ static int emac_probe(struct platform_device *ofdev)
 	wake_up_all(&emac_probe_wait);
 
 
-	printk(KERN_INFO "%s: EMAC-%d %s, MAC %pM\n",
-	       ndev->name, dev->cell_index, np->full_name, ndev->dev_addr);
+	printk(KERN_INFO "%s: EMAC-%d %pOF, MAC %pM\n",
+	       ndev->name, dev->cell_index, np, ndev->dev_addr);
 
-	if (dev->phy_mode == PHY_MODE_SGMII)
+	if (dev->phy_mode == PHY_INTERFACE_MODE_SGMII)
 		printk(KERN_NOTICE "%s: in SGMII mode\n", ndev->name);
 
 	if (dev->phy.address >= 0)

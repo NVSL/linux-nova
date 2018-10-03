@@ -67,16 +67,6 @@ MODULE_PARM_DESC(lb_pending_cmds, "Change raid-1 load balancing outstanding "
 #define ABS_DIFF(a, b)   (((a) > (b)) ? ((a) - (b)) : ((b) - (a)))
 #define MR_LD_STATE_OPTIMAL 3
 
-#ifdef FALSE
-#undef FALSE
-#endif
-#define FALSE 0
-
-#ifdef TRUE
-#undef TRUE
-#endif
-#define TRUE 1
-
 #define SPAN_ROW_SIZE(map, ld, index_) (MR_LdSpanPtrGet(ld, index_, map)->spanRowSize)
 #define SPAN_ROW_DATA_SIZE(map_, ld, index_)   (MR_LdSpanPtrGet(ld, index_, map)->spanRowDataSize)
 #define SPAN_INVALID  0xff
@@ -178,7 +168,7 @@ static struct MR_LD_SPAN *MR_LdSpanPtrGet(u32 ld, u32 span,
 /*
  * This function will Populate Driver Map using firmware raid map
  */
-void MR_PopulateDrvRaidMap(struct megasas_instance *instance)
+static int MR_PopulateDrvRaidMap(struct megasas_instance *instance, u64 map_id)
 {
 	struct fusion_context *fusion = instance->ctrl_context;
 	struct MR_FW_RAID_MAP_ALL     *fw_map_old    = NULL;
@@ -191,7 +181,7 @@ void MR_PopulateDrvRaidMap(struct megasas_instance *instance)
 
 
 	struct MR_DRV_RAID_MAP_ALL *drv_map =
-			fusion->ld_drv_map[(instance->map_id & 1)];
+			fusion->ld_drv_map[(map_id & 1)];
 	struct MR_DRV_RAID_MAP *pDrvRaidMap = &drv_map->raidMap;
 	void *raid_map_data = NULL;
 
@@ -200,7 +190,7 @@ void MR_PopulateDrvRaidMap(struct megasas_instance *instance)
 	       0xff, (sizeof(u16) * MAX_LOGICAL_DRIVES_DYN));
 
 	if (instance->max_raid_mapsize) {
-		fw_map_dyn = fusion->ld_map[(instance->map_id & 1)];
+		fw_map_dyn = fusion->ld_map[(map_id & 1)];
 		desc_table =
 		(struct MR_RAID_MAP_DESC_TABLE *)((void *)fw_map_dyn + le32_to_cpu(fw_map_dyn->desc_table_offset));
 		if (desc_table != fw_map_dyn->raid_map_desc_table)
@@ -265,11 +255,11 @@ void MR_PopulateDrvRaidMap(struct megasas_instance *instance)
 
 	} else if (instance->supportmax256vd) {
 		fw_map_ext =
-			(struct MR_FW_RAID_MAP_EXT *)fusion->ld_map[(instance->map_id & 1)];
+			(struct MR_FW_RAID_MAP_EXT *)fusion->ld_map[(map_id & 1)];
 		ld_count = (u16)le16_to_cpu(fw_map_ext->ldCount);
 		if (ld_count > MAX_LOGICAL_DRIVES_EXT) {
 			dev_dbg(&instance->pdev->dev, "megaraid_sas: LD count exposed in RAID map in not valid\n");
-			return;
+			return 1;
 		}
 
 		pDrvRaidMap->ldCount = (__le16)cpu_to_le16(ld_count);
@@ -292,9 +282,15 @@ void MR_PopulateDrvRaidMap(struct megasas_instance *instance)
 			cpu_to_le32(sizeof(struct MR_FW_RAID_MAP_EXT));
 	} else {
 		fw_map_old = (struct MR_FW_RAID_MAP_ALL *)
-			fusion->ld_map[(instance->map_id & 1)];
+				fusion->ld_map[(map_id & 1)];
 		pFwRaidMap = &fw_map_old->raidMap;
 		ld_count = (u16)le32_to_cpu(pFwRaidMap->ldCount);
+		if (ld_count > MAX_LOGICAL_DRIVES) {
+			dev_dbg(&instance->pdev->dev,
+				"LD count exposed in RAID map in not valid\n");
+			return 1;
+		}
+
 		pDrvRaidMap->totalSize = pFwRaidMap->totalSize;
 		pDrvRaidMap->ldCount = (__le16)cpu_to_le16(ld_count);
 		pDrvRaidMap->fpPdIoTimeoutSec = pFwRaidMap->fpPdIoTimeoutSec;
@@ -310,12 +306,14 @@ void MR_PopulateDrvRaidMap(struct megasas_instance *instance)
 			sizeof(struct MR_DEV_HANDLE_INFO) *
 			MAX_RAIDMAP_PHYSICAL_DEVICES);
 	}
+
+	return 0;
 }
 
 /*
  * This function will validate Map info data provided by FW
  */
-u8 MR_ValidateMapInfo(struct megasas_instance *instance)
+u8 MR_ValidateMapInfo(struct megasas_instance *instance, u64 map_id)
 {
 	struct fusion_context *fusion;
 	struct MR_DRV_RAID_MAP_ALL *drv_map;
@@ -327,11 +325,11 @@ u8 MR_ValidateMapInfo(struct megasas_instance *instance)
 	u16 ld;
 	u32 expected_size;
 
-
-	MR_PopulateDrvRaidMap(instance);
+	if (MR_PopulateDrvRaidMap(instance, map_id))
+		return 0;
 
 	fusion = instance->ctrl_context;
-	drv_map = fusion->ld_drv_map[(instance->map_id & 1)];
+	drv_map = fusion->ld_drv_map[(map_id & 1)];
 	pDrvRaidMap = &drv_map->raidMap;
 
 	lbInfo = fusion->load_balance_info;
@@ -709,7 +707,7 @@ static u8 mr_spanset_get_phy_params(struct megasas_instance *instance, u32 ld,
 	u32     pd, arRef, r1_alt_pd;
 	u8      physArm, span;
 	u64     row;
-	u8	retval = TRUE;
+	u8	retval = true;
 	u64	*pdBlock = &io_info->pdBlock;
 	__le16	*pDevHandle = &io_info->devHandle;
 	u8	*pPdInterface = &io_info->pd_interface;
@@ -727,7 +725,7 @@ static u8 mr_spanset_get_phy_params(struct megasas_instance *instance, u32 ld,
 	if (raid->level == 6) {
 		logArm = get_arm_from_strip(instance, ld, stripRow, map);
 		if (logArm == -1U)
-			return FALSE;
+			return false;
 		rowMod = mega_mod64(row, SPAN_ROW_SIZE(map, ld, span));
 		armQ = SPAN_ROW_SIZE(map, ld, span) - 1 - rowMod;
 		arm = armQ + 1 + logArm;
@@ -738,7 +736,7 @@ static u8 mr_spanset_get_phy_params(struct megasas_instance *instance, u32 ld,
 		/* Calculate the arm */
 		physArm = get_arm(instance, ld, span, stripRow, map);
 	if (physArm == 0xFF)
-		return FALSE;
+		return false;
 
 	arRef       = MR_LdSpanArrayGet(ld, span, map);
 	pd          = MR_ArPdGet(arRef, physArm, map);
@@ -747,7 +745,7 @@ static u8 mr_spanset_get_phy_params(struct megasas_instance *instance, u32 ld,
 		*pDevHandle = MR_PdDevHandleGet(pd, map);
 		*pPdInterface = MR_PdInterfaceTypeGet(pd, map);
 		/* get second pd also for raid 1/10 fast path writes*/
-		if (instance->is_ventura &&
+		if ((instance->adapter_type == VENTURA_SERIES) &&
 		    (raid->level == 1) &&
 		    !io_info->isRead) {
 			r1_alt_pd = MR_ArPdGet(arRef, physArm + 1, map);
@@ -757,8 +755,8 @@ static u8 mr_spanset_get_phy_params(struct megasas_instance *instance, u32 ld,
 		}
 	} else {
 		if ((raid->level >= 5) &&
-			((fusion->adapter_type == THUNDERBOLT_SERIES)  ||
-			((fusion->adapter_type == INVADER_SERIES) &&
+			((instance->adapter_type == THUNDERBOLT_SERIES)  ||
+			((instance->adapter_type == INVADER_SERIES) &&
 			(raid->regTypeReqOnRead != REGION_TYPE_UNUSED))))
 			pRAID_Context->reg_lock_flags = REGION_TYPE_EXCLUSIVE;
 		else if (raid->level == 1) {
@@ -772,7 +770,7 @@ static u8 mr_spanset_get_phy_params(struct megasas_instance *instance, u32 ld,
 	}
 
 	*pdBlock += stripRef + le64_to_cpu(MR_LdSpanPtrGet(ld, span, map)->startBlk);
-	if (instance->is_ventura) {
+	if (instance->adapter_type == VENTURA_SERIES) {
 		((struct RAID_CONTEXT_G35 *)pRAID_Context)->span_arm =
 			(span << RAID_CTX_SPANARM_SPAN_SHIFT) | physArm;
 		io_info->span_arm =
@@ -812,7 +810,7 @@ u8 MR_GetPhyParams(struct megasas_instance *instance, u32 ld, u64 stripRow,
 	u32         pd, arRef, r1_alt_pd;
 	u8          physArm, span;
 	u64         row;
-	u8	    retval = TRUE;
+	u8	    retval = true;
 	u64	    *pdBlock = &io_info->pdBlock;
 	__le16	    *pDevHandle = &io_info->devHandle;
 	u8	    *pPdInterface = &io_info->pd_interface;
@@ -829,7 +827,7 @@ u8 MR_GetPhyParams(struct megasas_instance *instance, u32 ld, u64 stripRow,
 		u32 rowMod, armQ, arm;
 
 		if (raid->rowSize == 0)
-			return FALSE;
+			return false;
 		/* get logical row mod */
 		rowMod = mega_mod64(row, raid->rowSize);
 		armQ = raid->rowSize-1-rowMod; /* index of Q drive */
@@ -839,7 +837,7 @@ u8 MR_GetPhyParams(struct megasas_instance *instance, u32 ld, u64 stripRow,
 		physArm = (u8)arm;
 	} else  {
 		if (raid->modFactor == 0)
-			return FALSE;
+			return false;
 		physArm = MR_LdDataArmGet(ld,  mega_mod64(stripRow,
 							  raid->modFactor),
 					  map);
@@ -851,7 +849,7 @@ u8 MR_GetPhyParams(struct megasas_instance *instance, u32 ld, u64 stripRow,
 	} else {
 		span = (u8)MR_GetSpanBlock(ld, row, pdBlock, map);
 		if (span == SPAN_INVALID)
-			return FALSE;
+			return false;
 	}
 
 	/* Get the array on which this span is present */
@@ -863,7 +861,7 @@ u8 MR_GetPhyParams(struct megasas_instance *instance, u32 ld, u64 stripRow,
 		*pDevHandle = MR_PdDevHandleGet(pd, map);
 		*pPdInterface = MR_PdInterfaceTypeGet(pd, map);
 		/* get second pd also for raid 1/10 fast path writes*/
-		if (instance->is_ventura &&
+		if ((instance->adapter_type == VENTURA_SERIES) &&
 		    (raid->level == 1) &&
 		    !io_info->isRead) {
 			r1_alt_pd = MR_ArPdGet(arRef, physArm + 1, map);
@@ -873,8 +871,8 @@ u8 MR_GetPhyParams(struct megasas_instance *instance, u32 ld, u64 stripRow,
 		}
 	} else {
 		if ((raid->level >= 5) &&
-			((fusion->adapter_type == THUNDERBOLT_SERIES)  ||
-			((fusion->adapter_type == INVADER_SERIES) &&
+			((instance->adapter_type == THUNDERBOLT_SERIES)  ||
+			((instance->adapter_type == INVADER_SERIES) &&
 			(raid->regTypeReqOnRead != REGION_TYPE_UNUSED))))
 			pRAID_Context->reg_lock_flags = REGION_TYPE_EXCLUSIVE;
 		else if (raid->level == 1) {
@@ -890,7 +888,7 @@ u8 MR_GetPhyParams(struct megasas_instance *instance, u32 ld, u64 stripRow,
 	}
 
 	*pdBlock += stripRef + le64_to_cpu(MR_LdSpanPtrGet(ld, span, map)->startBlk);
-	if (instance->is_ventura) {
+	if (instance->adapter_type == VENTURA_SERIES) {
 		((struct RAID_CONTEXT_G35 *)pRAID_Context)->span_arm =
 				(span << RAID_CTX_SPANARM_SPAN_SHIFT) | physArm;
 		io_info->span_arm =
@@ -954,7 +952,7 @@ MR_BuildRaidContext(struct megasas_instance *instance,
 	 */
 	if (raid->rowDataSize == 0) {
 		if (MR_LdSpanPtrGet(ld, 0, map)->spanRowDataSize == 0)
-			return FALSE;
+			return false;
 		else if (instance->UnevenSpanSupport) {
 			io_info->IoforUnevenSpan = 1;
 		} else {
@@ -963,7 +961,7 @@ MR_BuildRaidContext(struct megasas_instance *instance,
 				"rowDataSize = 0x%0x,"
 				"but there is _NO_ UnevenSpanSupport\n",
 				MR_LdSpanPtrGet(ld, 0, map)->spanRowDataSize);
-			return FALSE;
+			return false;
 		}
 	}
 
@@ -988,7 +986,7 @@ MR_BuildRaidContext(struct megasas_instance *instance,
 			dev_info(&instance->pdev->dev, "return from %s %d."
 				"Send IO w/o region lock.\n",
 				__func__, __LINE__);
-			return FALSE;
+			return false;
 		}
 
 		if (raid->spanDepth == 1) {
@@ -1004,7 +1002,7 @@ MR_BuildRaidContext(struct megasas_instance *instance,
 				(unsigned long long)start_row,
 				(unsigned long long)start_strip,
 				(unsigned long long)endStrip);
-			return FALSE;
+			return false;
 		}
 		io_info->start_span	= startlba_span;
 		io_info->start_row	= start_row;
@@ -1038,7 +1036,7 @@ MR_BuildRaidContext(struct megasas_instance *instance,
 					       raid->capability.
 					       fpWriteAcrossStripe));
 	} else
-		io_info->fpOkForIo = FALSE;
+		io_info->fpOkForIo = false;
 
 	if (numRows == 1) {
 		/* single-strip IOs can always lock only the data needed */
@@ -1098,10 +1096,10 @@ MR_BuildRaidContext(struct megasas_instance *instance,
 		cpu_to_le16(raid->fpIoTimeoutForLd ?
 			    raid->fpIoTimeoutForLd :
 			    map->raidMap.fpPdIoTimeoutSec);
-	if (fusion->adapter_type == INVADER_SERIES)
+	if (instance->adapter_type == INVADER_SERIES)
 		pRAID_Context->reg_lock_flags = (isRead) ?
 			raid->regTypeReqOnRead : raid->regTypeReqOnWrite;
-	else if (!instance->is_ventura)
+	else if (instance->adapter_type == THUNDERBOLT_SERIES)
 		pRAID_Context->reg_lock_flags = (isRead) ?
 			REGION_TYPE_SHARED_READ : raid->regTypeReqOnWrite;
 	pRAID_Context->virtual_disk_tgt_id = raid->targetId;
@@ -1124,7 +1122,7 @@ MR_BuildRaidContext(struct megasas_instance *instance,
 					pRAID_Context, map);
 		/* If IO on an invalid Pd, then FP is not possible.*/
 		if (io_info->devHandle == MR_DEVHANDLE_INVALID)
-			io_info->fpOkForIo = FALSE;
+			io_info->fpOkForIo = false;
 		return retval;
 	} else if (isRead) {
 		uint stripIdx;
@@ -1138,10 +1136,10 @@ MR_BuildRaidContext(struct megasas_instance *instance,
 				    start_strip + stripIdx, ref_in_start_stripe,
 				    io_info, pRAID_Context, map);
 			if (!retval)
-				return TRUE;
+				return true;
 		}
 	}
-	return TRUE;
+	return true;
 }
 
 /*

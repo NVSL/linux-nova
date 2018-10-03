@@ -19,7 +19,6 @@
 #include <linux/scatterlist.h>
 
 #include <asm/io.h>
-#include <asm/prom.h>
 #include <asm/pci-bridge.h>
 
 #define PCIBIOS_MIN_IO		0x1000
@@ -47,9 +46,10 @@ extern int pci_proc_domain(struct pci_bus *bus);
 
 struct vm_area_struct;
 
-/* Tell drivers/pci/proc.c that we have pci_mmap_page_range() */
-#define HAVE_PCI_MMAP		1
-#define arch_can_pci_mmap_io()	1
+/* Tell PCI code what kind of PCI resource mappings we support */
+#define HAVE_PCI_MMAP			1
+#define ARCH_GENERIC_PCI_MMAP_RESOURCE	1
+#define arch_can_pci_mmap_io()		1
 
 extern int pci_legacy_read(struct pci_bus *bus, loff_t port, u32 *val,
 			   size_t count);
@@ -61,16 +61,6 @@ extern int pci_mmap_legacy_page_range(struct pci_bus *bus,
 
 #define HAVE_PCI_LEGACY	1
 
-/* The PCI address space does equal the physical memory
- * address space (no IOMMU).  The IDE and SCSI device layers use
- * this boolean for bounce buffer decisions.
- */
-#define PCI_DMA_BUS_IS_PHYS     (1)
-
-extern void pcibios_claim_one_bus(struct pci_bus *b);
-
-extern void pcibios_finish_adding_to_bus(struct pci_bus *bus);
-
 extern void pcibios_resource_survey(void);
 
 struct file;
@@ -80,9 +70,6 @@ extern pgprot_t	pci_phys_mem_access_prot(struct file *file,
 					 pgprot_t prot);
 
 #define HAVE_ARCH_PCI_RESOURCE_TO_USER
-
-extern void pcibios_setup_bus_devices(struct pci_bus *bus);
-extern void pcibios_setup_bus_self(struct pci_bus *bus);
 
 /* This part of code was originally in xilinx-pci.h */
 #ifdef CONFIG_PCI_XILINX

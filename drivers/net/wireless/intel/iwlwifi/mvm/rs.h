@@ -3,6 +3,7 @@
  * Copyright(c) 2003 - 2014 Intel Corporation. All rights reserved.
  * Copyright(c) 2015 Intel Mobile Communications GmbH
  * Copyright(c) 2017 Intel Deutschland GmbH
+ * Copyright(c) 2018 Intel Corporation
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of version 2 of the GNU General Public License as
@@ -12,10 +13,6 @@
  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
  * more details.
- *
- * You should have received a copy of the GNU General Public License along with
- * this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110, USA
  *
  * The full GNU General Public License is included in this distribution in the
  * file called LICENSE.
@@ -35,6 +32,8 @@
 
 #include "fw-api.h"
 #include "iwl-trans.h"
+
+#define RS_NAME "iwl-mvm-rs"
 
 struct iwl_rs_rate_info {
 	u8 plcp;	  /* uCode API:  IWL_RATE_6M_PLCP, etc. */
@@ -218,6 +217,38 @@ struct iwl_rate_mcs_info {
 };
 
 /**
+ * struct iwl_lq_sta_rs_fw - rate and related statistics for RS in FW
+ * @last_rate_n_flags: last rate reported by FW
+ * @sta_id: the id of the station
+#ifdef CONFIG_MAC80211_DEBUGFS
+ * @dbg_fixed_rate: for debug, use fixed rate if not 0
+ * @dbg_agg_frame_count_lim: for debug, max number of frames in A-MPDU
+#endif
+ * @chains: bitmask of chains reported in %chain_signal
+ * @chain_signal: per chain signal strength
+ * @last_rssi: last rssi reported
+ * @drv: pointer back to the driver data
+ */
+
+struct iwl_lq_sta_rs_fw {
+	/* last tx rate_n_flags */
+	u32 last_rate_n_flags;
+
+	/* persistent fields - initialized only once - keep last! */
+	struct lq_sta_pers_rs_fw {
+		u32 sta_id;
+#ifdef CONFIG_MAC80211_DEBUGFS
+		u32 dbg_fixed_rate;
+		u16 dbg_agg_frame_count_lim;
+#endif
+		u8 chains;
+		s8 chain_signal[IEEE80211_MAX_CHAINS];
+		s8 last_rssi;
+		struct iwl_mvm *drv;
+	} pers;
+};
+
+/**
  * struct iwl_rate_scale_data -- tx success history for one rate
  */
 struct iwl_rate_scale_data {
@@ -376,7 +407,7 @@ struct iwl_lq_sta {
 
 /* Initialize station's rate scaling information after adding station */
 void iwl_mvm_rs_rate_init(struct iwl_mvm *mvm, struct ieee80211_sta *sta,
-			  enum nl80211_band band, bool init);
+			  enum nl80211_band band);
 
 /* Notify RS about Tx status */
 void iwl_mvm_rs_tx_status(struct iwl_mvm *mvm, struct ieee80211_sta *sta,
@@ -407,4 +438,19 @@ struct iwl_mvm_sta;
 int iwl_mvm_tx_protection(struct iwl_mvm *mvm, struct iwl_mvm_sta *mvmsta,
 			  bool enable);
 
+#ifdef CONFIG_IWLWIFI_DEBUGFS
+void iwl_mvm_reset_frame_stats(struct iwl_mvm *mvm);
+#endif
+
+#ifdef CONFIG_MAC80211_DEBUGFS
+void rs_remove_sta_debugfs(void *mvm, void *mvm_sta);
+#endif
+
+void iwl_mvm_rs_add_sta(struct iwl_mvm *mvm, struct iwl_mvm_sta *mvmsta);
+void rs_fw_rate_init(struct iwl_mvm *mvm, struct ieee80211_sta *sta,
+		     enum nl80211_band band);
+int rs_fw_tx_protection(struct iwl_mvm *mvm, struct iwl_mvm_sta *mvmsta,
+			bool enable);
+void iwl_mvm_tlc_update_notif(struct iwl_mvm *mvm,
+			      struct iwl_rx_cmd_buffer *rxb);
 #endif /* __rs__ */

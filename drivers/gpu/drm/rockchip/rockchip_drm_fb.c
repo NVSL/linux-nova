@@ -48,7 +48,7 @@ static void rockchip_drm_fb_destroy(struct drm_framebuffer *fb)
 	int i;
 
 	for (i = 0; i < ROCKCHIP_MAX_FB_BUFFER; i++)
-		drm_gem_object_unreference_unlocked(rockchip_fb->obj[i]);
+		drm_gem_object_put_unlocked(rockchip_fb->obj[i]);
 
 	drm_framebuffer_cleanup(fb);
 	kfree(rockchip_fb);
@@ -100,8 +100,9 @@ rockchip_fb_alloc(struct drm_device *dev, const struct drm_mode_fb_cmd2 *mode_cm
 	ret = drm_framebuffer_init(dev, &rockchip_fb->fb,
 				   &rockchip_drm_fb_funcs);
 	if (ret) {
-		dev_err(dev->dev, "Failed to initialize framebuffer: %d\n",
-			ret);
+		DRM_DEV_ERROR(dev->dev,
+			      "Failed to initialize framebuffer: %d\n",
+			      ret);
 		kfree(rockchip_fb);
 		return ERR_PTR(ret);
 	}
@@ -134,7 +135,8 @@ rockchip_user_fb_create(struct drm_device *dev, struct drm_file *file_priv,
 
 		obj = drm_gem_object_lookup(file_priv, mode_cmd->handles[i]);
 		if (!obj) {
-			dev_err(dev->dev, "Failed to lookup GEM object\n");
+			DRM_DEV_ERROR(dev->dev,
+				      "Failed to lookup GEM object\n");
 			ret = -ENXIO;
 			goto err_gem_object_unreference;
 		}
@@ -144,7 +146,7 @@ rockchip_user_fb_create(struct drm_device *dev, struct drm_file *file_priv,
 			width * drm_format_plane_cpp(mode_cmd->pixel_format, i);
 
 		if (obj->size < min_size) {
-			drm_gem_object_unreference_unlocked(obj);
+			drm_gem_object_put_unlocked(obj);
 			ret = -EINVAL;
 			goto err_gem_object_unreference;
 		}
@@ -161,45 +163,76 @@ rockchip_user_fb_create(struct drm_device *dev, struct drm_file *file_priv,
 
 err_gem_object_unreference:
 	for (i--; i >= 0; i--)
-		drm_gem_object_unreference_unlocked(objs[i]);
+		drm_gem_object_put_unlocked(objs[i]);
 	return ERR_PTR(ret);
 }
 
-static void rockchip_drm_output_poll_changed(struct drm_device *dev)
+static void
+rockchip_drm_psr_inhibit_get_state(struct drm_atomic_state *state)
 {
-	struct rockchip_drm_private *private = dev->dev_private;
-	struct drm_fb_helper *fb_helper = &private->fbdev_helper;
+	struct drm_crtc *crtc;
+	struct drm_crtc_state *crtc_state;
+	struct drm_encoder *encoder;
+	u32 encoder_mask = 0;
+	int i;
 
-	if (fb_helper)
-		drm_fb_helper_hotplug_event(fb_helper);
+	for_each_old_crtc_in_state(state, crtc, crtc_state, i) {
+		encoder_mask |= crtc_state->encoder_mask;
+		encoder_mask |= crtc->state->encoder_mask;
+	}
+
+	drm_for_each_encoder_mask(encoder, state->dev, encoder_mask)
+		rockchip_drm_psr_inhibit_get(encoder);
 }
 
 static void
-rockchip_atomic_commit_tail(struct drm_atomic_state *state)
+rockchip_drm_psr_inhibit_put_state(struct drm_atomic_state *state)
 {
-	struct drm_device *dev = state->dev;
+	struct drm_crtc *crtc;
+	struct drm_crtc_state *crtc_state;
+	struct drm_encoder *encoder;
+	u32 encoder_mask = 0;
+	int i;
 
-	drm_atomic_helper_commit_modeset_disables(dev, state);
+	for_each_old_crtc_in_state(state, crtc, crtc_state, i) {
+		encoder_mask |= crtc_state->encoder_mask;
+		encoder_mask |= crtc->state->encoder_mask;
+	}
 
-	drm_atomic_helper_commit_modeset_enables(dev, state);
+	drm_for_each_encoder_mask(encoder, state->dev, encoder_mask)
+		rockchip_drm_psr_inhibit_put(encoder);
+}
 
-	drm_atomic_helper_commit_planes(dev, state,
+static void
+rockchip_atomic_helper_commit_tail_rpm(struct drm_atomic_state *old_state)
+{
+	struct drm_device *dev = old_state->dev;
+
+	rockchip_drm_psr_inhibit_get_state(old_state);
+
+	drm_atomic_helper_commit_modeset_disables(dev, old_state);
+
+	drm_atomic_helper_commit_modeset_enables(dev, old_state);
+
+	drm_atomic_helper_commit_planes(dev, old_state,
 					DRM_PLANE_COMMIT_ACTIVE_ONLY);
 
-	drm_atomic_helper_commit_hw_done(state);
+	rockchip_drm_psr_inhibit_put_state(old_state);
 
-	drm_atomic_helper_wait_for_vblanks(dev, state);
+	drm_atomic_helper_commit_hw_done(old_state);
 
-	drm_atomic_helper_cleanup_planes(dev, state);
+	drm_atomic_helper_wait_for_vblanks(dev, old_state);
+
+	drm_atomic_helper_cleanup_planes(dev, old_state);
 }
 
 static const struct drm_mode_config_helper_funcs rockchip_mode_config_helpers = {
-	.atomic_commit_tail = rockchip_atomic_commit_tail,
+	.atomic_commit_tail = rockchip_atomic_helper_commit_tail_rpm,
 };
 
 static const struct drm_mode_config_funcs rockchip_drm_mode_config_funcs = {
 	.fb_create = rockchip_user_fb_create,
-	.output_poll_changed = rockchip_drm_output_poll_changed,
+	.output_poll_changed = drm_fb_helper_output_poll_changed,
 	.atomic_check = drm_atomic_helper_check,
 	.atomic_commit = drm_atomic_helper_commit,
 };

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Author(s)......: Carsten Otte <cotte@de.ibm.com>
  * 		    Rob M van der Heij <rvdheij@nl.ibm.com>
@@ -102,7 +103,7 @@ static int scode_set;
 static int
 dcss_set_subcodes(void)
 {
-	char *name = kmalloc(8 * sizeof(char), GFP_KERNEL | GFP_DMA);
+	char *name = kmalloc(8, GFP_KERNEL | GFP_DMA);
 	unsigned long rx, ry;
 	int rc;
 

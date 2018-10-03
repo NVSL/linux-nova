@@ -254,7 +254,7 @@ struct emu10k1x {
 };
 
 /* hardware definition */
-static struct snd_pcm_hardware snd_emu10k1x_playback_hw = {
+static const struct snd_pcm_hardware snd_emu10k1x_playback_hw = {
 	.info =			(SNDRV_PCM_INFO_MMAP | 
 				 SNDRV_PCM_INFO_INTERLEAVED |
 				 SNDRV_PCM_INFO_BLOCK_TRANSFER |
@@ -273,7 +273,7 @@ static struct snd_pcm_hardware snd_emu10k1x_playback_hw = {
 	.fifo_size =		0,
 };
 
-static struct snd_pcm_hardware snd_emu10k1x_capture_hw = {
+static const struct snd_pcm_hardware snd_emu10k1x_capture_hw = {
 	.info =			(SNDRV_PCM_INFO_MMAP | 
 				 SNDRV_PCM_INFO_INTERLEAVED |
 				 SNDRV_PCM_INFO_BLOCK_TRANSFER |
@@ -1070,7 +1070,7 @@ static int snd_emu10k1x_proc_init(struct emu10k1x *emu)
 	if(! snd_card_proc_new(emu->card, "emu10k1x_regs", &entry)) {
 		snd_info_set_text_ops(entry, emu, snd_emu10k1x_proc_reg_read);
 		entry->c.text.write = snd_emu10k1x_proc_reg_write;
-		entry->mode |= S_IWUSR;
+		entry->mode |= 0200;
 		entry->private_data = emu;
 	}
 	

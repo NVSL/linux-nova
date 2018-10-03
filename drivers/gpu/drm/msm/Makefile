@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0
 ccflags-y := -Idrivers/gpu/drm/msm
 ccflags-$(CONFIG_DRM_MSM_DSI) += -Idrivers/gpu/drm/msm/dsi
 
@@ -8,6 +9,7 @@ msm-y := \
 	adreno/a4xx_gpu.o \
 	adreno/a5xx_gpu.o \
 	adreno/a5xx_power.o \
+	adreno/a5xx_preempt.o \
 	hdmi/hdmi.o \
 	hdmi/hdmi_audio.o \
 	hdmi/hdmi_bridge.o \
@@ -23,26 +25,26 @@ msm-y := \
 	edp/edp_connector.o \
 	edp/edp_ctrl.o \
 	edp/edp_phy.o \
-	mdp/mdp_format.o \
-	mdp/mdp_kms.o \
-	mdp/mdp4/mdp4_crtc.o \
-	mdp/mdp4/mdp4_dtv_encoder.o \
-	mdp/mdp4/mdp4_lcdc_encoder.o \
-	mdp/mdp4/mdp4_lvds_connector.o \
-	mdp/mdp4/mdp4_irq.o \
-	mdp/mdp4/mdp4_kms.o \
-	mdp/mdp4/mdp4_plane.o \
-	mdp/mdp5/mdp5_cfg.o \
-	mdp/mdp5/mdp5_ctl.o \
-	mdp/mdp5/mdp5_crtc.o \
-	mdp/mdp5/mdp5_encoder.o \
-	mdp/mdp5/mdp5_irq.o \
-	mdp/mdp5/mdp5_mdss.o \
-	mdp/mdp5/mdp5_kms.o \
-	mdp/mdp5/mdp5_pipe.o \
-	mdp/mdp5/mdp5_mixer.o \
-	mdp/mdp5/mdp5_plane.o \
-	mdp/mdp5/mdp5_smp.o \
+	disp/mdp_format.o \
+	disp/mdp_kms.o \
+	disp/mdp4/mdp4_crtc.o \
+	disp/mdp4/mdp4_dtv_encoder.o \
+	disp/mdp4/mdp4_lcdc_encoder.o \
+	disp/mdp4/mdp4_lvds_connector.o \
+	disp/mdp4/mdp4_irq.o \
+	disp/mdp4/mdp4_kms.o \
+	disp/mdp4/mdp4_plane.o \
+	disp/mdp5/mdp5_cfg.o \
+	disp/mdp5/mdp5_ctl.o \
+	disp/mdp5/mdp5_crtc.o \
+	disp/mdp5/mdp5_encoder.o \
+	disp/mdp5/mdp5_irq.o \
+	disp/mdp5/mdp5_mdss.o \
+	disp/mdp5/mdp5_kms.o \
+	disp/mdp5/mdp5_pipe.o \
+	disp/mdp5/mdp5_mixer.o \
+	disp/mdp5/mdp5_plane.o \
+	disp/mdp5/mdp5_smp.o \
 	msm_atomic.o \
 	msm_debugfs.o \
 	msm_drv.o \
@@ -57,33 +59,38 @@ msm-y := \
 	msm_iommu.o \
 	msm_perf.o \
 	msm_rd.o \
-	msm_ringbuffer.o
+	msm_ringbuffer.o \
+	msm_submitqueue.o
+
+msm-$(CONFIG_DEBUG_FS) += adreno/a5xx_debugfs.o
 
 msm-$(CONFIG_DRM_FBDEV_EMULATION) += msm_fbdev.o
-msm-$(CONFIG_COMMON_CLK) += mdp/mdp4/mdp4_lvds_pll.o
+msm-$(CONFIG_COMMON_CLK) += disp/mdp4/mdp4_lvds_pll.o
 msm-$(CONFIG_COMMON_CLK) += hdmi/hdmi_pll_8960.o
 msm-$(CONFIG_COMMON_CLK) += hdmi/hdmi_phy_8996.o
 
 msm-$(CONFIG_DRM_MSM_HDMI_HDCP) += hdmi/hdmi_hdcp.o
 
 msm-$(CONFIG_DRM_MSM_DSI) += dsi/dsi.o \
-			mdp/mdp4/mdp4_dsi_encoder.o \
+			disp/mdp4/mdp4_dsi_encoder.o \
 			dsi/dsi_cfg.o \
 			dsi/dsi_host.o \
 			dsi/dsi_manager.o \
 			dsi/phy/dsi_phy.o \
-			mdp/mdp5/mdp5_cmd_encoder.o
+			disp/mdp5/mdp5_cmd_encoder.o
 
 msm-$(CONFIG_DRM_MSM_DSI_28NM_PHY) += dsi/phy/dsi_phy_28nm.o
 msm-$(CONFIG_DRM_MSM_DSI_20NM_PHY) += dsi/phy/dsi_phy_20nm.o
 msm-$(CONFIG_DRM_MSM_DSI_28NM_8960_PHY) += dsi/phy/dsi_phy_28nm_8960.o
 msm-$(CONFIG_DRM_MSM_DSI_14NM_PHY) += dsi/phy/dsi_phy_14nm.o
+msm-$(CONFIG_DRM_MSM_DSI_10NM_PHY) += dsi/phy/dsi_phy_10nm.o
 
 ifeq ($(CONFIG_DRM_MSM_DSI_PLL),y)
 msm-y += dsi/pll/dsi_pll.o
 msm-$(CONFIG_DRM_MSM_DSI_28NM_PHY) += dsi/pll/dsi_pll_28nm.o
 msm-$(CONFIG_DRM_MSM_DSI_28NM_8960_PHY) += dsi/pll/dsi_pll_28nm_8960.o
 msm-$(CONFIG_DRM_MSM_DSI_14NM_PHY) += dsi/pll/dsi_pll_14nm.o
+msm-$(CONFIG_DRM_MSM_DSI_10NM_PHY) += dsi/pll/dsi_pll_10nm.o
 endif
 
 obj-$(CONFIG_DRM_MSM)	+= msm.o

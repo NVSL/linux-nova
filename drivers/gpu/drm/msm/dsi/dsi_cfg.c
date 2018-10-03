@@ -14,7 +14,7 @@
 #include "dsi_cfg.h"
 
 static const char * const dsi_v2_bus_clk_names[] = {
-	"core_mmss_clk", "iface_clk", "bus_clk",
+	"core_mmss", "iface", "bus",
 };
 
 static const struct msm_dsi_config apq8064_dsi_cfg = {
@@ -34,7 +34,7 @@ static const struct msm_dsi_config apq8064_dsi_cfg = {
 };
 
 static const char * const dsi_6g_bus_clk_names[] = {
-	"mdp_core_clk", "iface_clk", "bus_clk", "core_mmss_clk",
+	"mdp_core", "iface", "bus", "core_mmss",
 };
 
 static const struct msm_dsi_config msm8974_apq8084_dsi_cfg = {
@@ -55,7 +55,7 @@ static const struct msm_dsi_config msm8974_apq8084_dsi_cfg = {
 };
 
 static const char * const dsi_8916_bus_clk_names[] = {
-	"mdp_core_clk", "iface_clk", "bus_clk",
+	"mdp_core", "iface", "bus",
 };
 
 static const struct msm_dsi_config msm8916_dsi_cfg = {
@@ -99,7 +99,7 @@ static const struct msm_dsi_config msm8994_dsi_cfg = {
  * without it too. Figure out why it doesn't enable and uncomment below
  */
 static const char * const dsi_8996_bus_clk_names[] = {
-	"mdp_core_clk", "iface_clk", "bus_clk", /* "core_mmss_clk", */
+	"mdp_core", "iface", "bus", /* "core_mmss", */
 };
 
 static const struct msm_dsi_config msm8996_dsi_cfg = {
@@ -118,6 +118,24 @@ static const struct msm_dsi_config msm8996_dsi_cfg = {
 	.num_dsi = 2,
 };
 
+static const char * const dsi_sdm845_bus_clk_names[] = {
+	"iface", "bus",
+};
+
+static const struct msm_dsi_config sdm845_dsi_cfg = {
+	.io_offset = DSI_6G_REG_SHIFT,
+	.reg_cfg = {
+		.num = 1,
+		.regs = {
+			{"vdda", 21800, 4 },	/* 1.2 V */
+		},
+	},
+	.bus_clk_names = dsi_sdm845_bus_clk_names,
+	.num_bus_clks = ARRAY_SIZE(dsi_sdm845_bus_clk_names),
+	.io_start = { 0xae94000, 0xae96000 },
+	.num_dsi = 2,
+};
+
 static const struct msm_dsi_cfg_handler dsi_cfg_handlers[] = {
 	{MSM_DSI_VER_MAJOR_V2, MSM_DSI_V2_VER_MINOR_8064, &apq8064_dsi_cfg},
 	{MSM_DSI_VER_MAJOR_6G, MSM_DSI_6G_VER_MINOR_V1_0,
@@ -131,6 +149,7 @@ static const struct msm_dsi_cfg_handler dsi_cfg_handlers[] = {
 	{MSM_DSI_VER_MAJOR_6G, MSM_DSI_6G_VER_MINOR_V1_3, &msm8994_dsi_cfg},
 	{MSM_DSI_VER_MAJOR_6G, MSM_DSI_6G_VER_MINOR_V1_3_1, &msm8916_dsi_cfg},
 	{MSM_DSI_VER_MAJOR_6G, MSM_DSI_6G_VER_MINOR_V1_4_1, &msm8996_dsi_cfg},
+	{MSM_DSI_VER_MAJOR_6G, MSM_DSI_6G_VER_MINOR_V2_2_1, &sdm845_dsi_cfg},
 };
 
 const struct msm_dsi_cfg_handler *msm_dsi_cfg_get(u32 major, u32 minor)

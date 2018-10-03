@@ -62,7 +62,7 @@ struct capture_priv {
 /* In bytes, per queue */
 #define VID_MEM_LIMIT	SZ_64M
 
-static struct vb2_ops capture_qops;
+static const struct vb2_ops capture_qops;
 
 /*
  * Video ioctls follow
@@ -73,8 +73,8 @@ static int vidioc_querycap(struct file *file, void *fh,
 {
 	struct capture_priv *priv = video_drvdata(file);
 
-	strncpy(cap->driver, "imx-media-capture", sizeof(cap->driver) - 1);
-	strncpy(cap->card, "imx-media-capture", sizeof(cap->card) - 1);
+	strlcpy(cap->driver, "imx-media-capture", sizeof(cap->driver));
+	strlcpy(cap->card, "imx-media-capture", sizeof(cap->card));
 	snprintf(cap->bus_info, sizeof(cap->bus_info),
 		 "platform:%s", priv->src_sd->name);
 
@@ -141,7 +141,8 @@ static int capture_enum_frameintervals(struct file *file, void *fh,
 
 	fie.code = cc->codes[0];
 
-	ret = v4l2_subdev_call(priv->src_sd, pad, enum_frame_interval, NULL, &fie);
+	ret = v4l2_subdev_call(priv->src_sd, pad, enum_frame_interval,
+			       NULL, &fie);
 	if (ret)
 		return ret;
 
@@ -449,9 +450,6 @@ static int capture_start_streaming(struct vb2_queue *vq, unsigned int count)
 	unsigned long flags;
 	int ret;
 
-	if (vb2_is_streaming(vq))
-		return 0;
-
 	ret = imx_media_pipeline_set_stream(priv->md, &priv->src_sd->entity,
 					    true);
 	if (ret) {
@@ -480,9 +478,6 @@ static void capture_stop_streaming(struct vb2_queue *vq)
 	unsigned long flags;
 	int ret;
 
-	if (!vb2_is_streaming(vq))
-		return;
-
 	spin_lock_irqsave(&priv->q_lock, flags);
 	priv->stop = true;
 	spin_unlock_irqrestore(&priv->q_lock, flags);
@@ -503,7 +498,7 @@ static void capture_stop_streaming(struct vb2_queue *vq)
 	spin_unlock_irqrestore(&priv->q_lock, flags);
 }
 
-static struct vb2_ops capture_qops = {
+static const struct vb2_ops capture_qops = {
 	.queue_setup	 = capture_queue_setup,
 	.buf_init        = capture_buf_init,
 	.buf_prepare	 = capture_buf_prepare,
@@ -753,6 +748,8 @@ imx_media_capture_device_init(struct v4l2_subdev *src_sd, int pad)
 	vfd->lock = &priv->mutex;
 	vfd->queue = &priv->q;
 	priv->vdev.vfd = vfd;
+
+	INIT_LIST_HEAD(&priv->vdev.list);
 
 	video_set_drvdata(vfd, priv);
 

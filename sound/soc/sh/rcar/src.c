@@ -8,6 +8,15 @@
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
  */
+
+/*
+ * you can enable below define if you don't need
+ * SSI interrupt status debug message when debugging
+ * see rsnd_dbg_irq_status()
+ *
+ * #define RSND_DEBUG_NO_IRQ_STATUS 1
+ */
+
 #include "rsnd.h"
 
 #define SRC_NAME "src"
@@ -27,7 +36,6 @@ struct rsnd_src {
 #define RSND_SRC_NAME_SIZE 16
 
 #define rsnd_src_get(priv, id) ((struct rsnd_src *)(priv->src) + id)
-#define rsnd_src_to_dma(src) ((src)->dma)
 #define rsnd_src_nr(priv) ((priv)->src_nr)
 #define rsnd_src_sync_is_enabled(mod) (rsnd_mod_to_src(mod)->sen.val)
 
@@ -108,7 +116,6 @@ unsigned int rsnd_src_get_rate(struct rsnd_priv *priv,
 	int is_play = rsnd_io_is_play(io);
 
 	/*
-	 *
 	 * Playback
 	 * runtime_rate -> [SRC] -> convert_rate
 	 *
@@ -203,13 +210,13 @@ static void rsnd_src_set_convert_rate(struct rsnd_dai_stream *io,
 	use_src = (fin != fout) | rsnd_src_sync_is_enabled(mod);
 
 	/*
-	 *	SRC_ADINR
+	 * SRC_ADINR
 	 */
 	adinr = rsnd_get_adinr_bit(mod, io) |
 		rsnd_runtime_channel_original(io);
 
 	/*
-	 *	SRC_IFSCR / SRC_IFSVR
+	 * SRC_IFSCR / SRC_IFSVR
 	 */
 	ifscr = 0;
 	fsrate = 0;
@@ -223,7 +230,7 @@ static void rsnd_src_set_convert_rate(struct rsnd_dai_stream *io,
 	}
 
 	/*
-	 *	SRC_SRCCR / SRC_ROUTE_MODE0
+	 * SRC_SRCCR / SRC_ROUTE_MODE0
 	 */
 	cr	= 0x00011110;
 	route	= 0x0;
@@ -327,7 +334,10 @@ static void rsnd_src_status_clear(struct rsnd_mod *mod)
 
 static bool rsnd_src_error_occurred(struct rsnd_mod *mod)
 {
+	struct rsnd_priv *priv = rsnd_mod_to_priv(mod);
+	struct device *dev = rsnd_priv_to_dev(priv);
 	u32 val0, val1;
+	u32 status0, status1;
 	bool ret = false;
 
 	val0 = val1 = OUF_SRC(rsnd_mod_id(mod));
@@ -340,9 +350,15 @@ static bool rsnd_src_error_occurred(struct rsnd_mod *mod)
 	if (rsnd_src_sync_is_enabled(mod))
 		val0 = val0 & 0xffff;
 
-	if ((rsnd_mod_read(mod, SCU_SYS_STATUS0) & val0) ||
-	    (rsnd_mod_read(mod, SCU_SYS_STATUS1) & val1))
+	status0 = rsnd_mod_read(mod, SCU_SYS_STATUS0);
+	status1 = rsnd_mod_read(mod, SCU_SYS_STATUS1);
+	if ((status0 & val0) || (status1 & val1)) {
+		rsnd_dbg_irq_status(dev, "%s[%d] err status : 0x%08x, 0x%08x\n",
+			rsnd_mod_name(mod), rsnd_mod_id(mod),
+			status0, status1);
+
 		ret = true;
+	}
 
 	return ret;
 }
@@ -559,7 +575,7 @@ int rsnd_src_probe(struct rsnd_priv *priv)
 		goto rsnd_src_probe_done;
 	}
 
-	src	= devm_kzalloc(dev, sizeof(*src) * nr, GFP_KERNEL);
+	src	= devm_kcalloc(dev, nr, sizeof(*src), GFP_KERNEL);
 	if (!src) {
 		ret = -ENOMEM;
 		goto rsnd_src_probe_done;
@@ -581,20 +597,24 @@ int rsnd_src_probe(struct rsnd_priv *priv)
 		src->irq = irq_of_parse_and_map(np, 0);
 		if (!src->irq) {
 			ret = -EINVAL;
+			of_node_put(np);
 			goto rsnd_src_probe_done;
 		}
 
 		clk = devm_clk_get(dev, name);
 		if (IS_ERR(clk)) {
 			ret = PTR_ERR(clk);
+			of_node_put(np);
 			goto rsnd_src_probe_done;
 		}
 
 		ret = rsnd_mod_init(priv, rsnd_mod_get(src),
 				    &rsnd_src_ops, clk, rsnd_mod_get_status,
 				    RSND_MOD_SRC, i);
-		if (ret)
+		if (ret) {
+			of_node_put(np);
 			goto rsnd_src_probe_done;
+		}
 
 skip:
 		i++;

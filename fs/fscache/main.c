@@ -16,6 +16,7 @@
 #include <linux/completion.h>
 #include <linux/slab.h>
 #include <linux/seq_file.h>
+#define CREATE_TRACE_POINTS
 #include "internal.h"
 
 MODULE_DESCRIPTION("FS Cache Manager");
@@ -195,12 +196,3 @@ static void __exit fscache_exit(void)
 }
 
 module_exit(fscache_exit);
-
-/*
- * wait_on_atomic_t() sleep function for uninterruptible waiting
- */
-int fscache_wait_atomic_t(atomic_t *p)
-{
-	schedule();
-	return 0;
-}

@@ -519,6 +519,22 @@ void xgbe_debugfs_init(struct xgbe_prv_data *pdata)
 				   "debugfs_create_file failed\n");
 	}
 
+	if (pdata->vdata->an_cdr_workaround) {
+		pfile = debugfs_create_bool("an_cdr_workaround", 0600,
+					    pdata->xgbe_debugfs,
+					    &pdata->debugfs_an_cdr_workaround);
+		if (!pfile)
+			netdev_err(pdata->netdev,
+				   "debugfs_create_bool failed\n");
+
+		pfile = debugfs_create_bool("an_cdr_track_early", 0600,
+					    pdata->xgbe_debugfs,
+					    &pdata->debugfs_an_cdr_track_early);
+		if (!pfile)
+			netdev_err(pdata->netdev,
+				   "debugfs_create_bool failed\n");
+	}
+
 	kfree(buf);
 }
 
@@ -526,4 +542,29 @@ void xgbe_debugfs_exit(struct xgbe_prv_data *pdata)
 {
 	debugfs_remove_recursive(pdata->xgbe_debugfs);
 	pdata->xgbe_debugfs = NULL;
+}
+
+void xgbe_debugfs_rename(struct xgbe_prv_data *pdata)
+{
+	struct dentry *pfile;
+	char *buf;
+
+	if (!pdata->xgbe_debugfs)
+		return;
+
+	buf = kasprintf(GFP_KERNEL, "amd-xgbe-%s", pdata->netdev->name);
+	if (!buf)
+		return;
+
+	if (!strcmp(pdata->xgbe_debugfs->d_name.name, buf))
+		goto out;
+
+	pfile = debugfs_rename(pdata->xgbe_debugfs->d_parent,
+			       pdata->xgbe_debugfs,
+			       pdata->xgbe_debugfs->d_parent, buf);
+	if (!pfile)
+		netdev_err(pdata->netdev, "debugfs_rename failed\n");
+
+out:
+	kfree(buf);
 }

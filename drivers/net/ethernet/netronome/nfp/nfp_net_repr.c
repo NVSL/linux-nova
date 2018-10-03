@@ -43,7 +43,15 @@
 #include "nfp_main.h"
 #include "nfp_net_ctrl.h"
 #include "nfp_net_repr.h"
+#include "nfp_net_sriov.h"
 #include "nfp_port.h"
+
+struct net_device *
+nfp_repr_get_locked(struct nfp_app *app, struct nfp_reprs *set, unsigned int id)
+{
+	return rcu_dereference_protected(set->reprs[id],
+					 lockdep_is_held(&app->pf->lock));
+}
 
 static void
 nfp_repr_inc_tx_stats(struct net_device *netdev, unsigned int len,
@@ -78,87 +86,53 @@ void nfp_repr_inc_rx_stats(struct net_device *netdev, unsigned int len)
 }
 
 static void
-nfp_repr_phy_port_get_stats64(const struct nfp_app *app, u8 phy_port,
+nfp_repr_phy_port_get_stats64(struct nfp_port *port,
 			      struct rtnl_link_stats64 *stats)
 {
-	u8 __iomem *mem;
+	u8 __iomem *mem = port->eth_stats;
 
-	mem = app->pf->mac_stats_mem + phy_port * NFP_MAC_STATS_SIZE;
+	stats->tx_packets = readq(mem + NFP_MAC_STATS_TX_FRAMES_TRANSMITTED_OK);
+	stats->tx_bytes = readq(mem + NFP_MAC_STATS_TX_OUT_OCTETS);
+	stats->tx_dropped = readq(mem + NFP_MAC_STATS_TX_OUT_ERRORS);
 
-	/* TX and RX stats are flipped as we are returning the stats as seen
-	 * at the switch port corresponding to the phys port.
-	 */
-	stats->tx_packets = readq(mem + NFP_MAC_STATS_RX_FRAMES_RECEIVED_OK);
-	stats->tx_bytes = readq(mem + NFP_MAC_STATS_RX_IN_OCTETS);
-	stats->tx_dropped = readq(mem + NFP_MAC_STATS_RX_IN_ERRORS);
-
-	stats->rx_packets = readq(mem + NFP_MAC_STATS_TX_FRAMES_TRANSMITTED_OK);
-	stats->rx_bytes = readq(mem + NFP_MAC_STATS_TX_OUT_OCTETS);
-	stats->rx_dropped = readq(mem + NFP_MAC_STATS_TX_OUT_ERRORS);
+	stats->rx_packets = readq(mem + NFP_MAC_STATS_RX_FRAMES_RECEIVED_OK);
+	stats->rx_bytes = readq(mem + NFP_MAC_STATS_RX_IN_OCTETS);
+	stats->rx_dropped = readq(mem + NFP_MAC_STATS_RX_IN_ERRORS);
 }
 
 static void
-nfp_repr_vf_get_stats64(const struct nfp_app *app, u8 vf,
-			struct rtnl_link_stats64 *stats)
+nfp_repr_vnic_get_stats64(struct nfp_port *port,
+			  struct rtnl_link_stats64 *stats)
 {
-	u8 __iomem *mem;
-
-	mem = app->pf->vf_cfg_mem + vf * NFP_NET_CFG_BAR_SZ;
-
 	/* TX and RX stats are flipped as we are returning the stats as seen
 	 * at the switch port corresponding to the VF.
 	 */
-	stats->tx_packets = readq(mem + NFP_NET_CFG_STATS_RX_FRAMES);
-	stats->tx_bytes = readq(mem + NFP_NET_CFG_STATS_RX_OCTETS);
-	stats->tx_dropped = readq(mem + NFP_NET_CFG_STATS_RX_DISCARDS);
+	stats->tx_packets = readq(port->vnic + NFP_NET_CFG_STATS_RX_FRAMES);
+	stats->tx_bytes = readq(port->vnic + NFP_NET_CFG_STATS_RX_OCTETS);
+	stats->tx_dropped = readq(port->vnic + NFP_NET_CFG_STATS_RX_DISCARDS);
 
-	stats->rx_packets = readq(mem + NFP_NET_CFG_STATS_TX_FRAMES);
-	stats->rx_bytes = readq(mem + NFP_NET_CFG_STATS_TX_OCTETS);
-	stats->rx_dropped = readq(mem + NFP_NET_CFG_STATS_TX_DISCARDS);
-}
-
-static void
-nfp_repr_pf_get_stats64(const struct nfp_app *app, u8 pf,
-			struct rtnl_link_stats64 *stats)
-{
-	u8 __iomem *mem;
-
-	if (pf)
-		return;
-
-	mem = nfp_cpp_area_iomem(app->pf->data_vnic_bar);
-
-	stats->tx_packets = readq(mem + NFP_NET_CFG_STATS_RX_FRAMES);
-	stats->tx_bytes = readq(mem + NFP_NET_CFG_STATS_RX_OCTETS);
-	stats->tx_dropped = readq(mem + NFP_NET_CFG_STATS_RX_DISCARDS);
-
-	stats->rx_packets = readq(mem + NFP_NET_CFG_STATS_TX_FRAMES);
-	stats->rx_bytes = readq(mem + NFP_NET_CFG_STATS_TX_OCTETS);
-	stats->rx_dropped = readq(mem + NFP_NET_CFG_STATS_TX_DISCARDS);
+	stats->rx_packets = readq(port->vnic + NFP_NET_CFG_STATS_TX_FRAMES);
+	stats->rx_bytes = readq(port->vnic + NFP_NET_CFG_STATS_TX_OCTETS);
+	stats->rx_dropped = readq(port->vnic + NFP_NET_CFG_STATS_TX_DISCARDS);
 }
 
 static void
 nfp_repr_get_stats64(struct net_device *netdev, struct rtnl_link_stats64 *stats)
 {
 	struct nfp_repr *repr = netdev_priv(netdev);
-	struct nfp_eth_table_port *eth_port;
-	struct nfp_app *app = repr->app;
 
 	if (WARN_ON(!repr->port))
 		return;
 
 	switch (repr->port->type) {
 	case NFP_PORT_PHYS_PORT:
-		eth_port = __nfp_port_get_eth_port(repr->port);
-		if (!eth_port)
+		if (!__nfp_port_get_eth_port(repr->port))
 			break;
-		nfp_repr_phy_port_get_stats64(app, eth_port->index, stats);
+		nfp_repr_phy_port_get_stats64(repr->port, stats);
 		break;
 	case NFP_PORT_PF_PORT:
-		nfp_repr_pf_get_stats64(app, repr->port->pf_id, stats);
-		break;
 	case NFP_PORT_VF_PORT:
-		nfp_repr_vf_get_stats64(app, repr->port->vf_id, stats);
+		nfp_repr_vnic_get_stats64(repr->port, stats);
 	default:
 		break;
 	}
@@ -219,6 +193,24 @@ nfp_repr_get_offload_stats(int attr_id, const struct net_device *dev,
 	return -EINVAL;
 }
 
+static int nfp_repr_change_mtu(struct net_device *netdev, int new_mtu)
+{
+	struct nfp_repr *repr = netdev_priv(netdev);
+	int err;
+
+	err = nfp_app_check_mtu(repr->app, netdev, new_mtu);
+	if (err)
+		return err;
+
+	err = nfp_app_repr_change_mtu(repr->app, netdev, new_mtu);
+	if (err)
+		return err;
+
+	netdev->mtu = new_mtu;
+
+	return 0;
+}
+
 static netdev_tx_t nfp_repr_xmit(struct sk_buff *skb, struct net_device *netdev)
 {
 	struct nfp_repr *repr = netdev_priv(netdev);
@@ -239,31 +231,59 @@ static netdev_tx_t nfp_repr_xmit(struct sk_buff *skb, struct net_device *netdev)
 static int nfp_repr_stop(struct net_device *netdev)
 {
 	struct nfp_repr *repr = netdev_priv(netdev);
+	int err;
 
-	return nfp_app_repr_stop(repr->app, repr);
+	err = nfp_app_repr_stop(repr->app, repr);
+	if (err)
+		return err;
+
+	nfp_port_configure(netdev, false);
+	return 0;
 }
 
 static int nfp_repr_open(struct net_device *netdev)
 {
 	struct nfp_repr *repr = netdev_priv(netdev);
+	int err;
 
-	return nfp_app_repr_open(repr->app, repr);
+	err = nfp_port_configure(netdev, true);
+	if (err)
+		return err;
+
+	err = nfp_app_repr_open(repr->app, repr);
+	if (err)
+		goto err_port_disable;
+
+	return 0;
+
+err_port_disable:
+	nfp_port_configure(netdev, false);
+	return err;
 }
 
 const struct net_device_ops nfp_repr_netdev_ops = {
 	.ndo_open		= nfp_repr_open,
 	.ndo_stop		= nfp_repr_stop,
 	.ndo_start_xmit		= nfp_repr_xmit,
+	.ndo_change_mtu		= nfp_repr_change_mtu,
 	.ndo_get_stats64	= nfp_repr_get_stats64,
 	.ndo_has_offload_stats	= nfp_repr_has_offload_stats,
 	.ndo_get_offload_stats	= nfp_repr_get_offload_stats,
 	.ndo_get_phys_port_name	= nfp_port_get_phys_port_name,
 	.ndo_setup_tc		= nfp_port_setup_tc,
+	.ndo_set_vf_mac		= nfp_app_set_vf_mac,
+	.ndo_set_vf_vlan	= nfp_app_set_vf_vlan,
+	.ndo_set_vf_spoofchk	= nfp_app_set_vf_spoofchk,
+	.ndo_get_vf_config	= nfp_app_get_vf_config,
+	.ndo_set_vf_link_state	= nfp_app_set_vf_link_state,
+	.ndo_set_features	= nfp_port_set_features,
+	.ndo_set_mac_address    = eth_mac_addr,
 };
 
 static void nfp_repr_clean(struct nfp_repr *repr)
 {
 	unregister_netdev(repr->netdev);
+	nfp_app_repr_clean(repr->app, repr->netdev);
 	dst_release((struct dst_entry *)repr->dst);
 	nfp_port_free(repr->port);
 }
@@ -301,6 +321,10 @@ int nfp_repr_init(struct nfp_app *app, struct net_device *netdev,
 	repr->dst->u.port_info.lower_dev = pf_netdev;
 
 	netdev->netdev_ops = &nfp_repr_netdev_ops;
+	netdev->ethtool_ops = &nfp_port_ethtool_ops;
+
+	netdev->max_mtu = pf_netdev->max_mtu;
+
 	SWITCHDEV_SET_OPS(netdev, &nfp_port_switchdev_ops);
 
 	if (nfp_app_has_tc(app)) {
@@ -308,31 +332,45 @@ int nfp_repr_init(struct nfp_app *app, struct net_device *netdev,
 		netdev->hw_features |= NETIF_F_HW_TC;
 	}
 
-	err = register_netdev(netdev);
+	err = nfp_app_repr_init(app, netdev);
 	if (err)
 		goto err_clean;
 
+	err = register_netdev(netdev);
+	if (err)
+		goto err_repr_clean;
+
 	return 0;
 
+err_repr_clean:
+	nfp_app_repr_clean(app, netdev);
 err_clean:
 	dst_release((struct dst_entry *)repr->dst);
 	return err;
 }
 
-static void nfp_repr_free(struct nfp_repr *repr)
+static void __nfp_repr_free(struct nfp_repr *repr)
 {
 	free_percpu(repr->stats);
 	free_netdev(repr->netdev);
 }
 
-struct net_device *nfp_repr_alloc(struct nfp_app *app)
+void nfp_repr_free(struct net_device *netdev)
+{
+	__nfp_repr_free(netdev_priv(netdev));
+}
+
+struct net_device *
+nfp_repr_alloc_mqs(struct nfp_app *app, unsigned int txqs, unsigned int rxqs)
 {
 	struct net_device *netdev;
 	struct nfp_repr *repr;
 
-	netdev = alloc_etherdev(sizeof(*repr));
+	netdev = alloc_etherdev_mqs(sizeof(*repr), txqs, rxqs);
 	if (!netdev)
 		return NULL;
+
+	netif_carrier_off(netdev);
 
 	repr = netdev_priv(netdev);
 	repr->netdev = netdev;
@@ -349,37 +387,53 @@ err_free_netdev:
 	return NULL;
 }
 
-static void nfp_repr_clean_and_free(struct nfp_repr *repr)
+void nfp_repr_clean_and_free(struct nfp_repr *repr)
 {
 	nfp_info(repr->app->cpp, "Destroying Representor(%s)\n",
 		 repr->netdev->name);
 	nfp_repr_clean(repr);
-	nfp_repr_free(repr);
+	__nfp_repr_free(repr);
 }
 
-void nfp_reprs_clean_and_free(struct nfp_reprs *reprs)
+void nfp_reprs_clean_and_free(struct nfp_app *app, struct nfp_reprs *reprs)
 {
+	struct net_device *netdev;
 	unsigned int i;
 
-	for (i = 0; i < reprs->num_reprs; i++)
-		if (reprs->reprs[i])
-			nfp_repr_clean_and_free(netdev_priv(reprs->reprs[i]));
+	for (i = 0; i < reprs->num_reprs; i++) {
+		netdev = nfp_repr_get_locked(app, reprs, i);
+		if (netdev)
+			nfp_repr_clean_and_free(netdev_priv(netdev));
+	}
 
 	kfree(reprs);
 }
 
 void
-nfp_reprs_clean_and_free_by_type(struct nfp_app *app,
-				 enum nfp_repr_type type)
+nfp_reprs_clean_and_free_by_type(struct nfp_app *app, enum nfp_repr_type type)
 {
+	struct net_device *netdev;
 	struct nfp_reprs *reprs;
+	int i;
 
-	reprs = nfp_app_reprs_set(app, type, NULL);
+	reprs = rcu_dereference_protected(app->reprs[type],
+					  lockdep_is_held(&app->pf->lock));
 	if (!reprs)
 		return;
 
+	/* Preclean must happen before we remove the reprs reference from the
+	 * app below.
+	 */
+	for (i = 0; i < reprs->num_reprs; i++) {
+		netdev = nfp_repr_get_locked(app, reprs, i);
+		if (netdev)
+			nfp_app_repr_preclean(app, netdev);
+	}
+
+	reprs = nfp_app_reprs_set(app, type, NULL);
+
 	synchronize_rcu();
-	nfp_reprs_clean_and_free(reprs);
+	nfp_reprs_clean_and_free(app, reprs);
 }
 
 struct nfp_reprs *nfp_reprs_alloc(unsigned int num_reprs)
@@ -393,4 +447,33 @@ struct nfp_reprs *nfp_reprs_alloc(unsigned int num_reprs)
 	reprs->num_reprs = num_reprs;
 
 	return reprs;
+}
+
+int nfp_reprs_resync_phys_ports(struct nfp_app *app)
+{
+	struct net_device *netdev;
+	struct nfp_reprs *reprs;
+	struct nfp_repr *repr;
+	int i;
+
+	reprs = nfp_reprs_get_locked(app, NFP_REPR_TYPE_PHYS_PORT);
+	if (!reprs)
+		return 0;
+
+	for (i = 0; i < reprs->num_reprs; i++) {
+		netdev = nfp_repr_get_locked(app, reprs, i);
+		if (!netdev)
+			continue;
+
+		repr = netdev_priv(netdev);
+		if (repr->port->type != NFP_PORT_INVALID)
+			continue;
+
+		nfp_app_repr_preclean(app, netdev);
+		rcu_assign_pointer(reprs->reprs[i], NULL);
+		synchronize_rcu();
+		nfp_repr_clean(repr);
+	}
+
+	return 0;
 }

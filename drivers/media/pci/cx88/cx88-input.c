@@ -132,7 +132,7 @@ static void cx88_ir_handle_key(struct cx88_IR *ir)
 
 		data = (data << 4) | ((gpio_key & 0xf0) >> 4);
 
-		rc_keydown(ir->dev, RC_TYPE_UNKNOWN, data, 0);
+		rc_keydown(ir->dev, RC_PROTO_UNKNOWN, data, 0);
 
 	} else if (ir->core->boardnr == CX88_BOARD_PROLINK_PLAYTVPVR ||
 		   ir->core->boardnr == CX88_BOARD_PIXELVIEW_PLAYTV_ULTRA_PRO) {
@@ -146,7 +146,7 @@ static void cx88_ir_handle_key(struct cx88_IR *ir)
 		scancode = RC_SCANCODE_NECX(addr, cmd);
 
 		if (0 == (gpio & ir->mask_keyup))
-			rc_keydown_notimeout(ir->dev, RC_TYPE_NECX, scancode,
+			rc_keydown_notimeout(ir->dev, RC_PROTO_NECX, scancode,
 					     0);
 		else
 			rc_keyup(ir->dev);
@@ -154,20 +154,22 @@ static void cx88_ir_handle_key(struct cx88_IR *ir)
 	} else if (ir->mask_keydown) {
 		/* bit set on keydown */
 		if (gpio & ir->mask_keydown)
-			rc_keydown_notimeout(ir->dev, RC_TYPE_UNKNOWN, data, 0);
+			rc_keydown_notimeout(ir->dev, RC_PROTO_UNKNOWN, data,
+					     0);
 		else
 			rc_keyup(ir->dev);
 
 	} else if (ir->mask_keyup) {
 		/* bit cleared on keydown */
 		if (0 == (gpio & ir->mask_keyup))
-			rc_keydown_notimeout(ir->dev, RC_TYPE_UNKNOWN, data, 0);
+			rc_keydown_notimeout(ir->dev, RC_PROTO_UNKNOWN, data,
+					     0);
 		else
 			rc_keyup(ir->dev);
 
 	} else {
 		/* can't distinguish keydown/up :-/ */
-		rc_keydown_notimeout(ir->dev, RC_TYPE_UNKNOWN, data, 0);
+		rc_keydown_notimeout(ir->dev, RC_PROTO_UNKNOWN, data, 0);
 		rc_keyup(ir->dev);
 	}
 }
@@ -178,7 +180,8 @@ static enum hrtimer_restart cx88_ir_work(struct hrtimer *timer)
 	struct cx88_IR *ir = container_of(timer, struct cx88_IR, timer);
 
 	cx88_ir_handle_key(ir);
-	missed = hrtimer_forward_now(&ir->timer, ir->polling * 1000000);
+	missed = hrtimer_forward_now(&ir->timer,
+				     ktime_set(0, ir->polling * 1000000));
 	if (missed > 1)
 		ir_dprintk("Missed ticks %ld\n", missed - 1);
 
@@ -198,7 +201,8 @@ static int __cx88_ir_start(void *priv)
 	if (ir->polling) {
 		hrtimer_init(&ir->timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 		ir->timer.function = cx88_ir_work;
-		hrtimer_start(&ir->timer, ir->polling * 1000000,
+		hrtimer_start(&ir->timer,
+			      ktime_set(0, ir->polling * 1000000),
 			      HRTIMER_MODE_REL);
 	}
 	if (ir->sampling) {
@@ -267,7 +271,7 @@ int cx88_ir_init(struct cx88_core *core, struct pci_dev *pci)
 	struct cx88_IR *ir;
 	struct rc_dev *dev;
 	char *ir_codes = NULL;
-	u64 rc_type = RC_BIT_OTHER;
+	u64 rc_proto = RC_PROTO_BIT_OTHER;
 	int err = -ENOMEM;
 	u32 hardware_mask = 0;	/* For devices with a hardware mask, when
 				 * used with a full-code IR table
@@ -348,7 +352,7 @@ int cx88_ir_init(struct cx88_core *core, struct pci_dev *pci)
 		 * 002-T mini RC, provided with newer PV hardware
 		 */
 		ir_codes = RC_MAP_PIXELVIEW_MK12;
-		rc_type = RC_BIT_NECX;
+		rc_proto = RC_PROTO_BIT_NECX;
 		ir->gpio_addr = MO_GP1_IO;
 		ir->mask_keyup = 0x80;
 		ir->polling = 10; /* ms */
@@ -464,7 +468,7 @@ int cx88_ir_init(struct cx88_core *core, struct pci_dev *pci)
 	snprintf(ir->name, sizeof(ir->name), "cx88 IR (%s)", core->board.name);
 	snprintf(ir->phys, sizeof(ir->phys), "pci-%s/ir0", pci_name(pci));
 
-	dev->input_name = ir->name;
+	dev->device_name = ir->name;
 	dev->input_phys = ir->phys;
 	dev->input_id.bustype = BUS_PCI;
 	dev->input_id.version = 1;
@@ -487,7 +491,7 @@ int cx88_ir_init(struct cx88_core *core, struct pci_dev *pci)
 		dev->timeout = 10 * 1000 * 1000; /* 10 ms */
 	} else {
 		dev->driver_type = RC_DRIVER_SCANCODE;
-		dev->allowed_protocols = rc_type;
+		dev->allowed_protocols = rc_proto;
 	}
 
 	ir->core = core;
@@ -557,7 +561,7 @@ void cx88_ir_irq(struct cx88_core *core)
 	ir_raw_event_handle(ir->dev);
 }
 
-static int get_key_pvr2000(struct IR_i2c *ir, enum rc_type *protocol,
+static int get_key_pvr2000(struct IR_i2c *ir, enum rc_proto *protocol,
 			   u32 *scancode, u8 *toggle)
 {
 	int flags, code;
@@ -582,7 +586,7 @@ static int get_key_pvr2000(struct IR_i2c *ir, enum rc_type *protocol,
 	dprintk("IR Key/Flags: (0x%02x/0x%02x)\n",
 		code & 0xff, flags & 0xff);
 
-	*protocol = RC_TYPE_UNKNOWN;
+	*protocol = RC_PROTO_UNKNOWN;
 	*scancode = code & 0xff;
 	*toggle = 0;
 	return 1;
@@ -591,11 +595,11 @@ static int get_key_pvr2000(struct IR_i2c *ir, enum rc_type *protocol,
 void cx88_i2c_init_ir(struct cx88_core *core)
 {
 	struct i2c_board_info info;
-	const unsigned short default_addr_list[] = {
+	static const unsigned short default_addr_list[] = {
 		0x18, 0x6b, 0x71,
 		I2C_CLIENT_END
 	};
-	const unsigned short pvr2000_addr_list[] = {
+	static const unsigned short pvr2000_addr_list[] = {
 		0x18, 0x1a,
 		I2C_CLIENT_END
 	};
@@ -612,7 +616,7 @@ void cx88_i2c_init_ir(struct cx88_core *core)
 	case CX88_BOARD_LEADTEK_PVR2000:
 		addr_list = pvr2000_addr_list;
 		core->init_data.name = "cx88 Leadtek PVR 2000 remote";
-		core->init_data.type = RC_BIT_UNKNOWN;
+		core->init_data.type = RC_PROTO_BIT_UNKNOWN;
 		core->init_data.get_key = get_key_pvr2000;
 		core->init_data.ir_codes = RC_MAP_EMPTY;
 		break;
@@ -630,11 +634,12 @@ void cx88_i2c_init_ir(struct cx88_core *core)
 		memset(&core->init_data, 0, sizeof(core->init_data));
 
 		if (*addrp == 0x71) {
-			/* Hauppauge XVR */
-			core->init_data.name = "cx88 Hauppauge XVR remote";
+			/* Hauppauge Z8F0811 */
+			strlcpy(info.type, "ir_z8f0811_haup", I2C_NAME_SIZE);
+			core->init_data.name = core->board.name;
 			core->init_data.ir_codes = RC_MAP_HAUPPAUGE;
-			core->init_data.type = RC_BIT_RC5 | RC_BIT_RC6_MCE |
-							RC_BIT_RC6_6A_32;
+			core->init_data.type = RC_PROTO_BIT_RC5 |
+				RC_PROTO_BIT_RC6_MCE | RC_PROTO_BIT_RC6_6A_32;
 			core->init_data.internal_get_key_func = IR_KBD_GET_KEY_HAUP_XVR;
 
 			info.platform_data = &core->init_data;

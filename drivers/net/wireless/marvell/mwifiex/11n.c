@@ -341,6 +341,38 @@ mwifiex_cmd_append_11n_tlv(struct mwifiex_private *priv,
 		       le16_to_cpu(ht_cap->header.len));
 
 		mwifiex_fill_cap_info(priv, radio_type, &ht_cap->ht_cap);
+		/* Update HT40 capability from current channel information */
+		if (bss_desc->bcn_ht_oper) {
+			u8 ht_param = bss_desc->bcn_ht_oper->ht_param;
+			u8 radio =
+			mwifiex_band_to_radio_type(bss_desc->bss_band);
+			int freq =
+			ieee80211_channel_to_frequency(bss_desc->channel,
+						       radio);
+			struct ieee80211_channel *chan =
+			ieee80211_get_channel(priv->adapter->wiphy, freq);
+
+			switch (ht_param & IEEE80211_HT_PARAM_CHA_SEC_OFFSET) {
+			case IEEE80211_HT_PARAM_CHA_SEC_ABOVE:
+				if (chan->flags & IEEE80211_CHAN_NO_HT40PLUS) {
+					ht_cap->ht_cap.cap_info &=
+					cpu_to_le16
+					(~IEEE80211_HT_CAP_SUP_WIDTH_20_40);
+					ht_cap->ht_cap.cap_info &=
+					cpu_to_le16(~IEEE80211_HT_CAP_SGI_40);
+				}
+				break;
+			case IEEE80211_HT_PARAM_CHA_SEC_BELOW:
+				if (chan->flags & IEEE80211_CHAN_NO_HT40MINUS) {
+					ht_cap->ht_cap.cap_info &=
+					cpu_to_le16
+					(~IEEE80211_HT_CAP_SUP_WIDTH_20_40);
+					ht_cap->ht_cap.cap_info &=
+					cpu_to_le16(~IEEE80211_HT_CAP_SGI_40);
+				}
+				break;
+			}
+		}
 
 		*buffer += sizeof(struct mwifiex_ie_types_htcap);
 		ret_len += sizeof(struct mwifiex_ie_types_htcap);
@@ -572,6 +604,8 @@ int mwifiex_send_addba(struct mwifiex_private *priv, int tid, u8 *peer_mac)
 
 	mwifiex_dbg(priv->adapter, CMD, "cmd: %s: tid %d\n", __func__, tid);
 
+	memset(&add_ba_req, 0, sizeof(add_ba_req));
+
 	if ((GET_BSS_ROLE(priv) == MWIFIEX_BSS_ROLE_STA) &&
 	    ISSUPP_TDLS_ENABLED(priv->adapter->fw_cap_info) &&
 	    priv->adapter->is_hw_11ac_capable &&
@@ -656,12 +690,6 @@ void mwifiex_11n_delba(struct mwifiex_private *priv, int tid)
 	unsigned long flags;
 
 	spin_lock_irqsave(&priv->rx_reorder_tbl_lock, flags);
-	if (list_empty(&priv->rx_reorder_tbl_ptr)) {
-		dev_dbg(priv->adapter->dev,
-			"mwifiex_11n_delba: rx_reorder_tbl_ptr empty\n");
-		goto exit;
-	}
-
 	list_for_each_entry(rx_reor_tbl_ptr, &priv->rx_reorder_tbl_ptr, list) {
 		if (rx_reor_tbl_ptr->tid == tid) {
 			dev_dbg(priv->adapter->dev,
@@ -851,9 +879,6 @@ mwifiex_send_delba_txbastream_tbl(struct mwifiex_private *priv, u8 tid)
 {
 	struct mwifiex_adapter *adapter = priv->adapter;
 	struct mwifiex_tx_ba_stream_tbl *tx_ba_stream_tbl_ptr;
-
-	if (list_empty(&priv->tx_ba_stream_tbl_ptr))
-		return;
 
 	list_for_each_entry(tx_ba_stream_tbl_ptr,
 			    &priv->tx_ba_stream_tbl_ptr, list) {

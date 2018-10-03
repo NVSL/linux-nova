@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Xpram.c -- the S/390 expanded memory RAM-disk
  *           
@@ -183,7 +184,7 @@ static unsigned long xpram_highest_page_index(void)
  */
 static blk_qc_t xpram_make_request(struct request_queue *q, struct bio *bio)
 {
-	xpram_device_t *xdev = bio->bi_bdev->bd_disk->private_data;
+	xpram_device_t *xdev = bio->bi_disk->private_data;
 	struct bio_vec bvec;
 	struct bvec_iter iter;
 	unsigned int index;
@@ -347,8 +348,8 @@ static int __init xpram_setup_blkdev(void)
 			put_disk(xpram_disks[i]);
 			goto out;
 		}
-		queue_flag_set_unlocked(QUEUE_FLAG_NONROT, xpram_queues[i]);
-		queue_flag_clear_unlocked(QUEUE_FLAG_ADD_RANDOM, xpram_queues[i]);
+		blk_queue_flag_set(QUEUE_FLAG_NONROT, xpram_queues[i]);
+		blk_queue_flag_clear(QUEUE_FLAG_ADD_RANDOM, xpram_queues[i]);
 		blk_queue_make_request(xpram_queues[i], xpram_make_request);
 		blk_queue_logical_block_size(xpram_queues[i], 4096);
 	}

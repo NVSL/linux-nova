@@ -199,7 +199,7 @@ static int mdio_mux_iproc_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, md);
 
-	rc = mdio_mux_init(md->dev, mdio_mux_iproc_switch_fn,
+	rc = mdio_mux_init(md->dev, md->dev->of_node, mdio_mux_iproc_switch_fn,
 			   &md->mux_handle, md, md->mii_bus);
 	if (rc) {
 		dev_info(md->dev, "mdiomux initialization failed\n");
@@ -218,7 +218,7 @@ out:
 
 static int mdio_mux_iproc_remove(struct platform_device *pdev)
 {
-	struct iproc_mdiomux_desc *md = dev_get_platdata(&pdev->dev);
+	struct iproc_mdiomux_desc *md = platform_get_drvdata(pdev);
 
 	mdio_mux_uninit(md->mux_handle);
 	mdiobus_unregister(md->mii_bus);

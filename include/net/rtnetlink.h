@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __NET_RTNETLINK_H
 #define __NET_RTNETLINK_H
 
@@ -7,12 +8,15 @@
 typedef int (*rtnl_doit_func)(struct sk_buff *, struct nlmsghdr *,
 			      struct netlink_ext_ack *);
 typedef int (*rtnl_dumpit_func)(struct sk_buff *, struct netlink_callback *);
-typedef u16 (*rtnl_calcit_func)(struct sk_buff *, struct nlmsghdr *);
 
-int __rtnl_register(int protocol, int msgtype,
-		    rtnl_doit_func, rtnl_dumpit_func, rtnl_calcit_func);
+enum rtnl_link_flags {
+	RTNL_FLAG_DOIT_UNLOCKED = 1,
+};
+
 void rtnl_register(int protocol, int msgtype,
-		   rtnl_doit_func, rtnl_dumpit_func, rtnl_calcit_func);
+		   rtnl_doit_func, rtnl_dumpit_func, unsigned int flags);
+int rtnl_register_module(struct module *owner, int protocol, int msgtype,
+			 rtnl_doit_func, rtnl_dumpit_func, unsigned int flags);
 int rtnl_unregister(int protocol, int msgtype);
 void rtnl_unregister_all(int protocol);
 
@@ -60,7 +64,7 @@ struct rtnl_link_ops {
 	size_t			priv_size;
 	void			(*setup)(struct net_device *dev);
 
-	int			maxtype;
+	unsigned int		maxtype;
 	const struct nla_policy	*policy;
 	int			(*validate)(struct nlattr *tb[],
 					    struct nlattr *data[],
@@ -88,11 +92,8 @@ struct rtnl_link_ops {
 	unsigned int		(*get_num_tx_queues)(void);
 	unsigned int		(*get_num_rx_queues)(void);
 
-	int			slave_maxtype;
+	unsigned int		slave_maxtype;
 	const struct nla_policy	*slave_policy;
-	int			(*slave_validate)(struct nlattr *tb[],
-						  struct nlattr *data[],
-						  struct netlink_ext_ack *extack);
 	int			(*slave_changelink)(struct net_device *dev,
 						    struct net_device *slave_dev,
 						    struct nlattr *tb[],
@@ -150,8 +151,6 @@ struct rtnl_af_ops {
 						 const struct net_device *dev);
 	size_t			(*get_stats_af_size)(const struct net_device *dev);
 };
-
-void __rtnl_af_unregister(struct rtnl_af_ops *ops);
 
 void rtnl_af_register(struct rtnl_af_ops *ops);
 void rtnl_af_unregister(struct rtnl_af_ops *ops);

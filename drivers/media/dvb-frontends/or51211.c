@@ -22,7 +22,7 @@
 
 /*
  * This driver needs external firmware. Please use the command
- * "<kerneldir>/Documentation/dvb/get_dvb_firmware or51211" to
+ * "<kerneldir>/scripts/get_dvb_firmware or51211" to
  * download/extract it, and then copy it to /usr/lib/hotplug/firmware
  * or /lib/firmware (depending on configuration of firmware hotplug).
  */
@@ -36,8 +36,8 @@
 #include <linux/slab.h>
 #include <asm/byteorder.h>
 
-#include "dvb_math.h"
-#include "dvb_frontend.h"
+#include <media/dvb_math.h>
+#include <media/dvb_frontend.h>
 #include "or51211.h"
 
 static int debug;

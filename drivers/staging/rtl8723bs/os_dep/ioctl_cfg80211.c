@@ -1,19 +1,12 @@
+// SPDX-License-Identifier: GPL-2.0
 /******************************************************************************
  *
  * Copyright(c) 2007 - 2012 Realtek Corporation. All rights reserved.
  *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
- * more details.
- *
  ******************************************************************************/
 #define  _IOCTL_CFG80211_C_
 
+#include <linux/etherdevice.h>
 #include <drv_types.h>
 #include <rtw_debug.h>
 #include <linux/jiffies.h>
@@ -136,11 +129,9 @@ static struct ieee80211_supported_band *rtw_spt_band_alloc(
 		goto exit;
 	}
 
-	spt_band = (struct ieee80211_supported_band *)rtw_zmalloc(
-		sizeof(struct ieee80211_supported_band)
-		+ sizeof(struct ieee80211_channel)*n_channels
-		+ sizeof(struct ieee80211_rate)*n_bitrates
-	);
+	spt_band = rtw_zmalloc(sizeof(struct ieee80211_supported_band) +
+			       sizeof(struct ieee80211_channel) * n_channels +
+			       sizeof(struct ieee80211_rate) * n_bitrates);
 	if (!spt_band)
 		goto exit;
 
@@ -1094,7 +1085,7 @@ static int cfg80211_rtw_add_key(struct wiphy *wiphy, struct net_device *ndev,
 	DBG_871X("pairwise =%d\n", pairwise);
 
 	param_len = sizeof(struct ieee_param) + params->key_len;
-	param = (struct ieee_param *)rtw_malloc(param_len);
+	param = rtw_malloc(param_len);
 	if (param == NULL)
 		return -1;
 
@@ -2183,7 +2174,7 @@ static int cfg80211_rtw_connect(struct wiphy *wiphy, struct net_device *ndev,
 		{
 			wep_key_len = wep_key_len <= 5 ? 5 : 13;
 			wep_total_len = wep_key_len + FIELD_OFFSET(struct ndis_802_11_wep, KeyMaterial);
-			pwep =(struct ndis_802_11_wep	 *) rtw_malloc(wep_total_len);
+			pwep = rtw_malloc(wep_total_len);
 			if (pwep == NULL) {
 				DBG_871X(" wpa_set_encryption: pwep allocate fail !!!\n");
 				ret = -ENOMEM;
@@ -2393,7 +2384,7 @@ static int cfg80211_rtw_del_pmksa(struct wiphy *wiphy,
 	{
 		if (!memcmp(psecuritypriv->PMKIDList[index].Bssid, (u8 *)pmksa->bssid, ETH_ALEN))
 		{ /*  BSSID is matched, the same AP => Remove this PMKID information and reset it. */
-			memset(psecuritypriv->PMKIDList[index].Bssid, 0x00, ETH_ALEN);
+			eth_zero_addr(psecuritypriv->PMKIDList[index].Bssid);
 			memset(psecuritypriv->PMKIDList[index].PMKID, 0x00, WLAN_PMKID_LEN);
 			psecuritypriv->PMKIDList[index].bUsed = false;
 			bMatched = true;
@@ -2473,7 +2464,7 @@ static int rtw_cfg80211_monitor_if_close(struct net_device *ndev)
 	return ret;
 }
 
-static int rtw_cfg80211_monitor_if_xmit_entry(struct sk_buff *skb, struct net_device *ndev)
+static netdev_tx_t rtw_cfg80211_monitor_if_xmit_entry(struct sk_buff *skb, struct net_device *ndev)
 {
 	int ret = 0;
 	int rtap_len;
@@ -2518,7 +2509,7 @@ static int rtw_cfg80211_monitor_if_xmit_entry(struct sk_buff *skb, struct net_de
 	dot11_hdr = (struct ieee80211_hdr *)skb->data;
 	frame_control = le16_to_cpu(dot11_hdr->frame_control);
 	/* Check if the QoS bit is set */
-	if ((frame_control & RTW_IEEE80211_FCTL_FTYPE) == RTW_IEEE80211_FTYPE_DATA) {
+	if ((frame_control & IEEE80211_FCTL_FTYPE) == IEEE80211_FTYPE_DATA) {
 		/* Check if this ia a Wireless Distribution System (WDS) frame
 		 * which has 4 MAC addresses
 		 */
@@ -2546,8 +2537,8 @@ static int rtw_cfg80211_monitor_if_xmit_entry(struct sk_buff *skb, struct net_de
 		return ret;
 
 	}
-	else if ((frame_control & (RTW_IEEE80211_FCTL_FTYPE|RTW_IEEE80211_FCTL_STYPE))
-		== (RTW_IEEE80211_FTYPE_MGMT|RTW_IEEE80211_STYPE_ACTION)
+	else if ((frame_control & (IEEE80211_FCTL_FTYPE|IEEE80211_FCTL_STYPE))
+		== (IEEE80211_FTYPE_MGMT|IEEE80211_STYPE_ACTION)
 	)
 	{
 		/* only for action frames */
@@ -2608,7 +2599,7 @@ static int rtw_cfg80211_monitor_if_xmit_entry(struct sk_buff *skb, struct net_de
 	}
 	else
 	{
-		DBG_8192C("frame_control = 0x%x\n", frame_control & (RTW_IEEE80211_FCTL_FTYPE|RTW_IEEE80211_FCTL_STYPE));
+		DBG_8192C("frame_control = 0x%x\n", frame_control & (IEEE80211_FCTL_FTYPE|IEEE80211_FCTL_STYPE));
 	}
 
 
@@ -2677,7 +2668,7 @@ static int rtw_cfg80211_add_monitor_if (struct adapter *padapter, char *name, st
 	pnpi->sizeof_priv = sizeof(struct adapter);
 
 	/*  wdev */
-	mon_wdev = (struct wireless_dev *)rtw_zmalloc(sizeof(struct wireless_dev));
+	mon_wdev = rtw_zmalloc(sizeof(struct wireless_dev));
 	if (!mon_wdev) {
 		DBG_871X(FUNC_ADPT_FMT" allocate mon_wdev fail\n", FUNC_ADPT_ARG(padapter));
 		ret = -ENOMEM;
@@ -3257,7 +3248,7 @@ static int cfg80211_rtw_sched_scan_start(struct wiphy *wiphy,
 
 	struct adapter *padapter = (struct adapter *)rtw_netdev_priv(dev);
 	struct	mlme_priv *pmlmepriv = &(padapter->mlmepriv);
-	u8 ret;
+	int ret;
 
 	if (padapter->bup == false) {
 		DBG_871X("%s: net device is down.\n", __func__);
@@ -3497,7 +3488,7 @@ int rtw_wdev_alloc(struct adapter *padapter, struct device *dev)
 	}
 
 	/*  wdev */
-	wdev = (struct wireless_dev *)rtw_zmalloc(sizeof(struct wireless_dev));
+	wdev = rtw_zmalloc(sizeof(struct wireless_dev));
 	if (!wdev) {
 		DBG_8192C("Couldn't allocate wireless device\n");
 		ret = -ENOMEM;

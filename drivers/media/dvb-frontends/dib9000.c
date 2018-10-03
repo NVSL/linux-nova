@@ -14,8 +14,8 @@
 #include <linux/i2c.h>
 #include <linux/mutex.h>
 
-#include "dvb_math.h"
-#include "dvb_frontend.h"
+#include <media/dvb_math.h>
+#include <media/dvb_frontend.h>
 
 #include "dib9000.h"
 #include "dibx000_common.h"
@@ -1714,12 +1714,12 @@ static u32 dib9000_i2c_func(struct i2c_adapter *adapter)
 	return I2C_FUNC_I2C;
 }
 
-static struct i2c_algorithm dib9000_tuner_algo = {
+static const struct i2c_algorithm dib9000_tuner_algo = {
 	.master_xfer = dib9000_tuner_xfer,
 	.functionality = dib9000_i2c_func,
 };
 
-static struct i2c_algorithm dib9000_component_bus_algo = {
+static const struct i2c_algorithm dib9000_component_bus_algo = {
 	.master_xfer = dib9000_fw_component_bus_xfer,
 	.functionality = dib9000_i2c_func,
 };
@@ -2381,12 +2381,12 @@ int dib9000_i2c_enumeration(struct i2c_adapter *i2c, int no_of_demods, u8 defaul
 	u8 new_addr = 0;
 	struct i2c_device client = {.i2c_adap = i2c };
 
-	client.i2c_write_buffer = kzalloc(4 * sizeof(u8), GFP_KERNEL);
+	client.i2c_write_buffer = kzalloc(4, GFP_KERNEL);
 	if (!client.i2c_write_buffer) {
 		dprintk("%s: not enough memory\n", __func__);
 		return -ENOMEM;
 	}
-	client.i2c_read_buffer = kzalloc(4 * sizeof(u8), GFP_KERNEL);
+	client.i2c_read_buffer = kzalloc(4, GFP_KERNEL);
 	if (!client.i2c_read_buffer) {
 		dprintk("%s: not enough memory\n", __func__);
 		ret = -ENOMEM;
@@ -2461,24 +2461,6 @@ int dib9000_set_slave_frontend(struct dvb_frontend *fe, struct dvb_frontend *fe_
 	return -ENOMEM;
 }
 EXPORT_SYMBOL(dib9000_set_slave_frontend);
-
-int dib9000_remove_slave_frontend(struct dvb_frontend *fe)
-{
-	struct dib9000_state *state = fe->demodulator_priv;
-	u8 index_frontend = 1;
-
-	while ((index_frontend < MAX_NUMBER_OF_FRONTENDS) && (state->fe[index_frontend] != NULL))
-		index_frontend++;
-	if (index_frontend != 1) {
-		dprintk("remove slave fe %p (index %i)\n", state->fe[index_frontend - 1], index_frontend - 1);
-		state->fe[index_frontend] = NULL;
-		return 0;
-	}
-
-	dprintk("no frontend to be removed\n");
-	return -ENODEV;
-}
-EXPORT_SYMBOL(dib9000_remove_slave_frontend);
 
 struct dvb_frontend *dib9000_get_slave_frontend(struct dvb_frontend *fe, int slave_index)
 {

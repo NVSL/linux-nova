@@ -294,7 +294,7 @@ mlxsw_i2c_write(struct device *dev, size_t in_mbox_size, u8 *in_mbox, int num,
 		write_tran.len = MLXSW_I2C_ADDR_WIDTH + chunk_size;
 		mlxsw_i2c_set_slave_addr(tran_buf, off);
 		memcpy(&tran_buf[MLXSW_I2C_ADDR_BUF_SIZE], in_mbox +
-		       chunk_size * i, chunk_size);
+		       MLXSW_I2C_BLK_MAX * i, chunk_size);
 
 		j = 0;
 		end = jiffies + timeout;
@@ -539,7 +539,8 @@ static int mlxsw_i2c_probe(struct i2c_client *client,
 	mlxsw_i2c->dev = &client->dev;
 
 	err = mlxsw_core_bus_device_register(&mlxsw_i2c->bus_info,
-					     &mlxsw_i2c_bus, mlxsw_i2c);
+					     &mlxsw_i2c_bus, mlxsw_i2c, false,
+					     NULL);
 	if (err) {
 		dev_err(&client->dev, "Fail to register core bus\n");
 		return err;
@@ -557,7 +558,7 @@ static int mlxsw_i2c_remove(struct i2c_client *client)
 {
 	struct mlxsw_i2c *mlxsw_i2c = i2c_get_clientdata(client);
 
-	mlxsw_core_bus_device_unregister(mlxsw_i2c->core);
+	mlxsw_core_bus_device_unregister(mlxsw_i2c->core, false);
 	mutex_destroy(&mlxsw_i2c->cmd.lock);
 
 	return 0;

@@ -362,12 +362,6 @@ struct clk *tegra_clk_register_pllxc(const char *name, const char *parent_name,
 			    struct tegra_clk_pll_params *pll_params,
 			    spinlock_t *lock);
 
-struct clk *tegra_clk_register_pllxc_tegra210(const char *name,
-			const char *parent_name, void __iomem *clk_base,
-			void __iomem *pmc, unsigned long flags,
-			struct tegra_clk_pll_params *pll_params,
-			spinlock_t *lock);
-
 struct clk *tegra_clk_register_pllm(const char *name, const char *parent_name,
 			   void __iomem *clk_base, void __iomem *pmc,
 			   unsigned long flags,
@@ -668,6 +662,9 @@ struct tegra_periph_init_data {
 			_clk_num, _gate_flags, _clk_id,\
 			NULL, 0, NULL)
 
+struct clk *tegra_clk_register_periph_data(void __iomem *clk_base,
+					   struct tegra_periph_init_data *init);
+
 /**
  * struct clk_super_mux - super clock
  *
@@ -766,7 +763,7 @@ struct clk **tegra_clk_init(void __iomem *clk_base, int num, int periph_banks);
 
 struct clk **tegra_lookup_dt_id(int clk_id, struct tegra_clk *tegra_clk);
 
-void tegra_add_of_provider(struct device_node *np);
+void tegra_add_of_provider(struct device_node *np, void *clk_src_onecell_get);
 void tegra_register_devclks(struct tegra_devclk *dev_clks, int num);
 
 void tegra_audio_clk_init(void __iomem *clk_base,
@@ -814,5 +811,12 @@ extern tegra_clk_apply_init_table_func tegra_clk_apply_init_table;
 int tegra_pll_wait_for_lock(struct tegra_clk_pll *pll);
 u16 tegra_pll_get_fixed_mdiv(struct clk_hw *hw, unsigned long input_rate);
 int tegra_pll_p_div_to_hw(struct tegra_clk_pll *pll, u8 p_div);
+
+/* Combined read fence with delay */
+#define fence_udelay(delay, reg)	\
+	do {				\
+		readl(reg);		\
+		udelay(delay);		\
+	} while (0)
 
 #endif /* TEGRA_CLK_H */

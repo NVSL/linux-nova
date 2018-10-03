@@ -1,7 +1,8 @@
+# SPDX-License-Identifier: GPL-2.0
 generic-y += barrier.h
 generic-y += bug.h
 generic-y += bugs.h
-generic-y += clkdev.h
+generic-y += compat.h
 generic-y += current.h
 generic-y += device.h
 generic-y += div64.h

@@ -27,7 +27,7 @@ static void nd_pfn_release(struct device *dev)
 	struct nd_region *nd_region = to_nd_region(dev->parent);
 	struct nd_pfn *nd_pfn = to_nd_pfn(dev);
 
-	dev_dbg(dev, "%s\n", __func__);
+	dev_dbg(dev, "trace\n");
 	nd_detach_ndns(&nd_pfn->dev, &nd_pfn->ndns);
 	ida_simple_remove(&nd_region->pfn_ida, nd_pfn->id);
 	kfree(nd_pfn->uuid);
@@ -94,8 +94,8 @@ static ssize_t mode_store(struct device *dev,
 		else
 			rc = -EINVAL;
 	}
-	dev_dbg(dev, "%s: result: %zd wrote: %s%s", __func__,
-			rc, buf, buf[len - 1] == '\n' ? "" : "\n");
+	dev_dbg(dev, "result: %zd wrote: %s%s", rc, buf,
+			buf[len - 1] == '\n' ? "" : "\n");
 	nvdimm_bus_unlock(dev);
 	device_unlock(dev);
 
@@ -111,24 +111,27 @@ static ssize_t align_show(struct device *dev,
 	return sprintf(buf, "%ld\n", nd_pfn->align);
 }
 
-static ssize_t __align_store(struct nd_pfn *nd_pfn, const char *buf)
+static const unsigned long *nd_pfn_supported_alignments(void)
 {
-	unsigned long val;
-	int rc;
+	/*
+	 * This needs to be a non-static variable because the *_SIZE
+	 * macros aren't always constants.
+	 */
+	const unsigned long supported_alignments[] = {
+		PAGE_SIZE,
+#ifdef CONFIG_TRANSPARENT_HUGEPAGE
+		HPAGE_PMD_SIZE,
+#ifdef CONFIG_HAVE_ARCH_TRANSPARENT_HUGEPAGE_PUD
+		HPAGE_PUD_SIZE,
+#endif
+#endif
+		0,
+	};
+	static unsigned long data[ARRAY_SIZE(supported_alignments)];
 
-	rc = kstrtoul(buf, 0, &val);
-	if (rc)
-		return rc;
+	memcpy(data, supported_alignments, sizeof(data));
 
-	if (!is_power_of_2(val) || val < PAGE_SIZE || val > SZ_1G)
-		return -EINVAL;
-
-	if (nd_pfn->dev.driver)
-		return -EBUSY;
-	else
-		nd_pfn->align = val;
-
-	return 0;
+	return data;
 }
 
 static ssize_t align_store(struct device *dev,
@@ -139,9 +142,10 @@ static ssize_t align_store(struct device *dev,
 
 	device_lock(dev);
 	nvdimm_bus_lock(dev);
-	rc = __align_store(nd_pfn, buf);
-	dev_dbg(dev, "%s: result: %zd wrote: %s%s", __func__,
-			rc, buf, buf[len - 1] == '\n' ? "" : "\n");
+	rc = nd_size_select_store(dev, buf, &nd_pfn->align,
+			nd_pfn_supported_alignments());
+	dev_dbg(dev, "result: %zd wrote: %s%s", rc, buf,
+			buf[len - 1] == '\n' ? "" : "\n");
 	nvdimm_bus_unlock(dev);
 	device_unlock(dev);
 
@@ -167,8 +171,8 @@ static ssize_t uuid_store(struct device *dev,
 
 	device_lock(dev);
 	rc = nd_uuid_store(dev, &nd_pfn->uuid, buf, len);
-	dev_dbg(dev, "%s: result: %zd wrote: %s%s", __func__,
-			rc, buf, buf[len - 1] == '\n' ? "" : "\n");
+	dev_dbg(dev, "result: %zd wrote: %s%s", rc, buf,
+			buf[len - 1] == '\n' ? "" : "\n");
 	device_unlock(dev);
 
 	return rc ? rc : len;
@@ -197,8 +201,8 @@ static ssize_t namespace_store(struct device *dev,
 	device_lock(dev);
 	nvdimm_bus_lock(dev);
 	rc = nd_namespace_store(dev, &nd_pfn->ndns, buf, len);
-	dev_dbg(dev, "%s: result: %zd wrote: %s%s", __func__,
-			rc, buf, buf[len - 1] == '\n' ? "" : "\n");
+	dev_dbg(dev, "result: %zd wrote: %s%s", rc, buf,
+			buf[len - 1] == '\n' ? "" : "\n");
 	nvdimm_bus_unlock(dev);
 	device_unlock(dev);
 
@@ -260,6 +264,13 @@ static ssize_t size_show(struct device *dev,
 }
 static DEVICE_ATTR_RO(size);
 
+static ssize_t supported_alignments_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	return nd_size_select_show(0, nd_pfn_supported_alignments(), buf);
+}
+static DEVICE_ATTR_RO(supported_alignments);
+
 static struct attribute *nd_pfn_attributes[] = {
 	&dev_attr_mode.attr,
 	&dev_attr_namespace.attr,
@@ -267,11 +278,20 @@ static struct attribute *nd_pfn_attributes[] = {
 	&dev_attr_align.attr,
 	&dev_attr_resource.attr,
 	&dev_attr_size.attr,
+	&dev_attr_supported_alignments.attr,
 	NULL,
 };
 
+static umode_t pfn_visible(struct kobject *kobj, struct attribute *a, int n)
+{
+	if (a == &dev_attr_resource.attr)
+		return 0400;
+	return a->mode;
+}
+
 struct attribute_group nd_pfn_attribute_group = {
 	.attrs = nd_pfn_attributes,
+	.is_visible = pfn_visible,
 };
 
 static const struct attribute_group *nd_pfn_attribute_groups[] = {
@@ -284,18 +304,18 @@ static const struct attribute_group *nd_pfn_attribute_groups[] = {
 struct device *nd_pfn_devinit(struct nd_pfn *nd_pfn,
 		struct nd_namespace_common *ndns)
 {
-	struct device *dev = &nd_pfn->dev;
+	struct device *dev;
 
 	if (!nd_pfn)
 		return NULL;
 
 	nd_pfn->mode = PFN_MODE_NONE;
-	nd_pfn->align = HPAGE_SIZE;
+	nd_pfn->align = PFN_DEFAULT_ALIGNMENT;
 	dev = &nd_pfn->dev;
 	device_initialize(&nd_pfn->dev);
 	if (ndns && !__nd_attach_ndns(&nd_pfn->dev, ndns, &nd_pfn->ndns)) {
-		dev_dbg(&ndns->dev, "%s failed, already claimed by %s\n",
-				__func__, dev_name(ndns->claim));
+		dev_dbg(&ndns->dev, "failed, already claimed by %s\n",
+				dev_name(ndns->claim));
 		put_device(dev);
 		return NULL;
 	}
@@ -344,9 +364,9 @@ struct device *nd_pfn_create(struct nd_region *nd_region)
 int nd_pfn_validate(struct nd_pfn *nd_pfn, const char *sig)
 {
 	u64 checksum, offset;
-	unsigned long align;
 	enum nd_pfn_mode mode;
 	struct nd_namespace_io *nsio;
+	unsigned long align, start_pad;
 	struct nd_pfn_sb *pfn_sb = nd_pfn->pfn_sb;
 	struct nd_namespace_common *ndns = nd_pfn->ndns;
 	const u8 *parent_uuid = nd_dev_to_uuid(&ndns->dev);
@@ -390,6 +410,7 @@ int nd_pfn_validate(struct nd_pfn *nd_pfn, const char *sig)
 
 	align = le32_to_cpu(pfn_sb->align);
 	offset = le64_to_cpu(pfn_sb->dataoff);
+	start_pad = le32_to_cpu(pfn_sb->start_pad);
 	if (align == 0)
 		align = 1UL << ilog2(offset);
 	mode = le32_to_cpu(pfn_sb->mode);
@@ -448,7 +469,7 @@ int nd_pfn_validate(struct nd_pfn *nd_pfn, const char *sig)
 		return -EBUSY;
 	}
 
-	if ((align && !IS_ALIGNED(offset, align))
+	if ((align && !IS_ALIGNED(nsio->res.start + offset + start_pad, align))
 			|| !IS_ALIGNED(offset, PAGE_SIZE)) {
 		dev_err(&nd_pfn->dev,
 				"bad offset: %#llx dax disabled align: %#lx\n",
@@ -489,8 +510,7 @@ int nd_pfn_probe(struct device *dev, struct nd_namespace_common *ndns)
 	nd_pfn = to_nd_pfn(pfn_dev);
 	nd_pfn->pfn_sb = pfn_sb;
 	rc = nd_pfn_validate(nd_pfn, PFN_SIG);
-	dev_dbg(dev, "%s: pfn: %s\n", __func__,
-			rc == 0 ? dev_name(pfn_dev) : "<none>");
+	dev_dbg(dev, "pfn: %s\n", rc == 0 ? dev_name(pfn_dev) : "<none>");
 	if (rc < 0) {
 		nd_detach_ndns(pfn_dev, &nd_pfn->ndns);
 		put_device(pfn_dev);
@@ -521,9 +541,10 @@ static unsigned long init_altmap_reserve(resource_size_t base)
 	return reserve;
 }
 
-static struct vmem_altmap *__nvdimm_setup_pfn(struct nd_pfn *nd_pfn,
-		struct resource *res, struct vmem_altmap *altmap)
+static int __nvdimm_setup_pfn(struct nd_pfn *nd_pfn, struct dev_pagemap *pgmap)
 {
+	struct resource *res = &pgmap->res;
+	struct vmem_altmap *altmap = &pgmap->altmap;
 	struct nd_pfn_sb *pfn_sb = nd_pfn->pfn_sb;
 	u64 offset = le64_to_cpu(pfn_sb->dataoff);
 	u32 start_pad = __le32_to_cpu(pfn_sb->start_pad);
@@ -542,9 +563,9 @@ static struct vmem_altmap *__nvdimm_setup_pfn(struct nd_pfn *nd_pfn,
 
 	if (nd_pfn->mode == PFN_MODE_RAM) {
 		if (offset < SZ_8K)
-			return ERR_PTR(-EINVAL);
+			return -EINVAL;
 		nd_pfn->npfns = le64_to_cpu(pfn_sb->npfns);
-		altmap = NULL;
+		pgmap->altmap_valid = false;
 	} else if (nd_pfn->mode == PFN_MODE_PMEM) {
 		nd_pfn->npfns = PFN_SECTION_ALIGN_UP((resource_size(res)
 					- offset) / PAGE_SIZE);
@@ -556,10 +577,17 @@ static struct vmem_altmap *__nvdimm_setup_pfn(struct nd_pfn *nd_pfn,
 		memcpy(altmap, &__altmap, sizeof(*altmap));
 		altmap->free = PHYS_PFN(offset - SZ_8K);
 		altmap->alloc = 0;
+		pgmap->altmap_valid = true;
 	} else
-		return ERR_PTR(-ENXIO);
+		return -ENXIO;
 
-	return altmap;
+	return 0;
+}
+
+static u64 phys_pmem_align_down(struct nd_pfn *nd_pfn, u64 phys)
+{
+	return min_t(u64, PHYS_SECTION_ALIGN_DOWN(phys),
+			ALIGN_DOWN(phys, nd_pfn->align));
 }
 
 static int nd_pfn_init(struct nd_pfn *nd_pfn)
@@ -617,13 +645,16 @@ static int nd_pfn_init(struct nd_pfn *nd_pfn)
 	start = nsio->res.start;
 	size = PHYS_SECTION_ALIGN_UP(start + size) - start;
 	if (region_intersects(start, size, IORESOURCE_SYSTEM_RAM,
-				IORES_DESC_NONE) == REGION_MIXED) {
+				IORES_DESC_NONE) == REGION_MIXED
+			|| !IS_ALIGNED(start + resource_size(&nsio->res),
+				nd_pfn->align)) {
 		size = resource_size(&nsio->res);
-		end_trunc = start + size - PHYS_SECTION_ALIGN_DOWN(start + size);
+		end_trunc = start + size - phys_pmem_align_down(nd_pfn,
+				start + size);
 	}
 
 	if (start_pad + end_trunc)
-		dev_info(&nd_pfn->dev, "%s section collision, truncate %d bytes\n",
+		dev_info(&nd_pfn->dev, "%s alignment collision, truncate %d bytes\n",
 				dev_name(&ndns->dev), start_pad + end_trunc);
 
 	/*
@@ -638,11 +669,12 @@ static int nd_pfn_init(struct nd_pfn *nd_pfn)
 			/ PAGE_SIZE);
 	if (nd_pfn->mode == PFN_MODE_PMEM) {
 		/*
-		 * vmemmap_populate_hugepages() allocates the memmap array in
-		 * HPAGE_SIZE chunks.
+		 * The altmap should be padded out to the block size used
+		 * when populating the vmemmap. This *should* be equal to
+		 * PMD_SIZE for most architectures.
 		 */
 		offset = ALIGN(start + SZ_8K + 64 * npfns + dax_label_reserve,
-				max(nd_pfn->align, HPAGE_SIZE)) - start;
+				max(nd_pfn->align, PMD_SIZE)) - start;
 	} else if (nd_pfn->mode == PFN_MODE_RAM)
 		offset = ALIGN(start + SZ_8K + dax_label_reserve,
 				nd_pfn->align) - start;
@@ -677,19 +709,18 @@ static int nd_pfn_init(struct nd_pfn *nd_pfn)
  * Determine the effective resource range and vmem_altmap from an nd_pfn
  * instance.
  */
-struct vmem_altmap *nvdimm_setup_pfn(struct nd_pfn *nd_pfn,
-		struct resource *res, struct vmem_altmap *altmap)
+int nvdimm_setup_pfn(struct nd_pfn *nd_pfn, struct dev_pagemap *pgmap)
 {
 	int rc;
 
 	if (!nd_pfn->uuid || !nd_pfn->ndns)
-		return ERR_PTR(-ENODEV);
+		return -ENODEV;
 
 	rc = nd_pfn_init(nd_pfn);
 	if (rc)
-		return ERR_PTR(rc);
+		return rc;
 
-	/* we need a valid pfn_sb before we can init a vmem_altmap */
-	return __nvdimm_setup_pfn(nd_pfn, res, altmap);
+	/* we need a valid pfn_sb before we can init a dev_pagemap */
+	return __nvdimm_setup_pfn(nd_pfn, pgmap);
 }
 EXPORT_SYMBOL_GPL(nvdimm_setup_pfn);

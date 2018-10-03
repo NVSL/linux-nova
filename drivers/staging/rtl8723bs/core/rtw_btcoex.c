@@ -1,15 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0
 /******************************************************************************
  *
  * Copyright(c) 2013 Realtek Corporation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
- * more details.
  *
  ******************************************************************************/
 #include <drv_types.h>
@@ -55,7 +47,7 @@ void rtw_btcoex_ConnectNotify(struct adapter *padapter, u8 action)
 
 void rtw_btcoex_MediaStatusNotify(struct adapter *padapter, u8 mediaStatus)
 {
-	if ((RT_MEDIA_CONNECT == mediaStatus)
+	if ((mediaStatus == RT_MEDIA_CONNECT)
 		&& (check_fwstate(&padapter->mlmepriv, WIFI_AP_STATE) == true)) {
 		rtw_hal_set_hwreg(padapter, HW_VAR_DL_RSVD_PAGE, NULL);
 	}
@@ -207,11 +199,11 @@ void rtw_btcoex_RejectApAggregatedPacket(struct adapter *padapter, u8 enable)
 	psta = rtw_get_stainfo(&padapter->stapriv, get_bssid(&padapter->mlmepriv));
 
 	if (true == enable) {
-		pmlmeinfo->bAcceptAddbaReq = false;
+		pmlmeinfo->accept_addba_req = false;
 		if (psta)
 			send_delba(padapter, 0, psta->hwaddr);
 	} else{
-		pmlmeinfo->bAcceptAddbaReq = true;
+		pmlmeinfo->accept_addba_req = true;
 	}
 }
 

@@ -449,8 +449,7 @@ ef4_alloc_channel(struct ef4_nic *efx, int i, struct ef4_channel *old_channel)
 
 	rx_queue = &channel->rx_queue;
 	rx_queue->efx = efx;
-	setup_timer(&rx_queue->slow_fill, ef4_rx_slow_fill,
-		    (unsigned long)rx_queue);
+	timer_setup(&rx_queue->slow_fill, ef4_rx_slow_fill, 0);
 
 	return channel;
 }
@@ -489,8 +488,7 @@ ef4_copy_channel(const struct ef4_channel *old_channel)
 	rx_queue = &channel->rx_queue;
 	rx_queue->buffer = NULL;
 	memset(&rx_queue->rxd, 0, sizeof(rx_queue->rxd));
-	setup_timer(&rx_queue->slow_fill, ef4_rx_slow_fill,
-		    (unsigned long)rx_queue);
+	timer_setup(&rx_queue->slow_fill, ef4_rx_slow_fill, 0);
 
 	return channel;
 }
@@ -1244,9 +1242,8 @@ static int ef4_init_io(struct ef4_nic *efx)
 
 	pci_set_master(pci_dev);
 
-	/* Set the PCI DMA mask.  Try all possibilities from our
-	 * genuine mask down to 32 bits, because some architectures
-	 * (e.g. x86_64 with iommu_sac_force set) will allow 40 bit
+	/* Set the PCI DMA mask.  Try all possibilities from our genuine mask
+	 * down to 32 bits, because some architectures will allow 40 bit
 	 * masks event though they reject 46 bit masks.
 	 */
 	while (dma_mask > 0x7fffffffUL) {
@@ -2545,7 +2542,7 @@ static void ef4_reset_work(struct work_struct *data)
 	unsigned long pending;
 	enum reset_type method;
 
-	pending = ACCESS_ONCE(efx->reset_pending);
+	pending = READ_ONCE(efx->reset_pending);
 	method = fls(pending) - 1;
 
 	if ((method == RESET_TYPE_RECOVER_OR_DISABLE ||
@@ -2605,7 +2602,7 @@ void ef4_schedule_reset(struct ef4_nic *efx, enum reset_type type)
 	/* If we're not READY then just leave the flags set as the cue
 	 * to abort probing or reschedule the reset later.
 	 */
-	if (ACCESS_ONCE(efx->state) != STATE_READY)
+	if (READ_ONCE(efx->state) != STATE_READY)
 		return;
 
 	queue_work(reset_workqueue, &efx->reset_work);

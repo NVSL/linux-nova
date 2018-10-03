@@ -52,6 +52,8 @@ extern "C" {
 #define DRM_AMDGPU_GEM_USERPTR		0x11
 #define DRM_AMDGPU_WAIT_FENCES		0x12
 #define DRM_AMDGPU_VM			0x13
+#define DRM_AMDGPU_FENCE_TO_HANDLE	0x14
+#define DRM_AMDGPU_SCHED		0x15
 
 #define DRM_IOCTL_AMDGPU_GEM_CREATE	DRM_IOWR(DRM_COMMAND_BASE + DRM_AMDGPU_GEM_CREATE, union drm_amdgpu_gem_create)
 #define DRM_IOCTL_AMDGPU_GEM_MMAP	DRM_IOWR(DRM_COMMAND_BASE + DRM_AMDGPU_GEM_MMAP, union drm_amdgpu_gem_mmap)
@@ -67,6 +69,8 @@ extern "C" {
 #define DRM_IOCTL_AMDGPU_GEM_USERPTR	DRM_IOWR(DRM_COMMAND_BASE + DRM_AMDGPU_GEM_USERPTR, struct drm_amdgpu_gem_userptr)
 #define DRM_IOCTL_AMDGPU_WAIT_FENCES	DRM_IOWR(DRM_COMMAND_BASE + DRM_AMDGPU_WAIT_FENCES, union drm_amdgpu_wait_fences)
 #define DRM_IOCTL_AMDGPU_VM		DRM_IOWR(DRM_COMMAND_BASE + DRM_AMDGPU_VM, union drm_amdgpu_vm)
+#define DRM_IOCTL_AMDGPU_FENCE_TO_HANDLE DRM_IOWR(DRM_COMMAND_BASE + DRM_AMDGPU_FENCE_TO_HANDLE, union drm_amdgpu_fence_to_handle)
+#define DRM_IOCTL_AMDGPU_SCHED		DRM_IOW(DRM_COMMAND_BASE + DRM_AMDGPU_SCHED, union drm_amdgpu_sched)
 
 #define AMDGPU_GEM_DOMAIN_CPU		0x1
 #define AMDGPU_GEM_DOMAIN_GTT		0x2
@@ -74,6 +78,12 @@ extern "C" {
 #define AMDGPU_GEM_DOMAIN_GDS		0x8
 #define AMDGPU_GEM_DOMAIN_GWS		0x10
 #define AMDGPU_GEM_DOMAIN_OA		0x20
+#define AMDGPU_GEM_DOMAIN_MASK		(AMDGPU_GEM_DOMAIN_CPU | \
+					 AMDGPU_GEM_DOMAIN_GTT | \
+					 AMDGPU_GEM_DOMAIN_VRAM | \
+					 AMDGPU_GEM_DOMAIN_GDS | \
+					 AMDGPU_GEM_DOMAIN_GWS | \
+					 AMDGPU_GEM_DOMAIN_OA)
 
 /* Flag that CPU access will be required for the case of VRAM domain */
 #define AMDGPU_GEM_CREATE_CPU_ACCESS_REQUIRED	(1 << 0)
@@ -87,6 +97,14 @@ extern "C" {
 #define AMDGPU_GEM_CREATE_SHADOW		(1 << 4)
 /* Flag that allocating the BO should use linear VRAM */
 #define AMDGPU_GEM_CREATE_VRAM_CONTIGUOUS	(1 << 5)
+/* Flag that BO is always valid in this VM */
+#define AMDGPU_GEM_CREATE_VM_ALWAYS_VALID	(1 << 6)
+/* Flag that BO sharing will be explicitly synchronized */
+#define AMDGPU_GEM_CREATE_EXPLICIT_SYNC		(1 << 7)
+/* Flag that indicates allocating MQD gart on GFX9, where the mtype
+ * for the second page onward should be set to NC.
+ */
+#define AMDGPU_GEM_CREATE_MQD_GFX9		(1 << 8)
 
 struct drm_amdgpu_gem_create_in  {
 	/** the requested memory size */
@@ -152,6 +170,7 @@ union drm_amdgpu_bo_list {
 #define AMDGPU_CTX_OP_ALLOC_CTX	1
 #define AMDGPU_CTX_OP_FREE_CTX	2
 #define AMDGPU_CTX_OP_QUERY_STATE	3
+#define AMDGPU_CTX_OP_QUERY_STATE2	4
 
 /* GPU reset status */
 #define AMDGPU_CTX_NO_RESET		0
@@ -162,13 +181,29 @@ union drm_amdgpu_bo_list {
 /* unknown cause */
 #define AMDGPU_CTX_UNKNOWN_RESET	3
 
+/* indicate gpu reset occured after ctx created */
+#define AMDGPU_CTX_QUERY2_FLAGS_RESET    (1<<0)
+/* indicate vram lost occured after ctx created */
+#define AMDGPU_CTX_QUERY2_FLAGS_VRAMLOST (1<<1)
+/* indicate some job from this context once cause gpu hang */
+#define AMDGPU_CTX_QUERY2_FLAGS_GUILTY   (1<<2)
+
+/* Context priority level */
+#define AMDGPU_CTX_PRIORITY_UNSET       -2048
+#define AMDGPU_CTX_PRIORITY_VERY_LOW    -1023
+#define AMDGPU_CTX_PRIORITY_LOW         -512
+#define AMDGPU_CTX_PRIORITY_NORMAL      0
+/* Selecting a priority above NORMAL requires CAP_SYS_NICE or DRM_MASTER */
+#define AMDGPU_CTX_PRIORITY_HIGH        512
+#define AMDGPU_CTX_PRIORITY_VERY_HIGH   1023
+
 struct drm_amdgpu_ctx_in {
 	/** AMDGPU_CTX_OP_* */
 	__u32	op;
 	/** For future use, no flags defined so far */
 	__u32	flags;
 	__u32	ctx_id;
-	__u32	_pad;
+	__s32	priority;
 };
 
 union drm_amdgpu_ctx_out {
@@ -210,6 +245,21 @@ struct drm_amdgpu_vm_out {
 union drm_amdgpu_vm {
 	struct drm_amdgpu_vm_in in;
 	struct drm_amdgpu_vm_out out;
+};
+
+/* sched ioctl */
+#define AMDGPU_SCHED_OP_PROCESS_PRIORITY_OVERRIDE	1
+
+struct drm_amdgpu_sched_in {
+	/* AMDGPU_SCHED_OP_* */
+	__u32	op;
+	__u32	fd;
+	__s32	priority;
+	__u32	flags;
+};
+
+union drm_amdgpu_sched {
+	struct drm_amdgpu_sched_in in;
 };
 
 /*
@@ -480,6 +530,10 @@ union drm_amdgpu_cs {
 /* Preempt flag, IB should set Pre_enb bit if PREEMPT flag detected */
 #define AMDGPU_IB_FLAG_PREEMPT (1<<2)
 
+/* The IB fence should do the L2 writeback but not invalidate any shader
+ * caches (L2/vL1/sL1/I$). */
+#define AMDGPU_IB_FLAG_TC_WB_NOT_INVALIDATE (1 << 3)
+
 struct drm_amdgpu_cs_chunk_ib {
 	__u32 _pad;
 	/** AMDGPU_IB_FLAG_* */
@@ -511,6 +565,21 @@ struct drm_amdgpu_cs_chunk_fence {
 
 struct drm_amdgpu_cs_chunk_sem {
 	__u32 handle;
+};
+
+#define AMDGPU_FENCE_TO_HANDLE_GET_SYNCOBJ	0
+#define AMDGPU_FENCE_TO_HANDLE_GET_SYNCOBJ_FD	1
+#define AMDGPU_FENCE_TO_HANDLE_GET_SYNC_FILE_FD	2
+
+union drm_amdgpu_fence_to_handle {
+	struct {
+		struct drm_amdgpu_fence fence;
+		__u32 what;
+		__u32 pad;
+	} in;
+	struct {
+		__u32 handle;
+	} out;
 };
 
 struct drm_amdgpu_cs_chunk_data {
@@ -563,6 +632,14 @@ struct drm_amdgpu_cs_chunk_data {
 	#define AMDGPU_INFO_FW_SOS		0x0c
 	/* Subquery id: Query PSP ASD firmware version */
 	#define AMDGPU_INFO_FW_ASD		0x0d
+	/* Subquery id: Query VCN firmware version */
+	#define AMDGPU_INFO_FW_VCN		0x0e
+	/* Subquery id: Query GFX RLC SRLC firmware version */
+	#define AMDGPU_INFO_FW_GFX_RLC_RESTORE_LIST_CNTL 0x0f
+	/* Subquery id: Query GFX RLC SRLG firmware version */
+	#define AMDGPU_INFO_FW_GFX_RLC_RESTORE_LIST_GPM_MEM 0x10
+	/* Subquery id: Query GFX RLC SRLS firmware version */
+	#define AMDGPU_INFO_FW_GFX_RLC_RESTORE_LIST_SRM_MEM 0x11
 /* number of bytes moved for TTM migration */
 #define AMDGPU_INFO_NUM_BYTES_MOVED		0x0f
 /* the used VRAM size */
@@ -609,8 +686,13 @@ struct drm_amdgpu_cs_chunk_data {
 	#define AMDGPU_INFO_SENSOR_VDDNB		0x6
 	/* Subquery id: Query graphics voltage */
 	#define AMDGPU_INFO_SENSOR_VDDGFX		0x7
+	/* Subquery id: Query GPU stable pstate shader clock */
+	#define AMDGPU_INFO_SENSOR_STABLE_PSTATE_GFX_SCLK		0x8
+	/* Subquery id: Query GPU stable pstate memory clock */
+	#define AMDGPU_INFO_SENSOR_STABLE_PSTATE_GFX_MCLK		0x9
 /* Number of VRAM page faults on CPU access. */
 #define AMDGPU_INFO_NUM_VRAM_CPU_PAGE_FAULTS	0x1E
+#define AMDGPU_INFO_VRAM_LOST_COUNTER		0x1F
 
 #define AMDGPU_INFO_MMR_SE_INDEX_SHIFT	0
 #define AMDGPU_INFO_MMR_SE_INDEX_MASK	0xff
@@ -746,6 +828,7 @@ struct drm_amdgpu_info_firmware {
 #define AMDGPU_VRAM_TYPE_GDDR5 5
 #define AMDGPU_VRAM_TYPE_HBM   6
 #define AMDGPU_VRAM_TYPE_DDR3  7
+#define AMDGPU_VRAM_TYPE_DDR4  8
 
 struct drm_amdgpu_info_device {
 	/** PCI Device ID */
@@ -821,6 +904,10 @@ struct drm_amdgpu_info_device {
 	__u32 _pad1;
 	/* always on cu bitmap */
 	__u32 cu_ao_bitmap[4][4];
+	/** Starting high virtual address for UMDs. */
+	__u64 high_va_offset;
+	/** The maximum high virtual address */
+	__u64 high_va_max;
 };
 
 struct drm_amdgpu_info_hw_ip {

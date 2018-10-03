@@ -1,7 +1,7 @@
 /*******************************************************************
  * This file is part of the Emulex Linux Device Driver for         *
  * Fibre Channel Host Bus Adapters.                                *
- * Copyright (C) 2017 Broadcom. All Rights Reserved. The term      *
+ * Copyright (C) 2017-2018 Broadcom. All Rights Reserved. The term *
  * “Broadcom” refers to Broadcom Limited and/or its subsidiaries.  *
  * Copyright (C) 2004-2016 Emulex.  All rights reserved.           *
  * EMULEX and SLI are trademarks of Emulex.                        *
@@ -23,6 +23,7 @@
 
 #include <scsi/scsi_host.h>
 #include <linux/ktime.h>
+#include <linux/workqueue.h>
 
 #if defined(CONFIG_DEBUG_FS) && !defined(CONFIG_SCSI_LPFC_DEBUG_FS)
 #define CONFIG_SCSI_LPFC_DEBUG_FS
@@ -54,16 +55,15 @@ struct lpfc_sli2_slim;
 #define LPFC_MAX_SG_SLI4_SEG_CNT_DIF 128 /* sg element count per scsi cmnd */
 #define LPFC_MAX_SG_SEG_CNT_DIF 512	/* sg element count per scsi cmnd  */
 #define LPFC_MAX_SG_SEG_CNT	4096	/* sg element count per scsi cmnd */
+#define LPFC_MIN_SG_SEG_CNT	32	/* sg element count per scsi cmnd */
 #define LPFC_MAX_SGL_SEG_CNT	512	/* SGL element count per scsi cmnd */
 #define LPFC_MAX_BPL_SEG_CNT	4096	/* BPL element count per scsi cmnd */
-#define LPFC_MAX_NVME_SEG_CNT	128	/* max SGL element cnt per NVME cmnd */
+#define LPFC_MAX_NVME_SEG_CNT	256	/* max SGL element cnt per NVME cmnd */
 
 #define LPFC_MAX_SGE_SIZE       0x80000000 /* Maximum data allowed in a SGE */
 #define LPFC_IOCB_LIST_CNT	2250	/* list of IOCBs for fast-path usage. */
 #define LPFC_Q_RAMP_UP_INTERVAL 120     /* lun q_depth ramp up interval */
 #define LPFC_VNAME_LEN		100	/* vport symbolic name length */
-#define LPFC_TGTQ_INTERVAL	40000	/* Min amount of time between tgt
-					   queue depth change in millisecs */
 #define LPFC_TGTQ_RAMPUP_PCENT	5	/* Target queue rampup in percentage */
 #define LPFC_MIN_TGT_QDEPTH	10
 #define LPFC_MAX_TGT_QDEPTH	0xFFFF
@@ -542,16 +542,10 @@ struct unsol_rcv_ct_ctx {
 #define LPFC_USER_LINK_SPEED_10G	10	/* 10 Gigabaud */
 #define LPFC_USER_LINK_SPEED_16G	16	/* 16 Gigabaud */
 #define LPFC_USER_LINK_SPEED_32G	32	/* 32 Gigabaud */
-#define LPFC_USER_LINK_SPEED_MAX	LPFC_USER_LINK_SPEED_32G
-#define LPFC_USER_LINK_SPEED_BITMAP  ((1ULL << LPFC_USER_LINK_SPEED_32G) | \
-				     (1 << LPFC_USER_LINK_SPEED_16G) | \
-				     (1 << LPFC_USER_LINK_SPEED_10G) | \
-				     (1 << LPFC_USER_LINK_SPEED_8G) | \
-				     (1 << LPFC_USER_LINK_SPEED_4G) | \
-				     (1 << LPFC_USER_LINK_SPEED_2G) | \
-				     (1 << LPFC_USER_LINK_SPEED_1G) | \
-				     (1 << LPFC_USER_LINK_SPEED_AUTO))
-#define LPFC_LINK_SPEED_STRING "0, 1, 2, 4, 8, 10, 16, 32"
+#define LPFC_USER_LINK_SPEED_64G	64	/* 64 Gigabaud */
+#define LPFC_USER_LINK_SPEED_MAX	LPFC_USER_LINK_SPEED_64G
+
+#define LPFC_LINK_SPEED_STRING "0, 1, 2, 4, 8, 10, 16, 32, 64"
 
 enum nemb_type {
 	nemb_mse = 1,
@@ -653,6 +647,8 @@ struct lpfc_hba {
 	/* SLI4 specific HBA data structure */
 	struct lpfc_sli4_hba sli4_hba;
 
+	struct workqueue_struct *wq;
+
 	struct lpfc_sli sli;
 	uint8_t pci_dev_grp;	/* lpfc PCI dev group: 0x0, 0x1, 0x2,... */
 	uint32_t sli_rev;		/* SLI2, SLI3, or SLI4 */
@@ -702,7 +698,6 @@ struct lpfc_hba {
 					 * capability
 					 */
 #define HBA_NVME_IOQ_FLUSH      0x80000 /* NVME IO queues flushed. */
-#define NVME_XRI_ABORT_EVENT	0x100000
 
 	uint32_t fcp_ring_in_use; /* When polling test if intr-hndlr active*/
 	struct lpfc_dmabuf slim2p;
@@ -733,7 +728,6 @@ struct lpfc_hba {
 	uint32_t fc_rttov;	/* R_T_TOV timer value */
 	uint32_t fc_altov;	/* AL_TOV timer value */
 	uint32_t fc_crtov;	/* C_R_TOV timer value */
-	uint32_t fc_citov;	/* C_I_TOV timer value */
 
 	struct serv_parm fc_fabparam;	/* fabric service parameters buffer */
 	uint8_t alpa_map[128];	/* AL_PA map from READ_LA */
@@ -757,6 +751,8 @@ struct lpfc_hba {
 #define LPFC_NVMET_MAX_PORTS	32
 	uint8_t  mds_diags_support;
 	uint32_t initial_imax;
+	uint8_t  bbcredit_support;
+	uint8_t  enab_exp_wqcq_pages;
 
 	/* HBA Config Parameters */
 	uint32_t cfg_ack0;
@@ -784,7 +780,9 @@ struct lpfc_hba {
 	uint32_t cfg_fcp_io_channel;
 	uint32_t cfg_suppress_rsp;
 	uint32_t cfg_nvme_oas;
+	uint32_t cfg_nvme_embed_cmd;
 	uint32_t cfg_nvme_io_channel;
+	uint32_t cfg_nvmet_mrq_post;
 	uint32_t cfg_nvmet_mrq;
 	uint32_t cfg_enable_nvmet;
 	uint32_t cfg_nvme_enable_fb;
@@ -836,10 +834,14 @@ struct lpfc_hba {
 	uint32_t cfg_enable_SmartSAN;
 	uint32_t cfg_enable_mds_diags;
 	uint32_t cfg_enable_fc4_type;
+	uint32_t cfg_enable_bbcr;	/* Enable BB Credit Recovery */
+	uint32_t cfg_enable_dpp;	/* Enable Direct Packet Push */
 	uint32_t cfg_xri_split;
 #define LPFC_ENABLE_FCP  1
 #define LPFC_ENABLE_NVME 2
 #define LPFC_ENABLE_BOTH 3
+	uint32_t nvme_embed_pbde;
+	uint32_t fcp_embed_pbde;
 	uint32_t io_channel_irqs;	/* number of irqs for io channels */
 	struct nvmet_fc_target_port *targetport;
 	lpfc_vpd_t vpd;		/* vital product data */
@@ -919,12 +921,6 @@ struct lpfc_hba {
 	atomic_t fc4ScsiOutputRequests;
 	atomic_t fc4ScsiControlRequests;
 	atomic_t fc4ScsiIoCmpls;
-	atomic_t fc4NvmeInputRequests;
-	atomic_t fc4NvmeOutputRequests;
-	atomic_t fc4NvmeControlRequests;
-	atomic_t fc4NvmeIoCmpls;
-	atomic_t fc4NvmeLsRequests;
-	atomic_t fc4NvmeLsCmpls;
 
 	uint64_t bg_guard_err_cnt;
 	uint64_t bg_apptag_err_cnt;
@@ -941,19 +937,21 @@ struct lpfc_hba {
 	struct list_head lpfc_nvme_buf_list_get;
 	struct list_head lpfc_nvme_buf_list_put;
 	uint32_t total_nvme_bufs;
+	uint32_t get_nvme_bufs;
+	uint32_t put_nvme_bufs;
 	struct list_head lpfc_iocb_list;
 	uint32_t total_iocbq_bufs;
 	struct list_head active_rrq_list;
 	spinlock_t hbalock;
 
-	/* pci_mem_pools */
-	struct pci_pool *lpfc_sg_dma_buf_pool;
-	struct pci_pool *lpfc_mbuf_pool;
-	struct pci_pool *lpfc_hrb_pool;	/* header receive buffer pool */
-	struct pci_pool *lpfc_drb_pool; /* data receive buffer pool */
-	struct pci_pool *lpfc_nvmet_drb_pool; /* data receive buffer pool */
-	struct pci_pool *lpfc_hbq_pool;	/* SLI3 hbq buffer pool */
-	struct pci_pool *txrdy_payload_pool;
+	/* dma_mem_pools */
+	struct dma_pool *lpfc_sg_dma_buf_pool;
+	struct dma_pool *lpfc_mbuf_pool;
+	struct dma_pool *lpfc_hrb_pool;	/* header receive buffer pool */
+	struct dma_pool *lpfc_drb_pool; /* data receive buffer pool */
+	struct dma_pool *lpfc_nvmet_drb_pool; /* data receive buffer pool */
+	struct dma_pool *lpfc_hbq_pool;	/* SLI3 hbq buffer pool */
+	struct dma_pool *txrdy_payload_pool;
 	struct lpfc_dma_pool lpfc_mbuf_safety_pool;
 
 	mempool_t *mbox_mem_pool;

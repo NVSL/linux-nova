@@ -223,7 +223,6 @@ static irqreturn_t k3_dma_int_handler(int irq, void *dev_id)
 			if (c && (tc1 & BIT(i))) {
 				spin_lock_irqsave(&c->vc.lock, flags);
 				vchan_cookie_complete(&p->ds_run->vd);
-				WARN_ON_ONCE(p->ds_done);
 				p->ds_done = p->ds_run;
 				p->ds_run = NULL;
 				spin_unlock_irqrestore(&c->vc.lock, flags);
@@ -274,13 +273,14 @@ static int k3_dma_start_txd(struct k3_dma_chan *c)
 		 */
 		list_del(&ds->vd.node);
 
-		WARN_ON_ONCE(c->phy->ds_run);
-		WARN_ON_ONCE(c->phy->ds_done);
 		c->phy->ds_run = ds;
+		c->phy->ds_done = NULL;
 		/* start dma */
 		k3_dma_set_desc(c->phy, &ds->desc_hw[0]);
 		return 0;
 	}
+	c->phy->ds_run = NULL;
+	c->phy->ds_done = NULL;
 	return -EAGAIN;
 }
 
@@ -719,19 +719,22 @@ static int k3_dma_terminate_all(struct dma_chan *chan)
 		c->phy = NULL;
 		p->vchan = NULL;
 		if (p->ds_run) {
-			k3_dma_free_desc(&p->ds_run->vd);
+			vchan_terminate_vdesc(&p->ds_run->vd);
 			p->ds_run = NULL;
 		}
-		if (p->ds_done) {
-			k3_dma_free_desc(&p->ds_done->vd);
-			p->ds_done = NULL;
-		}
-
+		p->ds_done = NULL;
 	}
 	spin_unlock_irqrestore(&c->vc.lock, flags);
 	vchan_dma_desc_free_list(&c->vc, &head);
 
 	return 0;
+}
+
+static void k3_dma_synchronize(struct dma_chan *chan)
+{
+	struct k3_dma_chan *c = to_k3_chan(chan);
+
+	vchan_synchronize(&c->vc);
 }
 
 static int k3_dma_transfer_pause(struct dma_chan *chan)
@@ -791,7 +794,7 @@ static struct dma_chan *k3_of_dma_simple_xlate(struct of_phandle_args *dma_spec,
 	struct k3_dma_dev *d = ofdma->of_dma_data;
 	unsigned int request = dma_spec->args[0];
 
-	if (request > d->dma_requests)
+	if (request >= d->dma_requests)
 		return NULL;
 
 	return dma_get_slave_channel(&(d->chans[request].vc.chan));
@@ -845,8 +848,8 @@ static int k3_dma_probe(struct platform_device *op)
 		return -ENOMEM;
 
 	/* init phy channel */
-	d->phy = devm_kzalloc(&op->dev,
-		d->dma_channels * sizeof(struct k3_dma_phy), GFP_KERNEL);
+	d->phy = devm_kcalloc(&op->dev,
+		d->dma_channels, sizeof(struct k3_dma_phy), GFP_KERNEL);
 	if (d->phy == NULL)
 		return -ENOMEM;
 
@@ -872,11 +875,12 @@ static int k3_dma_probe(struct platform_device *op)
 	d->slave.device_pause = k3_dma_transfer_pause;
 	d->slave.device_resume = k3_dma_transfer_resume;
 	d->slave.device_terminate_all = k3_dma_terminate_all;
+	d->slave.device_synchronize = k3_dma_synchronize;
 	d->slave.copy_align = DMAENGINE_ALIGN_8_BYTES;
 
 	/* init virtual channel */
-	d->chans = devm_kzalloc(&op->dev,
-		d->dma_requests * sizeof(struct k3_dma_chan), GFP_KERNEL);
+	d->chans = devm_kcalloc(&op->dev,
+		d->dma_requests, sizeof(struct k3_dma_chan), GFP_KERNEL);
 	if (d->chans == NULL)
 		return -ENOMEM;
 

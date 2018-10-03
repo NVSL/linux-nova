@@ -273,8 +273,7 @@ static void __init asm9260_acc_init(struct device_node *np)
 	int n;
 	u32 accuracy = 0;
 
-	clk_data = kzalloc(sizeof(*clk_data) +
-			   sizeof(*clk_data->hws) * MAX_CLKS, GFP_KERNEL);
+	clk_data = kzalloc(struct_size(clk_data, hws, MAX_CLKS), GFP_KERNEL);
 	if (!clk_data)
 		return;
 	clk_data->num = MAX_CLKS;
@@ -338,8 +337,8 @@ static void __init asm9260_acc_init(struct device_node *np)
 		if (!IS_ERR(hws[n]))
 			continue;
 
-		pr_err("%s: Unable to register leaf clock %d\n",
-				np->full_name, n);
+		pr_err("%pOF: Unable to register leaf clock %d\n",
+				np, n);
 		goto fail;
 	}
 

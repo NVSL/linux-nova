@@ -329,7 +329,7 @@ static int pulse8_setup(struct pulse8 *pulse8, struct serio *serio,
 	u8 cmd[2];
 	int err;
 	struct tm tm;
-	time_t date;
+	time64_t date;
 
 	pulse8->vers = 0;
 
@@ -349,7 +349,7 @@ static int pulse8_setup(struct pulse8 *pulse8, struct serio *serio,
 	if (err)
 		return err;
 	date = (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3];
-	time_to_tm(date, 0, &tm);
+	time64_to_tm(date, 0, &tm);
 	dev_info(pulse8->dev, "Firmware build date %04ld.%02d.%02d %02d:%02d:%02d\n",
 		 tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
 		 tm.tm_hour, tm.tm_min, tm.tm_sec);
@@ -642,8 +642,7 @@ static const struct cec_adap_ops pulse8_cec_adap_ops = {
 
 static int pulse8_connect(struct serio *serio, struct serio_driver *drv)
 {
-	u32 caps = CEC_CAP_TRANSMIT | CEC_CAP_LOG_ADDRS | CEC_CAP_PHYS_ADDR |
-		CEC_CAP_PASSTHROUGH | CEC_CAP_RC | CEC_CAP_MONITOR_ALL;
+	u32 caps = CEC_CAP_DEFAULTS | CEC_CAP_PHYS_ADDR | CEC_CAP_MONITOR_ALL;
 	struct pulse8 *pulse8;
 	int err = -ENOMEM;
 	struct cec_log_addrs log_addrs = {};
@@ -656,7 +655,7 @@ static int pulse8_connect(struct serio *serio, struct serio_driver *drv)
 
 	pulse8->serio = serio;
 	pulse8->adap = cec_allocate_adapter(&pulse8_cec_adap_ops, pulse8,
-		"HDMI CEC", caps, 1);
+					    dev_name(&serio->dev), caps, 1);
 	err = PTR_ERR_OR_ZERO(pulse8->adap);
 	if (err < 0)
 		goto free_device;
@@ -732,7 +731,7 @@ static void pulse8_ping_eeprom_work_handler(struct work_struct *work)
 	mutex_unlock(&pulse8->config_lock);
 }
 
-static struct serio_device_id pulse8_serio_ids[] = {
+static const struct serio_device_id pulse8_serio_ids[] = {
 	{
 		.type	= SERIO_RS232,
 		.proto	= SERIO_PULSE8_CEC,

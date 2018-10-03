@@ -53,13 +53,6 @@ static int submit_bh_wbc(int op, int op_flags, struct buffer_head *bh,
 
 #define BH_ENTRY(list) list_entry((list), struct buffer_head, b_assoc_buffers)
 
-void init_buffer(struct buffer_head *bh, bh_end_io_t *handler, void *private)
-{
-	bh->b_end_io = handler;
-	bh->b_private = private;
-}
-EXPORT_SYMBOL(init_buffer);
-
 inline void touch_buffer(struct buffer_head *bh)
 {
 	trace_block_touch_buffer(bh);
@@ -192,10 +185,9 @@ EXPORT_SYMBOL(end_buffer_write_sync);
  * we get exclusion from try_to_free_buffers with the blockdev mapping's
  * private_lock.
  *
- * Hack idea: for the blockdev mapping, i_bufferlist_lock contention
+ * Hack idea: for the blockdev mapping, private_lock contention
  * may be quite high.  This code could TryLock the page, and if that
- * succeeds, there is no need to take private_lock. (But if
- * private_lock is contended then so is mapping->tree_lock).
+ * succeeds, there is no need to take private_lock.
  */
 static struct buffer_head *
 __find_get_block_slow(struct block_device *bdev, sector_t block)
@@ -250,27 +242,6 @@ out_unlock:
 	put_page(page);
 out:
 	return ret;
-}
-
-/*
- * Kick the writeback threads then try to free up some ZONE_NORMAL memory.
- */
-static void free_more_memory(void)
-{
-	struct zoneref *z;
-	int nid;
-
-	wakeup_flusher_threads(1024, WB_REASON_FREE_MORE_MEM);
-	yield();
-
-	for_each_online_node(nid) {
-
-		z = first_zones_zonelist(node_zonelist(nid, GFP_NOFS),
-						gfp_zone(GFP_NOFS), NULL);
-		if (z->zone)
-			try_to_free_pages(node_zonelist(nid, GFP_NOFS), 0,
-						GFP_NOFS, NULL);
-	}
 }
 
 /*
@@ -523,33 +494,10 @@ repeat:
 	return err;
 }
 
-static void do_thaw_one(struct super_block *sb, void *unused)
+void emergency_thaw_bdev(struct super_block *sb)
 {
 	while (sb->s_bdev && !thaw_bdev(sb->s_bdev, sb))
 		printk(KERN_WARNING "Emergency Thaw on %pg\n", sb->s_bdev);
-}
-
-static void do_thaw_all(struct work_struct *work)
-{
-	iterate_supers(do_thaw_one, NULL);
-	kfree(work);
-	printk(KERN_WARNING "Emergency Thaw complete\n");
-}
-
-/**
- * emergency_thaw_all -- forcibly thaw every frozen filesystem
- *
- * Used for emergency unfreeze of all filesystems via SysRq
- */
-void emergency_thaw_all(void)
-{
-	struct work_struct *work;
-
-	work = kmalloc(sizeof(*work), GFP_ATOMIC);
-	if (work) {
-		INIT_WORK(work, do_thaw_all);
-		schedule_work(work);
-	}
 }
 
 /**
@@ -622,20 +570,21 @@ EXPORT_SYMBOL(mark_buffer_dirty_inode);
  *
  * The caller must hold lock_page_memcg().
  */
-static void __set_page_dirty(struct page *page, struct address_space *mapping,
+void __set_page_dirty(struct page *page, struct address_space *mapping,
 			     int warn)
 {
 	unsigned long flags;
 
-	spin_lock_irqsave(&mapping->tree_lock, flags);
+	xa_lock_irqsave(&mapping->i_pages, flags);
 	if (page->mapping) {	/* Race with truncate? */
 		WARN_ON_ONCE(warn && !PageUptodate(page));
 		account_page_dirtied(page, mapping);
-		radix_tree_tag_set(&mapping->page_tree,
+		radix_tree_tag_set(&mapping->i_pages,
 				page_index(page), PAGECACHE_TAG_DIRTY);
 	}
-	spin_unlock_irqrestore(&mapping->tree_lock, flags);
+	xa_unlock_irqrestore(&mapping->i_pages, flags);
 }
+EXPORT_SYMBOL_GPL(__set_page_dirty);
 
 /*
  * Add a page to the dirty page list.
@@ -861,16 +810,19 @@ int remove_inode_buffers(struct inode *inode)
  * which may not fail from ordinary buffer allocations.
  */
 struct buffer_head *alloc_page_buffers(struct page *page, unsigned long size,
-		int retry)
+		bool retry)
 {
 	struct buffer_head *bh, *head;
+	gfp_t gfp = GFP_NOFS;
 	long offset;
 
-try_again:
+	if (retry)
+		gfp |= __GFP_NOFAIL;
+
 	head = NULL;
 	offset = PAGE_SIZE;
 	while ((offset -= size) >= 0) {
-		bh = alloc_buffer_head(GFP_NOFS);
+		bh = alloc_buffer_head(gfp);
 		if (!bh)
 			goto no_grow;
 
@@ -896,23 +848,7 @@ no_grow:
 		} while (head);
 	}
 
-	/*
-	 * Return failure for non-async IO requests.  Async IO requests
-	 * are not allowed to fail, so we have to wait until buffer heads
-	 * become available.  But we don't want tasks sleeping with 
-	 * partially complete buffers, so all were released above.
-	 */
-	if (!retry)
-		return NULL;
-
-	/* We're _really_ low on memory. Now we just
-	 * wait for old buffer heads to become free due to
-	 * finishing IO.  Since this is an async request and
-	 * the reserve list is empty, we're sure there are 
-	 * async buffer heads in use.
-	 */
-	free_more_memory();
-	goto try_again;
+	return NULL;
 }
 EXPORT_SYMBOL_GPL(alloc_page_buffers);
 
@@ -956,7 +892,8 @@ init_page_buffers(struct page *page, struct block_device *bdev,
 
 	do {
 		if (!buffer_mapped(bh)) {
-			init_buffer(bh, NULL, NULL);
+			bh->b_end_io = NULL;
+			bh->b_private = NULL;
 			bh->b_bdev = bdev;
 			bh->b_blocknr = block;
 			if (uptodate)
@@ -1001,8 +938,6 @@ grow_dev_page(struct block_device *bdev, sector_t block,
 	gfp_mask |= __GFP_NOFAIL;
 
 	page = find_or_create_page(inode->i_mapping, index, gfp_mask);
-	if (!page)
-		return ret;
 
 	BUG_ON(!PageLocked(page));
 
@@ -1021,9 +956,7 @@ grow_dev_page(struct block_device *bdev, sector_t block,
 	/*
 	 * Allocate some buffers for this page
 	 */
-	bh = alloc_page_buffers(page, size, 0);
-	if (!bh)
-		goto failed;
+	bh = alloc_page_buffers(page, size, true);
 
 	/*
 	 * Link the page to the buffers and initialise them.  Take the
@@ -1103,8 +1036,6 @@ __getblk_slow(struct block_device *bdev, sector_t block,
 		ret = grow_buffers(bdev, block, size, gfp);
 		if (ret < 0)
 			return NULL;
-		if (ret == 0)
-			free_more_memory();
 	}
 }
 
@@ -1141,7 +1072,7 @@ __getblk_slow(struct block_device *bdev, sector_t block,
  * inode list.
  *
  * mark_buffer_dirty() is atomic.  It takes bh->b_page->mapping->private_lock,
- * mapping->tree_lock and mapping->host->i_lock.
+ * i_pages lock and mapping->host->i_lock.
  */
 void mark_buffer_dirty(struct buffer_head *bh)
 {
@@ -1557,7 +1488,7 @@ void block_invalidatepage(struct page *page, unsigned int offset,
 	 * The get_block cached value has been unconditionally invalidated,
 	 * so real IO is not possible anymore.
 	 */
-	if (offset == 0)
+	if (length == PAGE_SIZE)
 		try_to_release_page(page, 0);
 out:
 	return;
@@ -1575,7 +1506,7 @@ void create_empty_buffers(struct page *page,
 {
 	struct buffer_head *bh, *head, *tail;
 
-	head = alloc_page_buffers(page, blocksize, 1);
+	head = alloc_page_buffers(page, blocksize, true);
 	bh = head;
 	do {
 		bh->b_state |= b_state;
@@ -1627,20 +1558,17 @@ void clean_bdev_aliases(struct block_device *bdev, sector_t block, sector_t len)
 	struct pagevec pvec;
 	pgoff_t index = block >> (PAGE_SHIFT - bd_inode->i_blkbits);
 	pgoff_t end;
-	int i;
+	int i, count;
 	struct buffer_head *bh;
 	struct buffer_head *head;
 
 	end = (block + len - 1) >> (PAGE_SHIFT - bd_inode->i_blkbits);
-	pagevec_init(&pvec, 0);
-	while (index <= end && pagevec_lookup(&pvec, bd_mapping, index,
-			min(end - index, (pgoff_t)PAGEVEC_SIZE - 1) + 1)) {
-		for (i = 0; i < pagevec_count(&pvec); i++) {
+	pagevec_init(&pvec);
+	while (pagevec_lookup_range(&pvec, bd_mapping, &index, end)) {
+		count = pagevec_count(&pvec);
+		for (i = 0; i < count; i++) {
 			struct page *page = pvec.pages[i];
 
-			index = page->index;
-			if (index > end)
-				break;
 			if (!page_has_buffers(page))
 				continue;
 			/*
@@ -1670,7 +1598,9 @@ unlock_page:
 		}
 		pagevec_release(&pvec);
 		cond_resched();
-		index++;
+		/* End of range already reached? */
+		if (index > end || !index)
+			break;
 	}
 }
 EXPORT_SYMBOL(clean_bdev_aliases);
@@ -1693,7 +1623,8 @@ static struct buffer_head *create_page_buffers(struct page *page, struct inode *
 	BUG_ON(!PageLocked(page));
 
 	if (!page_has_buffers(page))
-		create_empty_buffers(page, 1 << ACCESS_ONCE(inode->i_blkbits), b_state);
+		create_empty_buffers(page, 1 << READ_ONCE(inode->i_blkbits),
+				     b_state);
 	return page_buffers(page);
 }
 
@@ -1979,8 +1910,8 @@ iomap_to_bh(struct inode *inode, sector_t block, struct buffer_head *bh,
 	case IOMAP_MAPPED:
 		if (offset >= i_size_read(inode))
 			set_buffer_new(bh);
-		bh->b_blocknr = (iomap->blkno >> (inode->i_blkbits - 9)) +
-				((offset - iomap->offset) >> inode->i_blkbits);
+		bh->b_blocknr = (iomap->addr + offset - iomap->offset) >>
+				inode->i_blkbits;
 		set_buffer_mapped(bh);
 		break;
 	}
@@ -2639,7 +2570,7 @@ int nobh_write_begin(struct address_space *mapping,
 	 * Be careful: the buffer linked list is a NULL terminated one, rather
 	 * than the circular one we're used to.
 	 */
-	head = alloc_page_buffers(page, blocksize, 0);
+	head = alloc_page_buffers(page, blocksize, false);
 	if (!head) {
 		ret = -ENOMEM;
 		goto out_release;
@@ -3054,10 +2985,18 @@ static void end_bio_bh_io_sync(struct bio *bio)
 void guard_bio_eod(int op, struct bio *bio)
 {
 	sector_t maxsector;
-	struct bio_vec *bvec = &bio->bi_io_vec[bio->bi_vcnt - 1];
+	struct bio_vec *bvec = bio_last_bvec_all(bio);
 	unsigned truncated_bytes;
+	struct hd_struct *part;
 
-	maxsector = i_size_read(bio->bi_bdev->bd_inode) >> 9;
+	rcu_read_lock();
+	part = __disk_get_part(bio->bi_disk, bio->bi_partno);
+	if (part)
+		maxsector = part_nr_sects_read(part);
+	else
+		maxsector = get_capacity(bio->bi_disk);
+	rcu_read_unlock();
+
 	if (!maxsector)
 		return;
 
@@ -3116,7 +3055,7 @@ static int submit_bh_wbc(int op, int op_flags, struct buffer_head *bh,
 	}
 
 	bio->bi_iter.bi_sector = bh->b_blocknr * (bh->b_size >> 9);
-	bio->bi_bdev = bh->b_bdev;
+	bio_set_dev(bio, bh->b_bdev);
 	bio->bi_write_hint = write_hint;
 
 	bio_add_page(bio, bh->b_page, bh->b_size, bh_offset(bh));
@@ -3487,130 +3426,6 @@ int bh_submit_read(struct buffer_head *bh)
 	return -EIO;
 }
 EXPORT_SYMBOL(bh_submit_read);
-
-/*
- * Seek for SEEK_DATA / SEEK_HOLE within @page, starting at @lastoff.
- *
- * Returns the offset within the file on success, and -ENOENT otherwise.
- */
-static loff_t
-page_seek_hole_data(struct page *page, loff_t lastoff, int whence)
-{
-	loff_t offset = page_offset(page);
-	struct buffer_head *bh, *head;
-	bool seek_data = whence == SEEK_DATA;
-
-	if (lastoff < offset)
-		lastoff = offset;
-
-	bh = head = page_buffers(page);
-	do {
-		offset += bh->b_size;
-		if (lastoff >= offset)
-			continue;
-
-		/*
-		 * Unwritten extents that have data in the page cache covering
-		 * them can be identified by the BH_Unwritten state flag.
-		 * Pages with multiple buffers might have a mix of holes, data
-		 * and unwritten extents - any buffer with valid data in it
-		 * should have BH_Uptodate flag set on it.
-		 */
-
-		if ((buffer_unwritten(bh) || buffer_uptodate(bh)) == seek_data)
-			return lastoff;
-
-		lastoff = offset;
-	} while ((bh = bh->b_this_page) != head);
-	return -ENOENT;
-}
-
-/*
- * Seek for SEEK_DATA / SEEK_HOLE in the page cache.
- *
- * Within unwritten extents, the page cache determines which parts are holes
- * and which are data: unwritten and uptodate buffer heads count as data;
- * everything else counts as a hole.
- *
- * Returns the resulting offset on successs, and -ENOENT otherwise.
- */
-loff_t
-page_cache_seek_hole_data(struct inode *inode, loff_t offset, loff_t length,
-			  int whence)
-{
-	pgoff_t index = offset >> PAGE_SHIFT;
-	pgoff_t end = DIV_ROUND_UP(offset + length, PAGE_SIZE);
-	loff_t lastoff = offset;
-	struct pagevec pvec;
-
-	if (length <= 0)
-		return -ENOENT;
-
-	pagevec_init(&pvec, 0);
-
-	do {
-		unsigned want, nr_pages, i;
-
-		want = min_t(unsigned, end - index, PAGEVEC_SIZE);
-		nr_pages = pagevec_lookup(&pvec, inode->i_mapping, index, want);
-		if (nr_pages == 0)
-			break;
-
-		for (i = 0; i < nr_pages; i++) {
-			struct page *page = pvec.pages[i];
-
-			/*
-			 * At this point, the page may be truncated or
-			 * invalidated (changing page->mapping to NULL), or
-			 * even swizzled back from swapper_space to tmpfs file
-			 * mapping.  However, page->index will not change
-			 * because we have a reference on the page.
-                         *
-			 * If current page offset is beyond where we've ended,
-			 * we've found a hole.
-                         */
-			if (whence == SEEK_HOLE &&
-			    lastoff < page_offset(page))
-				goto check_range;
-
-			/* Searching done if the page index is out of range. */
-			if (page->index >= end)
-				goto not_found;
-
-			lock_page(page);
-			if (likely(page->mapping == inode->i_mapping) &&
-			    page_has_buffers(page)) {
-				lastoff = page_seek_hole_data(page, lastoff, whence);
-				if (lastoff >= 0) {
-					unlock_page(page);
-					goto check_range;
-				}
-			}
-			unlock_page(page);
-			lastoff = page_offset(page) + PAGE_SIZE;
-		}
-
-		/* Searching done if fewer pages returned than wanted. */
-		if (nr_pages < want)
-			break;
-
-		index = pvec.pages[i - 1]->index + 1;
-		pagevec_release(&pvec);
-	} while (index < end);
-
-	/* When no page at lastoff and we are not done, we found a hole. */
-	if (whence != SEEK_HOLE)
-		goto not_found;
-
-check_range:
-	if (lastoff < offset + length)
-		goto out;
-not_found:
-	lastoff = -ENOENT;
-out:
-	pagevec_release(&pvec);
-	return lastoff;
-}
 
 void __init buffer_init(void)
 {

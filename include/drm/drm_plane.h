@@ -26,6 +26,7 @@
 #include <linux/list.h>
 #include <linux/ctype.h>
 #include <drm/drm_mode_object.h>
+#include <drm/drm_color_mgmt.h>
 
 struct drm_crtc;
 struct drm_printer;
@@ -42,6 +43,7 @@ struct drm_modeset_acquire_ctx;
  *	plane (in 16.16)
  * @src_w: width of visible portion of plane (in 16.16)
  * @src_h: height of visible portion of plane (in 16.16)
+ * @alpha: opacity of the plane
  * @rotation: rotation of the plane
  * @zpos: priority of the given plane on crtc (optional)
  *	Note that multiple active planes on the same crtc can have an identical
@@ -50,8 +52,8 @@ struct drm_modeset_acquire_ctx;
  *	plane with a lower ID.
  * @normalized_zpos: normalized value of zpos: unique, range from 0 to N-1
  *	where N is the number of active planes for given crtc. Note that
- *	the driver must call drm_atomic_normalize_zpos() to update this before
- *	it can be trusted.
+ *	the driver must set drm_mode_config.normalize_zpos or call
+ *	drm_atomic_normalize_zpos() to update this before it can be trusted.
  * @src: clipped source coordinates of the plane (in 16.16)
  * @dst: clipped destination coordinates of the plane
  * @state: backpointer to global drm_atomic_state
@@ -78,8 +80,15 @@ struct drm_plane_state {
 	/**
 	 * @fence:
 	 *
-	 * Optional fence to wait for before scanning out @fb. Do not write this
-	 * directly, use drm_atomic_set_fence_for_plane()
+	 * Optional fence to wait for before scanning out @fb. The core atomic
+	 * code will set this when userspace is using explicit fencing. Do not
+	 * write this directly for a driver's implicit fence, use
+	 * drm_atomic_set_fence_for_plane() to ensure that an explicit fence is
+	 * preserved.
+	 *
+	 * Drivers should store any implicit fence in this from their
+	 * &drm_plane_helper.prepare_fb callback. See drm_gem_fb_prepare_fb()
+	 * and drm_gem_fb_simple_display_pipe_prepare_fb() for suitable helpers.
 	 */
 	struct dma_fence *fence;
 
@@ -105,12 +114,29 @@ struct drm_plane_state {
 	uint32_t src_x, src_y;
 	uint32_t src_h, src_w;
 
+	/* Plane opacity */
+	u16 alpha;
+
 	/* Plane rotation */
 	unsigned int rotation;
 
 	/* Plane zpos */
 	unsigned int zpos;
 	unsigned int normalized_zpos;
+
+	/**
+	 * @color_encoding:
+	 *
+	 * Color encoding for non RGB formats
+	 */
+	enum drm_color_encoding color_encoding;
+
+	/**
+	 * @color_range:
+	 *
+	 * Color range for non RGB formats
+	 */
+	enum drm_color_range color_range;
 
 	/* Clipped coordinates */
 	struct drm_rect src, dst;
@@ -122,6 +148,14 @@ struct drm_plane_state {
 	 * crtc!=NULL, due to clipping.
 	 */
 	bool visible;
+
+	/**
+	 * @commit: Tracks the pending commit to prevent use-after-free conditions,
+	 * and for async plane updates.
+	 *
+	 * May be NULL.
+	 */
+	struct drm_crtc_commit *commit;
 
 	struct drm_atomic_state *state;
 };
@@ -233,11 +267,9 @@ struct drm_plane_funcs {
 	 * This is the legacy entry point to update a property attached to the
 	 * plane.
 	 *
-	 * Drivers implementing atomic modeset should use
-	 * drm_atomic_helper_plane_set_property() to implement this hook.
-	 *
 	 * This callback is optional if the driver does not support any legacy
-	 * driver-private properties.
+	 * driver-private properties. For atomic drivers it is not used because
+	 * property handling is done entirely in the DRM core.
 	 *
 	 * RETURNS:
 	 *
@@ -392,6 +424,22 @@ struct drm_plane_funcs {
 	 */
 	void (*atomic_print_state)(struct drm_printer *p,
 				   const struct drm_plane_state *state);
+
+	/**
+	 * @format_mod_supported:
+	 *
+	 * This optional hook is used for the DRM to determine if the given
+	 * format/modifier combination is valid for the plane. This allows the
+	 * DRM to generate the correct format bitmask (which formats apply to
+	 * which modifier).
+	 *
+	 * Returns:
+	 *
+	 * True if the given modifier is valid for that format on the plane.
+	 * False otherwise.
+	 */
+	bool (*format_mod_supported)(struct drm_plane *plane, uint32_t format,
+				     uint64_t modifier);
 };
 
 /**
@@ -452,13 +500,14 @@ enum drm_plane_type {
  * @format_types: array of formats supported by this plane
  * @format_count: number of formats supported
  * @format_default: driver hasn't supplied supported formats for the plane
- * @crtc: currently bound CRTC
- * @fb: currently bound fb
+ * @modifiers: array of modifiers supported by this plane
+ * @modifier_count: number of modifiers supported
  * @old_fb: Temporary tracking of the old fb while a modeset is ongoing. Used by
  * 	drm_mode_set_config_internal() to implement correct refcounting.
  * @funcs: helper functions
  * @properties: property tracking for this plane
  * @type: type of plane (overlay, primary, cursor)
+ * @alpha_property: alpha property for this plane
  * @zpos_property: zpos property for this plane
  * @rotation_property: rotation property for this plane
  * @helper_private: mid-layer private data
@@ -487,7 +536,20 @@ struct drm_plane {
 	unsigned int format_count;
 	bool format_default;
 
+	uint64_t *modifiers;
+	unsigned int modifier_count;
+
+	/**
+	 * @crtc: Currently bound CRTC, only really meaningful for non-atomic
+	 * drivers.  Atomic drivers should instead check &drm_plane_state.crtc.
+	 */
 	struct drm_crtc *crtc;
+
+	/**
+	 * @fb: Currently bound framebuffer, only really meaningful for
+	 * non-atomic drivers.  Atomic drivers should instead check
+	 * &drm_plane_state.fb.
+	 */
 	struct drm_framebuffer *fb;
 
 	struct drm_framebuffer *old_fb;
@@ -514,26 +576,45 @@ struct drm_plane {
 	 * This is protected by @mutex. Note that nonblocking atomic commits
 	 * access the current plane state without taking locks. Either by going
 	 * through the &struct drm_atomic_state pointers, see
-	 * for_each_plane_in_state(), for_each_oldnew_plane_in_state(),
-	 * for_each_old_plane_in_state() and for_each_new_plane_in_state(). Or
-	 * through careful ordering of atomic commit operations as implemented
-	 * in the atomic helpers, see &struct drm_crtc_commit.
+	 * for_each_oldnew_plane_in_state(), for_each_old_plane_in_state() and
+	 * for_each_new_plane_in_state(). Or through careful ordering of atomic
+	 * commit operations as implemented in the atomic helpers, see
+	 * &struct drm_crtc_commit.
 	 */
 	struct drm_plane_state *state;
 
+	struct drm_property *alpha_property;
 	struct drm_property *zpos_property;
 	struct drm_property *rotation_property;
+
+	/**
+	 * @color_encoding_property:
+	 *
+	 * Optional "COLOR_ENCODING" enum property for specifying
+	 * color encoding for non RGB formats.
+	 * See drm_plane_create_color_properties().
+	 */
+	struct drm_property *color_encoding_property;
+	/**
+	 * @color_range_property:
+	 *
+	 * Optional "COLOR_RANGE" enum property for specifying
+	 * color range for non RGB formats.
+	 * See drm_plane_create_color_properties().
+	 */
+	struct drm_property *color_range_property;
 };
 
 #define obj_to_plane(x) container_of(x, struct drm_plane, base)
 
-__printf(8, 9)
+__printf(9, 10)
 int drm_universal_plane_init(struct drm_device *dev,
 			     struct drm_plane *plane,
 			     uint32_t possible_crtcs,
 			     const struct drm_plane_funcs *funcs,
 			     const uint32_t *formats,
 			     unsigned int format_count,
+			     const uint64_t *format_modifiers,
 			     enum drm_plane_type type,
 			     const char *name, ...);
 int drm_plane_init(struct drm_device *dev,
@@ -565,16 +646,18 @@ int drm_mode_plane_set_obj_prop(struct drm_plane *plane,
 /**
  * drm_plane_find - find a &drm_plane
  * @dev: DRM device
+ * @file_priv: drm file to check for lease against.
  * @id: plane id
  *
  * Returns the plane with @id, NULL if it doesn't exist. Simple wrapper around
  * drm_mode_object_find().
  */
 static inline struct drm_plane *drm_plane_find(struct drm_device *dev,
+		struct drm_file *file_priv,
 		uint32_t id)
 {
 	struct drm_mode_object *mo;
-	mo = drm_mode_object_find(dev, id, DRM_MODE_OBJECT_PLANE);
+	mo = drm_mode_object_find(dev, file_priv, id, DRM_MODE_OBJECT_PLANE);
 	return mo ? obj_to_plane(mo) : NULL;
 }
 

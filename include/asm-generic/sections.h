@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _ASM_GENERIC_SECTIONS_H_
 #define _ASM_GENERIC_SECTIONS_H_
 
@@ -27,6 +28,9 @@
  *	__kprobes_text_start, __kprobes_text_end
  *	__entry_text_start, __entry_text_end
  *	__ctors_start, __ctors_end
+ *	__irqentry_text_start, __irqentry_text_end
+ *	__softirqentry_text_start, __softirqentry_text_end
+ *	__start_opd, __end_opd
  */
 extern char _text[], _stext[], _etext[];
 extern char _data[], _sdata[], _edata[];
@@ -39,16 +43,22 @@ extern char __per_cpu_load[], __per_cpu_start[], __per_cpu_end[];
 extern char __kprobes_text_start[], __kprobes_text_end[];
 extern char __entry_text_start[], __entry_text_end[];
 extern char __start_rodata[], __end_rodata[];
+extern char __irqentry_text_start[], __irqentry_text_end[];
+extern char __softirqentry_text_start[], __softirqentry_text_end[];
+extern char __start_once[], __end_once[];
 
 /* Start and end of .ctors section - used for constructor calls. */
 extern char __ctors_start[], __ctors_end[];
 
+/* Start and end of .opd section - used for function descriptors. */
+extern char __start_opd[], __end_opd[];
+
 extern __visible const void __nosave_begin, __nosave_end;
 
-/* function descriptor handling (if any).  Override
- * in asm/sections.h */
+/* Function descriptor handling (if any).  Override in asm/sections.h */
 #ifndef dereference_function_descriptor
 #define dereference_function_descriptor(p) (p)
+#define dereference_kernel_function_descriptor(p) (p)
 #endif
 
 /* random extra sections (if any).  Override

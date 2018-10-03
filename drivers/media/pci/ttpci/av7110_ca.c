@@ -119,7 +119,7 @@ static void ci_ll_release(struct dvb_ringbuffer *cirbuf, struct dvb_ringbuffer *
 }
 
 static int ci_ll_reset(struct dvb_ringbuffer *cibuf, struct file *file,
-		       int slots, ca_slot_info_t *slot)
+		       int slots, struct ca_slot_info *slot)
 {
 	int i;
 	int len = 0;
@@ -223,13 +223,13 @@ static int dvb_ca_open(struct inode *inode, struct file *file)
 	return 0;
 }
 
-static unsigned int dvb_ca_poll (struct file *file, poll_table *wait)
+static __poll_t dvb_ca_poll (struct file *file, poll_table *wait)
 {
 	struct dvb_device *dvbdev = file->private_data;
 	struct av7110 *av7110 = dvbdev->priv;
 	struct dvb_ringbuffer *rbuf = &av7110->ci_rbuffer;
 	struct dvb_ringbuffer *wbuf = &av7110->ci_wbuffer;
-	unsigned int mask = 0;
+	__poll_t mask = 0;
 
 	dprintk(8, "av7110:%p\n",av7110);
 
@@ -237,10 +237,10 @@ static unsigned int dvb_ca_poll (struct file *file, poll_table *wait)
 	poll_wait(file, &wbuf->queue, wait);
 
 	if (!dvb_ringbuffer_empty(rbuf))
-		mask |= (POLLIN | POLLRDNORM);
+		mask |= (EPOLLIN | EPOLLRDNORM);
 
 	if (dvb_ringbuffer_free(wbuf) > 1024)
-		mask |= (POLLOUT | POLLWRNORM);
+		mask |= (EPOLLOUT | EPOLLWRNORM);
 
 	return mask;
 }
@@ -264,7 +264,7 @@ static int dvb_ca_ioctl(struct file *file, unsigned int cmd, void *parg)
 		break;
 	case CA_GET_CAP:
 	{
-		ca_caps_t cap;
+		struct ca_caps cap;
 
 		cap.slot_num = 2;
 		cap.slot_type = (FW_CI_LL_SUPPORT(av7110->arm_app) ?
@@ -277,7 +277,7 @@ static int dvb_ca_ioctl(struct file *file, unsigned int cmd, void *parg)
 
 	case CA_GET_SLOT_INFO:
 	{
-		ca_slot_info_t *info=(ca_slot_info_t *)parg;
+		struct ca_slot_info *info=(struct ca_slot_info *)parg;
 
 		if (info->num < 0 || info->num > 1) {
 			mutex_unlock(&av7110->ioctl_mutex);
@@ -286,7 +286,7 @@ static int dvb_ca_ioctl(struct file *file, unsigned int cmd, void *parg)
 		av7110->ci_slot[info->num].num = info->num;
 		av7110->ci_slot[info->num].type = FW_CI_LL_SUPPORT(av7110->arm_app) ?
 							CA_CI_LINK : CA_CI;
-		memcpy(info, &av7110->ci_slot[info->num], sizeof(ca_slot_info_t));
+		memcpy(info, &av7110->ci_slot[info->num], sizeof(struct ca_slot_info));
 		break;
 	}
 
@@ -298,7 +298,7 @@ static int dvb_ca_ioctl(struct file *file, unsigned int cmd, void *parg)
 
 	case CA_GET_DESCR_INFO:
 	{
-		ca_descr_info_t info;
+		struct ca_descr_info info;
 
 		info.num = 16;
 		info.type = CA_ECD;
@@ -308,7 +308,7 @@ static int dvb_ca_ioctl(struct file *file, unsigned int cmd, void *parg)
 
 	case CA_SET_DESCR:
 	{
-		ca_descr_t *descr = (ca_descr_t*) parg;
+		struct ca_descr *descr = (struct ca_descr*) parg;
 
 		if (descr->index >= 16 || descr->parity > 1) {
 			mutex_unlock(&av7110->ioctl_mutex);

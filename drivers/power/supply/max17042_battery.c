@@ -22,6 +22,7 @@
  * This driver is based on max17040_battery.c
  */
 
+#include <linux/acpi.h>
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/slab.h>
@@ -122,6 +123,8 @@ static int max17042_get_temperature(struct max17042_chip *chip, int *temp)
 static int max17042_get_status(struct max17042_chip *chip, int *status)
 {
 	int ret, charge_full, charge_now;
+	int avg_current;
+	u32 data;
 
 	ret = power_supply_am_i_supplied(chip->battery);
 	if (ret < 0) {
@@ -151,10 +154,31 @@ static int max17042_get_status(struct max17042_chip *chip, int *status)
 	if (ret < 0)
 		return ret;
 
-	if ((charge_full - charge_now) <= MAX17042_FULL_THRESHOLD)
+	if ((charge_full - charge_now) <= MAX17042_FULL_THRESHOLD) {
 		*status = POWER_SUPPLY_STATUS_FULL;
-	else
+		return 0;
+	}
+
+	/*
+	 * Even though we are supplied, we may still be discharging if the
+	 * supply is e.g. only delivering 5V 0.5A. Check current if available.
+	 */
+	if (!chip->pdata->enable_current_sense) {
 		*status = POWER_SUPPLY_STATUS_CHARGING;
+		return 0;
+	}
+
+	ret = regmap_read(chip->regmap, MAX17042_AvgCurrent, &data);
+	if (ret < 0)
+		return ret;
+
+	avg_current = sign_extend32(data, 15);
+	avg_current *= 1562500 / chip->pdata->r_sns;
+
+	if (avg_current > 0)
+		*status = POWER_SUPPLY_STATUS_CHARGING;
+	else
+		*status = POWER_SUPPLY_STATUS_DISCHARGING;
 
 	return 0;
 }
@@ -862,15 +886,12 @@ static void max17042_init_worker(struct work_struct *work)
 
 #ifdef CONFIG_OF
 static struct max17042_platform_data *
-max17042_get_pdata(struct max17042_chip *chip)
+max17042_get_of_pdata(struct max17042_chip *chip)
 {
 	struct device *dev = &chip->client->dev;
 	struct device_node *np = dev->of_node;
 	u32 prop;
 	struct max17042_platform_data *pdata;
-
-	if (!np)
-		return dev->platform_data;
 
 	pdata = devm_kzalloc(dev, sizeof(*pdata), GFP_KERNEL);
 	if (!pdata)
@@ -896,7 +917,8 @@ max17042_get_pdata(struct max17042_chip *chip)
 
 	return pdata;
 }
-#else
+#endif
+
 static struct max17042_reg_data max17047_default_pdata_init_regs[] = {
 	/*
 	 * Some firmwares do not set FullSOCThr, Enable End-of-Charge Detection
@@ -906,14 +928,11 @@ static struct max17042_reg_data max17047_default_pdata_init_regs[] = {
 };
 
 static struct max17042_platform_data *
-max17042_get_pdata(struct max17042_chip *chip)
+max17042_get_default_pdata(struct max17042_chip *chip)
 {
 	struct device *dev = &chip->client->dev;
 	struct max17042_platform_data *pdata;
 	int ret, misc_cfg;
-
-	if (dev->platform_data)
-		return dev->platform_data;
 
 	/*
 	 * The MAX17047 gets used on x86 where we might not have pdata, assume
@@ -947,7 +966,21 @@ max17042_get_pdata(struct max17042_chip *chip)
 
 	return pdata;
 }
+
+static struct max17042_platform_data *
+max17042_get_pdata(struct max17042_chip *chip)
+{
+	struct device *dev = &chip->client->dev;
+
+#ifdef CONFIG_OF
+	if (dev->of_node)
+		return max17042_get_of_pdata(chip);
 #endif
+	if (dev->platform_data)
+		return dev->platform_data;
+
+	return max17042_get_default_pdata(chip);
+}
 
 static const struct regmap_config max17042_regmap_config = {
 	.reg_bits = 8,
@@ -982,6 +1015,8 @@ static int max17042_probe(struct i2c_client *client,
 	struct i2c_adapter *adapter = to_i2c_adapter(client->dev.parent);
 	const struct power_supply_desc *max17042_desc = &max17042_psy_desc;
 	struct power_supply_config psy_cfg = {};
+	const struct acpi_device_id *acpi_id = NULL;
+	struct device *dev = &client->dev;
 	struct max17042_chip *chip;
 	int ret;
 	int i;
@@ -995,7 +1030,15 @@ static int max17042_probe(struct i2c_client *client,
 		return -ENOMEM;
 
 	chip->client = client;
-	chip->chip_type = id->driver_data;
+	if (id) {
+		chip->chip_type = id->driver_data;
+	} else {
+		acpi_id = acpi_match_device(dev->driver->acpi_match_table, dev);
+		if (!acpi_id)
+			return -ENODEV;
+
+		chip->chip_type = acpi_id->driver_data;
+	}
 	chip->regmap = devm_regmap_init_i2c(client, &max17042_regmap_config);
 	if (IS_ERR(chip->regmap)) {
 		dev_err(&client->dev, "Failed to initialize regmap\n");
@@ -1010,6 +1053,7 @@ static int max17042_probe(struct i2c_client *client,
 
 	i2c_set_clientdata(client, chip);
 	psy_cfg.drv_data = chip;
+	psy_cfg.of_node = dev->of_node;
 
 	/* When current is not measured,
 	 * CURRENT_NOW and CURRENT_AVG properties should be invisible. */
@@ -1039,11 +1083,18 @@ static int max17042_probe(struct i2c_client *client,
 	}
 
 	if (client->irq) {
+		unsigned int flags = IRQF_TRIGGER_FALLING | IRQF_ONESHOT;
+
+		/*
+		 * On ACPI systems the IRQ may be handled by ACPI-event code,
+		 * so we need to share (if the ACPI code is willing to share).
+		 */
+		if (acpi_id)
+			flags |= IRQF_SHARED | IRQF_PROBE_SHARED;
+
 		ret = devm_request_threaded_irq(&client->dev, client->irq,
 						NULL,
-						max17042_thread_handler,
-						IRQF_TRIGGER_FALLING |
-						IRQF_ONESHOT,
+						max17042_thread_handler, flags,
 						chip->battery->desc->name,
 						chip);
 		if (!ret) {
@@ -1053,10 +1104,13 @@ static int max17042_probe(struct i2c_client *client,
 			max17042_set_soc_threshold(chip, 1);
 		} else {
 			client->irq = 0;
-			dev_err(&client->dev, "%s(): cannot get IRQ\n",
-				__func__);
+			if (ret != -EBUSY)
+				dev_err(&client->dev, "Failed to get IRQ\n");
 		}
 	}
+	/* Not able to update the charge threshold when exceeded? -> disable */
+	if (!client->irq)
+		regmap_write(chip->regmap, MAX17042_SALRT_Th, 0xff00);
 
 	regmap_read(chip->regmap, MAX17042_STATUS, &val);
 	if (val & STATUS_POR_BIT) {
@@ -1104,6 +1158,14 @@ static int max17042_resume(struct device *dev)
 static SIMPLE_DEV_PM_OPS(max17042_pm_ops, max17042_suspend,
 			max17042_resume);
 
+#ifdef CONFIG_ACPI
+static const struct acpi_device_id max17042_acpi_match[] = {
+	{ "MAX17047", MAXIM_DEVICE_TYPE_MAX17047 },
+	{ }
+};
+MODULE_DEVICE_TABLE(acpi, max17042_acpi_match);
+#endif
+
 #ifdef CONFIG_OF
 static const struct of_device_id max17042_dt_match[] = {
 	{ .compatible = "maxim,max17042" },
@@ -1125,6 +1187,7 @@ MODULE_DEVICE_TABLE(i2c, max17042_id);
 static struct i2c_driver max17042_i2c_driver = {
 	.driver	= {
 		.name	= "max17042",
+		.acpi_match_table = ACPI_PTR(max17042_acpi_match),
 		.of_match_table = of_match_ptr(max17042_dt_match),
 		.pm	= &max17042_pm_ops,
 	},

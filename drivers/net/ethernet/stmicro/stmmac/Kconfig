@@ -33,7 +33,7 @@ config DWMAC_DWC_QOS_ETH
 	select PHYLIB
 	select CRC32
 	select MII
-	depends on OF && HAS_DMA
+	depends on OF && COMMON_CLK && HAS_DMA
 	help
 	  Support for chips using the snps,dwc-qos-ethernet.txt DT binding.
 
@@ -45,10 +45,19 @@ config DWMAC_GENERIC
 	  platform specific code to function or is using platform
 	  data for setup.
 
+config DWMAC_ANARION
+	tristate "Adaptrum Anarion GMAC support"
+	default ARC
+	depends on OF && (ARC || COMPILE_TEST)
+	help
+	  Support for Adaptrum Anarion GMAC Ethernet controller.
+
+	  This selects the Anarion SoC glue layer support for the stmmac driver.
+
 config DWMAC_IPQ806X
 	tristate "QCA IPQ806x DWMAC support"
 	default ARCH_QCOM
-	depends on OF && (ARCH_QCOM || COMPILE_TEST)
+	depends on OF && COMMON_CLK && (ARCH_QCOM || COMPILE_TEST)
 	select MFD_SYSCON
 	help
 	  Support for QCA IPQ806X DWMAC Ethernet.
@@ -91,7 +100,7 @@ config DWMAC_OXNAS
 config DWMAC_ROCKCHIP
 	tristate "Rockchip dwmac support"
 	default ARCH_ROCKCHIP
-	depends on OF && (ARCH_ROCKCHIP || COMPILE_TEST)
+	depends on OF && COMMON_CLK && (ARCH_ROCKCHIP || COMPILE_TEST)
 	select MFD_SYSCON
 	help
 	  Support for Ethernet controller on Rockchip RK3288 SoC.
@@ -102,7 +111,7 @@ config DWMAC_ROCKCHIP
 config DWMAC_SOCFPGA
 	tristate "SOCFPGA dwmac support"
 	default ARCH_SOCFPGA
-	depends on OF && (ARCH_SOCFPGA || COMPILE_TEST)
+	depends on OF && (ARCH_SOCFPGA || ARCH_STRATIX10 || COMPILE_TEST)
 	select MFD_SYSCON
 	help
 	  Support for ethernet controller on Altera SOCFPGA
@@ -114,7 +123,7 @@ config DWMAC_SOCFPGA
 config DWMAC_STI
 	tristate "STi GMAC support"
 	default ARCH_STI
-	depends on OF && (ARCH_STI || COMPILE_TEST)
+	depends on OF && COMMON_CLK && (ARCH_STI || COMPILE_TEST)
 	select MFD_SYSCON
 	---help---
 	  Support for ethernet controller on STi SOCs.
@@ -138,7 +147,7 @@ config DWMAC_STM32
 config DWMAC_SUNXI
 	tristate "Allwinner GMAC support"
 	default ARCH_SUNXI
-	depends on OF && (ARCH_SUNXI || COMPILE_TEST)
+	depends on OF && COMMON_CLK && (ARCH_SUNXI || COMPILE_TEST)
 	---help---
 	  Support for Allwinner A20/A31 GMAC ethernet controllers.
 
@@ -150,6 +159,7 @@ config DWMAC_SUN8I
 	tristate "Allwinner sun8i GMAC support"
 	default ARCH_SUNXI
 	depends on OF && (ARCH_SUNXI || COMPILE_TEST)
+	select MDIO_BUS_MUX
 	---help---
 	  Support for Allwinner H3 A83T A64 EMAC ethernet controllers.
 

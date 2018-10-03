@@ -518,8 +518,16 @@ static irqreturn_t atmel_twi_interrupt(int irq, void *dev_id)
 	 * the RXRDY interrupt first in order to not keep garbage data in the
 	 * Receive Holding Register for the next transfer.
 	 */
-	if (irqstatus & AT91_TWI_RXRDY)
-		at91_twi_read_next_byte(dev);
+	if (irqstatus & AT91_TWI_RXRDY) {
+		/*
+		 * Read all available bytes at once by polling RXRDY usable w/
+		 * and w/o FIFO. With FIFO enabled we could also read RXFL and
+		 * avoid polling RXRDY.
+		 */
+		do {
+			at91_twi_read_next_byte(dev);
+		} while (at91_twi_read(dev, AT91_TWI_SR) & AT91_TWI_RXRDY);
+	}
 
 	/*
 	 * When a NACK condition is detected, the I2C controller sets the NACK,
@@ -809,7 +817,7 @@ out:
  * The hardware can handle at most two messages concatenated by a
  * repeated start via it's internal address feature.
  */
-static struct i2c_adapter_quirks at91_twi_quirks = {
+static const struct i2c_adapter_quirks at91_twi_quirks = {
 	.flags = I2C_AQ_COMB | I2C_AQ_COMB_WRITE_FIRST | I2C_AQ_COMB_SAME_ADDR,
 	.max_comb_1st_msg_len = 3,
 };

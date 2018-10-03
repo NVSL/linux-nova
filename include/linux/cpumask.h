@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __LINUX_CPUMASK_H
 #define __LINUX_CPUMASK_H
 
@@ -32,15 +33,15 @@ typedef struct cpumask { DECLARE_BITMAP(bits, NR_CPUS); } cpumask_t;
 #define cpumask_pr_args(maskp)		nr_cpu_ids, cpumask_bits(maskp)
 
 #if NR_CPUS == 1
-#define nr_cpu_ids		1
+#define nr_cpu_ids		1U
 #else
-extern int nr_cpu_ids;
+extern unsigned int nr_cpu_ids;
 #endif
 
 #ifdef CONFIG_CPUMASK_OFFSTACK
 /* Assuming NR_CPUS is huge, a runtime limit is more efficient.  Also,
  * not all bits may be allocated. */
-#define nr_cpumask_bits	((unsigned int)nr_cpu_ids)
+#define nr_cpumask_bits	nr_cpu_ids
 #else
 #define nr_cpumask_bits	((unsigned int)NR_CPUS)
 #endif
@@ -130,6 +131,11 @@ static inline unsigned int cpumask_first(const struct cpumask *srcp)
 	return 0;
 }
 
+static inline unsigned int cpumask_last(const struct cpumask *srcp)
+{
+	return 0;
+}
+
 /* Valid inputs for n are -1 and 0. */
 static inline unsigned int cpumask_next(int n, const struct cpumask *srcp)
 {
@@ -164,6 +170,8 @@ static inline unsigned int cpumask_local_spread(unsigned int i, int node)
 	for ((cpu) = 0; (cpu) < 1; (cpu)++, (void)mask)
 #define for_each_cpu_not(cpu, mask)		\
 	for ((cpu) = 0; (cpu) < 1; (cpu)++, (void)mask)
+#define for_each_cpu_wrap(cpu, mask, start)	\
+	for ((cpu) = 0; (cpu) < 1; (cpu)++, (void)mask, (void)(start))
 #define for_each_cpu_and(cpu, mask, and)	\
 	for ((cpu) = 0; (cpu) < 1; (cpu)++, (void)mask, (void)and)
 #else
@@ -179,19 +187,17 @@ static inline unsigned int cpumask_first(const struct cpumask *srcp)
 }
 
 /**
- * cpumask_next - get the next cpu in a cpumask
- * @n: the cpu prior to the place to search (ie. return will be > @n)
- * @srcp: the cpumask pointer
+ * cpumask_last - get the last CPU in a cpumask
+ * @srcp:	- the cpumask pointer
  *
- * Returns >= nr_cpu_ids if no further cpus set.
+ * Returns	>= nr_cpumask_bits if no CPUs set.
  */
-static inline unsigned int cpumask_next(int n, const struct cpumask *srcp)
+static inline unsigned int cpumask_last(const struct cpumask *srcp)
 {
-	/* -1 is a legal arg here. */
-	if (n != -1)
-		cpumask_check(n);
-	return find_next_bit(cpumask_bits(srcp), nr_cpumask_bits, n+1);
+	return find_last_bit(cpumask_bits(srcp), nr_cpumask_bits);
 }
+
+unsigned int cpumask_next(int n, const struct cpumask *srcp);
 
 /**
  * cpumask_next_zero - get the next unset cpu in a cpumask
@@ -636,7 +642,7 @@ static inline int cpulist_parse(const char *buf, struct cpumask *dstp)
 /**
  * cpumask_size - size to allocate for a 'struct cpumask' in bytes
  */
-static inline size_t cpumask_size(void)
+static inline unsigned int cpumask_size(void)
 {
 	return BITS_TO_LONGS(nr_cpumask_bits) * sizeof(long);
 }

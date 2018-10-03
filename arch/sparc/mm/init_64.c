@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  *  arch/sparc64/mm/init.c
  *
@@ -205,9 +206,9 @@ inline void flush_dcache_page_impl(struct page *page)
 #ifdef DCACHE_ALIASING_POSSIBLE
 	__flush_dcache_page(page_address(page),
 			    ((tlb_type == spitfire) &&
-			     page_mapping(page) != NULL));
+			     page_mapping_file(page) != NULL));
 #else
-	if (page_mapping(page) != NULL &&
+	if (page_mapping_file(page) != NULL &&
 	    tlb_type == spitfire)
 		__flush_icache_page(__pa(page_address(page)));
 #endif
@@ -348,6 +349,18 @@ static int __init hugetlbpage_init(void)
 
 arch_initcall(hugetlbpage_init);
 
+static void __init pud_huge_patch(void)
+{
+	struct pud_huge_patch_entry *p;
+	unsigned long addr;
+
+	p = &__pud_huge_patch;
+	addr = p->addr;
+	*(unsigned int *)addr = p->insn;
+
+	__asm__ __volatile__("flush %0" : : "r" (addr));
+}
+
 static int __init setup_hugepagesz(char *string)
 {
 	unsigned long long hugepage_size;
@@ -360,6 +373,11 @@ static int __init setup_hugepagesz(char *string)
 	hugepage_shift = ilog2(hugepage_size);
 
 	switch (hugepage_shift) {
+	case HPAGE_16GB_SHIFT:
+		hv_pgsz_mask = HV_PGSZ_MASK_16GB;
+		hv_pgsz_idx = HV_PGSZ_IDX_16GB;
+		pud_huge_patch();
+		break;
 	case HPAGE_2GB_SHIFT:
 		hv_pgsz_mask = HV_PGSZ_MASK_2GB;
 		hv_pgsz_idx = HV_PGSZ_IDX_2GB;
@@ -400,6 +418,7 @@ void update_mmu_cache(struct vm_area_struct *vma, unsigned long address, pte_t *
 {
 	struct mm_struct *mm;
 	unsigned long flags;
+	bool is_huge_tsb;
 	pte_t pte = *ptep;
 
 	if (tlb_type != hypervisor) {
@@ -417,15 +436,37 @@ void update_mmu_cache(struct vm_area_struct *vma, unsigned long address, pte_t *
 
 	spin_lock_irqsave(&mm->context.lock, flags);
 
+	is_huge_tsb = false;
 #if defined(CONFIG_HUGETLB_PAGE) || defined(CONFIG_TRANSPARENT_HUGEPAGE)
-	if ((mm->context.hugetlb_pte_count || mm->context.thp_pte_count) &&
-	    is_hugetlb_pmd(__pmd(pte_val(pte)))) {
-		/* We are fabricating 8MB pages using 4MB real hw pages.  */
-		pte_val(pte) |= (address & (1UL << REAL_HPAGE_SHIFT));
-		__update_mmu_tsb_insert(mm, MM_TSB_HUGE, REAL_HPAGE_SHIFT,
-					address, pte_val(pte));
-	} else
+	if (mm->context.hugetlb_pte_count || mm->context.thp_pte_count) {
+		unsigned long hugepage_size = PAGE_SIZE;
+
+		if (is_vm_hugetlb_page(vma))
+			hugepage_size = huge_page_size(hstate_vma(vma));
+
+		if (hugepage_size >= PUD_SIZE) {
+			unsigned long mask = 0x1ffc00000UL;
+
+			/* Transfer bits [32:22] from address to resolve
+			 * at 4M granularity.
+			 */
+			pte_val(pte) &= ~mask;
+			pte_val(pte) |= (address & mask);
+		} else if (hugepage_size >= PMD_SIZE) {
+			/* We are fabricating 8MB pages using 4MB
+			 * real hw pages.
+			 */
+			pte_val(pte) |= (address & (1UL << REAL_HPAGE_SHIFT));
+		}
+
+		if (hugepage_size >= PMD_SIZE) {
+			__update_mmu_tsb_insert(mm, MM_TSB_HUGE,
+				REAL_HPAGE_SHIFT, address, pte_val(pte));
+			is_huge_tsb = true;
+		}
+	}
 #endif
+	if (!is_huge_tsb)
 		__update_mmu_tsb_insert(mm, MM_TSB_BASE, PAGE_SHIFT,
 					address, pte_val(pte));
 
@@ -449,7 +490,7 @@ void flush_dcache_page(struct page *page)
 
 	this_cpu = get_cpu();
 
-	mapping = page_mapping(page);
+	mapping = page_mapping_file(page);
 	if (mapping && !mapping_mapped(mapping)) {
 		int dirty = test_bit(PG_dcache_dirty, &page->flags);
 		if (dirty) {
@@ -1579,7 +1620,7 @@ static void __init bootmem_init_nonnuma(void)
 	       (top_of_ram - total_ram) >> 20);
 
 	init_node_masks_nonnuma();
-	memblock_set_node(0, (phys_addr_t)ULLONG_MAX, &memblock.memory, 0);
+	memblock_set_node(0, PHYS_ADDR_MAX, &memblock.memory, 0);
 	allocate_node_data(0);
 	node_set_online(0);
 }
@@ -2499,8 +2540,15 @@ void __init mem_init(void)
 {
 	high_memory = __va(last_valid_pfn << PAGE_SHIFT);
 
-	register_page_bootmem_info();
 	free_all_bootmem();
+
+	/*
+	 * Must be done after boot memory is put on freelist, because here we
+	 * might set fields in deferred struct pages that have not yet been
+	 * initialized, and free_all_bootmem() initializes all the reserved
+	 * deferred pages for us.
+	 */
+	register_page_bootmem_info();
 
 	/*
 	 * Set up the zero page, mark it reserved, so that page count
@@ -2580,7 +2628,7 @@ EXPORT_SYMBOL(_PAGE_CACHE);
 
 #ifdef CONFIG_SPARSEMEM_VMEMMAP
 int __meminit vmemmap_populate(unsigned long vstart, unsigned long vend,
-			       int node)
+			       int node, struct vmem_altmap *altmap)
 {
 	unsigned long pte_base;
 
@@ -2596,30 +2644,19 @@ int __meminit vmemmap_populate(unsigned long vstart, unsigned long vend,
 	vstart = vstart & PMD_MASK;
 	vend = ALIGN(vend, PMD_SIZE);
 	for (; vstart < vend; vstart += PMD_SIZE) {
-		pgd_t *pgd = pgd_offset_k(vstart);
+		pgd_t *pgd = vmemmap_pgd_populate(vstart, node);
 		unsigned long pte;
 		pud_t *pud;
 		pmd_t *pmd;
 
-		if (pgd_none(*pgd)) {
-			pud_t *new = vmemmap_alloc_block(PAGE_SIZE, node);
+		if (!pgd)
+			return -ENOMEM;
 
-			if (!new)
-				return -ENOMEM;
-			pgd_populate(&init_mm, pgd, new);
-		}
-
-		pud = pud_offset(pgd, vstart);
-		if (pud_none(*pud)) {
-			pmd_t *new = vmemmap_alloc_block(PAGE_SIZE, node);
-
-			if (!new)
-				return -ENOMEM;
-			pud_populate(&init_mm, pud, new);
-		}
+		pud = vmemmap_pud_populate(pgd, vstart, node);
+		if (!pud)
+			return -ENOMEM;
 
 		pmd = pmd_offset(pud, vstart);
-
 		pte = pmd_val(*pmd);
 		if (!(pte & _PAGE_VALID)) {
 			void *block = vmemmap_alloc_block(PMD_SIZE, node);
@@ -2634,7 +2671,8 @@ int __meminit vmemmap_populate(unsigned long vstart, unsigned long vend,
 	return 0;
 }
 
-void vmemmap_free(unsigned long start, unsigned long end)
+void vmemmap_free(unsigned long start, unsigned long end,
+		struct vmem_altmap *altmap)
 {
 }
 #endif /* CONFIG_SPARSEMEM_VMEMMAP */
@@ -2886,7 +2924,7 @@ void __flush_tlb_all(void)
 pte_t *pte_alloc_one_kernel(struct mm_struct *mm,
 			    unsigned long address)
 {
-	struct page *page = alloc_page(GFP_KERNEL | __GFP_NOTRACK | __GFP_ZERO);
+	struct page *page = alloc_page(GFP_KERNEL | __GFP_ZERO);
 	pte_t *pte = NULL;
 
 	if (page)
@@ -2898,11 +2936,11 @@ pte_t *pte_alloc_one_kernel(struct mm_struct *mm,
 pgtable_t pte_alloc_one(struct mm_struct *mm,
 			unsigned long address)
 {
-	struct page *page = alloc_page(GFP_KERNEL | __GFP_NOTRACK | __GFP_ZERO);
+	struct page *page = alloc_page(GFP_KERNEL | __GFP_ZERO);
 	if (!page)
 		return NULL;
 	if (!pgtable_page_ctor(page)) {
-		free_hot_cold_page(page, 0);
+		free_unref_page(page);
 		return NULL;
 	}
 	return (pte_t *) page_address(page);
@@ -3122,3 +3160,72 @@ void flush_tlb_kernel_range(unsigned long start, unsigned long end)
 		do_flush_tlb_kernel_range(start, end);
 	}
 }
+
+void copy_user_highpage(struct page *to, struct page *from,
+	unsigned long vaddr, struct vm_area_struct *vma)
+{
+	char *vfrom, *vto;
+
+	vfrom = kmap_atomic(from);
+	vto = kmap_atomic(to);
+	copy_user_page(vto, vfrom, vaddr, to);
+	kunmap_atomic(vto);
+	kunmap_atomic(vfrom);
+
+	/* If this page has ADI enabled, copy over any ADI tags
+	 * as well
+	 */
+	if (vma->vm_flags & VM_SPARC_ADI) {
+		unsigned long pfrom, pto, i, adi_tag;
+
+		pfrom = page_to_phys(from);
+		pto = page_to_phys(to);
+
+		for (i = pfrom; i < (pfrom + PAGE_SIZE); i += adi_blksize()) {
+			asm volatile("ldxa [%1] %2, %0\n\t"
+					: "=r" (adi_tag)
+					:  "r" (i), "i" (ASI_MCD_REAL));
+			asm volatile("stxa %0, [%1] %2\n\t"
+					:
+					: "r" (adi_tag), "r" (pto),
+					  "i" (ASI_MCD_REAL));
+			pto += adi_blksize();
+		}
+		asm volatile("membar #Sync\n\t");
+	}
+}
+EXPORT_SYMBOL(copy_user_highpage);
+
+void copy_highpage(struct page *to, struct page *from)
+{
+	char *vfrom, *vto;
+
+	vfrom = kmap_atomic(from);
+	vto = kmap_atomic(to);
+	copy_page(vto, vfrom);
+	kunmap_atomic(vto);
+	kunmap_atomic(vfrom);
+
+	/* If this platform is ADI enabled, copy any ADI tags
+	 * as well
+	 */
+	if (adi_capable()) {
+		unsigned long pfrom, pto, i, adi_tag;
+
+		pfrom = page_to_phys(from);
+		pto = page_to_phys(to);
+
+		for (i = pfrom; i < (pfrom + PAGE_SIZE); i += adi_blksize()) {
+			asm volatile("ldxa [%1] %2, %0\n\t"
+					: "=r" (adi_tag)
+					:  "r" (i), "i" (ASI_MCD_REAL));
+			asm volatile("stxa %0, [%1] %2\n\t"
+					:
+					: "r" (adi_tag), "r" (pto),
+					  "i" (ASI_MCD_REAL));
+			pto += adi_blksize();
+		}
+		asm volatile("membar #Sync\n\t");
+	}
+}
+EXPORT_SYMBOL(copy_highpage);

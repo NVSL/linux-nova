@@ -12,6 +12,7 @@
 
 #include <linux/clk.h>
 #include <linux/clk-provider.h>
+#include <linux/clkdev.h>
 #include <linux/fsl/guts.h>
 #include <linux/io.h>
 #include <linux/kernel.h>
@@ -40,7 +41,7 @@ struct clockgen_pll_div {
 };
 
 struct clockgen_pll {
-	struct clockgen_pll_div div[4];
+	struct clockgen_pll_div div[8];
 };
 
 #define CLKSEL_VALID	1
@@ -535,6 +536,17 @@ static const struct clockgen_chipinfo chipinfo[] = {
 		},
 		.pll_mask = 0x07,
 		.flags = CG_PLL_8BIT,
+	},
+	{
+		.compat = "fsl,ls1088a-clockgen",
+		.cmux_groups = {
+			&clockgen2_cmux_cga12
+		},
+		.cmux_to_group = {
+			0, 0, -1
+		},
+		.pll_mask = 0x07,
+		.flags = CG_VER3 | CG_LITTLE_ENDIAN,
 	},
 	{
 		.compat = "fsl,ls1012a-clockgen",
@@ -1113,6 +1125,14 @@ static void __init create_one_pll(struct clockgen *cg, int idx)
 
 	for (i = 0; i < ARRAY_SIZE(pll->div); i++) {
 		struct clk *clk;
+		int ret;
+
+		/*
+		 * For platform PLL, there are 8 divider clocks.
+		 * For core PLL, there are 4 divider clocks at most.
+		 */
+		if (idx != PLATFORM_PLL && i >= 4)
+			break;
 
 		snprintf(pll->div[i].name, sizeof(pll->div[i].name),
 			 "cg-pll%d-div%d", idx, i + 1);
@@ -1126,6 +1146,11 @@ static void __init create_one_pll(struct clockgen *cg, int idx)
 		}
 
 		pll->div[i].clk = clk;
+		ret = clk_register_clkdev(clk, pll->div[i].name, NULL);
+		if (ret != 0)
+			pr_err("%s: %s: register to lookup table failed %ld\n",
+			       __func__, pll->div[i].name, PTR_ERR(clk));
+
 	}
 }
 
@@ -1348,8 +1373,7 @@ static void __init clockgen_init(struct device_node *np)
 	}
 
 	if (i == ARRAY_SIZE(chipinfo)) {
-		pr_err("%s: unknown clockgen node %s\n", __func__,
-		       np->full_name);
+		pr_err("%s: unknown clockgen node %pOF\n", __func__, np);
 		goto err;
 	}
 	clockgen.info = chipinfo[i];
@@ -1362,8 +1386,8 @@ static void __init clockgen_init(struct device_node *np)
 		if (guts) {
 			clockgen.guts = of_iomap(guts, 0);
 			if (!clockgen.guts) {
-				pr_err("%s: Couldn't map %s regs\n", __func__,
-				       guts->full_name);
+				pr_err("%s: Couldn't map %pOF regs\n", __func__,
+				       guts);
 			}
 		}
 
@@ -1398,6 +1422,7 @@ CLK_OF_DECLARE(qoriq_clockgen_ls1012a, "fsl,ls1012a-clockgen", clockgen_init);
 CLK_OF_DECLARE(qoriq_clockgen_ls1021a, "fsl,ls1021a-clockgen", clockgen_init);
 CLK_OF_DECLARE(qoriq_clockgen_ls1043a, "fsl,ls1043a-clockgen", clockgen_init);
 CLK_OF_DECLARE(qoriq_clockgen_ls1046a, "fsl,ls1046a-clockgen", clockgen_init);
+CLK_OF_DECLARE(qoriq_clockgen_ls1088a, "fsl,ls1088a-clockgen", clockgen_init);
 CLK_OF_DECLARE(qoriq_clockgen_ls2080a, "fsl,ls2080a-clockgen", clockgen_init);
 
 /* Legacy nodes */

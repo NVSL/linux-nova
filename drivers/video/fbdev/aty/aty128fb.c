@@ -116,7 +116,7 @@ static const struct fb_var_screeninfo default_var = {
 
 /* default modedb mode */
 /* 640x480, 60 Hz, Non-Interlaced (25.172 MHz dotclock) */
-static struct fb_videomode defaultmode = {
+static const struct fb_videomode defaultmode = {
 	.refresh =	60,
 	.xres =		640,
 	.yres =		480,
@@ -166,7 +166,7 @@ static int aty128_pci_resume(struct pci_dev *pdev);
 static int aty128_do_resume(struct pci_dev *pdev);
 
 /* supported Rage128 chipsets */
-static struct pci_device_id aty128_pci_tbl[] = {
+static const struct pci_device_id aty128_pci_tbl[] = {
 	{ PCI_VENDOR_ID_ATI, PCI_DEVICE_ID_ATI_RAGE128_LE,
 	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, rage_M3_pci },
 	{ PCI_VENDOR_ID_ATI, PCI_DEVICE_ID_ATI_RAGE128_LF,
@@ -1716,7 +1716,7 @@ static int aty128fb_setup(char *options)
 			continue;
 		}
 		if(!strncmp(this_opt, "nomtrr", 6)) {
-			mtrr = 0;
+			mtrr = false;
 			continue;
 		}
 #ifdef CONFIG_PPC_PMAC
@@ -2442,7 +2442,7 @@ static void aty128_set_suspend(struct aty128fb_par *par, int suspend)
 		(void)aty_ld_pll(POWER_MANAGEMENT);
 		aty_st_le32(BUS_CNTL1, 0x00000010);
 		aty_st_le32(MEM_POWER_MISC, 0x0c830000);
-		mdelay(100);
+		msleep(100);
 
 		/* Switch PCI power management to D2 */
 		pci_set_power_state(pdev, PCI_D2);

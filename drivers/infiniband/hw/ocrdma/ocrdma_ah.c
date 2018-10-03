@@ -193,28 +193,11 @@ struct ib_ah *ocrdma_create_ah(struct ib_pd *ibpd, struct rdma_ah_attr *attr,
 		      __func__, status);
 		goto av_conf_err;
 	}
-	if (sgid_attr.ndev) {
-		if (is_vlan_dev(sgid_attr.ndev))
-			vlan_tag = vlan_dev_vlan_id(sgid_attr.ndev);
-		dev_put(sgid_attr.ndev);
-	}
+	if (is_vlan_dev(sgid_attr.ndev))
+		vlan_tag = vlan_dev_vlan_id(sgid_attr.ndev);
+	dev_put(sgid_attr.ndev);
 	/* Get network header type for this GID */
 	ah->hdr_type = ib_gid_to_network_type(sgid_attr.gid_type, &sgid);
-
-	if ((pd->uctx) &&
-	    (!rdma_is_multicast_addr((struct in6_addr *)grh->dgid.raw)) &&
-	    (!rdma_link_local_addr((struct in6_addr *)grh->dgid.raw))) {
-		status = rdma_addr_find_l2_eth_by_grh(&sgid, &grh->dgid,
-						      attr->roce.dmac,
-						      &vlan_tag,
-						      &sgid_attr.ndev->ifindex,
-						      NULL);
-		if (status) {
-			pr_err("%s(): Failed to resolve dmac from gid." 
-				"status = %d\n", __func__, status);
-			goto av_conf_err;
-		}
-	}
 
 	status = set_av_attr(dev, ah, attr, &sgid, pd->id, &isvlan, vlan_tag);
 	if (status)

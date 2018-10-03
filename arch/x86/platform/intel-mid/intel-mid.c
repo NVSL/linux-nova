@@ -79,7 +79,7 @@ static void intel_mid_power_off(void)
 
 static void intel_mid_reboot(void)
 {
-	intel_scu_ipc_simple_command(IPCMSG_COLD_BOOT, 0);
+	intel_scu_ipc_simple_command(IPCMSG_COLD_RESET, 0);
 }
 
 static unsigned long __init intel_mid_calibrate_tsc(void)
@@ -183,6 +183,7 @@ void __init x86_intel_mid_early_setup(void)
 
 	x86_init.timers.timer_init = intel_mid_time_init;
 	x86_init.timers.setup_percpu_clockev = x86_init_noop;
+	x86_init.timers.wallclock_init = intel_mid_rtc_init;
 
 	x86_init.irqs.pre_vector_init = x86_init_noop;
 
@@ -191,13 +192,18 @@ void __init x86_intel_mid_early_setup(void)
 	x86_cpuinit.setup_percpu_clockev = apbt_setup_secondary_clock;
 
 	x86_platform.calibrate_tsc = intel_mid_calibrate_tsc;
-	x86_init.timers.wallclock_init = intel_mid_rtc_init;
 	x86_platform.get_nmi_reason = intel_mid_get_nmi_reason;
 
-	x86_init.pci.init = intel_mid_pci_init;
+	x86_init.pci.arch_init = intel_mid_pci_init;
 	x86_init.pci.fixup_irqs = x86_init_noop;
 
 	legacy_pic = &null_legacy_pic;
+
+	/*
+	 * Do nothing for now as everything needed done in
+	 * x86_intel_mid_early_setup() below.
+	 */
+	x86_init.acpi.reduced_hw_early_init = x86_init_noop;
 
 	pm_power_off = intel_mid_power_off;
 	machine_ops.emergency_restart  = intel_mid_reboot;

@@ -611,9 +611,9 @@ static int drive_is_ready(ide_drive_t *drive)
  *	logic that wants cleaning up.
  */
  
-void ide_timer_expiry (unsigned long data)
+void ide_timer_expiry (struct timer_list *t)
 {
-	ide_hwif_t	*hwif = (ide_hwif_t *)data;
+	ide_hwif_t	*hwif = from_timer(hwif, t, timer);
 	ide_drive_t	*uninitialized_var(drive);
 	ide_handler_t	*handler;
 	unsigned long	flags;
@@ -659,8 +659,7 @@ void ide_timer_expiry (unsigned long data)
 		spin_unlock(&hwif->lock);
 		/* disable_irq_nosync ?? */
 		disable_irq(hwif->irq);
-		/* local CPU only, as if we were handling an interrupt */
-		local_irq_disable();
+
 		if (hwif->polling) {
 			startstop = handler(drive);
 		} else if (drive_is_ready(drive)) {
@@ -679,6 +678,7 @@ void ide_timer_expiry (unsigned long data)
 				startstop = ide_error(drive, "irq timeout",
 					hwif->tp_ops->read_status(hwif));
 		}
+		/* Disable interrupts again, `handler' might have enabled it */
 		spin_lock_irq(&hwif->lock);
 		enable_irq(hwif->irq);
 		if (startstop == ide_stopped && hwif->polling == 0) {

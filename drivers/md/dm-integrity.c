@@ -6,6 +6,7 @@
  * This file is released under the GPL.
  */
 
+#include <linux/compiler.h>
 #include <linux/module.h>
 #include <linux/device-mapper.h>
 #include <linux/dm-io.h>
@@ -17,7 +18,7 @@
 #include <crypto/hash.h>
 #include <crypto/skcipher.h>
 #include <linux/async_tx.h>
-#include "dm-bufio.h"
+#include <linux/dm-bufio.h>
 
 #define DM_MSG_PREFIX "integrity"
 
@@ -80,13 +81,13 @@ struct journal_entry {
 #define journal_entry_tag(ic, je)		((__u8 *)&(je)->last_bytes[(ic)->sectors_per_block])
 
 #if BITS_PER_LONG == 64
-#define journal_entry_set_sector(je, x)		do { smp_wmb(); ACCESS_ONCE((je)->u.sector) = cpu_to_le64(x); } while (0)
+#define journal_entry_set_sector(je, x)		do { smp_wmb(); WRITE_ONCE((je)->u.sector, cpu_to_le64(x)); } while (0)
 #define journal_entry_get_sector(je)		le64_to_cpu((je)->u.sector)
 #elif defined(CONFIG_LBDAF)
-#define journal_entry_set_sector(je, x)		do { (je)->u.s.sector_lo = cpu_to_le32(x); smp_wmb(); ACCESS_ONCE((je)->u.s.sector_hi) = cpu_to_le32((x) >> 32); } while (0)
+#define journal_entry_set_sector(je, x)		do { (je)->u.s.sector_lo = cpu_to_le32(x); smp_wmb(); WRITE_ONCE((je)->u.s.sector_hi, cpu_to_le32((x) >> 32)); } while (0)
 #define journal_entry_get_sector(je)		le64_to_cpu((je)->u.sector)
 #else
-#define journal_entry_set_sector(je, x)		do { (je)->u.s.sector_lo = cpu_to_le32(x); smp_wmb(); ACCESS_ONCE((je)->u.s.sector_hi) = cpu_to_le32(0); } while (0)
+#define journal_entry_set_sector(je, x)		do { (je)->u.s.sector_lo = cpu_to_le32(x); smp_wmb(); WRITE_ONCE((je)->u.s.sector_hi, cpu_to_le32(0)); } while (0)
 #define journal_entry_get_sector(je)		le32_to_cpu((je)->u.s.sector_lo)
 #endif
 #define journal_entry_is_unused(je)		((je)->u.s.sector_hi == cpu_to_le32(-1))
@@ -141,7 +142,7 @@ struct dm_integrity_c {
 	unsigned tag_size;
 	__s8 log2_tag_size;
 	sector_t start;
-	mempool_t *journal_io_mempool;
+	mempool_t journal_io_mempool;
 	struct dm_io_client *io;
 	struct dm_bufio_client *bufio;
 	struct workqueue_struct *metadata_wq;
@@ -225,6 +226,8 @@ struct dm_integrity_c {
 	struct alg_spec internal_hash_alg;
 	struct alg_spec journal_crypt_alg;
 	struct alg_spec journal_mac_alg;
+
+	atomic64_t number_of_mismatches;
 };
 
 struct dm_integrity_range {
@@ -250,7 +253,8 @@ struct dm_integrity_io {
 
 	struct completion *completion;
 
-	struct block_device *orig_bi_bdev;
+	struct gendisk *orig_bi_disk;
+	u8 orig_bi_partno;
 	bio_end_io_t *orig_bi_end_io;
 	struct bio_integrity_payload *orig_bi_integrity;
 	struct bvec_iter orig_bi_iter;
@@ -297,7 +301,7 @@ static void __DEBUG_bytes(__u8 *bytes, size_t len, const char *msg, ...)
 /*
  * DM Integrity profile, protection is performed layer above (dm-crypt)
  */
-static struct blk_integrity_profile dm_integrity_profile = {
+static const struct blk_integrity_profile dm_integrity_profile = {
 	.name			= "DM-DIF-EXT-TAG",
 	.generate_fn		= NULL,
 	.verify_fn		= NULL,
@@ -309,13 +313,15 @@ static void dm_integrity_dtr(struct dm_target *ti);
 
 static void dm_integrity_io_error(struct dm_integrity_c *ic, const char *msg, int err)
 {
+	if (err == -EILSEQ)
+		atomic64_inc(&ic->number_of_mismatches);
 	if (!cmpxchg(&ic->failed, 0, err))
 		DMERR("Error on %s: %d", msg, err);
 }
 
 static int dm_integrity_failed(struct dm_integrity_c *ic)
 {
-	return ACCESS_ONCE(ic->failed);
+	return READ_ONCE(ic->failed);
 }
 
 static commit_id_t dm_integrity_commit_id(struct dm_integrity_c *ic, unsigned i,
@@ -769,13 +775,13 @@ static void write_journal(struct dm_integrity_c *ic, unsigned commit_start, unsi
 	unsigned i;
 
 	io_comp.ic = ic;
-	io_comp.comp = COMPLETION_INITIALIZER_ONSTACK(io_comp.comp);
+	init_completion(&io_comp.comp);
 
 	if (commit_start + commit_sections <= ic->journal_sections) {
 		io_comp.in_flight = (atomic_t)ATOMIC_INIT(1);
 		if (ic->journal_io) {
 			crypt_comp_1.ic = ic;
-			crypt_comp_1.comp = COMPLETION_INITIALIZER_ONSTACK(crypt_comp_1.comp);
+			init_completion(&crypt_comp_1.comp);
 			crypt_comp_1.in_flight = (atomic_t)ATOMIC_INIT(0);
 			encrypt_journal(ic, true, commit_start, commit_sections, &crypt_comp_1);
 			wait_for_completion_io(&crypt_comp_1.comp);
@@ -791,18 +797,18 @@ static void write_journal(struct dm_integrity_c *ic, unsigned commit_start, unsi
 		to_end = ic->journal_sections - commit_start;
 		if (ic->journal_io) {
 			crypt_comp_1.ic = ic;
-			crypt_comp_1.comp = COMPLETION_INITIALIZER_ONSTACK(crypt_comp_1.comp);
+			init_completion(&crypt_comp_1.comp);
 			crypt_comp_1.in_flight = (atomic_t)ATOMIC_INIT(0);
 			encrypt_journal(ic, true, commit_start, to_end, &crypt_comp_1);
 			if (try_wait_for_completion(&crypt_comp_1.comp)) {
 				rw_journal(ic, REQ_OP_WRITE, REQ_FUA, commit_start, to_end, &io_comp);
-				crypt_comp_1.comp = COMPLETION_INITIALIZER_ONSTACK(crypt_comp_1.comp);
+				reinit_completion(&crypt_comp_1.comp);
 				crypt_comp_1.in_flight = (atomic_t)ATOMIC_INIT(0);
 				encrypt_journal(ic, true, 0, commit_sections - to_end, &crypt_comp_1);
 				wait_for_completion_io(&crypt_comp_1.comp);
 			} else {
 				crypt_comp_2.ic = ic;
-				crypt_comp_2.comp = COMPLETION_INITIALIZER_ONSTACK(crypt_comp_2.comp);
+				init_completion(&crypt_comp_2.comp);
 				crypt_comp_2.in_flight = (atomic_t)ATOMIC_INIT(0);
 				encrypt_journal(ic, true, 0, commit_sections - to_end, &crypt_comp_2);
 				wait_for_completion_io(&crypt_comp_1.comp);
@@ -1040,7 +1046,7 @@ static int dm_integrity_rw_tag(struct dm_integrity_c *ic, unsigned char *tag, se
 			memcpy(tag, dp, to_copy);
 		} else if (op == TAG_WRITE) {
 			memcpy(dp, tag, to_copy);
-			dm_bufio_mark_buffer_dirty(b);
+			dm_bufio_mark_partial_buffer_dirty(b, *metadata_offset, *metadata_offset + to_copy);
 		} else  {
 			/* e.g.: op == TAG_CMP */
 			if (unlikely(memcmp(dp, tag, to_copy))) {
@@ -1088,9 +1094,9 @@ static void sleep_on_endio_wait(struct dm_integrity_c *ic)
 	__remove_wait_queue(&ic->endio_wait, &wait);
 }
 
-static void autocommit_fn(unsigned long data)
+static void autocommit_fn(struct timer_list *t)
 {
-	struct dm_integrity_c *ic = (struct dm_integrity_c *)data;
+	struct dm_integrity_c *ic = from_timer(ic, t, autocommit_timer);
 
 	if (likely(!dm_integrity_failed(ic)))
 		queue_work(ic->commit_wq, &ic->commit_work);
@@ -1164,7 +1170,8 @@ static void integrity_end_io(struct bio *bio)
 	struct dm_integrity_io *dio = dm_per_bio_data(bio, sizeof(struct dm_integrity_io));
 
 	bio->bi_iter = dio->orig_bi_iter;
-	bio->bi_bdev = dio->orig_bi_bdev;
+	bio->bi_disk = dio->orig_bi_disk;
+	bio->bi_partno = dio->orig_bi_partno;
 	if (dio->orig_bi_integrity) {
 		bio->bi_integrity = dio->orig_bi_integrity;
 		bio->bi_opf |= REQ_INTEGRITY;
@@ -1273,6 +1280,7 @@ again:
 					DMERR("Checksum failed at sector 0x%llx",
 					      (unsigned long long)(sector - ((r + ic->tag_size - 1) / ic->tag_size)));
 					r = -EILSEQ;
+					atomic64_inc(&ic->number_of_mismatches);
 				}
 				if (likely(checksums != checksums_onstack))
 					kfree(checksums);
@@ -1369,7 +1377,7 @@ static int dm_integrity_map(struct dm_target *ti, struct bio *bio)
 		struct bvec_iter iter;
 		struct bio_vec bv;
 		bio_for_each_segment(bv, bio, iter) {
-			if (unlikely((bv.bv_offset | bv.bv_len) & ((ic->sectors_per_block << SECTOR_SHIFT) - 1))) {
+			if (unlikely(bv.bv_len & ((ic->sectors_per_block << SECTOR_SHIFT) - 1))) {
 				DMERR("Bio vector (%u,%u) is not aligned on %u-sector boundary",
 					bv.bv_offset, bv.bv_len, ic->sectors_per_block);
 				return DM_MAPIO_KILL;
@@ -1538,7 +1546,7 @@ retry_kmap:
 		smp_mb();
 		if (unlikely(waitqueue_active(&ic->copy_to_journal_wait)))
 			wake_up(&ic->copy_to_journal_wait);
-		if (ACCESS_ONCE(ic->free_sectors) <= ic->free_sectors_threshold) {
+		if (READ_ONCE(ic->free_sectors) <= ic->free_sectors_threshold) {
 			queue_work(ic->commit_wq, &ic->commit_work);
 		} else {
 			schedule_autocommit(ic);
@@ -1674,15 +1682,16 @@ sleep:
 	dio->in_flight = (atomic_t)ATOMIC_INIT(2);
 
 	if (need_sync_io) {
-		read_comp = COMPLETION_INITIALIZER_ONSTACK(read_comp);
+		init_completion(&read_comp);
 		dio->completion = &read_comp;
 	} else
 		dio->completion = NULL;
 
 	dio->orig_bi_iter = bio->bi_iter;
 
-	dio->orig_bi_bdev = bio->bi_bdev;
-	bio->bi_bdev = ic->dev->bdev;
+	dio->orig_bi_disk = bio->bi_disk;
+	dio->orig_bi_partno = bio->bi_partno;
+	bio_set_dev(bio, ic->dev->bdev);
 
 	dio->orig_bi_integrity = bio_integrity(bio);
 	bio->bi_integrity = NULL;
@@ -1697,7 +1706,11 @@ sleep:
 
 	if (need_sync_io) {
 		wait_for_completion_io(&read_comp);
-		integrity_metadata(&dio->work);
+		if (likely(!bio->bi_status))
+			integrity_metadata(&dio->work);
+		else
+			dec_in_flight(dio);
+
 	} else {
 		INIT_WORK(&dio->work, integrity_metadata);
 		queue_work(ic->metadata_wq, &dio->work);
@@ -1786,7 +1799,7 @@ static void integrity_commit(struct work_struct *w)
 	ic->n_committed_sections += commit_sections;
 	spin_unlock_irq(&ic->endio_wait.lock);
 
-	if (ACCESS_ONCE(ic->free_sectors) <= ic->free_sectors_threshold)
+	if (READ_ONCE(ic->free_sectors) <= ic->free_sectors_threshold)
 		queue_work(ic->writer_wq, &ic->writer_work);
 
 release_flush_bios:
@@ -1804,7 +1817,7 @@ static void complete_copy_from_journal(unsigned long error, void *context)
 	struct journal_completion *comp = io->comp;
 	struct dm_integrity_c *ic = comp->ic;
 	remove_range(ic, &io->range);
-	mempool_free(io, ic->journal_io_mempool);
+	mempool_free(io, &ic->journal_io_mempool);
 	if (unlikely(error != 0))
 		dm_integrity_io_error(ic, "copying from journal", -EIO);
 	complete_journal_op(comp);
@@ -1831,7 +1844,7 @@ static void do_journal_write(struct dm_integrity_c *ic, unsigned write_start,
 
 	comp.ic = ic;
 	comp.in_flight = (atomic_t)ATOMIC_INIT(1);
-	comp.comp = COMPLETION_INITIALIZER_ONSTACK(comp.comp);
+	init_completion(&comp.comp);
 
 	i = write_start;
 	for (n = 0; n < write_sections; n++, i++, wraparound_section(ic, &i)) {
@@ -1873,7 +1886,7 @@ static void do_journal_write(struct dm_integrity_c *ic, unsigned write_start,
 			}
 			next_loop = k - 1;
 
-			io = mempool_alloc(ic->journal_io_mempool, GFP_NOIO);
+			io = mempool_alloc(&ic->journal_io_mempool, GFP_NOIO);
 			io->comp = &comp;
 			io->range.logical_sector = sec;
 			io->range.n_sectors = (k - j) << ic->sb->log2_sectors_per_block;
@@ -1905,7 +1918,7 @@ static void do_journal_write(struct dm_integrity_c *ic, unsigned write_start,
 				if (j == k) {
 					remove_range_unlocked(ic, &io->range);
 					spin_unlock_irq(&ic->endio_wait.lock);
-					mempool_free(io, ic->journal_io_mempool);
+					mempool_free(io, &ic->journal_io_mempool);
 					goto skip_io;
 				}
 				for (l = j; l < k; l++) {
@@ -1968,7 +1981,7 @@ static void integrity_writer(struct work_struct *w)
 	unsigned prev_free_sectors;
 
 	/* the following test is not needed, but it tests the replay code */
-	if (ACCESS_ONCE(ic->suspending))
+	if (READ_ONCE(ic->suspending))
 		return;
 
 	spin_lock_irq(&ic->endio_wait.lock);
@@ -2058,7 +2071,7 @@ static void replay_journal(struct dm_integrity_c *ic)
 		if (ic->journal_io) {
 			struct journal_completion crypt_comp;
 			crypt_comp.ic = ic;
-			crypt_comp.comp = COMPLETION_INITIALIZER_ONSTACK(crypt_comp.comp);
+			init_completion(&crypt_comp.comp);
 			crypt_comp.in_flight = (atomic_t)ATOMIC_INIT(0);
 			encrypt_journal(ic, false, 0, ic->journal_sections, &crypt_comp);
 			wait_for_completion(&crypt_comp.comp);
@@ -2230,7 +2243,7 @@ static void dm_integrity_status(struct dm_target *ti, status_type_t type,
 
 	switch (type) {
 	case STATUSTYPE_INFO:
-		result[0] = '\0';
+		DMEMIT("%llu", (unsigned long long)atomic64_read(&ic->number_of_mismatches));
 		break;
 
 	case STATUSTYPE_TABLE: {
@@ -2427,7 +2440,7 @@ static void dm_integrity_free_journal_scatterlist(struct dm_integrity_c *ic, str
 	unsigned i;
 	for (i = 0; i < ic->journal_sections; i++)
 		kvfree(sl[i]);
-	kfree(sl);
+	kvfree(sl);
 }
 
 static struct scatterlist **dm_integrity_alloc_journal_scatterlist(struct dm_integrity_c *ic, struct page_list *pl)
@@ -2435,7 +2448,9 @@ static struct scatterlist **dm_integrity_alloc_journal_scatterlist(struct dm_int
 	struct scatterlist **sl;
 	unsigned i;
 
-	sl = kvmalloc(ic->journal_sections * sizeof(struct scatterlist *), GFP_KERNEL | __GFP_ZERO);
+	sl = kvmalloc_array(ic->journal_sections,
+			    sizeof(struct scatterlist *),
+			    GFP_KERNEL | __GFP_ZERO);
 	if (!sl)
 		return NULL;
 
@@ -2451,7 +2466,8 @@ static struct scatterlist **dm_integrity_alloc_journal_scatterlist(struct dm_int
 
 		n_pages = (end_index - start_index + 1);
 
-		s = kvmalloc(n_pages * sizeof(struct scatterlist), GFP_KERNEL);
+		s = kvmalloc_array(n_pages, sizeof(struct scatterlist),
+				   GFP_KERNEL);
 		if (!s) {
 			dm_integrity_free_journal_scatterlist(ic, sl);
 			return NULL;
@@ -2535,6 +2551,9 @@ static int get_mac(struct crypto_shash **hash, struct alg_spec *a, char **error,
 				*error = error_key;
 				return r;
 			}
+		} else if (crypto_shash_get_flags(*hash) & CRYPTO_TFM_NEED_KEY) {
+			*error = error_key;
+			return -ENOKEY;
 		}
 	}
 
@@ -2546,7 +2565,8 @@ static int create_journal(struct dm_integrity_c *ic, char **error)
 	int r = 0;
 	unsigned i;
 	__u64 journal_pages, journal_desc_size, journal_tree_size;
-	unsigned char *crypt_data = NULL;
+	unsigned char *crypt_data = NULL, *crypt_iv = NULL;
+	struct skcipher_request *req = NULL;
 
 	ic->commit_ids[0] = cpu_to_le64(0x1111111111111111ULL);
 	ic->commit_ids[1] = cpu_to_le64(0x2222222222222222ULL);
@@ -2604,9 +2624,20 @@ static int create_journal(struct dm_integrity_c *ic, char **error)
 
 		if (blocksize == 1) {
 			struct scatterlist *sg;
-			SKCIPHER_REQUEST_ON_STACK(req, ic->journal_crypt);
-			unsigned char iv[ivsize];
-			skcipher_request_set_tfm(req, ic->journal_crypt);
+
+			req = skcipher_request_alloc(ic->journal_crypt, GFP_KERNEL);
+			if (!req) {
+				*error = "Could not allocate crypt request";
+				r = -ENOMEM;
+				goto bad;
+			}
+
+			crypt_iv = kmalloc(ivsize, GFP_KERNEL);
+			if (!crypt_iv) {
+				*error = "Could not allocate iv";
+				r = -ENOMEM;
+				goto bad;
+			}
 
 			ic->journal_xor = dm_integrity_alloc_page_list(ic);
 			if (!ic->journal_xor) {
@@ -2615,7 +2646,9 @@ static int create_journal(struct dm_integrity_c *ic, char **error)
 				goto bad;
 			}
 
-			sg = kvmalloc((ic->journal_pages + 1) * sizeof(struct scatterlist), GFP_KERNEL);
+			sg = kvmalloc_array(ic->journal_pages + 1,
+					    sizeof(struct scatterlist),
+					    GFP_KERNEL);
 			if (!sg) {
 				*error = "Unable to allocate sg list";
 				r = -ENOMEM;
@@ -2628,10 +2661,10 @@ static int create_journal(struct dm_integrity_c *ic, char **error)
 				sg_set_buf(&sg[i], va, PAGE_SIZE);
 			}
 			sg_set_buf(&sg[i], &ic->commit_ids, sizeof ic->commit_ids);
-			memset(iv, 0x00, ivsize);
+			memset(crypt_iv, 0x00, ivsize);
 
-			skcipher_request_set_crypt(req, sg, sg, PAGE_SIZE * ic->journal_pages + sizeof ic->commit_ids, iv);
-			comp.comp = COMPLETION_INITIALIZER_ONSTACK(comp.comp);
+			skcipher_request_set_crypt(req, sg, sg, PAGE_SIZE * ic->journal_pages + sizeof ic->commit_ids, crypt_iv);
+			init_completion(&comp.comp);
 			comp.in_flight = (atomic_t)ATOMIC_INIT(1);
 			if (do_crypt(true, req, &comp))
 				wait_for_completion(&comp.comp);
@@ -2646,9 +2679,21 @@ static int create_journal(struct dm_integrity_c *ic, char **error)
 			crypto_free_skcipher(ic->journal_crypt);
 			ic->journal_crypt = NULL;
 		} else {
-			SKCIPHER_REQUEST_ON_STACK(req, ic->journal_crypt);
-			unsigned char iv[ivsize];
 			unsigned crypt_len = roundup(ivsize, blocksize);
+
+			req = skcipher_request_alloc(ic->journal_crypt, GFP_KERNEL);
+			if (!req) {
+				*error = "Could not allocate crypt request";
+				r = -ENOMEM;
+				goto bad;
+			}
+
+			crypt_iv = kmalloc(ivsize, GFP_KERNEL);
+			if (!crypt_iv) {
+				*error = "Could not allocate iv";
+				r = -ENOMEM;
+				goto bad;
+			}
 
 			crypt_data = kmalloc(crypt_len, GFP_KERNEL);
 			if (!crypt_data) {
@@ -2656,8 +2701,6 @@ static int create_journal(struct dm_integrity_c *ic, char **error)
 				r = -ENOMEM;
 				goto bad;
 			}
-
-			skcipher_request_set_tfm(req, ic->journal_crypt);
 
 			ic->journal_scatterlist = dm_integrity_alloc_journal_scatterlist(ic, ic->journal);
 			if (!ic->journal_scatterlist) {
@@ -2671,7 +2714,9 @@ static int create_journal(struct dm_integrity_c *ic, char **error)
 				r = -ENOMEM;
 				goto bad;
 			}
-			ic->sk_requests = kvmalloc(ic->journal_sections * sizeof(struct skcipher_request *), GFP_KERNEL | __GFP_ZERO);
+			ic->sk_requests = kvmalloc_array(ic->journal_sections,
+							 sizeof(struct skcipher_request *),
+							 GFP_KERNEL | __GFP_ZERO);
 			if (!ic->sk_requests) {
 				*error = "Unable to allocate sk requests";
 				r = -ENOMEM;
@@ -2682,13 +2727,13 @@ static int create_journal(struct dm_integrity_c *ic, char **error)
 				struct skcipher_request *section_req;
 				__u32 section_le = cpu_to_le32(i);
 
-				memset(iv, 0x00, ivsize);
+				memset(crypt_iv, 0x00, ivsize);
 				memset(crypt_data, 0x00, crypt_len);
 				memcpy(crypt_data, &section_le, min((size_t)crypt_len, sizeof(section_le)));
 
 				sg_init_one(&sg, crypt_data, crypt_len);
-				skcipher_request_set_crypt(req, &sg, &sg, crypt_len, iv);
-				comp.comp = COMPLETION_INITIALIZER_ONSTACK(comp.comp);
+				skcipher_request_set_crypt(req, &sg, &sg, crypt_len, crypt_iv);
+				init_completion(&comp.comp);
 				comp.in_flight = (atomic_t)ATOMIC_INIT(1);
 				if (do_crypt(true, req, &comp))
 					wait_for_completion(&comp.comp);
@@ -2705,7 +2750,8 @@ static int create_journal(struct dm_integrity_c *ic, char **error)
 					r = -ENOMEM;
 					goto bad;
 				}
-				section_req->iv = kmalloc(ivsize * 2, GFP_KERNEL);
+				section_req->iv = kmalloc_array(ivsize, 2,
+								GFP_KERNEL);
 				if (!section_req->iv) {
 					skcipher_request_free(section_req);
 					*error = "Unable to allocate iv";
@@ -2745,6 +2791,9 @@ retest_commit_id:
 	}
 bad:
 	kfree(crypt_data);
+	kfree(crypt_iv);
+	skcipher_request_free(req);
+
 	return r;
 }
 
@@ -2775,7 +2824,7 @@ static int dm_integrity_ctr(struct dm_target *ti, unsigned argc, char **argv)
 	int r;
 	unsigned extra_args;
 	struct dm_arg_set as;
-	static struct dm_arg _args[] = {
+	static const struct dm_arg _args[] = {
 		{0, 9, "Invalid number of feature args"},
 	};
 	unsigned journal_sectors, interleave_sectors, buffer_sectors, journal_watermark, sync_msec;
@@ -2803,6 +2852,7 @@ static int dm_integrity_ctr(struct dm_target *ti, unsigned argc, char **argv)
 	bio_list_init(&ic->flush_bio_list);
 	init_waitqueue_head(&ic->copy_to_journal_wait);
 	init_completion(&ic->crypto_backoff);
+	atomic64_set(&ic->number_of_mismatches, 0);
 
 	r = dm_get_device(ti, argv[0], dm_table_get_mode(ti->table), &ic->dev);
 	if (r) {
@@ -2928,7 +2978,7 @@ static int dm_integrity_ctr(struct dm_target *ti, unsigned argc, char **argv)
 
 	ic->autocommit_jiffies = msecs_to_jiffies(sync_msec);
 	ic->autocommit_msec = sync_msec;
-	setup_timer(&ic->autocommit_timer, autocommit_fn, (unsigned long)ic);
+	timer_setup(&ic->autocommit_timer, autocommit_fn, 0);
 
 	ic->io = dm_io_client_create();
 	if (IS_ERR(ic->io)) {
@@ -2938,9 +2988,8 @@ static int dm_integrity_ctr(struct dm_target *ti, unsigned argc, char **argv)
 		goto bad;
 	}
 
-	ic->journal_io_mempool = mempool_create_slab_pool(JOURNAL_IO_MEMPOOL, journal_io_cache);
-	if (!ic->journal_io_mempool) {
-		r = -ENOMEM;
+	r = mempool_init_slab_pool(&ic->journal_io_mempool, JOURNAL_IO_MEMPOOL, journal_io_cache);
+	if (r) {
 		ti->error = "Cannot allocate mempool";
 		goto bad;
 	}
@@ -3154,7 +3203,7 @@ static void dm_integrity_dtr(struct dm_target *ti)
 		destroy_workqueue(ic->writer_wq);
 	if (ic->bufio)
 		dm_bufio_client_destroy(ic->bufio);
-	mempool_destroy(ic->journal_io_mempool);
+	mempool_exit(&ic->journal_io_mempool);
 	if (ic->io)
 		dm_io_client_destroy(ic->io);
 	if (ic->dev)
@@ -3199,7 +3248,7 @@ static void dm_integrity_dtr(struct dm_target *ti)
 
 static struct target_type integrity_target = {
 	.name			= "integrity",
-	.version		= {1, 0, 0},
+	.version		= {1, 1, 0},
 	.module			= THIS_MODULE,
 	.features		= DM_TARGET_SINGLETON | DM_TARGET_INTEGRITY,
 	.ctr			= dm_integrity_ctr,

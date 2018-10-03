@@ -122,7 +122,7 @@
  */
 
  /* hardware definition */
-static struct snd_pcm_hardware snd_p16v_playback_hw = {
+static const struct snd_pcm_hardware snd_p16v_playback_hw = {
 	.info =			SNDRV_PCM_INFO_MMAP | 
 				SNDRV_PCM_INFO_INTERLEAVED |
 				SNDRV_PCM_INFO_BLOCK_TRANSFER |
@@ -143,7 +143,7 @@ static struct snd_pcm_hardware snd_p16v_playback_hw = {
 	.fifo_size =		0,
 };
 
-static struct snd_pcm_hardware snd_p16v_capture_hw = {
+static const struct snd_pcm_hardware snd_p16v_capture_hw = {
 	.info =			(SNDRV_PCM_INFO_MMAP |
 				 SNDRV_PCM_INFO_INTERLEAVED |
 				 SNDRV_PCM_INFO_BLOCK_TRANSFER |
@@ -874,7 +874,7 @@ int snd_p16v_mixer(struct snd_emu10k1 *emu)
 
 int snd_p16v_alloc_pm_buffer(struct snd_emu10k1 *emu)
 {
-	emu->p16v_saved = vmalloc(NUM_CHS * 4 * 0x80);
+	emu->p16v_saved = vmalloc(array_size(NUM_CHS * 4, 0x80));
 	if (! emu->p16v_saved)
 		return -ENOMEM;
 	return 0;

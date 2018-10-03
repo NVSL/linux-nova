@@ -58,7 +58,7 @@ void copy_to_user_page(struct vm_area_struct *vma, struct page *page,
 	flush_ptrace_access(vma, page, uaddr, dst, len);
 }
 
-void __sync_icache_dcache(pte_t pte, unsigned long addr)
+void __sync_icache_dcache(pte_t pte)
 {
 	struct page *page = pte_page(pte);
 
@@ -83,3 +83,19 @@ EXPORT_SYMBOL(flush_dcache_page);
  * Additional functions defined in assembly.
  */
 EXPORT_SYMBOL(flush_icache_range);
+
+#ifdef CONFIG_ARCH_HAS_PMEM_API
+void arch_wb_cache_pmem(void *addr, size_t size)
+{
+	/* Ensure order against any prior non-cacheable writes */
+	dmb(osh);
+	__clean_dcache_area_pop(addr, size);
+}
+EXPORT_SYMBOL_GPL(arch_wb_cache_pmem);
+
+void arch_invalidate_pmem(void *addr, size_t size)
+{
+	__inval_dcache_area(addr, size);
+}
+EXPORT_SYMBOL_GPL(arch_invalidate_pmem);
+#endif

@@ -1150,14 +1150,50 @@ static void cn23xx_get_pcie_qlmport(struct octeon_device *oct)
 		oct->pcie_port);
 }
 
-static void cn23xx_get_pf_num(struct octeon_device *oct)
+static int cn23xx_get_pf_num(struct octeon_device *oct)
 {
 	u32 fdl_bit = 0;
+	u64 pkt0_in_ctl, d64;
+	int pfnum, mac, trs, ret;
+
+	ret = 0;
 
 	/** Read Function Dependency Link reg to get the function number */
-	pci_read_config_dword(oct->pci_dev, CN23XX_PCIE_SRIOV_FDL, &fdl_bit);
-	oct->pf_num = ((fdl_bit >> CN23XX_PCIE_SRIOV_FDL_BIT_POS) &
-		       CN23XX_PCIE_SRIOV_FDL_MASK);
+	if (pci_read_config_dword(oct->pci_dev, CN23XX_PCIE_SRIOV_FDL,
+				  &fdl_bit) == 0) {
+		oct->pf_num = ((fdl_bit >> CN23XX_PCIE_SRIOV_FDL_BIT_POS) &
+			       CN23XX_PCIE_SRIOV_FDL_MASK);
+	} else {
+		ret = EINVAL;
+
+		/* Under some virtual environments, extended PCI regs are
+		 * inaccessible, in which case the above read will have failed.
+		 * In this case, read the PF number from the
+		 * SLI_PKT0_INPUT_CONTROL reg (written by f/w)
+		 */
+		pkt0_in_ctl = octeon_read_csr64(oct,
+						CN23XX_SLI_IQ_PKT_CONTROL64(0));
+		pfnum = (pkt0_in_ctl >> CN23XX_PKT_INPUT_CTL_PF_NUM_POS) &
+			CN23XX_PKT_INPUT_CTL_PF_NUM_MASK;
+		mac = (octeon_read_csr(oct, CN23XX_SLI_MAC_NUMBER)) & 0xff;
+
+		/* validate PF num by reading RINFO; f/w writes RINFO.trs == 1*/
+		d64 = octeon_read_csr64(oct,
+					CN23XX_SLI_PKT_MAC_RINFO64(mac, pfnum));
+		trs = (int)(d64 >> CN23XX_PKT_MAC_CTL_RINFO_TRS_BIT_POS) & 0xff;
+		if (trs == 1) {
+			dev_err(&oct->pci_dev->dev,
+				"OCTEON: error reading PCI cfg space pfnum, re-read %u\n",
+				pfnum);
+			oct->pf_num = pfnum;
+			ret = 0;
+		} else {
+			dev_err(&oct->pci_dev->dev,
+				"OCTEON: error reading PCI cfg space pfnum; could not ascertain PF number\n");
+		}
+	}
+
+	return ret;
 }
 
 static void cn23xx_setup_reg_address(struct octeon_device *oct)
@@ -1209,7 +1245,7 @@ static void cn23xx_setup_reg_address(struct octeon_device *oct)
 	    CN23XX_SLI_MAC_PF_INT_ENB64(oct->pcie_port, oct->pf_num);
 }
 
-static int cn23xx_sriov_config(struct octeon_device *oct)
+int cn23xx_sriov_config(struct octeon_device *oct)
 {
 	struct octeon_cn23xx_pf *cn23xx = (struct octeon_cn23xx_pf *)oct->chip;
 	u32 max_rings, total_rings, max_vfs, rings_per_vf;
@@ -1233,8 +1269,8 @@ static int cn23xx_sriov_config(struct octeon_device *oct)
 		break;
 	}
 
-	if (max_rings <= num_present_cpus())
-		num_pf_rings = 1;
+	if (oct->sriov_info.num_pf_rings)
+		num_pf_rings = oct->sriov_info.num_pf_rings;
 	else
 		num_pf_rings = num_present_cpus();
 
@@ -1269,6 +1305,26 @@ static int cn23xx_sriov_config(struct octeon_device *oct)
 
 int setup_cn23xx_octeon_pf_device(struct octeon_device *oct)
 {
+	u32 data32;
+	u64 BAR0, BAR1;
+
+	pci_read_config_dword(oct->pci_dev, PCI_BASE_ADDRESS_0, &data32);
+	BAR0 = (u64)(data32 & ~0xf);
+	pci_read_config_dword(oct->pci_dev, PCI_BASE_ADDRESS_1, &data32);
+	BAR0 |= ((u64)data32 << 32);
+	pci_read_config_dword(oct->pci_dev, PCI_BASE_ADDRESS_2, &data32);
+	BAR1 = (u64)(data32 & ~0xf);
+	pci_read_config_dword(oct->pci_dev, PCI_BASE_ADDRESS_3, &data32);
+	BAR1 |= ((u64)data32 << 32);
+
+	if (!BAR0 || !BAR1) {
+		if (!BAR0)
+			dev_err(&oct->pci_dev->dev, "device BAR0 unassigned\n");
+		if (!BAR1)
+			dev_err(&oct->pci_dev->dev, "device BAR1 unassigned\n");
+		return 1;
+	}
+
 	if (octeon_map_pci_barx(oct, 0, 0))
 		return 1;
 
@@ -1279,7 +1335,8 @@ int setup_cn23xx_octeon_pf_device(struct octeon_device *oct)
 		return 1;
 	}
 
-	cn23xx_get_pf_num(oct);
+	if (cn23xx_get_pf_num(oct) != 0)
+		return 1;
 
 	if (cn23xx_sriov_config(oct)) {
 		octeon_unmap_pci_barx(oct, 0);
@@ -1405,8 +1462,19 @@ int cn23xx_fw_loaded(struct octeon_device *oct)
 {
 	u64 val;
 
-	val = octeon_read_csr64(oct, CN23XX_SLI_SCRATCH1);
-	return (val >> 1) & 1ULL;
+	/* If there's more than one active PF on this NIC, then that
+	 * implies that the NIC firmware is loaded and running.  This check
+	 * prevents a rare false negative that might occur if we only relied
+	 * on checking the SCR2_BIT_FW_LOADED flag.  The false negative would
+	 * happen if the PF driver sees SCR2_BIT_FW_LOADED as cleared even
+	 * though the firmware was already loaded but still booting and has yet
+	 * to set SCR2_BIT_FW_LOADED.
+	 */
+	if (atomic_read(oct->adapter_refcount) > 1)
+		return 1;
+
+	val = octeon_read_csr64(oct, CN23XX_SLI_SCRATCH2);
+	return (val >> SCR2_BIT_FW_LOADED) & 1ULL;
 }
 
 void cn23xx_tell_vf_its_macaddr_changed(struct octeon_device *oct, int vfidx,
@@ -1428,4 +1496,58 @@ void cn23xx_tell_vf_its_macaddr_changed(struct octeon_device *oct, int vfidx,
 		mbox_cmd.q_no = vfidx * oct->sriov_info.rings_per_vf;
 		octeon_mbox_write(oct, &mbox_cmd);
 	}
+}
+
+static void
+cn23xx_get_vf_stats_callback(struct octeon_device *oct,
+			     struct octeon_mbox_cmd *cmd, void *arg)
+{
+	struct oct_vf_stats_ctx *ctx = arg;
+
+	memcpy(ctx->stats, cmd->data, sizeof(struct oct_vf_stats));
+	atomic_set(&ctx->status, 1);
+}
+
+int cn23xx_get_vf_stats(struct octeon_device *oct, int vfidx,
+			struct oct_vf_stats *stats)
+{
+	u32 timeout = HZ; // 1sec
+	struct octeon_mbox_cmd mbox_cmd;
+	struct oct_vf_stats_ctx ctx;
+	u32 count = 0, ret;
+
+	if (!(oct->sriov_info.vf_drv_loaded_mask & (1ULL << vfidx)))
+		return -1;
+
+	if (sizeof(struct oct_vf_stats) > sizeof(mbox_cmd.data))
+		return -1;
+
+	mbox_cmd.msg.u64 = 0;
+	mbox_cmd.msg.s.type = OCTEON_MBOX_REQUEST;
+	mbox_cmd.msg.s.resp_needed = 1;
+	mbox_cmd.msg.s.cmd = OCTEON_GET_VF_STATS;
+	mbox_cmd.msg.s.len = 1;
+	mbox_cmd.q_no = vfidx * oct->sriov_info.rings_per_vf;
+	mbox_cmd.recv_len = 0;
+	mbox_cmd.recv_status = 0;
+	mbox_cmd.fn = (octeon_mbox_callback_t)cn23xx_get_vf_stats_callback;
+	ctx.stats = stats;
+	atomic_set(&ctx.status, 0);
+	mbox_cmd.fn_arg = (void *)&ctx;
+	memset(mbox_cmd.data, 0, sizeof(mbox_cmd.data));
+	octeon_mbox_write(oct, &mbox_cmd);
+
+	do {
+		schedule_timeout_uninterruptible(1);
+	} while ((atomic_read(&ctx.status) == 0) && (count++ < timeout));
+
+	ret = atomic_read(&ctx.status);
+	if (ret == 0) {
+		octeon_mbox_cancel(oct, 0);
+		dev_err(&oct->pci_dev->dev, "Unable to get stats from VF-%d, timedout\n",
+			vfidx);
+		return -1;
+	}
+
+	return 0;
 }

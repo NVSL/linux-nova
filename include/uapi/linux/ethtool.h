@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 /*
  * ethtool.h: Defines for Linux ethtool.
  *
@@ -216,12 +217,16 @@ struct ethtool_value {
 	__u32	data;
 };
 
+#define PFC_STORM_PREVENTION_AUTO	0xffff
+#define PFC_STORM_PREVENTION_DISABLE	0
+
 enum tunable_id {
 	ETHTOOL_ID_UNSPEC,
 	ETHTOOL_RX_COPYBREAK,
 	ETHTOOL_TX_COPYBREAK,
+	ETHTOOL_PFC_PREVENTION_TOUT, /* timeout in msecs */
 	/*
-	 * Add your fresh new tubale attribute above and remember to update
+	 * Add your fresh new tunable attribute above and remember to update
 	 * tunable_strings[] in net/core/ethtool.c
 	 */
 	__ETHTOOL_TUNABLE_COUNT,
@@ -913,12 +918,15 @@ static inline __u64 ethtool_get_flow_spec_ring_vf(__u64 ring_cookie)
  * @flow_type: Type of flow to be affected, e.g. %TCP_V4_FLOW
  * @data: Command-dependent value
  * @fs: Flow classification rule
+ * @rss_context: RSS context to be affected
  * @rule_cnt: Number of rules to be affected
  * @rule_locs: Array of used rule locations
  *
  * For %ETHTOOL_GRXFH and %ETHTOOL_SRXFH, @data is a bitmask indicating
  * the fields included in the flow hash, e.g. %RXH_IP_SRC.  The following
- * structure fields must not be used.
+ * structure fields must not be used, except that if @flow_type includes
+ * the %FLOW_RSS flag, then @rss_context determines which RSS context to
+ * act on.
  *
  * For %ETHTOOL_GRXRINGS, @data is set to the number of RX rings/queues
  * on return.
@@ -930,7 +938,9 @@ static inline __u64 ethtool_get_flow_spec_ring_vf(__u64 ring_cookie)
  * set in @data then special location values should not be used.
  *
  * For %ETHTOOL_GRXCLSRULE, @fs.@location specifies the location of an
- * existing rule on entry and @fs contains the rule on return.
+ * existing rule on entry and @fs contains the rule on return; if
+ * @fs.@flow_type includes the %FLOW_RSS flag, then @rss_context is
+ * filled with the RSS context ID associated with the rule.
  *
  * For %ETHTOOL_GRXCLSRLALL, @rule_cnt specifies the array size of the
  * user buffer for @rule_locs on entry.  On return, @data is the size
@@ -941,7 +951,11 @@ static inline __u64 ethtool_get_flow_spec_ring_vf(__u64 ring_cookie)
  * For %ETHTOOL_SRXCLSRLINS, @fs specifies the rule to add or update.
  * @fs.@location either specifies the location to use or is a special
  * location value with %RX_CLS_LOC_SPECIAL flag set.  On return,
- * @fs.@location is the actual rule location.
+ * @fs.@location is the actual rule location.  If @fs.@flow_type
+ * includes the %FLOW_RSS flag, @rss_context is the RSS context ID to
+ * use for flow spreading traffic which matches this rule.  The value
+ * from the rxfh indirection table will be added to @fs.@ring_cookie
+ * to choose which ring to deliver to.
  *
  * For %ETHTOOL_SRXCLSRLDEL, @fs.@location specifies the location of an
  * existing rule on entry.
@@ -962,7 +976,10 @@ struct ethtool_rxnfc {
 	__u32				flow_type;
 	__u64				data;
 	struct ethtool_rx_flow_spec	fs;
-	__u32				rule_cnt;
+	union {
+		__u32			rule_cnt;
+		__u32			rss_context;
+	};
 	__u32				rule_locs[0];
 };
 
@@ -989,7 +1006,11 @@ struct ethtool_rxfh_indir {
 /**
  * struct ethtool_rxfh - command to get/set RX flow hash indir or/and hash key.
  * @cmd: Specific command number - %ETHTOOL_GRSSH or %ETHTOOL_SRSSH
- * @rss_context: RSS context identifier.
+ * @rss_context: RSS context identifier.  Context 0 is the default for normal
+ *	traffic; other contexts can be referenced as the destination for RX flow
+ *	classification rules.  %ETH_RXFH_CONTEXT_ALLOC is used with command
+ *	%ETHTOOL_SRSSH to allocate a new RSS context; on return this field will
+ *	contain the ID of the newly allocated context.
  * @indir_size: On entry, the array size of the user buffer for the
  *	indirection table, which may be zero, or (for %ETHTOOL_SRSSH),
  *	%ETH_RXFH_INDIR_NO_CHANGE.  On return from %ETHTOOL_GRSSH,
@@ -1008,7 +1029,8 @@ struct ethtool_rxfh_indir {
  * size should be returned.  For %ETHTOOL_SRSSH, an @indir_size of
  * %ETH_RXFH_INDIR_NO_CHANGE means that indir table setting is not requested
  * and a @indir_size of zero means the indir table should be reset to default
- * values. An hfunc of zero means that hash function setting is not requested.
+ * values (if @rss_context == 0) or that the RSS context should be deleted.
+ * An hfunc of zero means that hash function setting is not requested.
  */
 struct ethtool_rxfh {
 	__u32   cmd;
@@ -1020,6 +1042,7 @@ struct ethtool_rxfh {
 	__u32	rsvd32;
 	__u32   rss_config[0];
 };
+#define ETH_RXFH_CONTEXT_ALLOC		0xffffffff
 #define ETH_RXFH_INDIR_NO_CHANGE	0xffffffff
 
 /**
@@ -1238,6 +1261,47 @@ struct ethtool_per_queue_op {
 	char	data[];
 };
 
+/**
+ * struct ethtool_fecparam - Ethernet forward error correction(fec) parameters
+ * @cmd: Command number = %ETHTOOL_GFECPARAM or %ETHTOOL_SFECPARAM
+ * @active_fec: FEC mode which is active on porte
+ * @fec: Bitmask of supported/configured FEC modes
+ * @rsvd: Reserved for future extensions. i.e FEC bypass feature.
+ *
+ * Drivers should reject a non-zero setting of @autoneg when
+ * autoneogotiation is disabled (or not supported) for the link.
+ *
+ */
+struct ethtool_fecparam {
+	__u32   cmd;
+	/* bitmask of FEC modes */
+	__u32   active_fec;
+	__u32   fec;
+	__u32   reserved;
+};
+
+/**
+ * enum ethtool_fec_config_bits - flags definition of ethtool_fec_configuration
+ * @ETHTOOL_FEC_NONE: FEC mode configuration is not supported
+ * @ETHTOOL_FEC_AUTO: Default/Best FEC mode provided by driver
+ * @ETHTOOL_FEC_OFF: No FEC Mode
+ * @ETHTOOL_FEC_RS: Reed-Solomon Forward Error Detection mode
+ * @ETHTOOL_FEC_BASER: Base-R/Reed-Solomon Forward Error Detection mode
+ */
+enum ethtool_fec_config_bits {
+	ETHTOOL_FEC_NONE_BIT,
+	ETHTOOL_FEC_AUTO_BIT,
+	ETHTOOL_FEC_OFF_BIT,
+	ETHTOOL_FEC_RS_BIT,
+	ETHTOOL_FEC_BASER_BIT,
+};
+
+#define ETHTOOL_FEC_NONE		(1 << ETHTOOL_FEC_NONE_BIT)
+#define ETHTOOL_FEC_AUTO		(1 << ETHTOOL_FEC_AUTO_BIT)
+#define ETHTOOL_FEC_OFF			(1 << ETHTOOL_FEC_OFF_BIT)
+#define ETHTOOL_FEC_RS			(1 << ETHTOOL_FEC_RS_BIT)
+#define ETHTOOL_FEC_BASER		(1 << ETHTOOL_FEC_BASER_BIT)
+
 /* CMDs currently supported */
 #define ETHTOOL_GSET		0x00000001 /* DEPRECATED, Get settings.
 					    * Please use ETHTOOL_GLINKSETTINGS
@@ -1330,6 +1394,8 @@ struct ethtool_per_queue_op {
 #define ETHTOOL_SLINKSETTINGS	0x0000004d /* Set ethtool_link_settings */
 #define ETHTOOL_PHY_GTUNABLE	0x0000004e /* Get PHY tunable configuration */
 #define ETHTOOL_PHY_STUNABLE	0x0000004f /* Set PHY tunable configuration */
+#define ETHTOOL_GFECPARAM	0x00000050 /* Get FEC settings */
+#define ETHTOOL_SFECPARAM	0x00000051 /* Set FEC settings */
 
 /* compatibility with older code */
 #define SPARC_ETH_GSET		ETHTOOL_GSET
@@ -1387,6 +1453,9 @@ enum ethtool_link_mode_bit_indices {
 	ETHTOOL_LINK_MODE_2500baseT_Full_BIT	= 47,
 	ETHTOOL_LINK_MODE_5000baseT_Full_BIT	= 48,
 
+	ETHTOOL_LINK_MODE_FEC_NONE_BIT	= 49,
+	ETHTOOL_LINK_MODE_FEC_RS_BIT	= 50,
+	ETHTOOL_LINK_MODE_FEC_BASER_BIT	= 51,
 
 	/* Last allowed bit for __ETHTOOL_LINK_MODE_LEGACY_MASK is bit
 	 * 31. Please do NOT define any SUPPORTED_* or ADVERTISED_*
@@ -1395,7 +1464,7 @@ enum ethtool_link_mode_bit_indices {
 	 */
 
 	__ETHTOOL_LINK_MODE_LAST
-	  = ETHTOOL_LINK_MODE_5000baseT_Full_BIT,
+	  = ETHTOOL_LINK_MODE_FEC_BASER_BIT,
 };
 
 #define __ETHTOOL_LINK_MODE_LEGACY_MASK(base_name)	\
@@ -1588,6 +1657,8 @@ static inline int ethtool_validate_duplex(__u8 duplex)
 /* Flag to enable additional fields in struct ethtool_rx_flow_spec */
 #define	FLOW_EXT	0x80000000
 #define	FLOW_MAC_EXT	0x40000000
+/* Flag to enable RSS spreading of traffic matching rule (nfc only) */
+#define	FLOW_RSS	0x20000000
 
 /* L3-L4 network traffic flow hash options */
 #define	RXH_L2DA	(1 << 1)
@@ -1639,6 +1710,7 @@ enum ethtool_reset_flags {
 	ETH_RESET_PHY		= 1 << 6,	/* Transceiver/PHY */
 	ETH_RESET_RAM		= 1 << 7,	/* RAM shared between
 						 * multiple components */
+	ETH_RESET_AP		= 1 << 8,	/* Application processor */
 
 	ETH_RESET_DEDICATED	= 0x0000ffff,	/* All components dedicated to
 						 * this interface */
@@ -1707,6 +1779,8 @@ enum ethtool_reset_flags {
  *	%ethtool_link_mode_bit_indices for the link modes, and other
  *	link features that the link partner advertised through
  *	autonegotiation; 0 if unknown or not applicable.  Read-only.
+ * @transceiver: Used to distinguish different possible PHY types,
+ *	reported consistently by PHYLIB.  Read-only.
  *
  * If autonegotiation is disabled, the speed and @duplex represent the
  * fixed link mode and are writable if the driver supports multiple
@@ -1758,7 +1832,9 @@ struct ethtool_link_settings {
 	__u8	eth_tp_mdix;
 	__u8	eth_tp_mdix_ctrl;
 	__s8	link_mode_masks_nwords;
-	__u32	reserved[8];
+	__u8	transceiver;
+	__u8	reserved1[3];
+	__u32	reserved[7];
 	__u32	link_mode_masks[0];
 	/* layout of link_mode_masks fields:
 	 * __u32 map_supported[link_mode_masks_nwords];

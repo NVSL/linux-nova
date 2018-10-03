@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0
 # ==========================================================================
 # Generating modules.builtin
 # ==========================================================================
@@ -52,9 +53,5 @@ FORCE:
 PHONY += $(subdir-ym)
 $(subdir-ym):
 	$(Q)$(MAKE) $(modbuiltin)=$@
-
-
-# Declare the contents of the .PHONY variable as phony.  We keep that
-# information in a variable se we can use it in if_changed and friends.
 
 .PHONY: $(PHONY)

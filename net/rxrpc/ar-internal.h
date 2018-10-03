@@ -15,7 +15,7 @@
 #include <net/netns/generic.h>
 #include <net/sock.h>
 #include <net/af_rxrpc.h>
-#include <rxrpc/packet.h>
+#include "protocol.h"
 
 #if 0
 #define CHECK_SLAB_OKAY(X)				     \
@@ -75,27 +75,40 @@ struct rxrpc_net {
 	u32			epoch;		/* Local epoch for detecting local-end reset */
 	struct list_head	calls;		/* List of calls active in this namespace */
 	rwlock_t		call_lock;	/* Lock for ->calls */
+	atomic_t		nr_calls;	/* Count of allocated calls */
 
+	atomic_t		nr_conns;
 	struct list_head	conn_proc_list;	/* List of conns in this namespace for proc */
 	struct list_head	service_conns;	/* Service conns in this namespace */
 	rwlock_t		conn_lock;	/* Lock for ->conn_proc_list, ->service_conns */
-	struct delayed_work	service_conn_reaper;
+	struct work_struct	service_conn_reaper;
+	struct timer_list	service_conn_reap_timer;
 
 	unsigned int		nr_client_conns;
 	unsigned int		nr_active_client_conns;
 	bool			kill_all_client_conns;
+	bool			live;
 	spinlock_t		client_conn_cache_lock; /* Lock for ->*_client_conns */
 	spinlock_t		client_conn_discard_lock; /* Prevent multiple discarders */
 	struct list_head	waiting_client_conns;
 	struct list_head	active_client_conns;
 	struct list_head	idle_client_conns;
-	struct delayed_work	client_conn_reaper;
+	struct work_struct	client_conn_reaper;
+	struct timer_list	client_conn_reap_timer;
 
 	struct list_head	local_endpoints;
 	struct mutex		local_mutex;	/* Lock for ->local_endpoints */
 
-	spinlock_t		peer_hash_lock;	/* Lock for ->peer_hash */
 	DECLARE_HASHTABLE	(peer_hash, 10);
+	spinlock_t		peer_hash_lock;	/* Lock for ->peer_hash */
+
+#define RXRPC_KEEPALIVE_TIME 20 /* NAT keepalive time in seconds */
+	u8			peer_keepalive_cursor;
+	time64_t		peer_keepalive_base;
+	struct list_head	peer_keepalive[32];
+	struct list_head	peer_keepalive_new;
+	struct timer_list	peer_keepalive_timer;
+	struct work_struct	peer_keepalive_work;
 };
 
 /*
@@ -265,6 +278,7 @@ struct rxrpc_local {
 	rwlock_t		services_lock;	/* lock for services list */
 	int			debug_id;	/* debug ID for printks */
 	bool			dead;
+	bool			service_closed;	/* Service socket closed */
 	struct sockaddr_rxrpc	srx;		/* local address */
 };
 
@@ -281,6 +295,8 @@ struct rxrpc_peer {
 	struct hlist_head	error_targets;	/* targets for net error distribution */
 	struct work_struct	error_distributor;
 	struct rb_root		service_conns;	/* Service connections */
+	struct list_head	keepalive_link;	/* Link in net->peer_keepalive[] */
+	time64_t		last_tx_at;	/* Last time packet sent here */
 	seqlock_t		service_conn_lock;
 	spinlock_t		lock;		/* access lock */
 	unsigned int		if_mtu;		/* interface MTU for this peer */
@@ -338,7 +354,16 @@ enum rxrpc_conn_flag {
 	RXRPC_CONN_DONT_REUSE,		/* Don't reuse this connection */
 	RXRPC_CONN_COUNTED,		/* Counted by rxrpc_nr_client_conns */
 	RXRPC_CONN_PROBING_FOR_UPGRADE,	/* Probing for service upgrade */
+	RXRPC_CONN_FINAL_ACK_0,		/* Need final ACK for channel 0 */
+	RXRPC_CONN_FINAL_ACK_1,		/* Need final ACK for channel 1 */
+	RXRPC_CONN_FINAL_ACK_2,		/* Need final ACK for channel 2 */
+	RXRPC_CONN_FINAL_ACK_3,		/* Need final ACK for channel 3 */
 };
+
+#define RXRPC_CONN_FINAL_ACK_MASK ((1UL << RXRPC_CONN_FINAL_ACK_0) |	\
+				   (1UL << RXRPC_CONN_FINAL_ACK_1) |	\
+				   (1UL << RXRPC_CONN_FINAL_ACK_2) |	\
+				   (1UL << RXRPC_CONN_FINAL_ACK_3))
 
 /*
  * Events that can be raised upon a connection.
@@ -393,6 +418,7 @@ struct rxrpc_connection {
 #define RXRPC_ACTIVE_CHANS_MASK	((1 << RXRPC_MAXCALLS) - 1)
 	struct list_head	waiting_calls;	/* Calls waiting for channels */
 	struct rxrpc_channel {
+		unsigned long		final_ack_at;	/* Time at which to issue final ACK */
 		struct rxrpc_call __rcu	*call;		/* Active call */
 		u32			call_id;	/* ID of current call */
 		u32			call_counter;	/* Call ID counter */
@@ -404,6 +430,7 @@ struct rxrpc_connection {
 		};
 	} channels[RXRPC_MAXCALLS];
 
+	struct timer_list	timer;		/* Conn event timer */
 	struct work_struct	processor;	/* connection event processor */
 	union {
 		struct rb_node	client_node;	/* Node in local->client_conns */
@@ -445,9 +472,12 @@ enum rxrpc_call_flag {
 	RXRPC_CALL_EXPOSED,		/* The call was exposed to the world */
 	RXRPC_CALL_RX_LAST,		/* Received the last packet (at rxtx_top) */
 	RXRPC_CALL_TX_LAST,		/* Last packet in Tx buffer (at rxtx_top) */
+	RXRPC_CALL_TX_LASTQ,		/* Last packet has been queued */
 	RXRPC_CALL_SEND_PING,		/* A ping will need to be sent */
 	RXRPC_CALL_PINGING,		/* Ping in process */
 	RXRPC_CALL_RETRANS_TIMEOUT,	/* Retransmission due to timeout occurred */
+	RXRPC_CALL_BEGAN_RX_TIMER,	/* We began the expect_rx_by timer */
+	RXRPC_CALL_RX_HEARD,		/* The peer responded at least once to this call */
 };
 
 /*
@@ -456,9 +486,10 @@ enum rxrpc_call_flag {
 enum rxrpc_call_event {
 	RXRPC_CALL_EV_ACK,		/* need to generate ACK */
 	RXRPC_CALL_EV_ABORT,		/* need to generate abort */
-	RXRPC_CALL_EV_TIMER,		/* Timer expired */
 	RXRPC_CALL_EV_RESEND,		/* Tx resend required */
 	RXRPC_CALL_EV_PING,		/* Ping send required */
+	RXRPC_CALL_EV_EXPIRED,		/* Expiry occurred */
+	RXRPC_CALL_EV_ACK_LOST,		/* ACK may be lost, send ping */
 };
 
 /*
@@ -482,18 +513,6 @@ enum rxrpc_call_state {
 };
 
 /*
- * Call completion condition (state == RXRPC_CALL_COMPLETE).
- */
-enum rxrpc_call_completion {
-	RXRPC_CALL_SUCCEEDED,		/* - Normal termination */
-	RXRPC_CALL_REMOTELY_ABORTED,	/* - call aborted by peer */
-	RXRPC_CALL_LOCALLY_ABORTED,	/* - call aborted locally on error or close */
-	RXRPC_CALL_LOCAL_ERROR,		/* - call failed due to local error */
-	RXRPC_CALL_NETWORK_ERROR,	/* - call terminated by network error */
-	NR__RXRPC_CALL_COMPLETIONS
-};
-
-/*
  * Call Tx congestion management modes.
  */
 enum rxrpc_congest_mode {
@@ -513,11 +532,18 @@ struct rxrpc_call {
 	struct rxrpc_connection	*conn;		/* connection carrying call */
 	struct rxrpc_peer	*peer;		/* Peer record for remote address */
 	struct rxrpc_sock __rcu	*socket;	/* socket responsible */
+	struct rxrpc_net	*rxnet;		/* Network namespace to which call belongs */
 	struct mutex		user_mutex;	/* User access mutex */
-	ktime_t			ack_at;		/* When deferred ACK needs to happen */
-	ktime_t			resend_at;	/* When next resend needs to happen */
-	ktime_t			ping_at;	/* When next to send a ping */
-	ktime_t			expire_at;	/* When the call times out */
+	unsigned long		ack_at;		/* When deferred ACK needs to happen */
+	unsigned long		ack_lost_at;	/* When ACK is figured as lost */
+	unsigned long		resend_at;	/* When next resend needs to happen */
+	unsigned long		ping_at;	/* When next to send a ping */
+	unsigned long		keepalive_at;	/* When next to send a keepalive ping */
+	unsigned long		expect_rx_by;	/* When we expect to get a packet by */
+	unsigned long		expect_req_by;	/* When we expect to get a request DATA packet by */
+	unsigned long		expect_term_by;	/* When we expect call termination by */
+	u32			next_rx_timo;	/* Timeout for next Rx packet (jif) */
+	u32			next_req_timo;	/* Timeout for next Rx request packet (jif) */
 	struct timer_list	timer;		/* Combined event timer */
 	struct work_struct	processor;	/* Event processor */
 	rxrpc_notify_rx_t	notify_rx;	/* kernel service Rx notification function */
@@ -536,6 +562,7 @@ struct rxrpc_call {
 	unsigned long		flags;
 	unsigned long		events;
 	spinlock_t		lock;
+	spinlock_t		notify_lock;	/* Kernel notification lock */
 	rwlock_t		state_lock;	/* lock for state transition */
 	u32			abort_code;	/* Local/remote abort code */
 	int			error;		/* Local error incurred */
@@ -598,6 +625,7 @@ struct rxrpc_call {
 						 */
 	rxrpc_seq_t		rx_top;		/* Highest Rx slot allocated. */
 	rxrpc_seq_t		rx_expect_next;	/* Expected next packet sequence number */
+	rxrpc_serial_t		rx_serial;	/* Highest serial received for this call */
 	u8			rx_winsize;	/* Size of Rx window */
 	u8			tx_winsize;	/* Maximum size of Tx window */
 	bool			tx_phase;	/* T if transmission phase, F if receive phase */
@@ -619,6 +647,8 @@ struct rxrpc_call {
 	ktime_t			acks_latest_ts;	/* Timestamp of latest ACK received */
 	rxrpc_serial_t		acks_latest;	/* serial number of latest ACK received */
 	rxrpc_seq_t		acks_lowest_nak; /* Lowest NACK in the buffer (or ==tx_hard_ack) */
+	rxrpc_seq_t		acks_lost_top;	/* tx_top at the time lost-ack ping sent */
+	rxrpc_serial_t		acks_lost_ping;	/* Serial number of probe ACK */
 };
 
 /*
@@ -642,13 +672,41 @@ struct rxrpc_ack_summary {
 	u8			cumulative_acks;
 };
 
+/*
+ * sendmsg() cmsg-specified parameters.
+ */
+enum rxrpc_command {
+	RXRPC_CMD_SEND_DATA,		/* send data message */
+	RXRPC_CMD_SEND_ABORT,		/* request abort generation */
+	RXRPC_CMD_ACCEPT,		/* [server] accept incoming call */
+	RXRPC_CMD_REJECT_BUSY,		/* [server] reject a call as busy */
+};
+
+struct rxrpc_call_params {
+	s64			tx_total_len;	/* Total Tx data length (if send data) */
+	unsigned long		user_call_ID;	/* User's call ID */
+	struct {
+		u32		hard;		/* Maximum lifetime (sec) */
+		u32		idle;		/* Max time since last data packet (msec) */
+		u32		normal;		/* Max time since last call packet (msec) */
+	} timeouts;
+	u8			nr_timeouts;	/* Number of timeouts specified */
+};
+
+struct rxrpc_send_params {
+	struct rxrpc_call_params call;
+	u32			abort_code;	/* Abort code to Tx (if abort) */
+	enum rxrpc_command	command : 8;	/* The command to implement */
+	bool			exclusive;	/* Shared or exclusive call */
+	bool			upgrade;	/* If the connection is upgradeable */
+};
+
 #include <trace/events/rxrpc.h>
 
 /*
  * af_rxrpc.c
  */
 extern atomic_t rxrpc_n_tx_skbs, rxrpc_n_rx_skbs;
-extern atomic_t rxrpc_debug_id;
 extern struct workqueue_struct *rxrpc_workqueue;
 
 /*
@@ -667,11 +725,18 @@ int rxrpc_reject_call(struct rxrpc_sock *);
 /*
  * call_event.c
  */
-void __rxrpc_set_timer(struct rxrpc_call *, enum rxrpc_timer_trace, ktime_t);
-void rxrpc_set_timer(struct rxrpc_call *, enum rxrpc_timer_trace, ktime_t);
 void rxrpc_propose_ACK(struct rxrpc_call *, u8, u16, u32, bool, bool,
 		       enum rxrpc_propose_ack_trace);
 void rxrpc_process_call(struct work_struct *);
+
+static inline void rxrpc_reduce_call_timer(struct rxrpc_call *call,
+					   unsigned long expire_at,
+					   unsigned long now,
+					   enum rxrpc_timer_trace why)
+{
+	trace_rxrpc_timer(call, why, now);
+	timer_reduce(&call->timer, expire_at);
+}
 
 /*
  * call_object.c
@@ -682,14 +747,21 @@ extern unsigned int rxrpc_max_call_lifetime;
 extern struct kmem_cache *rxrpc_call_jar;
 
 struct rxrpc_call *rxrpc_find_call_by_user_ID(struct rxrpc_sock *, unsigned long);
-struct rxrpc_call *rxrpc_alloc_call(gfp_t);
+struct rxrpc_call *rxrpc_alloc_call(struct rxrpc_sock *, gfp_t, unsigned int);
 struct rxrpc_call *rxrpc_new_client_call(struct rxrpc_sock *,
 					 struct rxrpc_conn_parameters *,
 					 struct sockaddr_rxrpc *,
-					 unsigned long, s64, gfp_t);
+					 struct rxrpc_call_params *, gfp_t,
+					 unsigned int);
+int rxrpc_retry_client_call(struct rxrpc_sock *,
+			    struct rxrpc_call *,
+			    struct rxrpc_conn_parameters *,
+			    struct sockaddr_rxrpc *,
+			    gfp_t);
 void rxrpc_incoming_call(struct rxrpc_sock *, struct rxrpc_call *,
 			 struct sk_buff *);
 void rxrpc_release_call(struct rxrpc_sock *, struct rxrpc_call *);
+int rxrpc_prepare_call_for_retry(struct rxrpc_sock *, struct rxrpc_call *);
 void rxrpc_release_calls_on_socket(struct rxrpc_sock *);
 bool __rxrpc_queue_call(struct rxrpc_call *);
 bool rxrpc_queue_call(struct rxrpc_call *);
@@ -722,6 +794,7 @@ static inline bool __rxrpc_set_call_completion(struct rxrpc_call *call,
 		call->error = error;
 		call->completion = compl,
 		call->state = RXRPC_CALL_COMPLETE;
+		trace_rxrpc_call_complete(call);
 		wake_up(&call->waitq);
 		return true;
 	}
@@ -766,7 +839,7 @@ static inline bool __rxrpc_abort_call(const char *why, struct rxrpc_call *call,
 				      rxrpc_seq_t seq,
 				      u32 abort_code, int error)
 {
-	trace_rxrpc_abort(why, call->cid, call->call_id, seq,
+	trace_rxrpc_abort(call->debug_id, why, call->cid, call->call_id, seq,
 			  abort_code, error);
 	return __rxrpc_set_call_completion(call, RXRPC_CALL_LOCALLY_ABORTED,
 					   abort_code, error);
@@ -807,8 +880,8 @@ static inline bool __rxrpc_abort_eproto(struct rxrpc_call *call,
  */
 extern unsigned int rxrpc_max_client_connections;
 extern unsigned int rxrpc_reap_client_connections;
-extern unsigned int rxrpc_conn_idle_client_expiry;
-extern unsigned int rxrpc_conn_idle_client_fast_expiry;
+extern unsigned long rxrpc_conn_idle_client_expiry;
+extern unsigned long rxrpc_conn_idle_client_fast_expiry;
 extern struct idr rxrpc_client_conn_ids;
 
 void rxrpc_destroy_client_conn_ids(void);
@@ -829,8 +902,8 @@ void rxrpc_process_connection(struct work_struct *);
  * conn_object.c
  */
 extern unsigned int rxrpc_connection_expiry;
+extern unsigned int rxrpc_closed_conn_expiry;
 
-int rxrpc_extract_addr_from_skb(struct sockaddr_rxrpc *, struct sk_buff *);
 struct rxrpc_connection *rxrpc_alloc_connection(gfp_t);
 struct rxrpc_connection *rxrpc_find_connection_rcu(struct rxrpc_local *,
 						   struct sk_buff *);
@@ -866,6 +939,12 @@ static inline void rxrpc_put_connection(struct rxrpc_connection *conn)
 		rxrpc_put_service_conn(conn);
 }
 
+static inline void rxrpc_reduce_conn_timer(struct rxrpc_connection *conn,
+					   unsigned long expire_at)
+{
+	timer_reduce(&conn->timer, expire_at);
+}
+
 /*
  * conn_service.c
  */
@@ -894,7 +973,7 @@ extern struct key_type key_type_rxrpc_s;
 
 int rxrpc_request_key(struct rxrpc_sock *, char __user *, int);
 int rxrpc_server_keyring(struct rxrpc_sock *, char __user *, int);
-int rxrpc_get_server_data_key(struct rxrpc_connection *, const void *, time_t,
+int rxrpc_get_server_data_key(struct rxrpc_connection *, const void *, time64_t,
 			      u32);
 
 /*
@@ -906,42 +985,23 @@ extern void rxrpc_process_local_events(struct rxrpc_local *);
  * local_object.c
  */
 struct rxrpc_local *rxrpc_lookup_local(struct net *, const struct sockaddr_rxrpc *);
-void __rxrpc_put_local(struct rxrpc_local *);
+struct rxrpc_local *rxrpc_get_local(struct rxrpc_local *);
+struct rxrpc_local *rxrpc_get_local_maybe(struct rxrpc_local *);
+void rxrpc_put_local(struct rxrpc_local *);
+void rxrpc_queue_local(struct rxrpc_local *);
 void rxrpc_destroy_all_locals(struct rxrpc_net *);
-
-static inline void rxrpc_get_local(struct rxrpc_local *local)
-{
-	atomic_inc(&local->usage);
-}
-
-static inline
-struct rxrpc_local *rxrpc_get_local_maybe(struct rxrpc_local *local)
-{
-	return atomic_inc_not_zero(&local->usage) ? local : NULL;
-}
-
-static inline void rxrpc_put_local(struct rxrpc_local *local)
-{
-	if (local && atomic_dec_and_test(&local->usage))
-		__rxrpc_put_local(local);
-}
-
-static inline void rxrpc_queue_local(struct rxrpc_local *local)
-{
-	rxrpc_queue_work(&local->processor);
-}
 
 /*
  * misc.c
  */
 extern unsigned int rxrpc_max_backlog __read_mostly;
-extern unsigned int rxrpc_requested_ack_delay;
-extern unsigned int rxrpc_soft_ack_delay;
-extern unsigned int rxrpc_idle_ack_delay;
+extern unsigned long rxrpc_requested_ack_delay;
+extern unsigned long rxrpc_soft_ack_delay;
+extern unsigned long rxrpc_idle_ack_delay;
 extern unsigned int rxrpc_rx_window_size;
 extern unsigned int rxrpc_rx_mtu;
 extern unsigned int rxrpc_rx_jumbo_max;
-extern unsigned int rxrpc_resend_timeout;
+extern unsigned long rxrpc_resend_timeout;
 
 extern const s8 rxrpc_ack_priority[];
 
@@ -959,10 +1019,11 @@ static inline struct rxrpc_net *rxrpc_net(struct net *net)
 /*
  * output.c
  */
-int rxrpc_send_ack_packet(struct rxrpc_call *, bool);
+int rxrpc_send_ack_packet(struct rxrpc_call *, bool, rxrpc_serial_t *);
 int rxrpc_send_abort_packet(struct rxrpc_call *);
 int rxrpc_send_data_packet(struct rxrpc_call *, struct sk_buff *, bool);
 void rxrpc_reject_packets(struct rxrpc_local *);
+void rxrpc_send_keepalive(struct rxrpc_peer *);
 
 /*
  * peer_event.c
@@ -971,6 +1032,7 @@ void rxrpc_error_report(struct sock *);
 void rxrpc_peer_error_distributor(struct work_struct *);
 void rxrpc_peer_add_rtt(struct rxrpc_call *, enum rxrpc_rtt_rx_trace,
 			rxrpc_serial_t, rxrpc_serial_t, ktime_t, ktime_t);
+void rxrpc_peer_keepalive_worker(struct work_struct *);
 
 /*
  * peer_object.c
@@ -982,31 +1044,17 @@ struct rxrpc_peer *rxrpc_lookup_peer(struct rxrpc_local *,
 struct rxrpc_peer *rxrpc_alloc_peer(struct rxrpc_local *, gfp_t);
 struct rxrpc_peer *rxrpc_lookup_incoming_peer(struct rxrpc_local *,
 					      struct rxrpc_peer *);
-
-static inline struct rxrpc_peer *rxrpc_get_peer(struct rxrpc_peer *peer)
-{
-	atomic_inc(&peer->usage);
-	return peer;
-}
-
-static inline
-struct rxrpc_peer *rxrpc_get_peer_maybe(struct rxrpc_peer *peer)
-{
-	return atomic_inc_not_zero(&peer->usage) ? peer : NULL;
-}
-
-extern void __rxrpc_put_peer(struct rxrpc_peer *peer);
-static inline void rxrpc_put_peer(struct rxrpc_peer *peer)
-{
-	if (peer && atomic_dec_and_test(&peer->usage))
-		__rxrpc_put_peer(peer);
-}
+void rxrpc_destroy_all_peers(struct rxrpc_net *);
+struct rxrpc_peer *rxrpc_get_peer(struct rxrpc_peer *);
+struct rxrpc_peer *rxrpc_get_peer_maybe(struct rxrpc_peer *);
+void rxrpc_put_peer(struct rxrpc_peer *);
+void __rxrpc_queue_peer_error(struct rxrpc_peer *);
 
 /*
  * proc.c
  */
-extern const struct file_operations rxrpc_call_seq_fops;
-extern const struct file_operations rxrpc_connection_seq_fops;
+extern const struct seq_operations rxrpc_call_seq_ops;
+extern const struct seq_operations rxrpc_connection_seq_ops;
 
 /*
  * recvmsg.c
@@ -1060,7 +1108,8 @@ static inline void rxrpc_sysctl_exit(void) {}
 /*
  * utils.c
  */
-int rxrpc_extract_addr_from_skb(struct sockaddr_rxrpc *, struct sk_buff *);
+int rxrpc_extract_addr_from_skb(struct rxrpc_local *, struct sockaddr_rxrpc *,
+				struct sk_buff *);
 
 static inline bool before(u32 seq1, u32 seq2)
 {

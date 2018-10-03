@@ -1,5 +1,5 @@
 /*
- * Copyright(c) 2015, 2016 Intel Corporation.
+ * Copyright(c) 2015 - 2017 Intel Corporation.
  *
  * This file is provided under a dual BSD/GPLv2 license.  When using or
  * redistributing this file, you may do so under either license.
@@ -55,11 +55,6 @@
 #include "hfi.h"
 #include "chip_registers.h"
 #include "aspm.h"
-
-/* link speed vector for Gen3 speed - not in Linux headers */
-#define GEN1_SPEED_VECTOR 0x1
-#define GEN2_SPEED_VECTOR 0x2
-#define GEN3_SPEED_VECTOR 0x3
 
 /*
  * This file contains PCIe utility routines.
@@ -161,9 +156,7 @@ int hfi1_pcie_ddinit(struct hfi1_devdata *dd, struct pci_dev *pdev)
 {
 	unsigned long len;
 	resource_size_t addr;
-
-	dd->pcidev = pdev;
-	pci_set_drvdata(pdev, dd);
+	int ret = 0;
 
 	addr = pci_resource_start(pdev, 0);
 	len = pci_resource_len(pdev, 0);
@@ -179,47 +172,62 @@ int hfi1_pcie_ddinit(struct hfi1_devdata *dd, struct pci_dev *pdev)
 		return -EINVAL;
 	}
 
-	dd->kregbase = ioremap_nocache(addr, TXE_PIO_SEND);
-	if (!dd->kregbase)
+	dd->kregbase1 = ioremap_nocache(addr, RCV_ARRAY);
+	if (!dd->kregbase1) {
+		dd_dev_err(dd, "UC mapping of kregbase1 failed\n");
 		return -ENOMEM;
+	}
+	dd_dev_info(dd, "UC base1: %p for %x\n", dd->kregbase1, RCV_ARRAY);
+
+	/* verify that reads actually work, save revision for reset check */
+	dd->revision = readq(dd->kregbase1 + CCE_REVISION);
+	if (dd->revision == ~(u64)0) {
+		dd_dev_err(dd, "Cannot read chip CSRs\n");
+		goto nomem;
+	}
+
+	dd->chip_rcv_array_count = readq(dd->kregbase1 + RCV_ARRAY_CNT);
+	dd_dev_info(dd, "RcvArray count: %u\n", dd->chip_rcv_array_count);
+	dd->base2_start  = RCV_ARRAY + dd->chip_rcv_array_count * 8;
+
+	dd->kregbase2 = ioremap_nocache(
+		addr + dd->base2_start,
+		TXE_PIO_SEND - dd->base2_start);
+	if (!dd->kregbase2) {
+		dd_dev_err(dd, "UC mapping of kregbase2 failed\n");
+		goto nomem;
+	}
+	dd_dev_info(dd, "UC base2: %p for %x\n", dd->kregbase2,
+		    TXE_PIO_SEND - dd->base2_start);
 
 	dd->piobase = ioremap_wc(addr + TXE_PIO_SEND, TXE_PIO_SIZE);
 	if (!dd->piobase) {
-		iounmap(dd->kregbase);
-		return -ENOMEM;
+		dd_dev_err(dd, "WC mapping of send buffers failed\n");
+		goto nomem;
 	}
+	dd_dev_info(dd, "WC piobase: %p\n for %x", dd->piobase, TXE_PIO_SIZE);
 
-	dd->flags |= HFI1_PRESENT;	/* now register routines work */
-
-	dd->kregend = dd->kregbase + TXE_PIO_SEND;
 	dd->physaddr = addr;        /* used for io_remap, etc. */
 
 	/*
-	 * Re-map the chip's RcvArray as write-combining to allow us
+	 * Map the chip's RcvArray as write-combining to allow us
 	 * to write an entire cacheline worth of entries in one shot.
-	 * If this re-map fails, just continue - the RcvArray programming
-	 * function will handle both cases.
 	 */
-	dd->chip_rcv_array_count = read_csr(dd, RCV_ARRAY_CNT);
 	dd->rcvarray_wc = ioremap_wc(addr + RCV_ARRAY,
 				     dd->chip_rcv_array_count * 8);
-	dd_dev_info(dd, "WC Remapped RcvArray: %p\n", dd->rcvarray_wc);
-	/*
-	 * Save BARs and command to rewrite after device reset.
-	 */
-	pci_read_config_dword(dd->pcidev, PCI_BASE_ADDRESS_0, &dd->pcibar0);
-	pci_read_config_dword(dd->pcidev, PCI_BASE_ADDRESS_1, &dd->pcibar1);
-	pci_read_config_dword(dd->pcidev, PCI_ROM_ADDRESS, &dd->pci_rom);
-	pci_read_config_word(dd->pcidev, PCI_COMMAND, &dd->pci_command);
-	pcie_capability_read_word(dd->pcidev, PCI_EXP_DEVCTL, &dd->pcie_devctl);
-	pcie_capability_read_word(dd->pcidev, PCI_EXP_LNKCTL, &dd->pcie_lnkctl);
-	pcie_capability_read_word(dd->pcidev, PCI_EXP_DEVCTL2,
-				  &dd->pcie_devctl2);
-	pci_read_config_dword(dd->pcidev, PCI_CFG_MSIX0, &dd->pci_msix0);
-	pci_read_config_dword(dd->pcidev, PCIE_CFG_SPCIE1, &dd->pci_lnkctl3);
-	pci_read_config_dword(dd->pcidev, PCIE_CFG_TPH2, &dd->pci_tph2);
+	if (!dd->rcvarray_wc) {
+		dd_dev_err(dd, "WC mapping of receive array failed\n");
+		goto nomem;
+	}
+	dd_dev_info(dd, "WC RcvArray: %p for %x\n",
+		    dd->rcvarray_wc, dd->chip_rcv_array_count * 8);
 
+	dd->flags |= HFI1_PRESENT;	/* chip.c CSR routines now work */
 	return 0;
+nomem:
+	ret = -ENOMEM;
+	hfi1_pcie_ddcleanup(dd);
+	return ret;
 }
 
 /*
@@ -229,59 +237,19 @@ int hfi1_pcie_ddinit(struct hfi1_devdata *dd, struct pci_dev *pdev)
  */
 void hfi1_pcie_ddcleanup(struct hfi1_devdata *dd)
 {
-	u64 __iomem *base = (void __iomem *)dd->kregbase;
-
 	dd->flags &= ~HFI1_PRESENT;
-	dd->kregbase = NULL;
-	iounmap(base);
+	if (dd->kregbase1)
+		iounmap(dd->kregbase1);
+	dd->kregbase1 = NULL;
+	if (dd->kregbase2)
+		iounmap(dd->kregbase2);
+	dd->kregbase2 = NULL;
 	if (dd->rcvarray_wc)
 		iounmap(dd->rcvarray_wc);
+	dd->rcvarray_wc = NULL;
 	if (dd->piobase)
 		iounmap(dd->piobase);
-}
-
-static void msix_setup(struct hfi1_devdata *dd, int pos, u32 *msixcnt,
-		       struct hfi1_msix_entry *hfi1_msix_entry)
-{
-	int ret;
-	int nvec = *msixcnt;
-	struct msix_entry *msix_entry;
-	int i;
-
-	/*
-	 * We can't pass hfi1_msix_entry array to msix_setup
-	 * so use a dummy msix_entry array and copy the allocated
-	 * irq back to the hfi1_msix_entry array.
-	 */
-	msix_entry = kmalloc_array(nvec, sizeof(*msix_entry), GFP_KERNEL);
-	if (!msix_entry) {
-		ret = -ENOMEM;
-		goto do_intx;
-	}
-
-	for (i = 0; i < nvec; i++)
-		msix_entry[i] = hfi1_msix_entry[i].msix;
-
-	ret = pci_enable_msix_range(dd->pcidev, msix_entry, 1, nvec);
-	if (ret < 0)
-		goto free_msix_entry;
-	nvec = ret;
-
-	for (i = 0; i < nvec; i++)
-		hfi1_msix_entry[i].msix = msix_entry[i];
-
-	kfree(msix_entry);
-	*msixcnt = nvec;
-	return;
-
-free_msix_entry:
-	kfree(msix_entry);
-
-do_intx:
-	dd_dev_err(dd, "pci_enable_msix_range %d vectors failed: %d, falling back to INTx\n",
-		   nvec, ret);
-	*msixcnt = 0;
-	hfi1_enable_intx(dd->pcidev);
+	dd->piobase = NULL;
 }
 
 /* return the PCIe link speed from the given link status */
@@ -297,7 +265,7 @@ static u32 extract_speed(u16 linkstat)
 	case PCI_EXP_LNKSTA_CLS_5_0GB:
 		speed = 5000; /* Gen 2, 5GHz */
 		break;
-	case GEN3_SPEED_VECTOR:
+	case PCI_EXP_LNKSTA_CLS_8_0GB:
 		speed = 8000; /* Gen 3, 8GHz */
 		break;
 	}
@@ -314,8 +282,14 @@ static u32 extract_width(u16 linkstat)
 static void update_lbus_info(struct hfi1_devdata *dd)
 {
 	u16 linkstat;
+	int ret;
 
-	pcie_capability_read_word(dd->pcidev, PCI_EXP_LNKSTA, &linkstat);
+	ret = pcie_capability_read_word(dd->pcidev, PCI_EXP_LNKSTA, &linkstat);
+	if (ret) {
+		dd_dev_err(dd, "Unable to read from PCI config\n");
+		return;
+	}
+
 	dd->lbus_width = extract_width(linkstat);
 	dd->lbus_speed = extract_speed(linkstat);
 	snprintf(dd->lbus_info, sizeof(dd->lbus_info),
@@ -330,6 +304,7 @@ int pcie_speeds(struct hfi1_devdata *dd)
 {
 	u32 linkcap;
 	struct pci_dev *parent = dd->pcidev->bus->self;
+	int ret;
 
 	if (!pci_is_pcie(dd->pcidev)) {
 		dd_dev_err(dd, "Can't find PCI Express capability!\n");
@@ -339,8 +314,13 @@ int pcie_speeds(struct hfi1_devdata *dd)
 	/* find if our max speed is Gen3 and parent supports Gen3 speeds */
 	dd->link_gen3_capable = 1;
 
-	pcie_capability_read_dword(dd->pcidev, PCI_EXP_LNKCAP, &linkcap);
-	if ((linkcap & PCI_EXP_LNKCAP_SLS) != GEN3_SPEED_VECTOR) {
+	ret = pcie_capability_read_dword(dd->pcidev, PCI_EXP_LNKCAP, &linkcap);
+	if (ret) {
+		dd_dev_err(dd, "Unable to read from PCI config\n");
+		return ret;
+	}
+
+	if ((linkcap & PCI_EXP_LNKCAP_SLS) != PCI_EXP_LNKCAP_SLS_8_0GB) {
 		dd_dev_info(dd,
 			    "This HFI is not Gen3 capable, max speed 0x%x, need 0x3\n",
 			    linkcap & PCI_EXP_LNKCAP_SLS);
@@ -364,49 +344,139 @@ int pcie_speeds(struct hfi1_devdata *dd)
 }
 
 /*
- * Returns in *nent:
- *	- actual number of interrupts allocated
+ * Returns:
+ *	- actual number of interrupts allocated or
  *	- 0 if fell back to INTx.
+ *      - error
  */
-void request_msix(struct hfi1_devdata *dd, u32 *nent,
-		  struct hfi1_msix_entry *entry)
+int request_msix(struct hfi1_devdata *dd, u32 msireq)
 {
-	int pos;
+	int nvec;
 
-	pos = dd->pcidev->msix_cap;
-	if (*nent && pos) {
-		msix_setup(dd, pos, nent, entry);
-		/* did it, either MSI-X or INTx */
-	} else {
-		*nent = 0;
-		hfi1_enable_intx(dd->pcidev);
+	nvec = pci_alloc_irq_vectors(dd->pcidev, 1, msireq,
+				     PCI_IRQ_MSIX | PCI_IRQ_LEGACY);
+	if (nvec < 0) {
+		dd_dev_err(dd, "pci_alloc_irq_vectors() failed: %d\n", nvec);
+		return nvec;
 	}
 
 	tune_pcie_caps(dd);
-}
 
-void hfi1_enable_intx(struct pci_dev *pdev)
-{
-	/* first, turn on INTx */
-	pci_intx(pdev, 1);
-	/* then turn off MSI-X */
-	pci_disable_msix(pdev);
+	/* check for legacy IRQ */
+	if (nvec == 1 && !dd->pcidev->msix_enabled)
+		return 0;
+
+	return nvec;
 }
 
 /* restore command and BARs after a reset has wiped them out */
-void restore_pci_variables(struct hfi1_devdata *dd)
+int restore_pci_variables(struct hfi1_devdata *dd)
 {
-	pci_write_config_word(dd->pcidev, PCI_COMMAND, dd->pci_command);
-	pci_write_config_dword(dd->pcidev, PCI_BASE_ADDRESS_0, dd->pcibar0);
-	pci_write_config_dword(dd->pcidev, PCI_BASE_ADDRESS_1, dd->pcibar1);
-	pci_write_config_dword(dd->pcidev, PCI_ROM_ADDRESS, dd->pci_rom);
-	pcie_capability_write_word(dd->pcidev, PCI_EXP_DEVCTL, dd->pcie_devctl);
-	pcie_capability_write_word(dd->pcidev, PCI_EXP_LNKCTL, dd->pcie_lnkctl);
-	pcie_capability_write_word(dd->pcidev, PCI_EXP_DEVCTL2,
-				   dd->pcie_devctl2);
-	pci_write_config_dword(dd->pcidev, PCI_CFG_MSIX0, dd->pci_msix0);
-	pci_write_config_dword(dd->pcidev, PCIE_CFG_SPCIE1, dd->pci_lnkctl3);
-	pci_write_config_dword(dd->pcidev, PCIE_CFG_TPH2, dd->pci_tph2);
+	int ret = 0;
+
+	ret = pci_write_config_word(dd->pcidev, PCI_COMMAND, dd->pci_command);
+	if (ret)
+		goto error;
+
+	ret = pci_write_config_dword(dd->pcidev, PCI_BASE_ADDRESS_0,
+				     dd->pcibar0);
+	if (ret)
+		goto error;
+
+	ret = pci_write_config_dword(dd->pcidev, PCI_BASE_ADDRESS_1,
+				     dd->pcibar1);
+	if (ret)
+		goto error;
+
+	ret = pci_write_config_dword(dd->pcidev, PCI_ROM_ADDRESS, dd->pci_rom);
+	if (ret)
+		goto error;
+
+	ret = pcie_capability_write_word(dd->pcidev, PCI_EXP_DEVCTL,
+					 dd->pcie_devctl);
+	if (ret)
+		goto error;
+
+	ret = pcie_capability_write_word(dd->pcidev, PCI_EXP_LNKCTL,
+					 dd->pcie_lnkctl);
+	if (ret)
+		goto error;
+
+	ret = pcie_capability_write_word(dd->pcidev, PCI_EXP_DEVCTL2,
+					 dd->pcie_devctl2);
+	if (ret)
+		goto error;
+
+	ret = pci_write_config_dword(dd->pcidev, PCI_CFG_MSIX0, dd->pci_msix0);
+	if (ret)
+		goto error;
+
+	if (pci_find_ext_capability(dd->pcidev, PCI_EXT_CAP_ID_TPH)) {
+		ret = pci_write_config_dword(dd->pcidev, PCIE_CFG_TPH2,
+					     dd->pci_tph2);
+		if (ret)
+			goto error;
+	}
+	return 0;
+
+error:
+	dd_dev_err(dd, "Unable to write to PCI config\n");
+	return ret;
+}
+
+/* Save BARs and command to rewrite after device reset */
+int save_pci_variables(struct hfi1_devdata *dd)
+{
+	int ret = 0;
+
+	ret = pci_read_config_dword(dd->pcidev, PCI_BASE_ADDRESS_0,
+				    &dd->pcibar0);
+	if (ret)
+		goto error;
+
+	ret = pci_read_config_dword(dd->pcidev, PCI_BASE_ADDRESS_1,
+				    &dd->pcibar1);
+	if (ret)
+		goto error;
+
+	ret = pci_read_config_dword(dd->pcidev, PCI_ROM_ADDRESS, &dd->pci_rom);
+	if (ret)
+		goto error;
+
+	ret = pci_read_config_word(dd->pcidev, PCI_COMMAND, &dd->pci_command);
+	if (ret)
+		goto error;
+
+	ret = pcie_capability_read_word(dd->pcidev, PCI_EXP_DEVCTL,
+					&dd->pcie_devctl);
+	if (ret)
+		goto error;
+
+	ret = pcie_capability_read_word(dd->pcidev, PCI_EXP_LNKCTL,
+					&dd->pcie_lnkctl);
+	if (ret)
+		goto error;
+
+	ret = pcie_capability_read_word(dd->pcidev, PCI_EXP_DEVCTL2,
+					&dd->pcie_devctl2);
+	if (ret)
+		goto error;
+
+	ret = pci_read_config_dword(dd->pcidev, PCI_CFG_MSIX0, &dd->pci_msix0);
+	if (ret)
+		goto error;
+
+	if (pci_find_ext_capability(dd->pcidev, PCI_EXT_CAP_ID_TPH)) {
+		ret = pci_read_config_dword(dd->pcidev, PCIE_CFG_TPH2,
+					    &dd->pci_tph2);
+		if (ret)
+			goto error;
+	}
+	return 0;
+
+error:
+	dd_dev_err(dd, "Unable to read from PCI config\n");
+	return ret;
 }
 
 /*
@@ -426,16 +496,20 @@ static void tune_pcie_caps(struct hfi1_devdata *dd)
 	struct pci_dev *parent;
 	u16 rc_mpss, rc_mps, ep_mpss, ep_mps;
 	u16 rc_mrrs, ep_mrrs, max_mrrs, ectl;
+	int ret;
 
 	/*
 	 * Turn on extended tags in DevCtl in case the BIOS has turned it off
 	 * to improve WFR SDMA bandwidth
 	 */
-	pcie_capability_read_word(dd->pcidev, PCI_EXP_DEVCTL, &ectl);
-	if (!(ectl & PCI_EXP_DEVCTL_EXT_TAG)) {
+	ret = pcie_capability_read_word(dd->pcidev, PCI_EXP_DEVCTL, &ectl);
+	if ((!ret) && !(ectl & PCI_EXP_DEVCTL_EXT_TAG)) {
 		dd_dev_info(dd, "Enabling PCIe extended tags\n");
 		ectl |= PCI_EXP_DEVCTL_EXT_TAG;
-		pcie_capability_write_word(dd->pcidev, PCI_EXP_DEVCTL, ectl);
+		ret = pcie_capability_write_word(dd->pcidev,
+						 PCI_EXP_DEVCTL, ectl);
+		if (ret)
+			dd_dev_info(dd, "Unable to write to PCI config\n");
 	}
 	/* Find out supported and configured values for parent (root) */
 	parent = dd->pcidev->bus->self;
@@ -443,15 +517,22 @@ static void tune_pcie_caps(struct hfi1_devdata *dd)
 	 * The driver cannot perform the tuning if it does not have
 	 * access to the upstream component.
 	 */
-	if (!parent)
+	if (!parent) {
+		dd_dev_info(dd, "Parent not found\n");
 		return;
+	}
 	if (!pci_is_root_bus(parent->bus)) {
 		dd_dev_info(dd, "Parent not root\n");
 		return;
 	}
-
-	if (!pci_is_pcie(parent) || !pci_is_pcie(dd->pcidev))
+	if (!pci_is_pcie(parent)) {
+		dd_dev_info(dd, "Parent is not PCI Express capable\n");
 		return;
+	}
+	if (!pci_is_pcie(dd->pcidev)) {
+		dd_dev_info(dd, "PCI device is not PCI Express capable\n");
+		return;
+	}
 	rc_mpss = parent->pcie_mpss;
 	rc_mps = ffs(pcie_get_mps(parent)) - 8;
 	/* Find out supported and configured values for endpoint (us) */
@@ -616,9 +697,6 @@ const struct pci_error_handlers hfi1_pci_err_handler = {
 /* gasket block secondary bus reset delay */
 #define SBR_DELAY_US 200000	/* 200ms */
 
-/* mask for PCIe capability register lnkctl2 target link speed */
-#define LNKCTL2_TARGET_LINK_SPEED_MASK 0xf
-
 static uint pcie_target = 3;
 module_param(pcie_target, uint, S_IRUGO);
 MODULE_PARM_DESC(pcie_target, "PCIe target speed (0 skip, 1-3 Gen1-3)");
@@ -728,6 +806,7 @@ static int load_eq_table(struct hfi1_devdata *dd, const u8 eq[11][3], u8 fs,
 	u32 violation;
 	u32 i;
 	u8 c_minus1, c0, c_plus1;
+	int ret;
 
 	for (i = 0; i < 11; i++) {
 		/* set index */
@@ -739,8 +818,14 @@ static int load_eq_table(struct hfi1_devdata *dd, const u8 eq[11][3], u8 fs,
 		pci_write_config_dword(pdev, PCIE_CFG_REG_PL102,
 				       eq_value(c_minus1, c0, c_plus1));
 		/* check if these coefficients violate EQ rules */
-		pci_read_config_dword(dd->pcidev, PCIE_CFG_REG_PL105,
-				      &violation);
+		ret = pci_read_config_dword(dd->pcidev,
+					    PCIE_CFG_REG_PL105, &violation);
+		if (ret) {
+			dd_dev_err(dd, "Unable to read from PCI config\n");
+			hit_error = 1;
+			break;
+		}
+
 		if (violation
 		    & PCIE_CFG_REG_PL105_GEN3_EQ_VIOLATE_COEF_RULES_SMASK){
 			if (hit_error == 0) {
@@ -946,6 +1031,7 @@ int do_pcie_gen3_transition(struct hfi1_devdata *dd)
 	int do_retry, retry_count = 0;
 	int intnum = 0;
 	uint default_pset;
+	uint pset = pcie_pset;
 	u16 target_vector, target_speed;
 	u16 lnkctl2, vendor;
 	u8 div;
@@ -959,13 +1045,13 @@ int do_pcie_gen3_transition(struct hfi1_devdata *dd)
 		return 0;
 
 	if (pcie_target == 1) {			/* target Gen1 */
-		target_vector = GEN1_SPEED_VECTOR;
+		target_vector = PCI_EXP_LNKCTL2_TLS_2_5GT;
 		target_speed = 2500;
 	} else if (pcie_target == 2) {		/* target Gen2 */
-		target_vector = GEN2_SPEED_VECTOR;
+		target_vector = PCI_EXP_LNKCTL2_TLS_5_0GT;
 		target_speed = 5000;
 	} else if (pcie_target == 3) {		/* target Gen3 */
-		target_vector = GEN3_SPEED_VECTOR;
+		target_vector = PCI_EXP_LNKCTL2_TLS_8_0GT;
 		target_speed = 8000;
 	} else {
 		/* off or invalid target - skip */
@@ -1113,16 +1199,16 @@ retry:
 	 *
 	 * Set Gen3EqPsetReqVec, leave other fields 0.
 	 */
-	if (pcie_pset == UNSET_PSET)
-		pcie_pset = default_pset;
-	if (pcie_pset > 10) {	/* valid range is 0-10, inclusive */
+	if (pset == UNSET_PSET)
+		pset = default_pset;
+	if (pset > 10) {	/* valid range is 0-10, inclusive */
 		dd_dev_err(dd, "%s: Invalid Eq Pset %u, setting to %d\n",
-			   __func__, pcie_pset, default_pset);
-		pcie_pset = default_pset;
+			   __func__, pset, default_pset);
+		pset = default_pset;
 	}
-	dd_dev_info(dd, "%s: using EQ Pset %u\n", __func__, pcie_pset);
+	dd_dev_info(dd, "%s: using EQ Pset %u\n", __func__, pset);
 	pci_write_config_dword(dd->pcidev, PCIE_CFG_REG_PL106,
-			       ((1 << pcie_pset) <<
+			       ((1 << pset) <<
 			PCIE_CFG_REG_PL106_GEN3_EQ_PSET_REQ_VEC_SHIFT) |
 			PCIE_CFG_REG_PL106_GEN3_EQ_EVAL2MS_DISABLE_SMASK |
 			PCIE_CFG_REG_PL106_GEN3_EQ_PHASE23_EXIT_MODE_SMASK);
@@ -1152,10 +1238,10 @@ retry:
 		/* apply static CTLE tunings */
 		u8 pcie_dc, pcie_lf, pcie_hf, pcie_bw;
 
-		pcie_dc = ctle_tunings[pcie_pset][0];
-		pcie_lf = ctle_tunings[pcie_pset][1];
-		pcie_hf = ctle_tunings[pcie_pset][2];
-		pcie_bw = ctle_tunings[pcie_pset][3];
+		pcie_dc = ctle_tunings[pset][0];
+		pcie_lf = ctle_tunings[pset][1];
+		pcie_hf = ctle_tunings[pset][2];
+		pcie_bw = ctle_tunings[pset][3];
 		write_gasket_interrupt(dd, intnum++, 0x0026, 0x0200 | pcie_dc);
 		write_gasket_interrupt(dd, intnum++, 0x0026, 0x0100 | pcie_lf);
 		write_gasket_interrupt(dd, intnum++, 0x0026, 0x0000 | pcie_hf);
@@ -1194,29 +1280,52 @@ retry:
 	 * that it is Gen3 capable earlier.
 	 */
 	dd_dev_info(dd, "%s: setting parent target link speed\n", __func__);
-	pcie_capability_read_word(parent, PCI_EXP_LNKCTL2, &lnkctl2);
+	ret = pcie_capability_read_word(parent, PCI_EXP_LNKCTL2, &lnkctl2);
+	if (ret) {
+		dd_dev_err(dd, "Unable to read from PCI config\n");
+		return_error = 1;
+		goto done;
+	}
+
 	dd_dev_info(dd, "%s: ..old link control2: 0x%x\n", __func__,
 		    (u32)lnkctl2);
 	/* only write to parent if target is not as high as ours */
-	if ((lnkctl2 & LNKCTL2_TARGET_LINK_SPEED_MASK) < target_vector) {
-		lnkctl2 &= ~LNKCTL2_TARGET_LINK_SPEED_MASK;
+	if ((lnkctl2 & PCI_EXP_LNKCTL2_TLS) < target_vector) {
+		lnkctl2 &= ~PCI_EXP_LNKCTL2_TLS;
 		lnkctl2 |= target_vector;
 		dd_dev_info(dd, "%s: ..new link control2: 0x%x\n", __func__,
 			    (u32)lnkctl2);
-		pcie_capability_write_word(parent, PCI_EXP_LNKCTL2, lnkctl2);
+		ret = pcie_capability_write_word(parent,
+						 PCI_EXP_LNKCTL2, lnkctl2);
+		if (ret) {
+			dd_dev_err(dd, "Unable to write to PCI config\n");
+			return_error = 1;
+			goto done;
+		}
 	} else {
 		dd_dev_info(dd, "%s: ..target speed is OK\n", __func__);
 	}
 
 	dd_dev_info(dd, "%s: setting target link speed\n", __func__);
-	pcie_capability_read_word(dd->pcidev, PCI_EXP_LNKCTL2, &lnkctl2);
+	ret = pcie_capability_read_word(dd->pcidev, PCI_EXP_LNKCTL2, &lnkctl2);
+	if (ret) {
+		dd_dev_err(dd, "Unable to read from PCI config\n");
+		return_error = 1;
+		goto done;
+	}
+
 	dd_dev_info(dd, "%s: ..old link control2: 0x%x\n", __func__,
 		    (u32)lnkctl2);
-	lnkctl2 &= ~LNKCTL2_TARGET_LINK_SPEED_MASK;
+	lnkctl2 &= ~PCI_EXP_LNKCTL2_TLS;
 	lnkctl2 |= target_vector;
 	dd_dev_info(dd, "%s: ..new link control2: 0x%x\n", __func__,
 		    (u32)lnkctl2);
-	pcie_capability_write_word(dd->pcidev, PCI_EXP_LNKCTL2, lnkctl2);
+	ret = pcie_capability_write_word(dd->pcidev, PCI_EXP_LNKCTL2, lnkctl2);
+	if (ret) {
+		dd_dev_err(dd, "Unable to write to PCI config\n");
+		return_error = 1;
+		goto done;
+	}
 
 	/* step 5h: arm gasket logic */
 	/* hold DC in reset across the SBR */
@@ -1266,7 +1375,14 @@ retry:
 
 	/* restore PCI space registers we know were reset */
 	dd_dev_info(dd, "%s: calling restore_pci_variables\n", __func__);
-	restore_pci_variables(dd);
+	ret = restore_pci_variables(dd);
+	if (ret) {
+		dd_dev_err(dd, "%s: Could not restore PCI variables\n",
+			   __func__);
+		return_error = 1;
+		goto done;
+	}
+
 	/* restore firmware control */
 	write_csr(dd, MISC_CFG_FW_CTRL, fw_ctrl);
 
@@ -1296,7 +1412,13 @@ retry:
 	setextled(dd, 0);
 
 	/* check for any per-lane errors */
-	pci_read_config_dword(dd->pcidev, PCIE_CFG_SPCIE2, &reg32);
+	ret = pci_read_config_dword(dd->pcidev, PCIE_CFG_SPCIE2, &reg32);
+	if (ret) {
+		dd_dev_err(dd, "Unable to read from PCI config\n");
+		return_error = 1;
+		goto done;
+	}
+
 	dd_dev_info(dd, "%s: per-lane errors: 0x%x\n", __func__, reg32);
 
 	/* extract status, look for our HFI */

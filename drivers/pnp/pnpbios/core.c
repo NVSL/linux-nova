@@ -495,7 +495,7 @@ static int __init exploding_pnp_bios(const struct dmi_system_id *d)
 	return 0;
 }
 
-static struct dmi_system_id pnpbios_dmi_table[] __initdata = {
+static const struct dmi_system_id pnpbios_dmi_table[] __initconst = {
 	{			/* PnPBIOS GPF on boot */
 	 .callback = exploding_pnp_bios,
 	 .ident = "Higraded P14H",
@@ -581,10 +581,7 @@ static int __init pnpbios_thread_init(void)
 
 	init_completion(&unload_sem);
 	task = kthread_run(pnp_dock_thread, NULL, "kpnpbiosd");
-	if (IS_ERR(task))
-		return PTR_ERR(task);
-
-	return 0;
+	return PTR_ERR_OR_ZERO(task);
 }
 
 /* Start the kernel thread later: */

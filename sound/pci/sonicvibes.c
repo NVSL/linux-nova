@@ -776,7 +776,7 @@ static snd_pcm_uframes_t snd_sonicvibes_capture_pointer(struct snd_pcm_substream
 	return bytes_to_frames(substream->runtime, ptr);
 }
 
-static struct snd_pcm_hardware snd_sonicvibes_playback =
+static const struct snd_pcm_hardware snd_sonicvibes_playback =
 {
 	.info =			(SNDRV_PCM_INFO_MMAP | SNDRV_PCM_INFO_INTERLEAVED |
 				 SNDRV_PCM_INFO_BLOCK_TRANSFER |
@@ -795,7 +795,7 @@ static struct snd_pcm_hardware snd_sonicvibes_playback =
 	.fifo_size =		0,
 };
 
-static struct snd_pcm_hardware snd_sonicvibes_capture =
+static const struct snd_pcm_hardware snd_sonicvibes_capture =
 {
 	.info =			(SNDRV_PCM_INFO_MMAP | SNDRV_PCM_INFO_INTERLEAVED |
 				 SNDRV_PCM_INFO_BLOCK_TRANSFER |
@@ -1188,6 +1188,7 @@ SONICVIBES_SINGLE("Joystick Speed", 0, SV_IREG_GAME_PORT, 1, 15, 0);
 static int snd_sonicvibes_create_gameport(struct sonicvibes *sonic)
 {
 	struct gameport *gp;
+	int err;
 
 	sonic->gameport = gp = gameport_allocate_port();
 	if (!gp) {
@@ -1203,7 +1204,10 @@ static int snd_sonicvibes_create_gameport(struct sonicvibes *sonic)
 
 	gameport_register_port(gp);
 
-	snd_ctl_add(sonic->card, snd_ctl_new1(&snd_sonicvibes_game_control, sonic));
+	err = snd_ctl_add(sonic->card,
+		snd_ctl_new1(&snd_sonicvibes_game_control, sonic));
+	if (err < 0)
+		return err;
 
 	return 0;
 }
@@ -1515,7 +1519,11 @@ static int snd_sonic_probe(struct pci_dev *pci,
 		return err;
 	}
 
-	snd_sonicvibes_create_gameport(sonic);
+	err = snd_sonicvibes_create_gameport(sonic);
+	if (err < 0) {
+		snd_card_free(card);
+		return err;
+	}
 
 	if ((err = snd_card_register(card)) < 0) {
 		snd_card_free(card);

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 OR MIT */
 /**************************************************************************
  *
  * Copyright (c) 2007-2010 VMware, Inc., Palo Alto, CA., USA
@@ -136,13 +137,12 @@ static int ttm_bo_man_takedown(struct ttm_mem_type_manager *man)
 }
 
 static void ttm_bo_man_debug(struct ttm_mem_type_manager *man,
-			     const char *prefix)
+			     struct drm_printer *printer)
 {
 	struct ttm_range_manager *rman = (struct ttm_range_manager *) man->priv;
-	struct drm_printer p = drm_debug_printer(prefix);
 
 	spin_lock(&rman->lock);
-	drm_mm_print(&rman->mm, &p);
+	drm_mm_print(&rman->mm, printer);
 	spin_unlock(&rman->lock);
 }
 

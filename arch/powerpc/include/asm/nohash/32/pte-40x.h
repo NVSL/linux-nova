@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _ASM_POWERPC_NOHASH_32_PTE_40x_H
 #define _ASM_POWERPC_NOHASH_32_PTE_40x_H
 #ifdef __KERNEL__
@@ -51,11 +52,8 @@
 
 #define _PMD_PRESENT	0x400	/* PMD points to page of PTEs */
 #define _PMD_BAD	0x802
-#define _PMD_SIZE	0x0e0	/* size field, != 0 for large-page PMD entry */
 #define _PMD_SIZE_4M	0x0c0
 #define _PMD_SIZE_16M	0x0e0
-
-#define PMD_PAGE_SIZE(pmdval)	(1024 << (((pmdval) & _PMD_SIZE) >> 4))
 
 /* Until my rework is finished, 40x still needs atomic PTE updates */
 #define PTE_ATOMIC_UPDATES	1

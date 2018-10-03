@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef GHES_H
 #define GHES_H
 
@@ -54,22 +55,21 @@ enum {
 /* From drivers/edac/ghes_edac.c */
 
 #ifdef CONFIG_EDAC_GHES
-void ghes_edac_report_mem_error(struct ghes *ghes, int sev,
-				struct cper_sec_mem_err *mem_err);
+void ghes_edac_report_mem_error(int sev, struct cper_sec_mem_err *mem_err);
 
 int ghes_edac_register(struct ghes *ghes, struct device *dev);
 
 void ghes_edac_unregister(struct ghes *ghes);
 
 #else
-static inline void ghes_edac_report_mem_error(struct ghes *ghes, int sev,
+static inline void ghes_edac_report_mem_error(int sev,
 				       struct cper_sec_mem_err *mem_err)
 {
 }
 
 static inline int ghes_edac_register(struct ghes *ghes, struct device *dev)
 {
-	return 0;
+	return -ENODEV;
 }
 
 static inline void ghes_edac_unregister(struct ghes *ghes)
@@ -112,6 +112,11 @@ static inline void *acpi_hest_get_next(struct acpi_hest_generic_data *gdata)
 {
 	return (void *)(gdata) + acpi_hest_get_record_size(gdata);
 }
+
+#define apei_estatus_for_each_section(estatus, section)			\
+	for (section = (struct acpi_hest_generic_data *)(estatus + 1);	\
+	     (void *)section - (void *)(estatus + 1) < estatus->data_length; \
+	     section = acpi_hest_get_next(section))
 
 int ghes_notify_sea(void);
 

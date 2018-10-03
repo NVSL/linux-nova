@@ -1,17 +1,6 @@
-/*
- * Copyright (c) 2015--2017 Intel Corporation.
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License version
- * 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- */
+// SPDX-License-Identifier: GPL-2.0
+// Copyright (c) 2015--2017 Intel Corporation.
 
-#include <linux/acpi.h>
 #include <linux/delay.h>
 #include <linux/i2c.h>
 #include <linux/module.h>
@@ -21,6 +10,11 @@
 
 #define DW9714_NAME		"dw9714"
 #define DW9714_MAX_FOCUS_POS	1023
+/*
+ * This sets the minimum granularity for the focus positions.
+ * A value of 1 gives maximum accuracy for a desired focus position
+ */
+#define DW9714_FOCUS_STEPS	1
 /*
  * This acts as the minimum granularity of lens movement.
  * Keep this value power of 2, so the control steps can be
@@ -38,7 +32,6 @@
 
 /* dw9714 device structure */
 struct dw9714_device {
-	struct i2c_client *client;
 	struct v4l2_ctrl_handler ctrls_vcm;
 	struct v4l2_subdev sd;
 	u16 current_val;
@@ -57,7 +50,7 @@ static inline struct dw9714_device *sd_to_dw9714_vcm(struct v4l2_subdev *subdev)
 static int dw9714_i2c_write(struct i2c_client *client, u16 data)
 {
 	int ret;
-	u16 val = cpu_to_be16(data);
+	__be16 val = cpu_to_be16(data);
 
 	ret = i2c_master_send(client, (const char *)&val, sizeof(val));
 	if (ret != sizeof(val)) {
@@ -69,7 +62,7 @@ static int dw9714_i2c_write(struct i2c_client *client, u16 data)
 
 static int dw9714_t_focus_vcm(struct dw9714_device *dw9714_dev, u16 val)
 {
-	struct i2c_client *client = dw9714_dev->client;
+	struct i2c_client *client = v4l2_get_subdevdata(&dw9714_dev->sd);
 
 	dw9714_dev->current_val = val;
 
@@ -92,13 +85,11 @@ static const struct v4l2_ctrl_ops dw9714_vcm_ctrl_ops = {
 
 static int dw9714_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 {
-	struct dw9714_device *dw9714_dev = sd_to_dw9714_vcm(sd);
-	struct device *dev = &dw9714_dev->client->dev;
 	int rval;
 
-	rval = pm_runtime_get_sync(dev);
+	rval = pm_runtime_get_sync(sd->dev);
 	if (rval < 0) {
-		pm_runtime_put_noidle(dev);
+		pm_runtime_put_noidle(sd->dev);
 		return rval;
 	}
 
@@ -107,10 +98,7 @@ static int dw9714_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 
 static int dw9714_close(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 {
-	struct dw9714_device *dw9714_dev = sd_to_dw9714_vcm(sd);
-	struct device *dev = &dw9714_dev->client->dev;
-
-	pm_runtime_put(dev);
+	pm_runtime_put(sd->dev);
 
 	return 0;
 }
@@ -133,22 +121,20 @@ static int dw9714_init_controls(struct dw9714_device *dev_vcm)
 {
 	struct v4l2_ctrl_handler *hdl = &dev_vcm->ctrls_vcm;
 	const struct v4l2_ctrl_ops *ops = &dw9714_vcm_ctrl_ops;
-	struct i2c_client *client = dev_vcm->client;
 
 	v4l2_ctrl_handler_init(hdl, 1);
 
 	v4l2_ctrl_new_std(hdl, ops, V4L2_CID_FOCUS_ABSOLUTE,
-			  0, DW9714_MAX_FOCUS_POS, DW9714_CTRL_STEPS, 0);
+			  0, DW9714_MAX_FOCUS_POS, DW9714_FOCUS_STEPS, 0);
 
 	if (hdl->error)
-		dev_err(&client->dev, "%s fail error: 0x%x\n",
+		dev_err(dev_vcm->sd.dev, "%s fail error: 0x%x\n",
 			__func__, hdl->error);
 	dev_vcm->sd.ctrl_handler = hdl;
 	return hdl->error;
 }
 
-static int dw9714_probe(struct i2c_client *client,
-			const struct i2c_device_id *devid)
+static int dw9714_probe(struct i2c_client *client)
 {
 	struct dw9714_device *dw9714_dev;
 	int rval;
@@ -157,8 +143,6 @@ static int dw9714_probe(struct i2c_client *client,
 				  GFP_KERNEL);
 	if (dw9714_dev == NULL)
 		return -ENOMEM;
-
-	dw9714_dev->client = client;
 
 	v4l2_i2c_subdev_init(&dw9714_dev->sd, client, &dw9714_ops);
 	dw9714_dev->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
@@ -180,6 +164,7 @@ static int dw9714_probe(struct i2c_client *client,
 
 	pm_runtime_set_active(&client->dev);
 	pm_runtime_enable(&client->dev);
+	pm_runtime_idle(&client->dev);
 
 	return 0;
 
@@ -250,19 +235,17 @@ static int  __maybe_unused dw9714_vcm_resume(struct device *dev)
 	return 0;
 }
 
-#ifdef CONFIG_ACPI
-static const struct acpi_device_id dw9714_acpi_match[] = {
-	{},
-};
-MODULE_DEVICE_TABLE(acpi, dw9714_acpi_match);
-#endif
-
 static const struct i2c_device_id dw9714_id_table[] = {
-	{DW9714_NAME, 0},
-	{}
+	{ DW9714_NAME, 0 },
+	{ { 0 } }
 };
-
 MODULE_DEVICE_TABLE(i2c, dw9714_id_table);
+
+static const struct of_device_id dw9714_of_table[] = {
+	{ .compatible = "dongwoon,dw9714" },
+	{ { 0 } }
+};
+MODULE_DEVICE_TABLE(of, dw9714_of_table);
 
 static const struct dev_pm_ops dw9714_pm_ops = {
 	SET_SYSTEM_SLEEP_PM_OPS(dw9714_vcm_suspend, dw9714_vcm_resume)
@@ -273,9 +256,9 @@ static struct i2c_driver dw9714_i2c_driver = {
 	.driver = {
 		.name = DW9714_NAME,
 		.pm = &dw9714_pm_ops,
-		.acpi_match_table = ACPI_PTR(dw9714_acpi_match),
+		.of_match_table = dw9714_of_table,
 	},
-	.probe = dw9714_probe,
+	.probe_new = dw9714_probe,
 	.remove = dw9714_remove,
 	.id_table = dw9714_id_table,
 };

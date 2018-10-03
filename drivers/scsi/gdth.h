@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _GDTH_H
 #define _GDTH_H
 
@@ -176,9 +177,6 @@
 #define MSGLEN          16                      /* size of message text */
 #define MSG_SIZE        34                      /* size of message structure */
 #define MSG_REQUEST     0                       /* async. event: message */
-
-/* cacheservice defines */
-#define SECTOR_SIZE     0x200                   /* always 512 bytes per sec. */
 
 /* DPMEM constants */
 #define DPMEM_MAGIC     0xC0FFEE11

@@ -30,13 +30,9 @@
 
 #include <asm/div64.h>
 
-#define MTD_ERASE_PENDING	0x01
-#define MTD_ERASING		0x02
-#define MTD_ERASE_SUSPEND	0x04
-#define MTD_ERASE_DONE		0x08
-#define MTD_ERASE_FAILED	0x10
-
 #define MTD_FAIL_ADDR_UNKNOWN -1LL
+
+struct mtd_info;
 
 /*
  * If the erase fails, fail_addr might indicate exactly which block failed. If
@@ -44,18 +40,9 @@
  * or was not specific to any particular block.
  */
 struct erase_info {
-	struct mtd_info *mtd;
 	uint64_t addr;
 	uint64_t len;
 	uint64_t fail_addr;
-	u_long time;
-	u_long retries;
-	unsigned dev;
-	unsigned cell;
-	void (*callback) (struct erase_info *self);
-	u_long priv;
-	u_char state;
-	struct erase_info *next;
 };
 
 struct mtd_erase_region_info {
@@ -206,6 +193,15 @@ struct mtd_pairing_scheme {
 
 struct module;	/* only needed for owner field in mtd_info */
 
+/**
+ * struct mtd_debug_info - debugging information for an MTD device.
+ *
+ * @dfs_dir: direntry object of the MTD device debugfs directory
+ */
+struct mtd_debug_info {
+	struct dentry *dfs_dir;
+};
+
 struct mtd_info {
 	u_char type;
 	uint32_t flags;
@@ -258,7 +254,7 @@ struct mtd_info {
 	 */
 	unsigned int bitflip_threshold;
 
-	// Kernel-only stuff starts here.
+	/* Kernel-only stuff starts here. */
 	const char *name;
 	int index;
 
@@ -288,10 +284,6 @@ struct mtd_info {
 	int (*_point) (struct mtd_info *mtd, loff_t from, size_t len,
 		       size_t *retlen, void **virt, resource_size_t *phys);
 	int (*_unpoint) (struct mtd_info *mtd, loff_t from, size_t len);
-	unsigned long (*_get_unmapped_area) (struct mtd_info *mtd,
-					     unsigned long len,
-					     unsigned long offset,
-					     unsigned long flags);
 	int (*_read) (struct mtd_info *mtd, loff_t from, size_t len,
 		      size_t *retlen, u_char *buf);
 	int (*_write) (struct mtd_info *mtd, loff_t to, size_t len,
@@ -346,6 +338,7 @@ struct mtd_info {
 	struct module *owner;
 	struct device dev;
 	int usecount;
+	struct mtd_debug_info dbg;
 };
 
 int mtd_ooblayout_ecc(struct mtd_info *mtd, int section,
@@ -483,6 +476,34 @@ static inline uint32_t mtd_mod_by_eb(uint64_t sz, struct mtd_info *mtd)
 	return do_div(sz, mtd->erasesize);
 }
 
+/**
+ * mtd_align_erase_req - Adjust an erase request to align things on eraseblock
+ *			 boundaries.
+ * @mtd: the MTD device this erase request applies on
+ * @req: the erase request to adjust
+ *
+ * This function will adjust @req->addr and @req->len to align them on
+ * @mtd->erasesize. Of course we expect @mtd->erasesize to be != 0.
+ */
+static inline void mtd_align_erase_req(struct mtd_info *mtd,
+				       struct erase_info *req)
+{
+	u32 mod;
+
+	if (WARN_ON(!mtd->erasesize))
+		return;
+
+	mod = mtd_mod_by_eb(req->addr, mtd);
+	if (mod) {
+		req->addr -= mod;
+		req->len += mod;
+	}
+
+	mod = mtd_mod_by_eb(req->addr + req->len, mtd);
+	if (mod)
+		req->len += mtd->erasesize - mod;
+}
+
 static inline uint32_t mtd_div_by_ws(uint64_t sz, struct mtd_info *mtd)
 {
 	if (mtd->writesize_shift)
@@ -560,8 +581,6 @@ struct mtd_notifier {
 extern void register_mtd_user (struct mtd_notifier *new);
 extern int unregister_mtd_user (struct mtd_notifier *old);
 void *mtd_kmalloc_up_to(const struct mtd_info *mtd, size_t *size);
-
-void mtd_erase_callback(struct erase_info *instr);
 
 static inline int mtd_is_bitflip(int err) {
 	return err == -EUCLEAN;

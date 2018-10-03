@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0
 #
 # General architecture dependent options
 #
@@ -90,7 +91,7 @@ config STATIC_KEYS_SELFTEST
 config OPTPROBES
 	def_bool y
 	depends on KPROBES && HAVE_OPTPROBES
-	depends on !PREEMPT
+	select TASKS_RCU if PREEMPT
 
 config KPROBES_ON_FTRACE
 	def_bool y
@@ -195,6 +196,9 @@ config HAVE_OPTPROBES
 config HAVE_KPROBES_ON_FTRACE
 	bool
 
+config HAVE_FUNCTION_ERROR_INJECTION
+	bool
+
 config HAVE_NMI
 	bool
 
@@ -233,13 +237,24 @@ config ARCH_HAS_FORTIFY_SOURCE
 config ARCH_HAS_SET_MEMORY
 	bool
 
-# Select if arch init_task initializer is different to init/init_task.c
-config ARCH_INIT_TASK
+# Select if arch init_task must go in the __init_task_data section
+config ARCH_TASK_STRUCT_ON_STACK
        bool
 
 # Select if arch has its private alloc_task_struct() function
 config ARCH_TASK_STRUCT_ALLOCATOR
 	bool
+
+config HAVE_ARCH_THREAD_STRUCT_WHITELIST
+	bool
+	depends on !ARCH_TASK_STRUCT_ALLOCATOR
+	help
+	  An architecture should select this to provide hardened usercopy
+	  knowledge about what region of the thread_struct should be
+	  whitelisted for copying to userspace. Normally this is only the
+	  FPU registers. Specifically, arch_thread_struct_whitelist()
+	  should be implemented. Without this, the entire thread_struct
+	  field in task_struct will be left whitelisted.
 
 # Select if arch has its private alloc_thread_stack() function
 config ARCH_THREAD_STACK_ALLOCATOR
@@ -257,14 +272,18 @@ config HAVE_REGS_AND_STACK_ACCESS_API
 	  declared in asm/ptrace.h
 	  For example the kprobes-based event tracer needs this API.
 
+config HAVE_RSEQ
+	bool
+	depends on HAVE_REGS_AND_STACK_ACCESS_API
+	help
+	  This symbol should be selected by an architecture if it
+	  supports an implementation of restartable sequences.
+
 config HAVE_CLK
 	bool
 	help
 	  The <linux/clk.h> calls support software clock gating and
 	  thus are a key power management tool on many systems.
-
-config HAVE_DMA_API_DEBUG
-	bool
 
 config HAVE_HW_BREAKPOINT
 	bool
@@ -384,7 +403,16 @@ config SECCOMP_FILTER
 	  in terms of Berkeley Packet Filter programs which implement
 	  task-defined system call filtering polices.
 
-	  See Documentation/prctl/seccomp_filter.txt for details.
+	  See Documentation/userspace-api/seccomp_filter.rst for details.
+
+preferred-plugin-hostcc := $(if-success,[ $(gcc-version) -ge 40800 ],$(HOSTCXX),$(HOSTCC))
+
+config PLUGIN_HOSTCC
+	string
+	default "$(shell,$(srctree)/scripts/gcc-plugin.sh "$(preferred-plugin-hostcc)" "$(HOSTCXX)" "$(CC)")"
+	help
+	  Host compiler used to build GCC plugins.  This can be $(HOSTCXX),
+	  $(HOSTCC), or a null string if GCC plugin is unsupported.
 
 config HAVE_GCC_PLUGINS
 	bool
@@ -395,7 +423,7 @@ config HAVE_GCC_PLUGINS
 menuconfig GCC_PLUGINS
 	bool "GCC plugins"
 	depends on HAVE_GCC_PLUGINS
-	depends on !COMPILE_TEST
+	depends on PLUGIN_HOSTCC != ""
 	help
 	  GCC plugins are loadable modules that provide extra features to the
 	  compiler. They are useful for runtime instrumentation and static analysis.
@@ -405,7 +433,7 @@ menuconfig GCC_PLUGINS
 config GCC_PLUGIN_CYC_COMPLEXITY
 	bool "Compute the cyclomatic complexity of a function" if EXPERT
 	depends on GCC_PLUGINS
-	depends on !COMPILE_TEST
+	depends on !COMPILE_TEST	# too noisy
 	help
 	  The complexity M of a function's control flow graph is defined as:
 	   M = E - N + 2P
@@ -449,6 +477,10 @@ config GCC_PLUGIN_LATENT_ENTROPY
 config GCC_PLUGIN_STRUCTLEAK
 	bool "Force initialization of variables containing userspace addresses"
 	depends on GCC_PLUGINS
+	# Currently STRUCTLEAK inserts initialization out of live scope of
+	# variables from KASAN point of view. This leads to KASAN false
+	# positive reports. Prohibit this combination for now.
+	depends on !KASAN_EXTRA
 	help
 	  This plugin zero-initializes any structures containing a
 	  __user attribute. This can prevent some classes of information
@@ -458,10 +490,18 @@ config GCC_PLUGIN_STRUCTLEAK
 	   * https://grsecurity.net/
 	   * https://pax.grsecurity.net/
 
+config GCC_PLUGIN_STRUCTLEAK_BYREF_ALL
+	bool "Force initialize all struct type variables passed by reference"
+	depends on GCC_PLUGIN_STRUCTLEAK
+	depends on !COMPILE_TEST
+	help
+	  Zero initialize any struct type local variable that may be passed by
+	  reference without having been initialized.
+
 config GCC_PLUGIN_STRUCTLEAK_VERBOSE
 	bool "Report forcefully initialized variables"
 	depends on GCC_PLUGIN_STRUCTLEAK
-	depends on !COMPILE_TEST
+	depends on !COMPILE_TEST	# too noisy
 	help
 	  This option will cause a warning to be printed each time the
 	  structleak plugin finds a variable it thinks needs to be
@@ -473,11 +513,13 @@ config GCC_PLUGIN_RANDSTRUCT
 	depends on GCC_PLUGINS
 	select MODVERSIONS if MODULES
 	help
-	  If you say Y here, the layouts of structures explicitly
-	  marked by __randomize_layout will be randomized at
-	  compile-time.  This can introduce the requirement of an
-	  additional information exposure vulnerability for exploits
-	  targeting these structure types.
+	  If you say Y here, the layouts of structures that are entirely
+	  function pointers (and have not been manually annotated with
+	  __no_randomize_layout), or structures that have been explicitly
+	  marked with __randomize_layout, will be randomized at compile-time.
+	  This can introduce the requirement of an additional information
+	  exposure vulnerability for exploits targeting these structure
+	  types.
 
 	  Enabling this feature will introduce some performance impact,
 	  slightly increase memory usage, and prevent the use of forensic
@@ -499,7 +541,7 @@ config GCC_PLUGIN_RANDSTRUCT
 config GCC_PLUGIN_RANDSTRUCT_PERFORMANCE
 	bool "Use cacheline-aware structure randomization"
 	depends on GCC_PLUGIN_RANDSTRUCT
-	depends on !COMPILE_TEST
+	depends on !COMPILE_TEST	# do not reduce test coverage
 	help
 	  If you say Y here, the RANDSTRUCT randomization will make a
 	  best effort at restricting randomization to cacheline-sized
@@ -507,23 +549,20 @@ config GCC_PLUGIN_RANDSTRUCT_PERFORMANCE
 	  in structures.  This reduces the performance hit of RANDSTRUCT
 	  at the cost of weakened randomization.
 
-config HAVE_CC_STACKPROTECTOR
+config HAVE_STACKPROTECTOR
 	bool
 	help
 	  An arch should select this symbol if:
-	  - its compiler supports the -fstack-protector option
 	  - it has implemented a stack canary (e.g. __stack_chk_guard)
 
-config CC_STACKPROTECTOR
-	def_bool n
-	help
-	  Set when a stack-protector mode is enabled, so that the build
-	  can enable kernel-side support for the GCC feature.
+config CC_HAS_STACKPROTECTOR_NONE
+	def_bool $(cc-option,-fno-stack-protector)
 
-choice
-	prompt "Stack Protector buffer overflow detection"
-	depends on HAVE_CC_STACKPROTECTOR
-	default CC_STACKPROTECTOR_NONE
+config STACKPROTECTOR
+	bool "Stack Protector buffer overflow detection"
+	depends on HAVE_STACKPROTECTOR
+	depends on $(cc-option,-fstack-protector)
+	default y
 	help
 	  This option turns on the "stack-protector" GCC feature. This
 	  feature puts, at the beginning of functions, a canary value on
@@ -533,15 +572,6 @@ choice
 	  overwrite the canary, which gets detected and the attack is then
 	  neutralized via a kernel panic.
 
-config CC_STACKPROTECTOR_NONE
-	bool "None"
-	help
-	  Disable "stack-protector" GCC feature.
-
-config CC_STACKPROTECTOR_REGULAR
-	bool "Regular"
-	select CC_STACKPROTECTOR
-	help
 	  Functions will have the stack-protector canary logic added if they
 	  have an 8-byte or larger character array on the stack.
 
@@ -552,9 +582,11 @@ config CC_STACKPROTECTOR_REGULAR
 	  about 3% of all kernel functions, which increases kernel code size
 	  by about 0.3%.
 
-config CC_STACKPROTECTOR_STRONG
-	bool "Strong"
-	select CC_STACKPROTECTOR
+config STACKPROTECTOR_STRONG
+	bool "Strong Stack Protector"
+	depends on STACKPROTECTOR
+	depends on $(cc-option,-fstack-protector-strong)
+	default y
 	help
 	  Functions will have the stack-protector canary logic added in any
 	  of the following conditions:
@@ -571,29 +603,6 @@ config CC_STACKPROTECTOR_STRONG
 	  On an x86 "defconfig" build, this feature adds canary checks to
 	  about 20% of all kernel functions, which increases the kernel code
 	  size by about 2%.
-
-endchoice
-
-config THIN_ARCHIVES
-	def_bool y
-	help
-	  Select this if the architecture wants to use thin archives
-	  instead of ld -r to create the built-in.o files.
-
-config LD_DEAD_CODE_DATA_ELIMINATION
-	bool
-	help
-	  Select this if the architecture wants to do dead code and
-	  data elimination with the linker by compiling with
-	  -ffunction-sections -fdata-sections and linking with
-	  --gc-sections.
-
-	  This requires that the arch annotates or otherwise protects
-	  its external entry points from being discarded. Linker scripts
-	  must also merge .text.*, .data.*, and .bss.* correctly into
-	  output sections. Care must be taken not to pull in unrelated
-	  sections (e.g., '.text.init'). Typically '.' in section names
-	  is used to distinguish them from label names / C identifiers.
 
 config HAVE_ARCH_WITHIN_STACK_FRAMES
 	bool
@@ -669,12 +678,6 @@ config MODULES_USE_ELF_REL
 	help
 	  Modules only use ELF REL relocations.  Modules with ELF RELA
 	  relocations will give an error.
-
-config HAVE_UNDERSCORE_SYMBOL_PREFIX
-	bool
-	help
-	  Some architectures generate an _ in front of C symbols; things like
-	  module loading and assembly files need to know about this.
 
 config HAVE_IRQ_EXIT_ON_IRQ_STACK
 	bool
@@ -854,6 +857,21 @@ config OLD_SIGACTION
 config COMPAT_OLD_SIGACTION
 	bool
 
+config 64BIT_TIME
+	def_bool ARCH_HAS_64BIT_TIME
+	help
+	  This should be selected by all architectures that need to support
+	  new system calls with a 64-bit time_t. This is relevant on all 32-bit
+	  architectures, and 64-bit architectures as part of compat syscall
+	  handling.
+
+config COMPAT_32BIT_TIME
+	def_bool (!64BIT && 64BIT_TIME) || COMPAT
+	help
+	  This enables 32 bit time_t support in addition to 64 bit time_t support.
+	  This is relevant on all 32-bit architectures, and 64-bit architectures
+	  as part of compat syscall handling.
+
 config ARCH_NO_COHERENT_DMA_MMAP
 	bool
 
@@ -928,8 +946,21 @@ config STRICT_MODULE_RWX
 	  and non-text memory will be made non-executable. This provides
 	  protection against certain security exploits (e.g. writing to text)
 
-config ARCH_WANT_RELAX_ORDER
+# select if the architecture provides an asm/dma-direct.h header
+config ARCH_HAS_PHYS_TO_DMA
 	bool
+
+config ARCH_HAS_REFCOUNT
+	bool
+	help
+	  An architecture selects this when it has implemented refcount_t
+	  using open coded assembly primitives that provide an optimized
+	  refcount_t implementation, possibly at the expense of some full
+	  refcount state checks of CONFIG_REFCOUNT_FULL=y.
+
+	  The refcount overflow check behavior, however, must be retained.
+	  Catching overflows is the primary security concern for protecting
+	  against bugs in reference counts.
 
 config REFCOUNT_FULL
 	bool "Perform full reference count validation at the expense of speed"

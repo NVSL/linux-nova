@@ -16,6 +16,7 @@
  * Options:
  * -fplugin-arg-structleak_plugin-disable
  * -fplugin-arg-structleak_plugin-verbose
+ * -fplugin-arg-structleak_plugin-byref-all
  *
  * Usage:
  * $ # for 4.5/4.6/C based 4.7
@@ -42,6 +43,7 @@ static struct plugin_info structleak_plugin_info = {
 };
 
 static bool verbose;
+static bool byref_all;
 
 static tree handle_user_attribute(tree *node, tree name, tree args, int flags, bool *no_add_attrs)
 {
@@ -55,21 +57,16 @@ static tree handle_user_attribute(tree *node, tree name, tree args, int flags, b
 	return NULL_TREE;
 }
 
-static struct attribute_spec user_attr = {
-	.name			= "user",
-	.min_length		= 0,
-	.max_length		= 0,
-	.decl_required		= false,
-	.type_required		= false,
-	.function_type_required	= false,
-	.handler		= handle_user_attribute,
-#if BUILDING_GCC_VERSION >= 4007
-	.affects_type_identity	= true
-#endif
-};
+static struct attribute_spec user_attr = { };
 
 static void register_attributes(void *event_data, void *data)
 {
+	user_attr.name			= "user";
+	user_attr.handler		= handle_user_attribute;
+#if BUILDING_GCC_VERSION >= 4007
+	user_attr.affects_type_identity	= true;
+#endif
+
 	register_attribute(&user_attr);
 }
 
@@ -150,7 +147,9 @@ static void initialize(tree var)
 	/* these aren't the 0days you're looking for */
 	if (verbose)
 		inform(DECL_SOURCE_LOCATION(var),
-			"userspace variable will be forcibly initialized");
+			"%s variable will be forcibly initialized",
+			(byref_all && TREE_ADDRESSABLE(var)) ? "byref"
+							     : "userspace");
 
 	/* build the initializer expression */
 	initializer = build_constructor(TREE_TYPE(var), NULL);
@@ -190,7 +189,8 @@ static unsigned int structleak_execute(void)
 			continue;
 
 		/* if the type is of interest, examine the variable */
-		if (TYPE_USERSPACE(type))
+		if (TYPE_USERSPACE(type) ||
+		    (byref_all && TREE_ADDRESSABLE(var)))
 			initialize(var);
 	}
 
@@ -230,6 +230,10 @@ __visible int plugin_init(struct plugin_name_args *plugin_info, struct plugin_gc
 		}
 		if (!strcmp(argv[i].key, "verbose")) {
 			verbose = true;
+			continue;
+		}
+		if (!strcmp(argv[i].key, "byref-all")) {
+			byref_all = true;
 			continue;
 		}
 		error(G_("unknown option '-fplugin-arg-%s-%s'"), plugin_name, argv[i].key);

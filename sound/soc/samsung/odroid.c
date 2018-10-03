@@ -19,8 +19,8 @@ struct odroid_priv {
 	struct snd_soc_card card;
 	struct snd_soc_dai_link dai_link;
 
-	struct clk *pll;
-	struct clk *rclk;
+	struct clk *clk_i2s_bus;
+	struct clk *sclk_i2s;
 };
 
 static int odroid_card_startup(struct snd_pcm_substream *substream)
@@ -36,35 +36,41 @@ static int odroid_card_hw_params(struct snd_pcm_substream *substream,
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
 	struct odroid_priv *priv = snd_soc_card_get_drvdata(rtd->card);
-	unsigned int pll_freq, rclk_freq;
+	unsigned int pll_freq, rclk_freq, rfs;
 	int ret;
 
 	switch (params_rate(params)) {
-	case 32000:
 	case 64000:
-		pll_freq = 131072006U;
+		pll_freq = 196608001U;
+		rfs = 384;
 		break;
 	case 44100:
 	case 88200:
-	case 176400:
 		pll_freq = 180633609U;
+		rfs = 512;
 		break;
+	case 32000:
 	case 48000:
 	case 96000:
-	case 192000:
 		pll_freq = 196608001U;
+		rfs = 512;
 		break;
 	default:
 		return -EINVAL;
 	}
 
-	ret = clk_set_rate(priv->pll, pll_freq + 1);
+	ret = clk_set_rate(priv->clk_i2s_bus, pll_freq / 2 + 1);
 	if (ret < 0)
 		return ret;
 
-	rclk_freq = params_rate(params) * 256 * 4;
+	/*
+	 *  We add 1 to the rclk_freq value in order to avoid too low clock
+	 *  frequency values due to the EPLL output frequency not being exact
+	 *  multiple of the audio sampling rate.
+	 */
+	rclk_freq = params_rate(params) * rfs + 1;
 
-	ret = clk_set_rate(priv->rclk, rclk_freq);
+	ret = clk_set_rate(priv->sclk_i2s, rclk_freq);
 	if (ret < 0)
 		return ret;
 
@@ -84,18 +90,6 @@ static const struct snd_soc_ops odroid_card_ops = {
 	.startup = odroid_card_startup,
 	.hw_params = odroid_card_hw_params,
 };
-
-static void odroid_put_codec_of_nodes(struct snd_soc_dai_link *link)
-{
-	struct snd_soc_dai_link_component *component = link->codecs;
-	int i;
-
-	for (i = 0; i < link->num_codecs; i++, component++) {
-		if (!component->of_node)
-			break;
-		of_node_put(component->of_node);
-	}
-}
 
 static int odroid_audio_probe(struct platform_device *pdev)
 {
@@ -117,14 +111,6 @@ static int odroid_audio_probe(struct platform_device *pdev)
 	card->fully_routed = true;
 
 	snd_soc_card_set_drvdata(card, priv);
-
-	priv->pll = devm_clk_get(dev, "epll");
-	if (IS_ERR(priv->pll))
-		return PTR_ERR(priv->pll);
-
-	priv->rclk = devm_clk_get(dev, "i2s_rclk");
-	if (IS_ERR(priv->rclk))
-		return PTR_ERR(priv->rclk);
 
 	ret = snd_soc_of_parse_card_name(card, "model");
 	if (ret < 0)
@@ -171,18 +157,35 @@ static int odroid_audio_probe(struct platform_device *pdev)
 	link->name = "Primary";
 	link->stream_name = link->name;
 
+
+	priv->sclk_i2s = of_clk_get_by_name(link->cpu_of_node, "i2s_opclk1");
+	if (IS_ERR(priv->sclk_i2s)) {
+		ret = PTR_ERR(priv->sclk_i2s);
+		goto err_put_i2s_n;
+	}
+
+	priv->clk_i2s_bus = of_clk_get_by_name(link->cpu_of_node, "iis");
+	if (IS_ERR(priv->clk_i2s_bus)) {
+		ret = PTR_ERR(priv->clk_i2s_bus);
+		goto err_put_sclk;
+	}
+
 	ret = devm_snd_soc_register_card(dev, card);
 	if (ret < 0) {
 		dev_err(dev, "snd_soc_register_card() failed: %d\n", ret);
-		goto err_put_i2s_n;
+		goto err_put_clk_i2s;
 	}
 
 	return 0;
 
+err_put_clk_i2s:
+	clk_put(priv->clk_i2s_bus);
+err_put_sclk:
+	clk_put(priv->sclk_i2s);
 err_put_i2s_n:
 	of_node_put(link->cpu_of_node);
 err_put_codec_n:
-	odroid_put_codec_of_nodes(link);
+	snd_soc_of_put_dai_link_codecs(link);
 	return ret;
 }
 
@@ -191,14 +194,18 @@ static int odroid_audio_remove(struct platform_device *pdev)
 	struct odroid_priv *priv = platform_get_drvdata(pdev);
 
 	of_node_put(priv->dai_link.cpu_of_node);
-	odroid_put_codec_of_nodes(&priv->dai_link);
+	snd_soc_of_put_dai_link_codecs(&priv->dai_link);
+	clk_put(priv->sclk_i2s);
+	clk_put(priv->clk_i2s_bus);
 
 	return 0;
 }
 
 static const struct of_device_id odroid_audio_of_match[] = {
+	{ .compatible	= "hardkernel,odroid-xu3-audio" },
+	{ .compatible	= "hardkernel,odroid-xu4-audio" },
 	{ .compatible	= "samsung,odroid-xu3-audio" },
-	{ .compatible	= "samsung,odroid-xu4-audio"},
+	{ .compatible	= "samsung,odroid-xu4-audio" },
 	{ },
 };
 MODULE_DEVICE_TABLE(of, odroid_audio_of_match);

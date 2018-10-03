@@ -1,7 +1,7 @@
 /*
  * HDMI wrapper
  *
- * Copyright (C) 2013 Texas Instruments Incorporated
+ * Copyright (C) 2013 Texas Instruments Incorporated - http://www.ti.com/
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License version 2 as published by
@@ -168,7 +168,7 @@ void hdmi_wp_video_config_timing(struct hdmi_wp_data *wp,
 {
 	u32 timing_h = 0;
 	u32 timing_v = 0;
-	unsigned hsync_len_offset = 1;
+	unsigned int hsync_len_offset = 1;
 
 	DSSDBG("Enter hdmi_wp_video_config_timing\n");
 
@@ -178,9 +178,7 @@ void hdmi_wp_video_config_timing(struct hdmi_wp_data *wp,
 	 * However, we don't support OMAP5 ES1 at all, so we can just check for
 	 * OMAP4 here.
 	 */
-	if (omapdss_get_version() == OMAPDSS_VER_OMAP4430_ES1 ||
-	    omapdss_get_version() == OMAPDSS_VER_OMAP4430_ES2 ||
-	    omapdss_get_version() == OMAPDSS_VER_OMAP4)
+	if (wp->version == 4)
 		hsync_len_offset = 0;
 
 	timing_h |= FLD_VAL(vm->hback_porch, 31, 20);
@@ -235,9 +233,7 @@ void hdmi_wp_audio_config_format(struct hdmi_wp_data *wp,
 	DSSDBG("Enter hdmi_wp_audio_config_format\n");
 
 	r = hdmi_read_reg(wp->base, HDMI_WP_AUDIO_CFG);
-	if (omapdss_get_version() == OMAPDSS_VER_OMAP4430_ES1 ||
-	    omapdss_get_version() == OMAPDSS_VER_OMAP4430_ES2 ||
-	    omapdss_get_version() == OMAPDSS_VER_OMAP4) {
+	if (wp->version == 4) {
 		r = FLD_MOD(r, aud_fmt->stereo_channels, 26, 24);
 		r = FLD_MOD(r, aud_fmt->active_chnnls_msk, 23, 16);
 	}
@@ -282,7 +278,8 @@ int hdmi_wp_audio_core_req_enable(struct hdmi_wp_data *wp, bool enable)
 	return 0;
 }
 
-int hdmi_wp_init(struct platform_device *pdev, struct hdmi_wp_data *wp)
+int hdmi_wp_init(struct platform_device *pdev, struct hdmi_wp_data *wp,
+		 unsigned int version)
 {
 	struct resource *res;
 
@@ -292,6 +289,7 @@ int hdmi_wp_init(struct platform_device *pdev, struct hdmi_wp_data *wp)
 		return PTR_ERR(wp->base);
 
 	wp->phys_base = res->start;
+	wp->version = version;
 
 	return 0;
 }

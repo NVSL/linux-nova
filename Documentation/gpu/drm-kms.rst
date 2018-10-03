@@ -263,13 +263,19 @@ Taken all together there's two consequences for the atomic design:
 
 - An atomic update is assembled and validated as an entirely free-standing pile
   of structures within the :c:type:`drm_atomic_state <drm_atomic_state>`
-  container. Again drivers can subclass that container for their own state
-  structure tracking needs. Only when a state is committed is it applied to the
-  driver and modeset objects. This way rolling back an update boils down to
-  releasing memory and unreferencing objects like framebuffers.
+  container. Driver private state structures are also tracked in the same
+  structure; see the next chapter.  Only when a state is committed is it applied
+  to the driver and modeset objects. This way rolling back an update boils down
+  to releasing memory and unreferencing objects like framebuffers.
 
 Read on in this chapter, and also in :ref:`drm_atomic_helper` for more detailed
 coverage of specific topics.
+
+Handling Driver Private State
+-----------------------------
+
+.. kernel-doc:: drivers/gpu/drm/drm_atomic.c
+   :doc: handling driver private state
 
 Atomic Mode Setting Function Reference
 --------------------------------------
@@ -279,6 +285,9 @@ Atomic Mode Setting Function Reference
 
 .. kernel-doc:: drivers/gpu/drm/drm_atomic.c
    :export:
+
+.. kernel-doc:: drivers/gpu/drm/drm_atomic.c
+   :internal:
 
 CRTC Abstraction
 ================
@@ -523,9 +532,6 @@ Color Management Properties
 .. kernel-doc:: drivers/gpu/drm/drm_color_mgmt.c
    :doc: overview
 
-.. kernel-doc:: include/drm/drm_color_mgmt.h
-   :internal:
-
 .. kernel-doc:: drivers/gpu/drm/drm_color_mgmt.c
    :export:
 
@@ -544,8 +550,9 @@ Explicit Fencing Properties
 Existing KMS Properties
 -----------------------
 
-The following table gives description of drm properties exposed by
-various modules/drivers.
+The following table gives description of drm properties exposed by various
+modules/drivers. Because this table is very unwieldy, do not add any new
+properties here. Instead document them in a section above.
 
 .. csv-table::
    :header-rows: 1
@@ -554,60 +561,8 @@ various modules/drivers.
 Vertical Blanking
 =================
 
-Vertical blanking plays a major role in graphics rendering. To achieve
-tear-free display, users must synchronize page flips and/or rendering to
-vertical blanking. The DRM API offers ioctls to perform page flips
-synchronized to vertical blanking and wait for vertical blanking.
-
-The DRM core handles most of the vertical blanking management logic,
-which involves filtering out spurious interrupts, keeping race-free
-blanking counters, coping with counter wrap-around and resets and
-keeping use counts. It relies on the driver to generate vertical
-blanking interrupts and optionally provide a hardware vertical blanking
-counter. Drivers must implement the following operations.
-
--  int (\*enable_vblank) (struct drm_device \*dev, int crtc); void
-   (\*disable_vblank) (struct drm_device \*dev, int crtc);
-   Enable or disable vertical blanking interrupts for the given CRTC.
-
--  u32 (\*get_vblank_counter) (struct drm_device \*dev, int crtc);
-   Retrieve the value of the vertical blanking counter for the given
-   CRTC. If the hardware maintains a vertical blanking counter its value
-   should be returned. Otherwise drivers can use the
-   :c:func:`drm_vblank_count()` helper function to handle this
-   operation.
-
-Drivers must initialize the vertical blanking handling core with a call
-to :c:func:`drm_vblank_init()` in their load operation.
-
-Vertical blanking interrupts can be enabled by the DRM core or by
-drivers themselves (for instance to handle page flipping operations).
-The DRM core maintains a vertical blanking use count to ensure that the
-interrupts are not disabled while a user still needs them. To increment
-the use count, drivers call :c:func:`drm_vblank_get()`. Upon
-return vertical blanking interrupts are guaranteed to be enabled.
-
-To decrement the use count drivers call
-:c:func:`drm_vblank_put()`. Only when the use count drops to zero
-will the DRM core disable the vertical blanking interrupts after a delay
-by scheduling a timer. The delay is accessible through the
-vblankoffdelay module parameter or the ``drm_vblank_offdelay`` global
-variable and expressed in milliseconds. Its default value is 5000 ms.
-Zero means never disable, and a negative value means disable
-immediately. Drivers may override the behaviour by setting the
-:c:type:`struct drm_device <drm_device>`
-vblank_disable_immediate flag, which when set causes vblank interrupts
-to be disabled immediately regardless of the drm_vblank_offdelay
-value. The flag should only be set if there's a properly working
-hardware vblank counter present.
-
-When a vertical blanking interrupt occurs drivers only need to call the
-:c:func:`drm_handle_vblank()` function to account for the
-interrupt.
-
-Resources allocated by :c:func:`drm_vblank_init()` must be freed
-with a call to :c:func:`drm_vblank_cleanup()` in the driver unload
-operation handler.
+.. kernel-doc:: drivers/gpu/drm/drm_vblank.c
+   :doc: vblank handling
 
 Vertical Blanking and Interrupt Handling Functions Reference
 ------------------------------------------------------------

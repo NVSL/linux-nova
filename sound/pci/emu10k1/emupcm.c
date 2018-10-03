@@ -411,12 +411,20 @@ static int snd_emu10k1_playback_hw_params(struct snd_pcm_substream *substream,
 	struct snd_emu10k1 *emu = snd_pcm_substream_chip(substream);
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	struct snd_emu10k1_pcm *epcm = runtime->private_data;
+	size_t alloc_size;
 	int err;
 
 	if ((err = snd_emu10k1_pcm_channel_alloc(epcm, params_channels(hw_params))) < 0)
 		return err;
-	if ((err = snd_pcm_lib_malloc_pages(substream, params_buffer_bytes(hw_params))) < 0)
+
+	alloc_size = params_buffer_bytes(hw_params);
+	if (emu->iommu_workaround)
+		alloc_size += EMUPAGESIZE;
+	err = snd_pcm_lib_malloc_pages(substream, alloc_size);
+	if (err < 0)
 		return err;
+	if (emu->iommu_workaround && runtime->dma_bytes >= EMUPAGESIZE)
+		runtime->dma_bytes -= EMUPAGESIZE;
 	if (err > 0) {	/* change */
 		int mapped;
 		if (epcm->memblk != NULL)
@@ -556,7 +564,7 @@ static int snd_emu10k1_efx_playback_prepare(struct snd_pcm_substream *substream)
 	return 0;
 }
 
-static struct snd_pcm_hardware snd_emu10k1_efx_playback =
+static const struct snd_pcm_hardware snd_emu10k1_efx_playback =
 {
 	.info =			(SNDRV_PCM_INFO_MMAP | SNDRV_PCM_INFO_NONINTERLEAVED |
 				 SNDRV_PCM_INFO_BLOCK_TRANSFER |
@@ -975,7 +983,7 @@ static snd_pcm_uframes_t snd_emu10k1_capture_pointer(struct snd_pcm_substream *s
  *  Playback support device description
  */
 
-static struct snd_pcm_hardware snd_emu10k1_playback =
+static const struct snd_pcm_hardware snd_emu10k1_playback =
 {
 	.info =			(SNDRV_PCM_INFO_MMAP | SNDRV_PCM_INFO_INTERLEAVED |
 				 SNDRV_PCM_INFO_BLOCK_TRANSFER |
@@ -999,7 +1007,7 @@ static struct snd_pcm_hardware snd_emu10k1_playback =
  *  Capture support device description
  */
 
-static struct snd_pcm_hardware snd_emu10k1_capture =
+static const struct snd_pcm_hardware snd_emu10k1_capture =
 {
 	.info =			(SNDRV_PCM_INFO_MMAP | SNDRV_PCM_INFO_INTERLEAVED |
 				 SNDRV_PCM_INFO_BLOCK_TRANSFER |
@@ -1019,7 +1027,7 @@ static struct snd_pcm_hardware snd_emu10k1_capture =
 	.fifo_size =		0,
 };
 
-static struct snd_pcm_hardware snd_emu10k1_capture_efx =
+static const struct snd_pcm_hardware snd_emu10k1_capture_efx =
 {
 	.info =			(SNDRV_PCM_INFO_MMAP | SNDRV_PCM_INFO_INTERLEAVED |
 				 SNDRV_PCM_INFO_BLOCK_TRANSFER |
@@ -1716,7 +1724,7 @@ static int snd_emu10k1_fx8010_playback_trigger(struct snd_pcm_substream *substre
 	case SNDRV_PCM_TRIGGER_STOP:
 	case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
 	case SNDRV_PCM_TRIGGER_SUSPEND:
-		snd_emu10k1_fx8010_unregister_irq_handler(emu, pcm->irq); pcm->irq = NULL;
+		snd_emu10k1_fx8010_unregister_irq_handler(emu, &pcm->irq);
 		snd_emu10k1_ptr_write(emu, emu->gpr_base + pcm->gpr_trigger, 0, 0);
 		pcm->tram_pos = INITIAL_TRAM_POS(pcm->buffer_size);
 		pcm->tram_shift = 0;
@@ -1742,7 +1750,7 @@ static snd_pcm_uframes_t snd_emu10k1_fx8010_playback_pointer(struct snd_pcm_subs
 	return snd_pcm_indirect_playback_pointer(substream, &pcm->pcm_rec, ptr);
 }
 
-static struct snd_pcm_hardware snd_emu10k1_fx8010_playback =
+static const struct snd_pcm_hardware snd_emu10k1_fx8010_playback =
 {
 	.info =			(SNDRV_PCM_INFO_MMAP | SNDRV_PCM_INFO_INTERLEAVED |
 				 SNDRV_PCM_INFO_RESUME |
@@ -1850,7 +1858,9 @@ int snd_emu10k1_pcm_efx(struct snd_emu10k1 *emu, int device)
 	if (!kctl)
 		return -ENOMEM;
 	kctl->id.device = device;
-	snd_ctl_add(emu->card, kctl);
+	err = snd_ctl_add(emu->card, kctl);
+	if (err < 0)
+		return err;
 
 	snd_pcm_lib_preallocate_pages_for_all(pcm, SNDRV_DMA_TYPE_DEV, snd_dma_pci_data(emu->pci), 64*1024, 64*1024);
 

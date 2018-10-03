@@ -112,7 +112,7 @@ struct drm_gem_cma_object *drm_gem_cma_create(struct drm_device *drm,
 	cma_obj->vaddr = dma_alloc_wc(drm->dev, size, &cma_obj->paddr,
 				      GFP_KERNEL | __GFP_NOWARN);
 	if (!cma_obj->vaddr) {
-		dev_err(drm->dev, "failed to allocate buffer with size %zu\n",
+		dev_dbg(drm->dev, "failed to allocate buffer with size %zu\n",
 			size);
 		ret = -ENOMEM;
 		goto error;
@@ -177,7 +177,7 @@ drm_gem_cma_create_with_handle(struct drm_file *file_priv,
  * This function frees the backing memory of the CMA GEM object, cleans up the
  * GEM object state and frees the memory used to store the object itself.
  * Drivers using the CMA helpers should set this as their
- * &drm_driver.gem_free_object callback.
+ * &drm_driver.gem_free_object_unlocked callback.
  */
 void drm_gem_cma_free_object(struct drm_gem_object *gem_obj)
 {
@@ -263,41 +263,6 @@ int drm_gem_cma_dumb_create(struct drm_file *file_priv,
 	return PTR_ERR_OR_ZERO(cma_obj);
 }
 EXPORT_SYMBOL_GPL(drm_gem_cma_dumb_create);
-
-/**
- * drm_gem_cma_dumb_map_offset - return the fake mmap offset for a CMA GEM
- *     object
- * @file_priv: DRM file-private structure containing the GEM object
- * @drm: DRM device
- * @handle: GEM object handle
- * @offset: return location for the fake mmap offset
- *
- * This function look up an object by its handle and returns the fake mmap
- * offset associated with it. Drivers using the CMA helpers should set this
- * as their &drm_driver.dumb_map_offset callback.
- *
- * Returns:
- * 0 on success or a negative error code on failure.
- */
-int drm_gem_cma_dumb_map_offset(struct drm_file *file_priv,
-				struct drm_device *drm, u32 handle,
-				u64 *offset)
-{
-	struct drm_gem_object *gem_obj;
-
-	gem_obj = drm_gem_object_lookup(file_priv, handle);
-	if (!gem_obj) {
-		dev_err(drm->dev, "failed to lookup GEM object\n");
-		return -EINVAL;
-	}
-
-	*offset = drm_vma_node_offset_addr(&gem_obj->vma_node);
-
-	drm_gem_object_put_unlocked(gem_obj);
-
-	return 0;
-}
-EXPORT_SYMBOL_GPL(drm_gem_cma_dumb_map_offset);
 
 const struct vm_operations_struct drm_gem_cma_vm_ops = {
 	.open = drm_gem_vm_open,
@@ -390,7 +355,7 @@ unsigned long drm_gem_cma_get_unmapped_area(struct file *filp,
 	struct drm_device *dev = priv->minor->dev;
 	struct drm_vma_offset_node *node;
 
-	if (drm_device_is_unplugged(dev))
+	if (drm_dev_is_unplugged(dev))
 		return -ENODEV;
 
 	drm_vma_offset_lock_lookup(dev->vma_offset_manager);
@@ -432,31 +397,24 @@ unsigned long drm_gem_cma_get_unmapped_area(struct file *filp,
 EXPORT_SYMBOL_GPL(drm_gem_cma_get_unmapped_area);
 #endif
 
-#ifdef CONFIG_DEBUG_FS
 /**
- * drm_gem_cma_describe - describe a CMA GEM object for debugfs
- * @cma_obj: CMA GEM object
- * @m: debugfs file handle
+ * drm_gem_cma_print_info() - Print &drm_gem_cma_object info for debugfs
+ * @p: DRM printer
+ * @indent: Tab indentation level
+ * @obj: GEM object
  *
- * This function can be used to dump a human-readable representation of the
- * CMA GEM object into a synthetic file.
+ * This function can be used as the &drm_driver->gem_print_info callback.
+ * It prints paddr and vaddr for use in e.g. debugfs output.
  */
-void drm_gem_cma_describe(struct drm_gem_cma_object *cma_obj,
-			  struct seq_file *m)
+void drm_gem_cma_print_info(struct drm_printer *p, unsigned int indent,
+			    const struct drm_gem_object *obj)
 {
-	struct drm_gem_object *obj = &cma_obj->base;
-	uint64_t off;
+	const struct drm_gem_cma_object *cma_obj = to_drm_gem_cma_obj(obj);
 
-	off = drm_vma_node_start(&obj->vma_node);
-
-	seq_printf(m, "%2d (%2d) %08llx %pad %p %zu",
-			obj->name, kref_read(&obj->refcount),
-			off, &cma_obj->paddr, cma_obj->vaddr, obj->size);
-
-	seq_printf(m, "\n");
+	drm_printf_indent(p, indent, "paddr=%pad\n", &cma_obj->paddr);
+	drm_printf_indent(p, indent, "vaddr=%p\n", cma_obj->vaddr);
 }
-EXPORT_SYMBOL_GPL(drm_gem_cma_describe);
-#endif
+EXPORT_SYMBOL(drm_gem_cma_print_info);
 
 /**
  * drm_gem_cma_prime_get_sg_table - provide a scatter/gather table of pinned
@@ -517,8 +475,26 @@ drm_gem_cma_prime_import_sg_table(struct drm_device *dev,
 {
 	struct drm_gem_cma_object *cma_obj;
 
-	if (sgt->nents != 1)
-		return ERR_PTR(-EINVAL);
+	if (sgt->nents != 1) {
+		/* check if the entries in the sg_table are contiguous */
+		dma_addr_t next_addr = sg_dma_address(sgt->sgl);
+		struct scatterlist *s;
+		unsigned int i;
+
+		for_each_sg(sgt->sgl, s, sgt->nents, i) {
+			/*
+			 * sg_dma_address(s) is only valid for entries
+			 * that have sg_dma_len(s) != 0
+			 */
+			if (!sg_dma_len(s))
+				continue;
+
+			if (sg_dma_address(s) != next_addr)
+				return ERR_PTR(-EINVAL);
+
+			next_addr = sg_dma_address(s) + sg_dma_len(s);
+		}
+	}
 
 	/* Create a CMA GEM buffer. */
 	cma_obj = __drm_gem_cma_create(dev, attach->dmabuf->size);

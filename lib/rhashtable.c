@@ -65,42 +65,6 @@ EXPORT_SYMBOL_GPL(lockdep_rht_bucket_is_held);
 #define ASSERT_RHT_MUTEX(HT)
 #endif
 
-
-static int alloc_bucket_locks(struct rhashtable *ht, struct bucket_table *tbl,
-			      gfp_t gfp)
-{
-	unsigned int i, size;
-#if defined(CONFIG_PROVE_LOCKING)
-	unsigned int nr_pcpus = 2;
-#else
-	unsigned int nr_pcpus = num_possible_cpus();
-#endif
-
-	nr_pcpus = min_t(unsigned int, nr_pcpus, 64UL);
-	size = roundup_pow_of_two(nr_pcpus * ht->p.locks_mul);
-
-	/* Never allocate more than 0.5 locks per bucket */
-	size = min_t(unsigned int, size, tbl->size >> 1);
-
-	if (tbl->nest)
-		size = min(size, 1U << tbl->nest);
-
-	if (sizeof(spinlock_t) != 0) {
-		if (gfpflags_allow_blocking(gfp))
-			tbl->locks = kvmalloc(size * sizeof(spinlock_t), gfp);
-		else
-			tbl->locks = kmalloc_array(size, sizeof(spinlock_t),
-						   gfp);
-		if (!tbl->locks)
-			return -ENOMEM;
-		for (i = 0; i < size; i++)
-			spin_lock_init(&tbl->locks[i]);
-	}
-	tbl->locks_mask = size - 1;
-
-	return 0;
-}
-
 static void nested_table_free(union nested_table *ntbl, unsigned int size)
 {
 	const unsigned int shift = PAGE_SHIFT - ilog2(sizeof(void *));
@@ -140,7 +104,7 @@ static void bucket_table_free(const struct bucket_table *tbl)
 	if (tbl->nest)
 		nested_bucket_table_free(tbl);
 
-	kvfree(tbl->locks);
+	free_bucket_spinlocks(tbl->locks);
 	kvfree(tbl);
 }
 
@@ -207,7 +171,7 @@ static struct bucket_table *bucket_table_alloc(struct rhashtable *ht,
 					       gfp_t gfp)
 {
 	struct bucket_table *tbl = NULL;
-	size_t size;
+	size_t size, max_locks;
 	int i;
 
 	size = sizeof(*tbl) + nbuckets * sizeof(tbl->buckets[0]);
@@ -227,7 +191,12 @@ static struct bucket_table *bucket_table_alloc(struct rhashtable *ht,
 
 	tbl->size = size;
 
-	if (alloc_bucket_locks(ht, tbl, gfp) < 0) {
+	max_locks = size >> 1;
+	if (tbl->nest)
+		max_locks = min_t(size_t, max_locks, 1U << tbl->nest);
+
+	if (alloc_bucket_spinlocks(&tbl->locks, &tbl->locks_mask, max_locks,
+				   ht->p.locks_mul, gfp) < 0) {
 		bucket_table_free(tbl);
 		return NULL;
 	}
@@ -364,6 +333,7 @@ static int rhashtable_rehash_table(struct rhashtable *ht)
 		err = rhashtable_rehash_chain(ht, old_hash);
 		if (err)
 			return err;
+		cond_resched();
 	}
 
 	/* Publish the new table pointer. */
@@ -537,8 +507,10 @@ static void *rhashtable_lookup_one(struct rhashtable *ht,
 		if (!key ||
 		    (ht->p.obj_cmpfn ?
 		     ht->p.obj_cmpfn(&arg, rht_obj(ht, head)) :
-		     rhashtable_compare(&arg, rht_obj(ht, head))))
+		     rhashtable_compare(&arg, rht_obj(ht, head)))) {
+			pprev = &head->next;
 			continue;
+		}
 
 		if (!ht->rhlist)
 			return rht_obj(ht, head);
@@ -696,8 +668,9 @@ EXPORT_SYMBOL_GPL(rhashtable_insert_slow);
  * For a completely stable walk you should construct your own data
  * structure outside the hash table.
  *
- * This function may sleep so you must not call it from interrupt
- * context or with spin locks held.
+ * This function may be called from any process context, including
+ * non-preemptable context, but cannot be called from softirq or
+ * hardirq context.
  *
  * You must call rhashtable_walk_exit after this function returns.
  */
@@ -707,6 +680,7 @@ void rhashtable_walk_enter(struct rhashtable *ht, struct rhashtable_iter *iter)
 	iter->p = NULL;
 	iter->slot = 0;
 	iter->skip = 0;
+	iter->end_of_table = 0;
 
 	spin_lock(&ht->lock);
 	iter->walker.tbl =
@@ -732,23 +706,28 @@ void rhashtable_walk_exit(struct rhashtable_iter *iter)
 EXPORT_SYMBOL_GPL(rhashtable_walk_exit);
 
 /**
- * rhashtable_walk_start - Start a hash table walk
+ * rhashtable_walk_start_check - Start a hash table walk
  * @iter:	Hash table iterator
  *
- * Start a hash table walk.  Note that we take the RCU lock in all
- * cases including when we return an error.  So you must always call
- * rhashtable_walk_stop to clean up.
+ * Start a hash table walk at the current iterator position.  Note that we take
+ * the RCU lock in all cases including when we return an error.  So you must
+ * always call rhashtable_walk_stop to clean up.
  *
  * Returns zero if successful.
  *
  * Returns -EAGAIN if resize event occured.  Note that the iterator
  * will rewind back to the beginning and you may use it immediately
  * by calling rhashtable_walk_next.
+ *
+ * rhashtable_walk_start is defined as an inline variant that returns
+ * void. This is preferred in cases where the caller would ignore
+ * resize events and always continue.
  */
-int rhashtable_walk_start(struct rhashtable_iter *iter)
+int rhashtable_walk_start_check(struct rhashtable_iter *iter)
 	__acquires(RCU)
 {
 	struct rhashtable *ht = iter->ht;
+	bool rhlist = ht->rhlist;
 
 	rcu_read_lock();
 
@@ -757,28 +736,67 @@ int rhashtable_walk_start(struct rhashtable_iter *iter)
 		list_del(&iter->walker.list);
 	spin_unlock(&ht->lock);
 
+	if (iter->end_of_table)
+		return 0;
 	if (!iter->walker.tbl) {
 		iter->walker.tbl = rht_dereference_rcu(ht->tbl, ht);
+		iter->slot = 0;
+		iter->skip = 0;
 		return -EAGAIN;
 	}
 
+	if (iter->p && !rhlist) {
+		/*
+		 * We need to validate that 'p' is still in the table, and
+		 * if so, update 'skip'
+		 */
+		struct rhash_head *p;
+		int skip = 0;
+		rht_for_each_rcu(p, iter->walker.tbl, iter->slot) {
+			skip++;
+			if (p == iter->p) {
+				iter->skip = skip;
+				goto found;
+			}
+		}
+		iter->p = NULL;
+	} else if (iter->p && rhlist) {
+		/* Need to validate that 'list' is still in the table, and
+		 * if so, update 'skip' and 'p'.
+		 */
+		struct rhash_head *p;
+		struct rhlist_head *list;
+		int skip = 0;
+		rht_for_each_rcu(p, iter->walker.tbl, iter->slot) {
+			for (list = container_of(p, struct rhlist_head, rhead);
+			     list;
+			     list = rcu_dereference(list->next)) {
+				skip++;
+				if (list == iter->list) {
+					iter->p = p;
+					iter->skip = skip;
+					goto found;
+				}
+			}
+		}
+		iter->p = NULL;
+	}
+found:
 	return 0;
 }
-EXPORT_SYMBOL_GPL(rhashtable_walk_start);
+EXPORT_SYMBOL_GPL(rhashtable_walk_start_check);
 
 /**
- * rhashtable_walk_next - Return the next object and advance the iterator
+ * __rhashtable_walk_find_next - Find the next element in a table (or the first
+ * one in case of a new walk).
+ *
  * @iter:	Hash table iterator
  *
- * Note that you must call rhashtable_walk_stop when you are finished
- * with the walk.
+ * Returns the found object or NULL when the end of the table is reached.
  *
- * Returns the next object or NULL when the end of the table is reached.
- *
- * Returns -EAGAIN if resize event occured.  Note that the iterator
- * will rewind back to the beginning and you may continue to use it.
+ * Returns -EAGAIN if resize event occurred.
  */
-void *rhashtable_walk_next(struct rhashtable_iter *iter)
+static void *__rhashtable_walk_find_next(struct rhashtable_iter *iter)
 {
 	struct bucket_table *tbl = iter->walker.tbl;
 	struct rhlist_head *list = iter->list;
@@ -786,13 +804,8 @@ void *rhashtable_walk_next(struct rhashtable_iter *iter)
 	struct rhash_head *p = iter->p;
 	bool rhlist = ht->rhlist;
 
-	if (p) {
-		if (!rhlist || !(list = rcu_dereference(list->next))) {
-			p = rcu_dereference(p->next);
-			list = container_of(p, struct rhlist_head, rhead);
-		}
-		goto next;
-	}
+	if (!tbl)
+		return NULL;
 
 	for (; iter->slot < tbl->size; iter->slot++) {
 		int skip = iter->skip;
@@ -836,17 +849,95 @@ next:
 		iter->slot = 0;
 		iter->skip = 0;
 		return ERR_PTR(-EAGAIN);
+	} else {
+		iter->end_of_table = true;
 	}
 
 	return NULL;
 }
+
+/**
+ * rhashtable_walk_next - Return the next object and advance the iterator
+ * @iter:	Hash table iterator
+ *
+ * Note that you must call rhashtable_walk_stop when you are finished
+ * with the walk.
+ *
+ * Returns the next object or NULL when the end of the table is reached.
+ *
+ * Returns -EAGAIN if resize event occurred.  Note that the iterator
+ * will rewind back to the beginning and you may continue to use it.
+ */
+void *rhashtable_walk_next(struct rhashtable_iter *iter)
+{
+	struct rhlist_head *list = iter->list;
+	struct rhashtable *ht = iter->ht;
+	struct rhash_head *p = iter->p;
+	bool rhlist = ht->rhlist;
+
+	if (p) {
+		if (!rhlist || !(list = rcu_dereference(list->next))) {
+			p = rcu_dereference(p->next);
+			list = container_of(p, struct rhlist_head, rhead);
+		}
+		if (!rht_is_a_nulls(p)) {
+			iter->skip++;
+			iter->p = p;
+			iter->list = list;
+			return rht_obj(ht, rhlist ? &list->rhead : p);
+		}
+
+		/* At the end of this slot, switch to next one and then find
+		 * next entry from that point.
+		 */
+		iter->skip = 0;
+		iter->slot++;
+	}
+
+	return __rhashtable_walk_find_next(iter);
+}
 EXPORT_SYMBOL_GPL(rhashtable_walk_next);
+
+/**
+ * rhashtable_walk_peek - Return the next object but don't advance the iterator
+ * @iter:	Hash table iterator
+ *
+ * Returns the next object or NULL when the end of the table is reached.
+ *
+ * Returns -EAGAIN if resize event occurred.  Note that the iterator
+ * will rewind back to the beginning and you may continue to use it.
+ */
+void *rhashtable_walk_peek(struct rhashtable_iter *iter)
+{
+	struct rhlist_head *list = iter->list;
+	struct rhashtable *ht = iter->ht;
+	struct rhash_head *p = iter->p;
+
+	if (p)
+		return rht_obj(ht, ht->rhlist ? &list->rhead : p);
+
+	/* No object found in current iter, find next one in the table. */
+
+	if (iter->skip) {
+		/* A nonzero skip value points to the next entry in the table
+		 * beyond that last one that was found. Decrement skip so
+		 * we find the current value. __rhashtable_walk_find_next
+		 * will restore the original value of skip assuming that
+		 * the table hasn't changed.
+		 */
+		iter->skip--;
+	}
+
+	return __rhashtable_walk_find_next(iter);
+}
+EXPORT_SYMBOL_GPL(rhashtable_walk_peek);
 
 /**
  * rhashtable_walk_stop - Finish a hash table walk
  * @iter:	Hash table iterator
  *
- * Finish a hash table walk.
+ * Finish a hash table walk.  Does not reset the iterator to the start of the
+ * hash table.
  */
 void rhashtable_walk_stop(struct rhashtable_iter *iter)
 	__releases(RCU)
@@ -866,8 +957,6 @@ void rhashtable_walk_stop(struct rhashtable_iter *iter)
 		iter->walker.tbl = NULL;
 	spin_unlock(&ht->lock);
 
-	iter->p = NULL;
-
 out:
 	rcu_read_unlock();
 }
@@ -875,8 +964,16 @@ EXPORT_SYMBOL_GPL(rhashtable_walk_stop);
 
 static size_t rounded_hashtable_size(const struct rhashtable_params *params)
 {
-	return max(roundup_pow_of_two(params->nelem_hint * 4 / 3),
-		   (unsigned long)params->min_size);
+	size_t retsize;
+
+	if (params->nelem_hint)
+		retsize = max(roundup_pow_of_two(params->nelem_hint * 4 / 3),
+			      (unsigned long)params->min_size);
+	else
+		retsize = max(HASH_DEFAULT_SIZE,
+			      (unsigned long)params->min_size);
+
+	return retsize;
 }
 
 static u32 rhashtable_jhash2(const void *key, u32 length, u32 seed)
@@ -933,8 +1030,6 @@ int rhashtable_init(struct rhashtable *ht,
 	struct bucket_table *tbl;
 	size_t size;
 
-	size = HASH_DEFAULT_SIZE;
-
 	if ((!params->key_len && !params->obj_hashfn) ||
 	    (params->obj_hashfn && !params->obj_cmpfn))
 		return -EINVAL;
@@ -961,8 +1056,7 @@ int rhashtable_init(struct rhashtable *ht,
 
 	ht->p.min_size = max_t(u16, ht->p.min_size, HASH_MIN_SIZE);
 
-	if (params->nelem_hint)
-		size = rounded_hashtable_size(&ht->p);
+	size = rounded_hashtable_size(&ht->p);
 
 	if (params->locks_mul)
 		ht->p.locks_mul = roundup_pow_of_two(params->locks_mul);
@@ -1054,17 +1148,19 @@ void rhashtable_free_and_destroy(struct rhashtable *ht,
 				 void (*free_fn)(void *ptr, void *arg),
 				 void *arg)
 {
-	struct bucket_table *tbl;
+	struct bucket_table *tbl, *next_tbl;
 	unsigned int i;
 
 	cancel_work_sync(&ht->run_work);
 
 	mutex_lock(&ht->mutex);
 	tbl = rht_dereference(ht->tbl, ht);
+restart:
 	if (free_fn) {
 		for (i = 0; i < tbl->size; i++) {
 			struct rhash_head *pos, *next;
 
+			cond_resched();
 			for (pos = rht_dereference(*rht_bucket(tbl, i), ht),
 			     next = !rht_is_a_nulls(pos) ?
 					rht_dereference(pos->next, ht) : NULL;
@@ -1076,7 +1172,12 @@ void rhashtable_free_and_destroy(struct rhashtable *ht,
 		}
 	}
 
+	next_tbl = rht_dereference(tbl->future_tbl, ht);
 	bucket_table_free(tbl);
+	if (next_tbl) {
+		tbl = next_tbl;
+		goto restart;
+	}
 	mutex_unlock(&ht->mutex);
 }
 EXPORT_SYMBOL_GPL(rhashtable_free_and_destroy);

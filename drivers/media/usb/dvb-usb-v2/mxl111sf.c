@@ -5,7 +5,7 @@
  *   under the terms of the GNU General Public License as published by the Free
  *   Software Foundation, version 2.
  *
- * see Documentation/dvb/README.dvb-usb for more information
+ * see Documentation/media/dvb-drivers/dvb-usb.rst for more information
  */
 
 #include <linux/vmalloc.h>
@@ -77,7 +77,9 @@ int mxl111sf_ctrl_msg(struct mxl111sf_state *state,
 		dvb_usbv2_generic_rw(d, state->sndbuf, 1+wlen, state->rcvbuf,
 				     rlen);
 
-	memcpy(rbuf, state->rcvbuf, rlen);
+	if (rbuf)
+		memcpy(rbuf, state->rcvbuf, rlen);
+
 	mutex_unlock(&state->msg_lock);
 
 	mxl_fail(ret);

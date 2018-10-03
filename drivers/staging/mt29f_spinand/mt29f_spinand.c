@@ -18,7 +18,7 @@
 #include <linux/delay.h>
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/partitions.h>
-#include <linux/mtd/nand.h>
+#include <linux/mtd/rawnand.h>
 #include <linux/spi/spi.h>
 
 #include "mt29f_spinand.h"
@@ -316,6 +316,7 @@ static int spinand_read_page_to_cache(struct spi_device *spi_nand, u16 page_id)
 	row = page_id;
 	cmd.cmd = CMD_READ;
 	cmd.n_addr = 3;
+	cmd.addr[0] = (u8)((row & 0xff0000) >> 16);
 	cmd.addr[1] = (u8)((row & 0xff00) >> 8);
 	cmd.addr[2] = (u8)(row & 0x00ff);
 
@@ -464,6 +465,7 @@ static int spinand_program_execute(struct spi_device *spi_nand, u16 page_id)
 	row = page_id;
 	cmd.cmd = CMD_PROG_PAGE_EXC;
 	cmd.n_addr = 3;
+	cmd.addr[0] = (u8)((row & 0xff0000) >> 16);
 	cmd.addr[1] = (u8)((row & 0xff00) >> 8);
 	cmd.addr[2] = (u8)(row & 0x00ff);
 
@@ -496,8 +498,12 @@ static int spinand_program_page(struct spi_device *spi_nand,
 	if (!wbuf)
 		return -ENOMEM;
 
-	enable_read_hw_ecc = 0;
-	spinand_read_page(spi_nand, page_id, 0, CACHE_BUF, wbuf);
+	enable_read_hw_ecc = 1;
+	retval = spinand_read_page(spi_nand, page_id, 0, CACHE_BUF, wbuf);
+	if (retval < 0) {
+		dev_err(&spi_nand->dev, "ecc error on read page!!!\n");
+		return retval;
+	}
 
 	for (i = offset, j = 0; i < len; i++, j++)
 		wbuf[i] &= buf[j];
@@ -575,6 +581,7 @@ static int spinand_erase_block_erase(struct spi_device *spi_nand, u16 block_id)
 	row = block_id;
 	cmd.cmd = CMD_ERASE_BLK;
 	cmd.n_addr = 3;
+	cmd.addr[0] = (u8)((row & 0xff0000) >> 16);
 	cmd.addr[1] = (u8)((row & 0xff00) >> 8);
 	cmd.addr[2] = (u8)(row & 0x00ff);
 
@@ -633,8 +640,7 @@ static int spinand_write_page_hwecc(struct mtd_info *mtd,
 	int eccsteps = chip->ecc.steps;
 
 	enable_hw_ecc = 1;
-	chip->write_buf(mtd, p, eccsize * eccsteps);
-	return 0;
+	return nand_prog_page_op(chip, page, 0, p, eccsize * eccsteps);
 }
 
 static int spinand_read_page_hwecc(struct mtd_info *mtd, struct nand_chip *chip,
@@ -649,7 +655,7 @@ static int spinand_read_page_hwecc(struct mtd_info *mtd, struct nand_chip *chip,
 
 	enable_read_hw_ecc = 1;
 
-	chip->read_buf(mtd, p, eccsize * eccsteps);
+	nand_read_page_op(chip, page, 0, p, eccsize * eccsteps);
 	if (oob_required)
 		chip->read_buf(mtd, chip->oob_poi, mtd->oobsize);
 
@@ -915,8 +921,8 @@ static int spinand_probe(struct spi_device *spi_nand)
 	chip->waitfunc	= spinand_wait;
 	chip->options	|= NAND_CACHEPRG;
 	chip->select_chip = spinand_select_chip;
-	chip->onfi_set_features = nand_onfi_get_set_features_notsupp;
-	chip->onfi_get_features = nand_onfi_get_set_features_notsupp;
+	chip->set_features = nand_get_set_features_notsupp;
+	chip->get_features = nand_get_set_features_notsupp;
 
 	mtd = nand_to_mtd(chip);
 

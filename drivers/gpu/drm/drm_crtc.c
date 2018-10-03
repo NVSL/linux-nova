@@ -282,6 +282,10 @@ int drm_crtc_init_with_planes(struct drm_device *dev, struct drm_crtc *crtc,
 	WARN_ON(primary && primary->type != DRM_PLANE_TYPE_PRIMARY);
 	WARN_ON(cursor && cursor->type != DRM_PLANE_TYPE_CURSOR);
 
+	/* crtc index is used with 32bit bitmasks */
+	if (WARN_ON(config->num_crtc >= 32))
+		return -EINVAL;
+
 	crtc->dev = dev;
 	crtc->funcs = funcs;
 
@@ -398,42 +402,45 @@ int drm_mode_getcrtc(struct drm_device *dev,
 {
 	struct drm_mode_crtc *crtc_resp = data;
 	struct drm_crtc *crtc;
+	struct drm_plane *plane;
 
 	if (!drm_core_check_feature(dev, DRIVER_MODESET))
 		return -EINVAL;
 
-	crtc = drm_crtc_find(dev, crtc_resp->crtc_id);
+	crtc = drm_crtc_find(dev, file_priv, crtc_resp->crtc_id);
 	if (!crtc)
 		return -ENOENT;
 
+	plane = crtc->primary;
+
 	crtc_resp->gamma_size = crtc->gamma_size;
 
-	drm_modeset_lock(&crtc->primary->mutex, NULL);
-	if (crtc->primary->state && crtc->primary->state->fb)
-		crtc_resp->fb_id = crtc->primary->state->fb->base.id;
-	else if (!crtc->primary->state && crtc->primary->fb)
-		crtc_resp->fb_id = crtc->primary->fb->base.id;
+	drm_modeset_lock(&plane->mutex, NULL);
+	if (plane->state && plane->state->fb)
+		crtc_resp->fb_id = plane->state->fb->base.id;
+	else if (!plane->state && plane->fb)
+		crtc_resp->fb_id = plane->fb->base.id;
 	else
 		crtc_resp->fb_id = 0;
 
-	if (crtc->primary->state) {
-		crtc_resp->x = crtc->primary->state->src_x >> 16;
-		crtc_resp->y = crtc->primary->state->src_y >> 16;
+	if (plane->state) {
+		crtc_resp->x = plane->state->src_x >> 16;
+		crtc_resp->y = plane->state->src_y >> 16;
 	}
-	drm_modeset_unlock(&crtc->primary->mutex);
+	drm_modeset_unlock(&plane->mutex);
 
 	drm_modeset_lock(&crtc->mutex, NULL);
 	if (crtc->state) {
 		if (crtc->state->enable) {
 			drm_mode_convert_to_umode(&crtc_resp->mode, &crtc->state->mode);
 			crtc_resp->mode_valid = 1;
-
 		} else {
 			crtc_resp->mode_valid = 0;
 		}
 	} else {
 		crtc_resp->x = crtc->x;
 		crtc_resp->y = crtc->y;
+
 		if (crtc->enabled) {
 			drm_mode_convert_to_umode(&crtc_resp->mode, &crtc->mode);
 			crtc_resp->mode_valid = 1;
@@ -442,6 +449,8 @@ int drm_mode_getcrtc(struct drm_device *dev,
 			crtc_resp->mode_valid = 0;
 		}
 	}
+	if (!file_priv->aspect_ratio_allowed)
+		crtc_resp->mode.flags &= ~DRM_MODE_FLAG_PIC_AR_MASK;
 	drm_modeset_unlock(&crtc->mutex);
 
 	return 0;
@@ -467,7 +476,7 @@ static int __drm_mode_set_config_internal(struct drm_mode_set *set,
 
 	ret = crtc->funcs->set_config(set, ctx);
 	if (ret == 0) {
-		crtc->primary->crtc = crtc;
+		crtc->primary->crtc = fb ? crtc : NULL;
 		crtc->primary->fb = fb;
 	}
 
@@ -550,6 +559,7 @@ int drm_mode_setcrtc(struct drm_device *dev, void *data,
 	struct drm_mode_config *config = &dev->mode_config;
 	struct drm_mode_crtc *crtc_req = data;
 	struct drm_crtc *crtc;
+	struct drm_plane *plane;
 	struct drm_connector **connector_set = NULL, *connector;
 	struct drm_framebuffer *fb = NULL;
 	struct drm_display_mode *mode = NULL;
@@ -569,33 +579,44 @@ int drm_mode_setcrtc(struct drm_device *dev, void *data,
 	if (crtc_req->x & 0xffff0000 || crtc_req->y & 0xffff0000)
 		return -ERANGE;
 
-	crtc = drm_crtc_find(dev, crtc_req->crtc_id);
+	crtc = drm_crtc_find(dev, file_priv, crtc_req->crtc_id);
 	if (!crtc) {
 		DRM_DEBUG_KMS("Unknown CRTC ID %d\n", crtc_req->crtc_id);
 		return -ENOENT;
 	}
 	DRM_DEBUG_KMS("[CRTC:%d:%s]\n", crtc->base.id, crtc->name);
 
+	plane = crtc->primary;
+
 	mutex_lock(&crtc->dev->mode_config.mutex);
-	drm_modeset_acquire_init(&ctx, 0);
+	drm_modeset_acquire_init(&ctx, DRM_MODESET_ACQUIRE_INTERRUPTIBLE);
 retry:
 	ret = drm_modeset_lock_all_ctx(crtc->dev, &ctx);
 	if (ret)
 		goto out;
+
 	if (crtc_req->mode_valid) {
 		/* If we have a mode we need a framebuffer. */
 		/* If we pass -1, set the mode with the currently bound fb */
 		if (crtc_req->fb_id == -1) {
-			if (!crtc->primary->fb) {
+			struct drm_framebuffer *old_fb;
+
+			if (plane->state)
+				old_fb = plane->state->fb;
+			else
+				old_fb = plane->fb;
+
+			if (!old_fb) {
 				DRM_DEBUG_KMS("CRTC doesn't have current FB\n");
 				ret = -EINVAL;
 				goto out;
 			}
-			fb = crtc->primary->fb;
+
+			fb = old_fb;
 			/* Make refcounting symmetric with the lookup path. */
 			drm_framebuffer_get(fb);
 		} else {
-			fb = drm_framebuffer_lookup(dev, crtc_req->fb_id);
+			fb = drm_framebuffer_lookup(dev, file_priv, crtc_req->fb_id);
 			if (!fb) {
 				DRM_DEBUG_KMS("Unknown FB ID%d\n",
 						crtc_req->fb_id);
@@ -609,8 +630,15 @@ retry:
 			ret = -ENOMEM;
 			goto out;
 		}
+		if (!file_priv->aspect_ratio_allowed &&
+		    (crtc_req->mode.flags & DRM_MODE_FLAG_PIC_AR_MASK) != DRM_MODE_FLAG_PIC_AR_NONE) {
+			DRM_DEBUG_KMS("Unexpected aspect-ratio flag bits\n");
+			ret = -EINVAL;
+			goto out;
+		}
 
-		ret = drm_mode_convert_umode(mode, &crtc_req->mode);
+
+		ret = drm_mode_convert_umode(dev, mode, &crtc_req->mode);
 		if (ret) {
 			DRM_DEBUG_KMS("Invalid mode\n");
 			goto out;
@@ -623,14 +651,16 @@ retry:
 		 * match real hardware capabilities. Skip the check in that
 		 * case.
 		 */
-		if (!crtc->primary->format_default) {
-			ret = drm_plane_check_pixel_format(crtc->primary,
-							   fb->format->format);
+		if (!plane->format_default) {
+			ret = drm_plane_check_pixel_format(plane,
+							   fb->format->format,
+							   fb->modifier);
 			if (ret) {
 				struct drm_format_name_buf format_name;
-				DRM_DEBUG_KMS("Invalid pixel format %s\n",
-				              drm_get_format_name(fb->format->format,
-				                                  &format_name));
+				DRM_DEBUG_KMS("Invalid pixel format %s, modifier 0x%llx\n",
+					      drm_get_format_name(fb->format->format,
+								  &format_name),
+					      fb->modifier);
 				goto out;
 			}
 		}
@@ -680,7 +710,7 @@ retry:
 				goto out;
 			}
 
-			connector = drm_connector_lookup(dev, out_id);
+			connector = drm_connector_lookup(dev, file_priv, out_id);
 			if (!connector) {
 				DRM_DEBUG_KMS("Connector id %d unknown\n",
 						out_id);
@@ -717,8 +747,9 @@ out:
 	kfree(connector_set);
 	drm_mode_destroy(dev, mode);
 	if (ret == -EDEADLK) {
-		drm_modeset_backoff(&ctx);
-		goto retry;
+		ret = drm_modeset_backoff(&ctx);
+		if (!ret)
+			goto retry;
 	}
 	drm_modeset_drop_locks(&ctx);
 	drm_modeset_acquire_fini(&ctx);

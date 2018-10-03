@@ -273,14 +273,13 @@ static int saa7134_alsa_dma_init(struct saa7134_dev *dev, int nr_pages)
 		return -ENOMEM;
 	}
 
-	pr_debug("vmalloc is at addr 0x%08lx, size=%d\n",
-				(unsigned long)dma->vaddr,
-				nr_pages << PAGE_SHIFT);
+	pr_debug("vmalloc is at addr %p, size=%d\n",
+		 dma->vaddr, nr_pages << PAGE_SHIFT);
 
 	memset(dma->vaddr, 0, nr_pages << PAGE_SHIFT);
 	dma->nr_pages = nr_pages;
 
-	dma->sglist = vzalloc(dma->nr_pages * sizeof(*dma->sglist));
+	dma->sglist = vzalloc(array_size(sizeof(*dma->sglist), dma->nr_pages));
 	if (NULL == dma->sglist)
 		goto vzalloc_err;
 
@@ -627,7 +626,7 @@ snd_card_saa7134_capture_pointer(struct snd_pcm_substream * substream)
  *    switching to 32kHz without any frequency translation
  */
 
-static struct snd_pcm_hardware snd_card_saa7134_capture =
+static const struct snd_pcm_hardware snd_card_saa7134_capture =
 {
 	.info =                 (SNDRV_PCM_INFO_MMAP | SNDRV_PCM_INFO_INTERLEAVED |
 				 SNDRV_PCM_INFO_BLOCK_TRANSFER |

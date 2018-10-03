@@ -494,8 +494,8 @@ static int atmel_pctl_dt_subnode_to_map(struct pinctrl_dev *pctldev,
 	ret = pinconf_generic_parse_dt_config(np, pctldev, &configs,
 					      &num_configs);
 	if (ret < 0) {
-		dev_err(pctldev->dev, "%s: could not parse node property\n",
-			of_node_full_name(np));
+		dev_err(pctldev->dev, "%pOF: could not parse node property\n",
+			np);
 		return ret;
 	}
 
@@ -504,8 +504,7 @@ static int atmel_pctl_dt_subnode_to_map(struct pinctrl_dev *pctldev,
 
 	num_pins = pins->length / sizeof(u32);
 	if (!num_pins) {
-		dev_err(pctldev->dev, "no pins found in node %s\n",
-			of_node_full_name(np));
+		dev_err(pctldev->dev, "no pins found in node %pOF\n", np);
 		ret = -EINVAL;
 		goto exit;
 	}
@@ -577,15 +576,17 @@ static int atmel_pctl_dt_node_to_map(struct pinctrl_dev *pctldev,
 		for_each_child_of_node(np_config, np) {
 			ret = atmel_pctl_dt_subnode_to_map(pctldev, np, map,
 						    &reserved_maps, num_maps);
-			if (ret < 0)
+			if (ret < 0) {
+				of_node_put(np);
 				break;
+			}
 		}
 	}
 
 	if (ret < 0) {
 		pinctrl_utils_free_map(pctldev, *map, *num_maps);
-		dev_err(pctldev->dev, "can't create maps for node %s\n",
-			np_config->full_name);
+		dev_err(pctldev->dev, "can't create maps for node %pOF\n",
+			np_config);
 	}
 
 	return ret;
@@ -911,7 +912,7 @@ static int atmel_pinctrl_probe(struct platform_device *pdev)
 	int i, ret;
 	struct resource	*res;
 	struct atmel_pioctrl *atmel_pioctrl;
-	struct atmel_pioctrl_data *atmel_pioctrl_data;
+	const struct atmel_pioctrl_data *atmel_pioctrl_data;
 
 	atmel_pioctrl = devm_kzalloc(dev, sizeof(*atmel_pioctrl), GFP_KERNEL);
 	if (!atmel_pioctrl)
@@ -925,7 +926,7 @@ static int atmel_pinctrl_probe(struct platform_device *pdev)
 		dev_err(dev, "unknown compatible string\n");
 		return -ENODEV;
 	}
-	atmel_pioctrl_data = (struct atmel_pioctrl_data *)match->data;
+	atmel_pioctrl_data = match->data;
 	atmel_pioctrl->nbanks = atmel_pioctrl_data->nbanks;
 	atmel_pioctrl->npins = atmel_pioctrl->nbanks * ATMEL_PIO_NPINS_PER_BANK;
 
@@ -944,27 +945,30 @@ static int atmel_pinctrl_probe(struct platform_device *pdev)
 		return PTR_ERR(atmel_pioctrl->clk);
 	}
 
-	atmel_pioctrl->pins = devm_kzalloc(dev, sizeof(*atmel_pioctrl->pins)
-			* atmel_pioctrl->npins, GFP_KERNEL);
+	atmel_pioctrl->pins = devm_kcalloc(dev,
+					   atmel_pioctrl->npins,
+					   sizeof(*atmel_pioctrl->pins),
+					   GFP_KERNEL);
 	if (!atmel_pioctrl->pins)
 		return -ENOMEM;
 
-	pin_desc = devm_kzalloc(dev, sizeof(*pin_desc)
-			* atmel_pioctrl->npins, GFP_KERNEL);
+	pin_desc = devm_kcalloc(dev, atmel_pioctrl->npins, sizeof(*pin_desc),
+				GFP_KERNEL);
 	if (!pin_desc)
 		return -ENOMEM;
 	atmel_pinctrl_desc.pins = pin_desc;
 	atmel_pinctrl_desc.npins = atmel_pioctrl->npins;
 
 	/* One pin is one group since a pin can achieve all functions. */
-	group_names = devm_kzalloc(dev, sizeof(*group_names)
-			* atmel_pioctrl->npins, GFP_KERNEL);
+	group_names = devm_kcalloc(dev,
+				   atmel_pioctrl->npins, sizeof(*group_names),
+				   GFP_KERNEL);
 	if (!group_names)
 		return -ENOMEM;
 	atmel_pioctrl->group_names = group_names;
 
-	atmel_pioctrl->groups = devm_kzalloc(&pdev->dev,
-			sizeof(*atmel_pioctrl->groups) * atmel_pioctrl->npins,
+	atmel_pioctrl->groups = devm_kcalloc(&pdev->dev,
+			atmel_pioctrl->npins, sizeof(*atmel_pioctrl->groups),
 			GFP_KERNEL);
 	if (!atmel_pioctrl->groups)
 		return -ENOMEM;
@@ -1000,20 +1004,24 @@ static int atmel_pinctrl_probe(struct platform_device *pdev)
 	atmel_pioctrl->gpio_chip->parent = dev;
 	atmel_pioctrl->gpio_chip->names = atmel_pioctrl->group_names;
 
-	atmel_pioctrl->pm_wakeup_sources = devm_kzalloc(dev,
-			sizeof(*atmel_pioctrl->pm_wakeup_sources)
-			* atmel_pioctrl->nbanks, GFP_KERNEL);
+	atmel_pioctrl->pm_wakeup_sources = devm_kcalloc(dev,
+			atmel_pioctrl->nbanks,
+			sizeof(*atmel_pioctrl->pm_wakeup_sources),
+			GFP_KERNEL);
 	if (!atmel_pioctrl->pm_wakeup_sources)
 		return -ENOMEM;
 
-	atmel_pioctrl->pm_suspend_backup = devm_kzalloc(dev,
-			sizeof(*atmel_pioctrl->pm_suspend_backup)
-			* atmel_pioctrl->nbanks, GFP_KERNEL);
+	atmel_pioctrl->pm_suspend_backup = devm_kcalloc(dev,
+			atmel_pioctrl->nbanks,
+			sizeof(*atmel_pioctrl->pm_suspend_backup),
+			GFP_KERNEL);
 	if (!atmel_pioctrl->pm_suspend_backup)
 		return -ENOMEM;
 
-	atmel_pioctrl->irqs = devm_kzalloc(dev, sizeof(*atmel_pioctrl->irqs)
-			* atmel_pioctrl->nbanks, GFP_KERNEL);
+	atmel_pioctrl->irqs = devm_kcalloc(dev,
+					   atmel_pioctrl->nbanks,
+					   sizeof(*atmel_pioctrl->irqs),
+					   GFP_KERNEL);
 	if (!atmel_pioctrl->irqs)
 		return -ENOMEM;
 

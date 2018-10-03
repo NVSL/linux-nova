@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  *    Copyright IBM Corp. 2007
  *    Author(s): Heiko Carstens <heiko.carstens@de.ibm.com>
@@ -76,6 +77,7 @@ struct sclp_info {
 	unsigned char has_ibs : 1;
 	unsigned char has_skey : 1;
 	unsigned char has_kss : 1;
+	unsigned char has_gisaf : 1;
 	unsigned int ibc;
 	unsigned int mtid;
 	unsigned int mtid_cp;

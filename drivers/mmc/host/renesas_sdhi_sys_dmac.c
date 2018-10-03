@@ -1,5 +1,5 @@
 /*
- * DMA function for TMIO MMC implementations
+ * DMA support use of SYS DMAC with SDHI SD/SDIO controller
  *
  * Copyright (C) 2016-17 Renesas Electronics Corporation
  * Copyright (C) 2016-17 Sang Engineering, Wolfram Sang
@@ -18,8 +18,10 @@
 #include <linux/mmc/host.h>
 #include <linux/mod_devicetable.h>
 #include <linux/module.h>
+#include <linux/of_device.h>
 #include <linux/pagemap.h>
 #include <linux/scatterlist.h>
+#include <linux/sys_soc.h>
 
 #include "renesas_sdhi.h"
 #include "tmio_mmc.h"
@@ -31,15 +33,16 @@ static const struct renesas_sdhi_of_data of_default_cfg = {
 };
 
 static const struct renesas_sdhi_of_data of_rz_compatible = {
-	.tmio_flags	= TMIO_MMC_HAS_IDLE_WAIT | TMIO_MMC_32BIT_DATA_PORT,
+	.tmio_flags	= TMIO_MMC_HAS_IDLE_WAIT | TMIO_MMC_32BIT_DATA_PORT |
+			  TMIO_MMC_HAVE_CBSY,
 	.tmio_ocr_mask	= MMC_VDD_32_33,
 	.capabilities	= MMC_CAP_SD_HIGHSPEED | MMC_CAP_SDIO_IRQ,
 };
 
 static const struct renesas_sdhi_of_data of_rcar_gen1_compatible = {
-	.tmio_flags	= TMIO_MMC_HAS_IDLE_WAIT | TMIO_MMC_WRPROTECT_DISABLE |
-			  TMIO_MMC_CLK_ACTUAL,
+	.tmio_flags	= TMIO_MMC_HAS_IDLE_WAIT | TMIO_MMC_CLK_ACTUAL,
 	.capabilities	= MMC_CAP_SD_HIGHSPEED | MMC_CAP_SDIO_IRQ,
+	.capabilities2	= MMC_CAP2_NO_WRITE_PROTECT,
 };
 
 /* Definitions for sampling clocks */
@@ -55,10 +58,11 @@ static struct renesas_sdhi_scc rcar_gen2_scc_taps[] = {
 };
 
 static const struct renesas_sdhi_of_data of_rcar_gen2_compatible = {
-	.tmio_flags	= TMIO_MMC_HAS_IDLE_WAIT | TMIO_MMC_WRPROTECT_DISABLE |
-			  TMIO_MMC_CLK_ACTUAL | TMIO_MMC_MIN_RCAR2,
+	.tmio_flags	= TMIO_MMC_HAS_IDLE_WAIT | TMIO_MMC_CLK_ACTUAL |
+			  TMIO_MMC_HAVE_CBSY | TMIO_MMC_MIN_RCAR2,
 	.capabilities	= MMC_CAP_SD_HIGHSPEED | MMC_CAP_SDIO_IRQ |
 			  MMC_CAP_CMD23,
+	.capabilities2	= MMC_CAP2_NO_WRITE_PROTECT,
 	.dma_buswidth	= DMA_SLAVE_BUSWIDTH_4_BYTES,
 	.dma_rx_offset	= 0x2000,
 	.scc_offset	= 0x0300,
@@ -75,10 +79,11 @@ static struct renesas_sdhi_scc rcar_gen3_scc_taps[] = {
 };
 
 static const struct renesas_sdhi_of_data of_rcar_gen3_compatible = {
-	.tmio_flags	= TMIO_MMC_HAS_IDLE_WAIT | TMIO_MMC_WRPROTECT_DISABLE |
-			  TMIO_MMC_CLK_ACTUAL | TMIO_MMC_MIN_RCAR2,
+	.tmio_flags	= TMIO_MMC_HAS_IDLE_WAIT | TMIO_MMC_CLK_ACTUAL |
+			  TMIO_MMC_HAVE_CBSY | TMIO_MMC_MIN_RCAR2,
 	.capabilities	= MMC_CAP_SD_HIGHSPEED | MMC_CAP_SDIO_IRQ |
 			  MMC_CAP_CMD23,
+	.capabilities2	= MMC_CAP2_NO_WRITE_PROTECT,
 	.bus_shift	= 2,
 	.scc_offset	= 0x1000,
 	.taps		= rcar_gen3_scc_taps,
@@ -86,13 +91,14 @@ static const struct renesas_sdhi_of_data of_rcar_gen3_compatible = {
 };
 
 static const struct of_device_id renesas_sdhi_sys_dmac_of_match[] = {
-	{ .compatible = "renesas,sdhi-shmobile" },
 	{ .compatible = "renesas,sdhi-sh73a0", .data = &of_default_cfg, },
 	{ .compatible = "renesas,sdhi-r8a73a4", .data = &of_default_cfg, },
 	{ .compatible = "renesas,sdhi-r8a7740", .data = &of_default_cfg, },
 	{ .compatible = "renesas,sdhi-r7s72100", .data = &of_rz_compatible, },
 	{ .compatible = "renesas,sdhi-r8a7778", .data = &of_rcar_gen1_compatible, },
 	{ .compatible = "renesas,sdhi-r8a7779", .data = &of_rcar_gen1_compatible, },
+	{ .compatible = "renesas,sdhi-r8a7743", .data = &of_rcar_gen2_compatible, },
+	{ .compatible = "renesas,sdhi-r8a7745", .data = &of_rcar_gen2_compatible, },
 	{ .compatible = "renesas,sdhi-r8a7790", .data = &of_rcar_gen2_compatible, },
 	{ .compatible = "renesas,sdhi-r8a7791", .data = &of_rcar_gen2_compatible, },
 	{ .compatible = "renesas,sdhi-r8a7792", .data = &of_rcar_gen2_compatible, },
@@ -100,6 +106,10 @@ static const struct of_device_id renesas_sdhi_sys_dmac_of_match[] = {
 	{ .compatible = "renesas,sdhi-r8a7794", .data = &of_rcar_gen2_compatible, },
 	{ .compatible = "renesas,sdhi-r8a7795", .data = &of_rcar_gen3_compatible, },
 	{ .compatible = "renesas,sdhi-r8a7796", .data = &of_rcar_gen3_compatible, },
+	{ .compatible = "renesas,rcar-gen1-sdhi", .data = &of_rcar_gen1_compatible, },
+	{ .compatible = "renesas,rcar-gen2-sdhi", .data = &of_rcar_gen2_compatible, },
+	{ .compatible = "renesas,rcar-gen3-sdhi", .data = &of_rcar_gen3_compatible, },
+	{ .compatible = "renesas,sdhi-shmobile" },
 	{},
 };
 MODULE_DEVICE_TABLE(of, renesas_sdhi_sys_dmac_of_match);
@@ -107,11 +117,13 @@ MODULE_DEVICE_TABLE(of, renesas_sdhi_sys_dmac_of_match);
 static void renesas_sdhi_sys_dmac_enable_dma(struct tmio_mmc_host *host,
 					     bool enable)
 {
+	struct renesas_sdhi *priv = host_to_priv(host);
+
 	if (!host->chan_tx || !host->chan_rx)
 		return;
 
-	if (host->dma->enable)
-		host->dma->enable(host, enable);
+	if (priv->dma_priv.enable)
+		priv->dma_priv.enable(host, enable);
 }
 
 static void renesas_sdhi_sys_dmac_abort_dma(struct tmio_mmc_host *host)
@@ -126,9 +138,17 @@ static void renesas_sdhi_sys_dmac_abort_dma(struct tmio_mmc_host *host)
 	renesas_sdhi_sys_dmac_enable_dma(host, true);
 }
 
+static void renesas_sdhi_sys_dmac_dataend_dma(struct tmio_mmc_host *host)
+{
+	struct renesas_sdhi *priv = host_to_priv(host);
+
+	complete(&priv->dma_priv.dma_dataend);
+}
+
 static void renesas_sdhi_sys_dmac_dma_callback(void *arg)
 {
 	struct tmio_mmc_host *host = arg;
+	struct renesas_sdhi *priv = host_to_priv(host);
 
 	spin_lock_irq(&host->lock);
 
@@ -146,7 +166,7 @@ static void renesas_sdhi_sys_dmac_dma_callback(void *arg)
 
 	spin_unlock_irq(&host->lock);
 
-	wait_for_completion(&host->dma_dataend);
+	wait_for_completion(&priv->dma_priv.dma_dataend);
 
 	spin_lock_irq(&host->lock);
 	tmio_mmc_do_data_irq(host);
@@ -156,6 +176,7 @@ out:
 
 static void renesas_sdhi_sys_dmac_start_dma_rx(struct tmio_mmc_host *host)
 {
+	struct renesas_sdhi *priv = host_to_priv(host);
 	struct scatterlist *sg = host->sg_ptr, *sg_tmp;
 	struct dma_async_tx_descriptor *desc = NULL;
 	struct dma_chan *chan = host->chan_rx;
@@ -184,8 +205,6 @@ static void renesas_sdhi_sys_dmac_start_dma_rx(struct tmio_mmc_host *host)
 		return;
 	}
 
-	tmio_mmc_disable_mmc_irqs(host, TMIO_STAT_RXRDY);
-
 	/* The only sg element can be unaligned, use our bounce buffer then */
 	if (!aligned) {
 		sg_init_one(&host->bounce_sg, host->bounce_buf, sg->length);
@@ -199,7 +218,7 @@ static void renesas_sdhi_sys_dmac_start_dma_rx(struct tmio_mmc_host *host)
 					       DMA_CTRL_ACK);
 
 	if (desc) {
-		reinit_completion(&host->dma_dataend);
+		reinit_completion(&priv->dma_priv.dma_dataend);
 		desc->callback = renesas_sdhi_sys_dmac_dma_callback;
 		desc->callback_param = host;
 
@@ -230,6 +249,7 @@ pio:
 
 static void renesas_sdhi_sys_dmac_start_dma_tx(struct tmio_mmc_host *host)
 {
+	struct renesas_sdhi *priv = host_to_priv(host);
 	struct scatterlist *sg = host->sg_ptr, *sg_tmp;
 	struct dma_async_tx_descriptor *desc = NULL;
 	struct dma_chan *chan = host->chan_tx;
@@ -258,8 +278,6 @@ static void renesas_sdhi_sys_dmac_start_dma_tx(struct tmio_mmc_host *host)
 		return;
 	}
 
-	tmio_mmc_disable_mmc_irqs(host, TMIO_STAT_TXRQ);
-
 	/* The only sg element can be unaligned, use our bounce buffer then */
 	if (!aligned) {
 		unsigned long flags;
@@ -278,7 +296,7 @@ static void renesas_sdhi_sys_dmac_start_dma_tx(struct tmio_mmc_host *host)
 					       DMA_CTRL_ACK);
 
 	if (desc) {
-		reinit_completion(&host->dma_dataend);
+		reinit_completion(&priv->dma_priv.dma_dataend);
 		desc->callback = renesas_sdhi_sys_dmac_dma_callback;
 		desc->callback_param = host;
 
@@ -326,7 +344,7 @@ static void renesas_sdhi_sys_dmac_issue_tasklet_fn(unsigned long priv)
 
 	spin_lock_irq(&host->lock);
 
-	if (host && host->data) {
+	if (host->data) {
 		if (host->data->flags & MMC_DATA_READ)
 			chan = host->chan_rx;
 		else
@@ -344,9 +362,11 @@ static void renesas_sdhi_sys_dmac_issue_tasklet_fn(unsigned long priv)
 static void renesas_sdhi_sys_dmac_request_dma(struct tmio_mmc_host *host,
 					      struct tmio_mmc_data *pdata)
 {
+	struct renesas_sdhi *priv = host_to_priv(host);
+
 	/* We can only either use DMA for both Tx and Rx or not use it at all */
-	if (!host->dma || (!host->pdev->dev.of_node &&
-			   (!pdata->chan_priv_tx || !pdata->chan_priv_rx)))
+	if (!host->pdev->dev.of_node &&
+	    (!pdata->chan_priv_tx || !pdata->chan_priv_rx))
 		return;
 
 	if (!host->chan_tx && !host->chan_rx) {
@@ -363,7 +383,7 @@ static void renesas_sdhi_sys_dmac_request_dma(struct tmio_mmc_host *host,
 		dma_cap_set(DMA_SLAVE, mask);
 
 		host->chan_tx = dma_request_slave_channel_compat(mask,
-					host->dma->filter, pdata->chan_priv_tx,
+					priv->dma_priv.filter, pdata->chan_priv_tx,
 					&host->pdev->dev, "tx");
 		dev_dbg(&host->pdev->dev, "%s: TX: got channel %p\n", __func__,
 			host->chan_tx);
@@ -374,7 +394,7 @@ static void renesas_sdhi_sys_dmac_request_dma(struct tmio_mmc_host *host,
 		cfg.direction = DMA_MEM_TO_DEV;
 		cfg.dst_addr = res->start +
 			(CTL_SD_DATA_PORT << host->bus_shift);
-		cfg.dst_addr_width = host->dma->dma_buswidth;
+		cfg.dst_addr_width = priv->dma_priv.dma_buswidth;
 		if (!cfg.dst_addr_width)
 			cfg.dst_addr_width = DMA_SLAVE_BUSWIDTH_2_BYTES;
 		cfg.src_addr = 0;
@@ -383,7 +403,7 @@ static void renesas_sdhi_sys_dmac_request_dma(struct tmio_mmc_host *host,
 			goto ecfgtx;
 
 		host->chan_rx = dma_request_slave_channel_compat(mask,
-					host->dma->filter, pdata->chan_priv_rx,
+					priv->dma_priv.filter, pdata->chan_priv_rx,
 					&host->pdev->dev, "rx");
 		dev_dbg(&host->pdev->dev, "%s: RX: got channel %p\n", __func__,
 			host->chan_rx);
@@ -393,7 +413,7 @@ static void renesas_sdhi_sys_dmac_request_dma(struct tmio_mmc_host *host,
 
 		cfg.direction = DMA_DEV_TO_MEM;
 		cfg.src_addr = cfg.dst_addr + host->pdata->dma_rx_offset;
-		cfg.src_addr_width = host->dma->dma_buswidth;
+		cfg.src_addr_width = priv->dma_priv.dma_buswidth;
 		if (!cfg.src_addr_width)
 			cfg.src_addr_width = DMA_SLAVE_BUSWIDTH_2_BYTES;
 		cfg.dst_addr = 0;
@@ -405,7 +425,7 @@ static void renesas_sdhi_sys_dmac_request_dma(struct tmio_mmc_host *host,
 		if (!host->bounce_buf)
 			goto ebouncebuf;
 
-		init_completion(&host->dma_dataend);
+		init_completion(&priv->dma_priv.dma_dataend);
 		tasklet_init(&host->dma_issue,
 			     renesas_sdhi_sys_dmac_issue_tasklet_fn,
 			     (unsigned long)host);
@@ -451,10 +471,24 @@ static const struct tmio_mmc_dma_ops renesas_sdhi_sys_dmac_dma_ops = {
 	.request = renesas_sdhi_sys_dmac_request_dma,
 	.release = renesas_sdhi_sys_dmac_release_dma,
 	.abort = renesas_sdhi_sys_dmac_abort_dma,
+	.dataend = renesas_sdhi_sys_dmac_dataend_dma,
+};
+
+/*
+ * Whitelist of specific R-Car Gen3 SoC ES versions to use this DMAC
+ * implementation. Currently empty as all supported ES versions use
+ * the internal DMAC.
+ */
+static const struct soc_device_attribute gen3_soc_whitelist[] = {
+        { /* sentinel */ }
 };
 
 static int renesas_sdhi_sys_dmac_probe(struct platform_device *pdev)
 {
+	if (of_device_get_match_data(&pdev->dev) == &of_rcar_gen3_compatible &&
+	    !soc_device_match(gen3_soc_whitelist))
+		return -ENODEV;
+
 	return renesas_sdhi_probe(pdev, &renesas_sdhi_sys_dmac_dma_ops);
 }
 

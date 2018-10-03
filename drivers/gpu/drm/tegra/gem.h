@@ -67,12 +67,11 @@ struct tegra_bo *tegra_bo_create_with_handle(struct drm_file *file,
 void tegra_bo_free_object(struct drm_gem_object *gem);
 int tegra_bo_dumb_create(struct drm_file *file, struct drm_device *drm,
 			 struct drm_mode_create_dumb *args);
-int tegra_bo_dumb_map_offset(struct drm_file *file, struct drm_device *drm,
-			     u32 handle, u64 *offset);
-
-int tegra_drm_mmap(struct file *file, struct vm_area_struct *vma);
 
 extern const struct vm_operations_struct tegra_bo_vm_ops;
+
+int __tegra_gem_mmap(struct drm_gem_object *gem, struct vm_area_struct *vma);
+int tegra_drm_mmap(struct file *file, struct vm_area_struct *vma);
 
 struct dma_buf *tegra_gem_prime_export(struct drm_device *drm,
 				       struct drm_gem_object *gem,

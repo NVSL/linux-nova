@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 #ifndef __LINUX_PKT_CLS_H
 #define __LINUX_PKT_CLS_H
 
@@ -128,6 +129,7 @@ enum {
 #define TCA_CLS_FLAGS_SKIP_SW	(1 << 1) /* don't use filter in SW */
 #define TCA_CLS_FLAGS_IN_HW	(1 << 2) /* filter is offloaded to HW */
 #define TCA_CLS_FLAGS_NOT_IN_HW (1 << 3) /* filter isn't offloaded to HW */
+#define TCA_CLS_FLAGS_VERBOSE	(1 << 4) /* verbose logging */
 
 /* U32 filters */
 
@@ -474,6 +476,7 @@ enum {
 
 enum {
 	TCA_FLOWER_KEY_FLAGS_IS_FRAGMENT = (1 << 0),
+	TCA_FLOWER_KEY_FLAGS_FRAG_IS_FIRST = (1 << 1),
 };
 
 /* Match-all classifier */
@@ -554,7 +557,8 @@ enum {
 #define	TCF_EM_VLAN		6
 #define	TCF_EM_CANID		7
 #define	TCF_EM_IPSET		8
-#define	TCF_EM_MAX		8
+#define	TCF_EM_IPT		9
+#define	TCF_EM_MAX		9
 
 enum {
 	TCF_EM_PROG_TC

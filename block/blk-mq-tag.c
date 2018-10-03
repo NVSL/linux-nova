@@ -134,11 +134,7 @@ unsigned int blk_mq_get_tag(struct blk_mq_alloc_data *data)
 	ws = bt_wait_ptr(bt, data->hctx);
 	drop_ctx = data->ctx == NULL;
 	do {
-		prepare_to_wait(&ws->wait, &wait, TASK_UNINTERRUPTIBLE);
-
-		tag = __blk_mq_get_tag(data, bt);
-		if (tag != -1)
-			break;
+		struct sbitmap_queue *bt_prev;
 
 		/*
 		 * We're out of tags on this hardware queue, kick any
@@ -155,9 +151,17 @@ unsigned int blk_mq_get_tag(struct blk_mq_alloc_data *data)
 		if (tag != -1)
 			break;
 
+		prepare_to_wait_exclusive(&ws->wait, &wait,
+						TASK_UNINTERRUPTIBLE);
+
+		tag = __blk_mq_get_tag(data, bt);
+		if (tag != -1)
+			break;
+
 		if (data->ctx)
 			blk_mq_put_ctx(data->ctx);
 
+		bt_prev = bt;
 		io_schedule();
 
 		data->ctx = blk_mq_get_ctx(data->q);
@@ -169,6 +173,15 @@ unsigned int blk_mq_get_tag(struct blk_mq_alloc_data *data)
 			bt = &tags->bitmap_tags;
 
 		finish_wait(&ws->wait, &wait);
+
+		/*
+		 * If destination hw queue is changed, fake wake up on
+		 * previous queue for compensating the wake up miss, so
+		 * other allocations on previous queue won't be starved.
+		 */
+		if (bt != bt_prev)
+			sbitmap_queue_wake_up(bt_prev);
+
 		ws = bt_wait_ptr(bt, data->hctx);
 	} while (1);
 
@@ -214,7 +227,11 @@ static bool bt_iter(struct sbitmap *bitmap, unsigned int bitnr, void *data)
 		bitnr += tags->nr_reserved_tags;
 	rq = tags->rqs[bitnr];
 
-	if (rq->q == hctx->queue)
+	/*
+	 * We can hit rq == NULL here, because the tagging functions
+	 * test and set the bit before assining ->rqs[].
+	 */
+	if (rq && rq->q == hctx->queue)
 		iter_data->fn(hctx, rq, iter_data->data, reserved);
 	return true;
 }
@@ -248,9 +265,15 @@ static bool bt_tags_iter(struct sbitmap *bitmap, unsigned int bitnr, void *data)
 
 	if (!reserved)
 		bitnr += tags->nr_reserved_tags;
-	rq = tags->rqs[bitnr];
 
-	iter_data->fn(rq, iter_data->data, reserved);
+	/*
+	 * We can hit rq == NULL here, because the tagging functions
+	 * test and set the bit before assining ->rqs[].
+	 */
+	rq = tags->rqs[bitnr];
+	if (rq && blk_mq_request_started(rq))
+		iter_data->fn(rq, iter_data->data, reserved);
+
 	return true;
 }
 
@@ -287,35 +310,6 @@ void blk_mq_tagset_busy_iter(struct blk_mq_tag_set *tagset,
 	}
 }
 EXPORT_SYMBOL(blk_mq_tagset_busy_iter);
-
-int blk_mq_reinit_tagset(struct blk_mq_tag_set *set)
-{
-	int i, j, ret = 0;
-
-	if (!set->ops->reinit_request)
-		goto out;
-
-	for (i = 0; i < set->nr_hw_queues; i++) {
-		struct blk_mq_tags *tags = set->tags[i];
-
-		if (!tags)
-			continue;
-
-		for (j = 0; j < tags->nr_tags; j++) {
-			if (!tags->static_rqs[j])
-				continue;
-
-			ret = set->ops->reinit_request(set->driver_data,
-						tags->static_rqs[j]);
-			if (ret)
-				goto out;
-		}
-	}
-
-out:
-	return ret;
-}
-EXPORT_SYMBOL_GPL(blk_mq_reinit_tagset);
 
 void blk_mq_queue_tag_busy_iter(struct request_queue *q, busy_iter_fn *fn,
 		void *priv)

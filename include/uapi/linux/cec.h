@@ -1,36 +1,8 @@
+/* SPDX-License-Identifier: ((GPL-2.0 WITH Linux-syscall-note) OR BSD-3-Clause) */
 /*
  * cec - HDMI Consumer Electronics Control public header
  *
  * Copyright 2016 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
- *
- * This program is free software; you may redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; version 2 of the License.
- *
- * Alternatively you can redistribute this file under the terms of the
- * BSD license as stated below:
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- * 3. The names of its contributors may not be used to endorse or promote
- *    products derived from this software without specific prior written
- *    permission.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
- * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
- * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
- * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
- * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
  */
 
 #ifndef _CEC_UAPI_H
@@ -318,6 +290,7 @@ static inline int cec_is_unconfigured(__u16 log_addr_mask)
 #define CEC_MODE_FOLLOWER		(0x1 << 4)
 #define CEC_MODE_EXCL_FOLLOWER		(0x2 << 4)
 #define CEC_MODE_EXCL_FOLLOWER_PASSTHRU	(0x3 << 4)
+#define CEC_MODE_MONITOR_PIN		(0xd << 4)
 #define CEC_MODE_MONITOR		(0xe << 4)
 #define CEC_MODE_MONITOR_ALL		(0xf << 4)
 #define CEC_MODE_FOLLOWER_MSK		0xf0
@@ -338,6 +311,8 @@ static inline int cec_is_unconfigured(__u16 log_addr_mask)
 #define CEC_CAP_MONITOR_ALL	(1 << 5)
 /* Hardware can use CEC only if the HDMI HPD pin is high. */
 #define CEC_CAP_NEEDS_HPD	(1 << 6)
+/* Hardware can monitor CEC pin transitions */
+#define CEC_CAP_MONITOR_PIN	(1 << 7)
 
 /**
  * struct cec_caps - CEC capabilities structure.
@@ -405,8 +380,13 @@ struct cec_log_addrs {
  * didn't empty the message queue in time
  */
 #define CEC_EVENT_LOST_MSGS		2
+#define CEC_EVENT_PIN_CEC_LOW		3
+#define CEC_EVENT_PIN_CEC_HIGH		4
+#define CEC_EVENT_PIN_HPD_LOW		5
+#define CEC_EVENT_PIN_HPD_HIGH		6
 
 #define CEC_EVENT_FL_INITIAL_STATE	(1 << 0)
+#define CEC_EVENT_FL_DROPPED_EVENTS	(1 << 1)
 
 /**
  * struct cec_event_state_change - used when the CEC adapter changes state.
@@ -419,7 +399,7 @@ struct cec_event_state_change {
 };
 
 /**
- * struct cec_event_lost_msgs - tells you how many messages were lost due.
+ * struct cec_event_lost_msgs - tells you how many messages were lost.
  * @lost_msgs: how many messages were lost.
  */
 struct cec_event_lost_msgs {

@@ -364,8 +364,8 @@ static void __init pmac_pic_probe_oldstyle(void)
 			(addr + 0x10);
 	of_node_put(master);
 
-	printk(KERN_INFO "irq: Found primary Apple PIC %s for %d irqs\n",
-	       master->full_name, max_real_irqs);
+	printk(KERN_INFO "irq: Found primary Apple PIC %pOF for %d irqs\n",
+	       master, max_real_irqs);
 
 	/* Map interrupts of cascaded controller */
 	if (slave && !of_address_to_resource(slave, 0, &r)) {
@@ -378,8 +378,8 @@ static void __init pmac_pic_probe_oldstyle(void)
 				(addr + 0x10);
 		pmac_irq_cascade = irq_of_parse_and_map(slave, 0);
 
-		printk(KERN_INFO "irq: Found slave Apple PIC %s for %d irqs"
-		       " cascade: %d\n", slave->full_name,
+		printk(KERN_INFO "irq: Found slave Apple PIC %pOF for %d irqs"
+		       " cascade: %d\n", slave,
 		       max_irqs - max_real_irqs, pmac_irq_cascade);
 	}
 	of_node_put(slave);
@@ -486,15 +486,16 @@ static int __init pmac_pic_probe_mpic(void)
 	struct device_node *np, *master = NULL, *slave = NULL;
 
 	/* We can have up to 2 MPICs cascaded */
-	for (np = NULL; (np = of_find_node_by_type(np, "open-pic"))
-		     != NULL;) {
+	for_each_node_by_type(np, "open-pic") {
 		if (master == NULL &&
 		    of_get_property(np, "interrupts", NULL) == NULL)
 			master = of_node_get(np);
 		else if (slave == NULL)
 			slave = of_node_get(np);
-		if (master && slave)
+		if (master && slave) {
+			of_node_put(np);
 			break;
+		}
 	}
 
 	/* Check for bogus setups */
@@ -604,6 +605,7 @@ static int pmacpic_find_viaint(void)
 	if (np == NULL)
 		goto not_found;
 	viaint = irq_of_parse_and_map(np, 0);
+	of_node_put(np);
 
 not_found:
 #endif /* CONFIG_ADB_PMU */

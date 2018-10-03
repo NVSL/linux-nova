@@ -7,12 +7,14 @@
  * (at your option) any later version.
  */
 
-#include <drm/tinydrm/tinydrm.h>
-#include <drm/tinydrm/tinydrm-helpers.h>
 #include <linux/backlight.h>
+#include <linux/dma-buf.h>
 #include <linux/pm.h>
 #include <linux/spi/spi.h>
 #include <linux/swab.h>
+
+#include <drm/tinydrm/tinydrm.h>
+#include <drm/tinydrm/tinydrm-helpers.h>
 
 static unsigned int spi_max;
 module_param(spi_max, uint, 0400);
@@ -75,6 +77,36 @@ bool tinydrm_merge_clips(struct drm_clip_rect *dst,
 	       (dst->y2 - dst->y1) == max_height;
 }
 EXPORT_SYMBOL(tinydrm_merge_clips);
+
+int tinydrm_fb_dirty(struct drm_framebuffer *fb,
+		     struct drm_file *file_priv,
+		     unsigned int flags, unsigned int color,
+		     struct drm_clip_rect *clips,
+		     unsigned int num_clips)
+{
+	struct tinydrm_device *tdev = fb->dev->dev_private;
+	struct drm_plane *plane = &tdev->pipe.plane;
+	int ret = 0;
+
+	drm_modeset_lock(&plane->mutex, NULL);
+
+	/* fbdev can flush even when we're not interested */
+	if (plane->state->fb == fb) {
+		mutex_lock(&tdev->dirty_lock);
+		ret = tdev->fb_dirty(fb, file_priv, flags,
+				     color, clips, num_clips);
+		mutex_unlock(&tdev->dirty_lock);
+	}
+
+	drm_modeset_unlock(&plane->mutex);
+
+	if (ret)
+		dev_err_once(fb->dev->dev,
+			     "Failed to update display %d\n", ret);
+
+	return ret;
+}
+EXPORT_SYMBOL(tinydrm_fb_dirty);
 
 /**
  * tinydrm_memcpy - Copy clip buffer
@@ -181,99 +213,58 @@ void tinydrm_xrgb8888_to_rgb565(u16 *dst, void *vaddr,
 EXPORT_SYMBOL(tinydrm_xrgb8888_to_rgb565);
 
 /**
- * tinydrm_of_find_backlight - Find backlight device in device-tree
- * @dev: Device
+ * tinydrm_xrgb8888_to_gray8 - Convert XRGB8888 to grayscale
+ * @dst: 8-bit grayscale destination buffer
+ * @vaddr: XRGB8888 source buffer
+ * @fb: DRM framebuffer
+ * @clip: Clip rectangle area to copy
  *
- * This function looks for a DT node pointed to by a property named 'backlight'
- * and uses of_find_backlight_by_node() to get the backlight device.
- * Additionally if the brightness property is zero, it is set to
- * max_brightness.
+ * Drm doesn't have native monochrome or grayscale support.
+ * Such drivers can announce the commonly supported XR24 format to userspace
+ * and use this function to convert to the native format.
  *
- * Returns:
- * NULL if there's no backlight property.
- * Error pointer -EPROBE_DEFER if the DT node is found, but no backlight device
- * is found.
- * If the backlight device is found, a pointer to the structure is returned.
+ * Monochrome drivers will use the most significant bit,
+ * where 1 means foreground color and 0 background color.
+ *
+ * ITU BT.601 is used for the RGB -> luma (brightness) conversion.
  */
-struct backlight_device *tinydrm_of_find_backlight(struct device *dev)
+void tinydrm_xrgb8888_to_gray8(u8 *dst, void *vaddr, struct drm_framebuffer *fb,
+			       struct drm_clip_rect *clip)
 {
-	struct backlight_device *backlight;
-	struct device_node *np;
+	unsigned int len = (clip->x2 - clip->x1) * sizeof(u32);
+	unsigned int x, y;
+	void *buf;
+	u32 *src;
 
-	np = of_parse_phandle(dev->of_node, "backlight", 0);
-	if (!np)
-		return NULL;
+	if (WARN_ON(fb->format->format != DRM_FORMAT_XRGB8888))
+		return;
+	/*
+	 * The cma memory is write-combined so reads are uncached.
+	 * Speed up by fetching one line at a time.
+	 */
+	buf = kmalloc(len, GFP_KERNEL);
+	if (!buf)
+		return;
 
-	backlight = of_find_backlight_by_node(np);
-	of_node_put(np);
+	for (y = clip->y1; y < clip->y2; y++) {
+		src = vaddr + (y * fb->pitches[0]);
+		src += clip->x1;
+		memcpy(buf, src, len);
+		src = buf;
+		for (x = clip->x1; x < clip->x2; x++) {
+			u8 r = (*src & 0x00ff0000) >> 16;
+			u8 g = (*src & 0x0000ff00) >> 8;
+			u8 b =  *src & 0x000000ff;
 
-	if (!backlight)
-		return ERR_PTR(-EPROBE_DEFER);
-
-	if (!backlight->props.brightness) {
-		backlight->props.brightness = backlight->props.max_brightness;
-		DRM_DEBUG_KMS("Backlight brightness set to %d\n",
-			      backlight->props.brightness);
+			/* ITU BT.601: Y = 0.299 R + 0.587 G + 0.114 B */
+			*dst++ = (3 * r + 6 * g + b) / 10;
+			src++;
+		}
 	}
 
-	return backlight;
+	kfree(buf);
 }
-EXPORT_SYMBOL(tinydrm_of_find_backlight);
-
-/**
- * tinydrm_enable_backlight - Enable backlight helper
- * @backlight: Backlight device
- *
- * Returns:
- * Zero on success, negative error code on failure.
- */
-int tinydrm_enable_backlight(struct backlight_device *backlight)
-{
-	unsigned int old_state;
-	int ret;
-
-	if (!backlight)
-		return 0;
-
-	old_state = backlight->props.state;
-	backlight->props.state &= ~BL_CORE_FBBLANK;
-	DRM_DEBUG_KMS("Backlight state: 0x%x -> 0x%x\n", old_state,
-		      backlight->props.state);
-
-	ret = backlight_update_status(backlight);
-	if (ret)
-		DRM_ERROR("Failed to enable backlight %d\n", ret);
-
-	return ret;
-}
-EXPORT_SYMBOL(tinydrm_enable_backlight);
-
-/**
- * tinydrm_disable_backlight - Disable backlight helper
- * @backlight: Backlight device
- *
- * Returns:
- * Zero on success, negative error code on failure.
- */
-int tinydrm_disable_backlight(struct backlight_device *backlight)
-{
-	unsigned int old_state;
-	int ret;
-
-	if (!backlight)
-		return 0;
-
-	old_state = backlight->props.state;
-	backlight->props.state |= BL_CORE_FBBLANK;
-	DRM_DEBUG_KMS("Backlight state: 0x%x -> 0x%x\n", old_state,
-		      backlight->props.state);
-	ret = backlight_update_status(backlight);
-	if (ret)
-		DRM_ERROR("Failed to disable backlight %d\n", ret);
-
-	return ret;
-}
-EXPORT_SYMBOL(tinydrm_disable_backlight);
+EXPORT_SYMBOL(tinydrm_xrgb8888_to_gray8);
 
 #if IS_ENABLED(CONFIG_SPI)
 
@@ -358,11 +349,9 @@ tinydrm_dbg_spi_print(struct spi_device *spi, struct spi_transfer *tr,
 void _tinydrm_dbg_spi_message(struct spi_device *spi, struct spi_message *m)
 {
 	struct spi_transfer *tmp;
-	struct list_head *pos;
 	int i = 0;
 
-	list_for_each(pos, &m->transfers) {
-		tmp = list_entry(pos, struct spi_transfer, transfer_list);
+	list_for_each_entry(tmp, &m->transfers, transfer_list) {
 
 		if (tmp->tx_buf)
 			tinydrm_dbg_spi_print(spi, tmp, tmp->tx_buf, i, true);

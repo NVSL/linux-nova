@@ -32,20 +32,27 @@ int bch_ ## name ## _h(const char *cp, type *res)		\
 	case 'y':						\
 	case 'z':						\
 		u++;						\
+		/* fall through */				\
 	case 'e':						\
 		u++;						\
+		/* fall through */				\
 	case 'p':						\
 		u++;						\
+		/* fall through */				\
 	case 't':						\
 		u++;						\
+		/* fall through */				\
 	case 'g':						\
 		u++;						\
+		/* fall through */				\
 	case 'm':						\
 		u++;						\
+		/* fall through */				\
 	case 'k':						\
 		u++;						\
 		if (e++ == cp)					\
 			return -EINVAL;				\
+		/* fall through */				\
 	case '\n':						\
 	case '\0':						\
 		if (*e == '\n')					\
@@ -74,59 +81,43 @@ STRTO_H(strtouint, unsigned int)
 STRTO_H(strtoll, long long)
 STRTO_H(strtoull, unsigned long long)
 
+/**
+ * bch_hprint - formats @v to human readable string for sysfs.
+ * @buf: the (at least 8 byte) buffer to format the result into.
+ * @v: signed 64 bit integer
+ *
+ * Returns the number of bytes used by format.
+ */
 ssize_t bch_hprint(char *buf, int64_t v)
 {
 	static const char units[] = "?kMGTPEZY";
-	char dec[4] = "";
-	int u, t = 0;
+	int u = 0, t;
 
-	for (u = 0; v >= 1024 || v <= -1024; u++) {
-		t = v & ~(~0 << 10);
-		v >>= 10;
-	}
+	uint64_t q;
 
-	if (!u)
-		return sprintf(buf, "%llu", v);
+	if (v < 0)
+		q = -v;
+	else
+		q = v;
 
-	if (v < 100 && v > -100)
-		snprintf(dec, sizeof(dec), ".%i", t / 100);
+	/* For as long as the number is more than 3 digits, but at least
+	 * once, shift right / divide by 1024.  Keep the remainder for
+	 * a digit after the decimal point.
+	 */
+	do {
+		u++;
 
-	return sprintf(buf, "%lli%s%c", v, dec, units[u]);
-}
+		t = q & ~(~0 << 10);
+		q >>= 10;
+	} while (q >= 1000);
 
-ssize_t bch_snprint_string_list(char *buf, size_t size, const char * const list[],
-			    size_t selected)
-{
-	char *out = buf;
-	size_t i;
-
-	for (i = 0; list[i]; i++)
-		out += snprintf(out, buf + size - out,
-				i == selected ? "[%s] " : "%s ", list[i]);
-
-	out[-1] = '\n';
-	return out - buf;
-}
-
-ssize_t bch_read_string_list(const char *buf, const char * const list[])
-{
-	size_t i;
-	char *s, *d = kstrndup(buf, PAGE_SIZE - 1, GFP_KERNEL);
-	if (!d)
-		return -ENOMEM;
-
-	s = strim(d);
-
-	for (i = 0; list[i]; i++)
-		if (!strcmp(list[i], s))
-			break;
-
-	kfree(d);
-
-	if (!list[i])
-		return -EINVAL;
-
-	return i;
+	if (v < 0)
+		/* '-', up to 3 digits, '.', 1 digit, 1 character, null;
+		 * yields 8 bytes.
+		 */
+		return sprintf(buf, "-%llu.%i%c", q, t * 10 / 1024, units[u]);
+	else
+		return sprintf(buf, "%llu.%i%c", q, t * 10 / 1024, units[u]);
 }
 
 bool bch_is_zero(const char *p, size_t n)
@@ -198,13 +189,12 @@ void bch_time_stats_update(struct time_stats *stats, uint64_t start_time)
 }
 
 /**
- * bch_next_delay() - increment @d by the amount of work done, and return how
- * long to delay until the next time to do some work.
+ * bch_next_delay() - update ratelimiting statistics and calculate next delay
+ * @d: the struct bch_ratelimit to update
+ * @done: the amount of work done, in arbitrary units
  *
- * @d - the struct bch_ratelimit to update
- * @done - the amount of work done, in arbitrary units
- *
- * Returns the amount of time to delay by, in jiffies
+ * Increment @d by the amount of work done, and return how long to delay in
+ * jiffies until the next time to do some work.
  */
 uint64_t bch_next_delay(struct bch_ratelimit *d, uint64_t done)
 {
@@ -212,8 +202,14 @@ uint64_t bch_next_delay(struct bch_ratelimit *d, uint64_t done)
 
 	d->next += div_u64(done * NSEC_PER_SEC, d->rate);
 
-	if (time_before64(now + NSEC_PER_SEC, d->next))
-		d->next = now + NSEC_PER_SEC;
+	/* Bound the time.  Don't let us fall further than 2 seconds behind
+	 * (this prevents unnecessary backlog that would make it impossible
+	 * to catch up).  If we're ahead of the desired writeback rate,
+	 * don't let us sleep more than 2.5 seconds (so we can notice/respond
+	 * if the control system tells us to speed up!).
+	 */
+	if (time_before64(now + NSEC_PER_SEC * 5LLU / 2LLU, d->next))
+		d->next = now + NSEC_PER_SEC * 5LLU / 2LLU;
 
 	if (time_after64(now - NSEC_PER_SEC * 2, d->next))
 		d->next = now - NSEC_PER_SEC * 2;
@@ -223,6 +219,13 @@ uint64_t bch_next_delay(struct bch_ratelimit *d, uint64_t done)
 		: 0;
 }
 
+/*
+ * Generally it isn't good to access .bi_io_vec and .bi_vcnt directly,
+ * the preferred way is bio_add_page, but in this case, bch_bio_map()
+ * supposes that the bvec table is empty, so it is safe to access
+ * .bi_vcnt & .bi_io_vec in this way even after multipage bvec is
+ * supported.
+ */
 void bch_bio_map(struct bio *bio, void *base)
 {
 	size_t size = bio->bi_iter.bi_size;
@@ -248,6 +251,33 @@ start:		bv->bv_len	= min_t(size_t, PAGE_SIZE - bv->bv_offset,
 
 		size -= bv->bv_len;
 	}
+}
+
+/**
+ * bch_bio_alloc_pages - allocates a single page for each bvec in a bio
+ * @bio: bio to allocate pages for
+ * @gfp_mask: flags for allocation
+ *
+ * Allocates pages up to @bio->bi_vcnt.
+ *
+ * Returns 0 on success, -ENOMEM on failure. On failure, any allocated pages are
+ * freed.
+ */
+int bch_bio_alloc_pages(struct bio *bio, gfp_t gfp_mask)
+{
+	int i;
+	struct bio_vec *bv;
+
+	bio_for_each_segment_all(bv, bio, i) {
+		bv->bv_page = alloc_page(gfp_mask);
+		if (!bv->bv_page) {
+			while (--bv >= bio->bi_io_vec)
+				__free_page(bv->bv_page);
+			return -ENOMEM;
+		}
+	}
+
+	return 0;
 }
 
 /*

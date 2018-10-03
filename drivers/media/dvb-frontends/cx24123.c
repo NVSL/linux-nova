@@ -24,7 +24,7 @@
 #include <linux/init.h>
 #include <asm/div64.h>
 
-#include "dvb_frontend.h"
+#include <media/dvb_frontend.h>
 #include "cx24123.h"
 
 #define XTAL 10111000
@@ -1005,7 +1005,7 @@ static int cx24123_tune(struct dvb_frontend *fe,
 	return retval;
 }
 
-static int cx24123_get_algo(struct dvb_frontend *fe)
+static enum dvbfe_algo cx24123_get_algo(struct dvb_frontend *fe)
 {
 	return DVBFE_ALGO_HW;
 }
@@ -1032,7 +1032,7 @@ static u32 cx24123_tuner_i2c_func(struct i2c_adapter *adapter)
 	return I2C_FUNC_I2C;
 }
 
-static struct i2c_algorithm cx24123_tuner_i2c_algo = {
+static const struct i2c_algorithm cx24123_tuner_i2c_algo = {
 	.master_xfer   = cx24123_tuner_i2c_tuner_xfer,
 	.functionality = cx24123_tuner_i2c_func,
 };

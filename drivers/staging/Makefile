@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0
 # Makefile for staging directory
 
 obj-y				+= media/
@@ -10,6 +11,7 @@ obj-$(CONFIG_RTL8192E)		+= rtl8192e/
 obj-$(CONFIG_RTL8723BS)		+= rtl8723bs/
 obj-$(CONFIG_R8712U)		+= rtl8712/
 obj-$(CONFIG_R8188EU)		+= rtl8188eu/
+obj-$(CONFIG_R8822BE)		+= rtlwifi/
 obj-$(CONFIG_RTS5208)		+= rts5208/
 obj-$(CONFIG_NETLOGIC_XLR_NET)	+= netlogic/
 obj-$(CONFIG_OCTEON_ETHERNET)	+= octeon/
@@ -28,7 +30,6 @@ obj-$(CONFIG_STAGING_BOARD)	+= board/
 obj-$(CONFIG_LTE_GDM724X)	+= gdm724x/
 obj-$(CONFIG_FIREWIRE_SERIAL)	+= fwserial/
 obj-$(CONFIG_GOLDFISH)		+= goldfish/
-obj-$(CONFIG_LNET)		+= lustre/
 obj-$(CONFIG_DGNC)			+= dgnc/
 obj-$(CONFIG_MTD_SPINAND_MT29F)	+= mt29f_spinand/
 obj-$(CONFIG_GS_FPGABOOT)	+= gs_fpgaboot/
@@ -43,5 +44,13 @@ obj-$(CONFIG_MOST)		+= most/
 obj-$(CONFIG_KS7010)		+= ks7010/
 obj-$(CONFIG_GREYBUS)		+= greybus/
 obj-$(CONFIG_BCM2835_VCHIQ)	+= vc04_services/
-obj-$(CONFIG_CRYPTO_DEV_CCREE)	+= ccree/
 obj-$(CONFIG_DRM_VBOXVIDEO)	+= vboxvideo/
+obj-$(CONFIG_PI433)		+= pi433/
+obj-$(CONFIG_SOC_MT7621)	+= mt7621-pci/
+obj-$(CONFIG_SOC_MT7621)	+= mt7621-pinctrl/
+obj-$(CONFIG_SOC_MT7621)	+= mt7621-gpio/
+obj-$(CONFIG_SOC_MT7621)	+= mt7621-spi/
+obj-$(CONFIG_SOC_MT7621)	+= mt7621-dma/
+obj-$(CONFIG_SOC_MT7621)	+= mt7621-mmc/
+obj-$(CONFIG_SOC_MT7621)	+= mt7621-eth/
+obj-$(CONFIG_SOC_MT7621)	+= mt7621-dts/

@@ -20,8 +20,6 @@
 #include <linux/tc_act/tc_skbmod.h>
 #include <net/tc_act/tc_skbmod.h>
 
-#define SKBMOD_TAB_MASK     15
-
 static unsigned int skbmod_net_id;
 static struct tc_action_ops act_skbmod_ops;
 
@@ -86,7 +84,7 @@ static const struct nla_policy skbmod_policy[TCA_SKBMOD_MAX + 1] = {
 
 static int tcf_skbmod_init(struct net *net, struct nlattr *nla,
 			   struct nlattr *est, struct tc_action **a,
-			   int ovr, int bind)
+			   int ovr, int bind, struct netlink_ext_ack *extack)
 {
 	struct tc_action_net *tn = net_generic(net, skbmod_net_id);
 	struct nlattr *tb[TCA_SKBMOD_MAX + 1];
@@ -129,22 +127,25 @@ static int tcf_skbmod_init(struct net *net, struct nlattr *nla,
 	if (parm->flags & SKBMOD_F_SWAPMAC)
 		lflags = SKBMOD_F_SWAPMAC;
 
-	exists = tcf_hash_check(tn, parm->index, a, bind);
+	exists = tcf_idr_check(tn, parm->index, a, bind);
 	if (exists && bind)
 		return 0;
 
-	if (!lflags)
+	if (!lflags) {
+		if (exists)
+			tcf_idr_release(*a, bind);
 		return -EINVAL;
+	}
 
 	if (!exists) {
-		ret = tcf_hash_create(tn, parm->index, est, a,
-				      &act_skbmod_ops, bind, true);
+		ret = tcf_idr_create(tn, parm->index, est, a,
+				     &act_skbmod_ops, bind, true);
 		if (ret)
 			return ret;
 
 		ret = ACT_P_CREATED;
 	} else {
-		tcf_hash_release(*a, bind);
+		tcf_idr_release(*a, bind);
 		if (!ovr)
 			return -EEXIST;
 	}
@@ -154,8 +155,8 @@ static int tcf_skbmod_init(struct net *net, struct nlattr *nla,
 	ASSERT_RTNL();
 	p = kzalloc(sizeof(struct tcf_skbmod_params), GFP_KERNEL);
 	if (unlikely(!p)) {
-		if (ovr)
-			tcf_hash_release(*a, bind);
+		if (ret == ACT_P_CREATED)
+			tcf_idr_release(*a, bind);
 		return -ENOMEM;
 	}
 
@@ -182,17 +183,18 @@ static int tcf_skbmod_init(struct net *net, struct nlattr *nla,
 		kfree_rcu(p_old, rcu);
 
 	if (ret == ACT_P_CREATED)
-		tcf_hash_insert(tn, *a);
+		tcf_idr_insert(tn, *a);
 	return ret;
 }
 
-static void tcf_skbmod_cleanup(struct tc_action *a, int bind)
+static void tcf_skbmod_cleanup(struct tc_action *a)
 {
 	struct tcf_skbmod *d = to_skbmod(a);
 	struct tcf_skbmod_params  *p;
 
 	p = rcu_dereference_protected(d->skbmod_p, 1);
-	kfree_rcu(p, rcu);
+	if (p)
+		kfree_rcu(p, rcu);
 }
 
 static int tcf_skbmod_dump(struct sk_buff *skb, struct tc_action *a,
@@ -234,18 +236,20 @@ nla_put_failure:
 
 static int tcf_skbmod_walker(struct net *net, struct sk_buff *skb,
 			     struct netlink_callback *cb, int type,
-			     const struct tc_action_ops *ops)
+			     const struct tc_action_ops *ops,
+			     struct netlink_ext_ack *extack)
 {
 	struct tc_action_net *tn = net_generic(net, skbmod_net_id);
 
-	return tcf_generic_walker(tn, skb, cb, type, ops);
+	return tcf_generic_walker(tn, skb, cb, type, ops, extack);
 }
 
-static int tcf_skbmod_search(struct net *net, struct tc_action **a, u32 index)
+static int tcf_skbmod_search(struct net *net, struct tc_action **a, u32 index,
+			     struct netlink_ext_ack *extack)
 {
 	struct tc_action_net *tn = net_generic(net, skbmod_net_id);
 
-	return tcf_hash_search(tn, a, index);
+	return tcf_idr_search(tn, a, index);
 }
 
 static struct tc_action_ops act_skbmod_ops = {
@@ -265,19 +269,17 @@ static __net_init int skbmod_init_net(struct net *net)
 {
 	struct tc_action_net *tn = net_generic(net, skbmod_net_id);
 
-	return tc_action_net_init(tn, &act_skbmod_ops, SKBMOD_TAB_MASK);
+	return tc_action_net_init(tn, &act_skbmod_ops);
 }
 
-static void __net_exit skbmod_exit_net(struct net *net)
+static void __net_exit skbmod_exit_net(struct list_head *net_list)
 {
-	struct tc_action_net *tn = net_generic(net, skbmod_net_id);
-
-	tc_action_net_exit(tn);
+	tc_action_net_exit(net_list, skbmod_net_id);
 }
 
 static struct pernet_operations skbmod_net_ops = {
 	.init = skbmod_init_net,
-	.exit = skbmod_exit_net,
+	.exit_batch = skbmod_exit_net,
 	.id   = &skbmod_net_id,
 	.size = sizeof(struct tc_action_net),
 };

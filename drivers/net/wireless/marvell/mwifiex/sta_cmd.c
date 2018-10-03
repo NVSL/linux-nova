@@ -189,9 +189,7 @@ static int mwifiex_cmd_tx_rate_cfg(struct mwifiex_private *priv,
 	if (pbitmap_rates != NULL) {
 		rate_scope->hr_dsss_rate_bitmap = cpu_to_le16(pbitmap_rates[0]);
 		rate_scope->ofdm_rate_bitmap = cpu_to_le16(pbitmap_rates[1]);
-		for (i = 0;
-		     i < sizeof(rate_scope->ht_mcs_rate_bitmap) / sizeof(u16);
-		     i++)
+		for (i = 0; i < ARRAY_SIZE(rate_scope->ht_mcs_rate_bitmap); i++)
 			rate_scope->ht_mcs_rate_bitmap[i] =
 				cpu_to_le16(pbitmap_rates[2 + i]);
 		if (priv->adapter->fw_api_ver == MWIFIEX_FW_V15) {
@@ -206,9 +204,7 @@ static int mwifiex_cmd_tx_rate_cfg(struct mwifiex_private *priv,
 			cpu_to_le16(priv->bitmap_rates[0]);
 		rate_scope->ofdm_rate_bitmap =
 			cpu_to_le16(priv->bitmap_rates[1]);
-		for (i = 0;
-		     i < sizeof(rate_scope->ht_mcs_rate_bitmap) / sizeof(u16);
-		     i++)
+		for (i = 0; i < ARRAY_SIZE(rate_scope->ht_mcs_rate_bitmap); i++)
 			rate_scope->ht_mcs_rate_bitmap[i] =
 				cpu_to_le16(priv->bitmap_rates[2 + i]);
 		if (priv->adapter->fw_api_ver == MWIFIEX_FW_V15) {
@@ -1755,7 +1751,7 @@ mwifiex_cmd_tdls_oper(struct mwifiex_private *priv,
 	struct mwifiex_ie_types_vhtcap *vht_capab;
 	struct mwifiex_ie_types_aid *aid;
 	struct mwifiex_ie_types_tdls_idle_timeout *timeout;
-	u8 *pos, qos_info;
+	u8 *pos;
 	u16 config_len = 0;
 	struct station_parameters *params = priv->sta_params;
 
@@ -1789,12 +1785,11 @@ mwifiex_cmd_tdls_oper(struct mwifiex_private *priv,
 		put_unaligned_le16(params->capability, pos);
 		config_len += sizeof(params->capability);
 
-		qos_info = params->uapsd_queues | (params->max_sp << 5);
-		wmm_qos_info = (struct mwifiex_ie_types_qos_info *)(pos +
-								    config_len);
+		wmm_qos_info = (void *)(pos + config_len);
 		wmm_qos_info->header.type = cpu_to_le16(WLAN_EID_QOS_CAPA);
-		wmm_qos_info->header.len = cpu_to_le16(sizeof(qos_info));
-		wmm_qos_info->qos_info = qos_info;
+		wmm_qos_info->header.len =
+				cpu_to_le16(sizeof(wmm_qos_info->qos_info));
+		wmm_qos_info->qos_info = 0;
 		config_len += sizeof(struct mwifiex_ie_types_qos_info);
 
 		if (params->ht_capa) {
@@ -1899,6 +1894,25 @@ static int mwifiex_cmd_get_wakeup_reason(struct mwifiex_private *priv,
 	cmd->command = cpu_to_le16(HostCmd_CMD_HS_WAKEUP_REASON);
 	cmd->size = cpu_to_le16(sizeof(struct host_cmd_ds_wakeup_reason) +
 				S_DS_GEN);
+
+	return 0;
+}
+
+static int mwifiex_cmd_get_chan_info(struct host_cmd_ds_command *cmd,
+				     u16 cmd_action)
+{
+	struct host_cmd_ds_sta_configure *sta_cfg_cmd = &cmd->params.sta_cfg;
+	struct host_cmd_tlv_channel_band *tlv_band_channel =
+	(struct host_cmd_tlv_channel_band *)sta_cfg_cmd->tlv_buffer;
+
+	cmd->command = cpu_to_le16(HostCmd_CMD_STA_CONFIGURE);
+	cmd->size = cpu_to_le16(sizeof(*sta_cfg_cmd) +
+				sizeof(*tlv_band_channel) + S_DS_GEN);
+	sta_cfg_cmd->action = cpu_to_le16(cmd_action);
+	memset(tlv_band_channel, 0, sizeof(*tlv_band_channel));
+	tlv_band_channel->header.type = cpu_to_le16(TLV_TYPE_CHANNELBANDLIST);
+	tlv_band_channel->header.len  = cpu_to_le16(sizeof(*tlv_band_channel) -
+					sizeof(struct mwifiex_ie_types_header));
 
 	return 0;
 }
@@ -2210,6 +2224,13 @@ int mwifiex_sta_prepare_cmd(struct mwifiex_private *priv, uint16_t cmd_no,
 		break;
 	case HostCmd_CMD_CHAN_REGION_CFG:
 		ret = mwifiex_cmd_chan_region_cfg(priv, cmd_ptr, cmd_action);
+		break;
+	case HostCmd_CMD_FW_DUMP_EVENT:
+		cmd_ptr->command = cpu_to_le16(cmd_no);
+		cmd_ptr->size = cpu_to_le16(S_DS_GEN);
+		break;
+	case HostCmd_CMD_STA_CONFIGURE:
+		ret = mwifiex_cmd_get_chan_info(cmd_ptr, cmd_action);
 		break;
 	default:
 		mwifiex_dbg(priv->adapter, ERROR,

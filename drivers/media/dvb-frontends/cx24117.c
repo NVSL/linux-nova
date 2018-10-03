@@ -32,7 +32,7 @@
 #include <linux/firmware.h>
 
 #include "tuner-i2c.h"
-#include "dvb_frontend.h"
+#include <media/dvb_frontend.h>
 #include "cx24117.h"
 
 
@@ -1555,7 +1555,7 @@ static int cx24117_tune(struct dvb_frontend *fe, bool re_tune,
 	return cx24117_read_status(fe, status);
 }
 
-static int cx24117_get_algo(struct dvb_frontend *fe)
+static enum dvbfe_algo cx24117_get_algo(struct dvb_frontend *fe)
 {
 	return DVBFE_ALGO_HW;
 }

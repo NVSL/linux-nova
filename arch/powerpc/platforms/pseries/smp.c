@@ -41,6 +41,7 @@
 #include <asm/vdso_datapage.h>
 #include <asm/cputhreads.h>
 #include <asm/xics.h>
+#include <asm/xive.h>
 #include <asm/dbell.h>
 #include <asm/plpar_wrappers.h>
 #include <asm/code-patching.h>
@@ -109,7 +110,7 @@ static inline int smp_startup_cpu(unsigned int lcpu)
 	}
 
 	/* Fixup atomic count: it exited inside IRQ handler. */
-	task_thread_info(paca[lcpu].__current)->preempt_count	= 0;
+	task_thread_info(paca_ptrs[lcpu]->__current)->preempt_count	= 0;
 #ifdef CONFIG_HOTPLUG_CPU
 	if (get_cpu_current_state(lcpu) == CPU_STATE_INACTIVE)
 		goto out;
@@ -136,7 +137,9 @@ out:
 
 static void smp_setup_cpu(int cpu)
 {
-	if (cpu != boot_cpuid)
+	if (xive_enabled())
+		xive_smp_setup_cpu();
+	else if (cpu != boot_cpuid)
 		xics_setup_cpu();
 
 	if (firmware_has_feature(FW_FEATURE_SPLPAR))
@@ -162,7 +165,7 @@ static int smp_pSeries_kick_cpu(int nr)
 	 * cpu_start field to become non-zero After we set cpu_start,
 	 * the processor will continue on to secondary_start
 	 */
-	paca[nr].cpu_start = 1;
+	paca_ptrs[nr]->cpu_start = 1;
 #ifdef CONFIG_HOTPLUG_CPU
 	set_preferred_offline_state(nr, CPU_STATE_ONLINE);
 
@@ -178,6 +181,13 @@ static int smp_pSeries_kick_cpu(int nr)
 	}
 #endif
 
+	return 0;
+}
+
+static int pseries_smp_prepare_cpu(int cpu)
+{
+	if (xive_enabled())
+		return xive_smp_prepare_cpu(cpu);
 	return 0;
 }
 
@@ -205,13 +215,13 @@ static int pseries_cause_nmi_ipi(int cpu)
 		hwcpu = get_hard_smp_processor_id(cpu);
 	}
 
-	if (plapr_signal_sys_reset(hwcpu) == H_SUCCESS)
+	if (plpar_signal_sys_reset(hwcpu) == H_SUCCESS)
 		return 1;
 
 	return 0;
 }
 
-static __init void pSeries_smp_probe(void)
+static __init void pSeries_smp_probe_xics(void)
 {
 	xics_smp_probe();
 
@@ -221,11 +231,24 @@ static __init void pSeries_smp_probe(void)
 		smp_ops->cause_ipi = icp_ops->cause_ipi;
 }
 
+static __init void pSeries_smp_probe(void)
+{
+	if (xive_enabled())
+		/*
+		 * Don't use P9 doorbells when XIVE is enabled. IPIs
+		 * using MMIOs should be faster
+		 */
+		xive_smp_probe();
+	else
+		pSeries_smp_probe_xics();
+}
+
 static struct smp_ops_t pseries_smp_ops = {
 	.message_pass	= NULL,	/* Use smp_muxed_ipi_message_pass */
 	.cause_ipi	= NULL,	/* Filled at runtime by pSeries_smp_probe() */
 	.cause_nmi_ipi	= pseries_cause_nmi_ipi,
 	.probe		= pSeries_smp_probe,
+	.prepare_cpu	= pseries_smp_prepare_cpu,
 	.kick_cpu	= smp_pSeries_kick_cpu,
 	.setup_cpu	= smp_setup_cpu,
 	.cpu_bootable	= smp_generic_cpu_bootable,

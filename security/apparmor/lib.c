@@ -211,7 +211,8 @@ void aa_perm_mask_to_str(char *str, const char *chrs, u32 mask)
 	*str = '\0';
 }
 
-void aa_audit_perm_names(struct audit_buffer *ab, const char **names, u32 mask)
+void aa_audit_perm_names(struct audit_buffer *ab, const char * const *names,
+			 u32 mask)
 {
 	const char *fmt = "%s";
 	unsigned int i, perm = 1;
@@ -229,7 +230,7 @@ void aa_audit_perm_names(struct audit_buffer *ab, const char **names, u32 mask)
 }
 
 void aa_audit_perm_mask(struct audit_buffer *ab, u32 mask, const char *chrs,
-			u32 chrsmask, const char **names, u32 namesmask)
+			u32 chrsmask, const char * const *names, u32 namesmask)
 {
 	char str[33];
 
@@ -317,14 +318,11 @@ static u32 map_other(u32 x)
 void aa_compute_perms(struct aa_dfa *dfa, unsigned int state,
 		      struct aa_perms *perms)
 {
-	perms->deny = 0;
-	perms->kill = perms->stop = 0;
-	perms->complain = perms->cond = 0;
-	perms->hide = 0;
-	perms->prompt = 0;
-	perms->allow = dfa_user_allow(dfa, state);
-	perms->audit = dfa_user_audit(dfa, state);
-	perms->quiet = dfa_user_quiet(dfa, state);
+	*perms = (struct aa_perms) {
+		.allow = dfa_user_allow(dfa, state),
+		.audit = dfa_user_audit(dfa, state),
+		.quiet = dfa_user_quiet(dfa, state),
+	};
 
 	/* for v5 perm mapping in the policydb, the other set is used
 	 * to extend the general perm set
@@ -410,7 +408,7 @@ int aa_profile_label_perm(struct aa_profile *profile, struct aa_profile *target,
  * @request: requested perms
  * @deny: Returns: explicit deny set
  * @sa: initialized audit structure (MAY BE NULL if not auditing)
- * @cb: callback fn for tpye specific fields (MAY BE NULL)
+ * @cb: callback fn for type specific fields (MAY BE NULL)
  *
  * Returns: 0 if permission else error code
  *
@@ -426,7 +424,6 @@ int aa_check_perms(struct aa_profile *profile, struct aa_perms *perms,
 		   void (*cb)(struct audit_buffer *, void *))
 {
 	int type, error;
-	bool stop = false;
 	u32 denied = request & (~perms->allow | perms->deny);
 
 	if (likely(!denied)) {
@@ -447,8 +444,6 @@ int aa_check_perms(struct aa_profile *profile, struct aa_perms *perms,
 		else
 			type = AUDIT_APPARMOR_DENIED;
 
-		if (denied & perms->stop)
-			stop = true;
 		if (denied == (denied & perms->hide))
 			error = -ENOENT;
 

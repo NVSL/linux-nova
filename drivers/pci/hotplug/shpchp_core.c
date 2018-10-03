@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Standard Hot Plug Controller Driver
  *
@@ -7,21 +8,6 @@
  * Copyright (C) 2003-2004 Intel Corporation
  *
  * All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or (at
- * your option) any later version.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, GOOD TITLE or
- * NON INFRINGEMENT.  See the GNU General Public License for more
- * details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  *
  * Send feedback to <greg@kroah.com>, <kristen.c.accardi@intel.com>
  *
@@ -284,31 +270,18 @@ static int get_adapter_status(struct hotplug_slot *hotplug_slot, u8 *value)
 	return 0;
 }
 
-static int is_shpc_capable(struct pci_dev *dev)
-{
-	if (dev->vendor == PCI_VENDOR_ID_AMD &&
-	    dev->device == PCI_DEVICE_ID_AMD_GOLAM_7450)
-		return 1;
-	if (!pci_find_capability(dev, PCI_CAP_ID_SHPC))
-		return 0;
-	if (get_hp_hw_control_from_firmware(dev))
-		return 0;
-	return 1;
-}
-
 static int shpc_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
 	int rc;
 	struct controller *ctrl;
 
-	if (!is_shpc_capable(pdev))
+	if (acpi_get_hp_hw_control_from_firmware(pdev))
 		return -ENODEV;
 
 	ctrl = kzalloc(sizeof(*ctrl), GFP_KERNEL);
-	if (!ctrl) {
-		dev_err(&pdev->dev, "%s: Out of memory\n", __func__);
+	if (!ctrl)
 		goto err_out_none;
-	}
+
 	INIT_LIST_HEAD(&ctrl->slot_list);
 
 	rc = shpc_init(ctrl, pdev);
@@ -351,7 +324,7 @@ static void shpc_remove(struct pci_dev *dev)
 	kfree(ctrl);
 }
 
-static struct pci_device_id shpcd_pci_tbl[] = {
+static const struct pci_device_id shpcd_pci_tbl[] = {
 	{PCI_DEVICE_CLASS(((PCI_CLASS_BRIDGE_PCI << 8) | 0x00), ~0)},
 	{ /* end: all zeroes */ }
 };

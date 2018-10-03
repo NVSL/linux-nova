@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  *  zcrypt 2.1.0
  *
@@ -9,20 +10,6 @@
  *  Major cleanup & driver split: Martin Schwidefsky <schwidefsky@de.ibm.com>
  *				  Ralph Wuerthner <rwuerthn@de.ibm.com>
  *  MSGTYPE restruct:		  Holger Dengler <hd@linux.vnet.ibm.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2, or (at your option)
- * any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
 #define KMSG_COMPONENT "zcrypt"
@@ -140,7 +127,7 @@ struct function_and_rules_block {
  *   + 0x000A 'MRP     ' (MCL3 'PK' or CEX2C 'PK')
  * - VUD block
  */
-static struct CPRBX static_cprbx = {
+static const struct CPRBX static_cprbx = {
 	.cprb_len	=  0x00DC,
 	.cprb_ver_id	=  0x02,
 	.func_id	= {0x54, 0x32},
@@ -474,7 +461,8 @@ static int XCRB_msg_to_type6CPRB_msgX(struct ap_message *ap_msg,
 	*fcode = (msg->hdr.function_code[0] << 8) | msg->hdr.function_code[1];
 	*dom = (unsigned short *)&msg->cprbx.domain;
 
-	if (memcmp(function_code, "US", 2) == 0)
+	if (memcmp(function_code, "US", 2) == 0
+	    || memcmp(function_code, "AU", 2) == 0)
 		ap_msg->special = 1;
 	else
 		ap_msg->special = 0;
@@ -1096,6 +1084,13 @@ out_free:
 	return rc;
 }
 
+/**
+ * Fetch function code from cprb.
+ * Extracting the fc requires to copy the cprb from userspace.
+ * So this function allocates memory and needs an ap_msg prepared
+ * by the caller with ap_init_message(). Also the caller has to
+ * make sure ap_release_message() is always called even on failure.
+ */
 unsigned int get_cprb_fc(struct ica_xcRB *xcRB,
 				struct ap_message *ap_msg,
 				unsigned int *func_code, unsigned short **dom)
@@ -1103,9 +1098,7 @@ unsigned int get_cprb_fc(struct ica_xcRB *xcRB,
 	struct response_type resp_type = {
 		.type = PCIXCC_RESPONSE_TYPE_XCRB,
 	};
-	int rc;
 
-	ap_init_message(ap_msg);
 	ap_msg->message = kmalloc(MSGTYPE06_MAX_MSG_SIZE, GFP_KERNEL);
 	if (!ap_msg->message)
 		return -ENOMEM;
@@ -1113,17 +1106,10 @@ unsigned int get_cprb_fc(struct ica_xcRB *xcRB,
 	ap_msg->psmid = (((unsigned long long) current->pid) << 32) +
 				atomic_inc_return(&zcrypt_step);
 	ap_msg->private = kmalloc(sizeof(resp_type), GFP_KERNEL);
-	if (!ap_msg->private) {
-		kzfree(ap_msg->message);
+	if (!ap_msg->private)
 		return -ENOMEM;
-	}
 	memcpy(ap_msg->private, &resp_type, sizeof(resp_type));
-	rc = XCRB_msg_to_type6CPRB_msgX(ap_msg, xcRB, func_code, dom);
-	if (rc) {
-		kzfree(ap_msg->message);
-		kzfree(ap_msg->private);
-	}
-	return rc;
+	return XCRB_msg_to_type6CPRB_msgX(ap_msg, xcRB, func_code, dom);
 }
 
 /**
@@ -1151,11 +1137,16 @@ static long zcrypt_msgtype6_send_cprb(struct zcrypt_queue *zq,
 		/* Signal pending. */
 		ap_cancel_message(zq->queue, ap_msg);
 
-	kzfree(ap_msg->message);
-	kzfree(ap_msg->private);
 	return rc;
 }
 
+/**
+ * Fetch function code from ep11 cprb.
+ * Extracting the fc requires to copy the ep11 cprb from userspace.
+ * So this function allocates memory and needs an ap_msg prepared
+ * by the caller with ap_init_message(). Also the caller has to
+ * make sure ap_release_message() is always called even on failure.
+ */
 unsigned int get_ep11cprb_fc(struct ep11_urb *xcrb,
 				    struct ap_message *ap_msg,
 				    unsigned int *func_code)
@@ -1163,9 +1154,7 @@ unsigned int get_ep11cprb_fc(struct ep11_urb *xcrb,
 	struct response_type resp_type = {
 		.type = PCIXCC_RESPONSE_TYPE_EP11,
 	};
-	int rc;
 
-	ap_init_message(ap_msg);
 	ap_msg->message = kmalloc(MSGTYPE06_MAX_MSG_SIZE, GFP_KERNEL);
 	if (!ap_msg->message)
 		return -ENOMEM;
@@ -1173,17 +1162,10 @@ unsigned int get_ep11cprb_fc(struct ep11_urb *xcrb,
 	ap_msg->psmid = (((unsigned long long) current->pid) << 32) +
 				atomic_inc_return(&zcrypt_step);
 	ap_msg->private = kmalloc(sizeof(resp_type), GFP_KERNEL);
-	if (!ap_msg->private) {
-		kzfree(ap_msg->message);
+	if (!ap_msg->private)
 		return -ENOMEM;
-	}
 	memcpy(ap_msg->private, &resp_type, sizeof(resp_type));
-	rc = xcrb_msg_to_type6_ep11cprb_msgx(ap_msg, xcrb, func_code);
-	if (rc) {
-		kzfree(ap_msg->message);
-		kzfree(ap_msg->private);
-	}
-	return rc;
+	return xcrb_msg_to_type6_ep11cprb_msgx(ap_msg, xcrb, func_code);
 }
 
 /**
@@ -1258,8 +1240,6 @@ static long zcrypt_msgtype6_send_ep11_cprb(struct zcrypt_queue *zq,
 		/* Signal pending. */
 		ap_cancel_message(zq->queue, ap_msg);
 
-	kzfree(ap_msg->message);
-	kzfree(ap_msg->private);
 	return rc;
 }
 
@@ -1270,7 +1250,6 @@ unsigned int get_rng_fc(struct ap_message *ap_msg, int *func_code,
 		.type = PCIXCC_RESPONSE_TYPE_XCRB,
 	};
 
-	ap_init_message(ap_msg);
 	ap_msg->message = kmalloc(MSGTYPE06_MAX_MSG_SIZE, GFP_KERNEL);
 	if (!ap_msg->message)
 		return -ENOMEM;
@@ -1278,10 +1257,8 @@ unsigned int get_rng_fc(struct ap_message *ap_msg, int *func_code,
 	ap_msg->psmid = (((unsigned long long) current->pid) << 32) +
 				atomic_inc_return(&zcrypt_step);
 	ap_msg->private = kmalloc(sizeof(resp_type), GFP_KERNEL);
-	if (!ap_msg->private) {
-		kzfree(ap_msg->message);
+	if (!ap_msg->private)
 		return -ENOMEM;
-	}
 	memcpy(ap_msg->private, &resp_type, sizeof(resp_type));
 
 	rng_type6CPRB_msgX(ap_msg, ZCRYPT_RNG_BUFFER_SIZE, domain);
@@ -1325,8 +1302,6 @@ static long zcrypt_msgtype6_rng(struct zcrypt_queue *zq,
 		/* Signal pending. */
 		ap_cancel_message(zq->queue, ap_msg);
 
-	kzfree(ap_msg->message);
-	kzfree(ap_msg->private);
 	return rc;
 }
 

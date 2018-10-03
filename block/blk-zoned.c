@@ -22,6 +22,48 @@ static inline sector_t blk_zone_start(struct request_queue *q,
 }
 
 /*
+ * Return true if a request is a write requests that needs zone write locking.
+ */
+bool blk_req_needs_zone_write_lock(struct request *rq)
+{
+	if (!rq->q->seq_zones_wlock)
+		return false;
+
+	if (blk_rq_is_passthrough(rq))
+		return false;
+
+	switch (req_op(rq)) {
+	case REQ_OP_WRITE_ZEROES:
+	case REQ_OP_WRITE_SAME:
+	case REQ_OP_WRITE:
+		return blk_rq_zone_is_seq(rq);
+	default:
+		return false;
+	}
+}
+EXPORT_SYMBOL_GPL(blk_req_needs_zone_write_lock);
+
+void __blk_req_zone_write_lock(struct request *rq)
+{
+	if (WARN_ON_ONCE(test_and_set_bit(blk_rq_zone_no(rq),
+					  rq->q->seq_zones_wlock)))
+		return;
+
+	WARN_ON_ONCE(rq->rq_flags & RQF_ZONE_WRITE_LOCKED);
+	rq->rq_flags |= RQF_ZONE_WRITE_LOCKED;
+}
+EXPORT_SYMBOL_GPL(__blk_req_zone_write_lock);
+
+void __blk_req_zone_write_unlock(struct request *rq)
+{
+	rq->rq_flags &= ~RQF_ZONE_WRITE_LOCKED;
+	if (rq->q->seq_zones_wlock)
+		WARN_ON_ONCE(!test_and_clear_bit(blk_rq_zone_no(rq),
+						 rq->q->seq_zones_wlock));
+}
+EXPORT_SYMBOL_GPL(__blk_req_zone_write_unlock);
+
+/*
  * Check that a zone report belongs to the partition.
  * If yes, fix its start sector and write pointer, copy it in the
  * zone information array and return true. Return false otherwise.
@@ -116,7 +158,7 @@ int blkdev_report_zones(struct block_device *bdev,
 	if (!bio)
 		return -ENOMEM;
 
-	bio->bi_bdev = bdev;
+	bio_set_dev(bio, bdev);
 	bio->bi_iter.bi_sector = blk_zone_start(q, sector);
 	bio_set_op_attrs(bio, REQ_OP_ZONE_REPORT, 0);
 
@@ -234,7 +276,7 @@ int blkdev_reset_zones(struct block_device *bdev,
 
 		bio = bio_alloc(gfp_mask, 0);
 		bio->bi_iter.bi_sector = sector;
-		bio->bi_bdev = bdev;
+		bio_set_dev(bio, bdev);
 		bio_set_op_attrs(bio, REQ_OP_ZONE_RESET, 0);
 
 		ret = submit_bio_wait(bio);
@@ -254,7 +296,7 @@ int blkdev_reset_zones(struct block_device *bdev,
 }
 EXPORT_SYMBOL_GPL(blkdev_reset_zones);
 
-/**
+/*
  * BLKREPORTZONE ioctl processing.
  * Called from blkdev_ioctl.
  */
@@ -286,7 +328,11 @@ int blkdev_report_zones_ioctl(struct block_device *bdev, fmode_t mode,
 	if (!rep.nr_zones)
 		return -EINVAL;
 
-	zones = kcalloc(rep.nr_zones, sizeof(struct blk_zone), GFP_KERNEL);
+	if (rep.nr_zones > INT_MAX / sizeof(struct blk_zone))
+		return -ERANGE;
+
+	zones = kvmalloc_array(rep.nr_zones, sizeof(struct blk_zone),
+			       GFP_KERNEL | __GFP_ZERO);
 	if (!zones)
 		return -ENOMEM;
 
@@ -308,12 +354,12 @@ int blkdev_report_zones_ioctl(struct block_device *bdev, fmode_t mode,
 	}
 
  out:
-	kfree(zones);
+	kvfree(zones);
 
 	return ret;
 }
 
-/**
+/*
  * BLKRESETZONE ioctl processing.
  * Called from blkdev_ioctl.
  */

@@ -4519,21 +4519,21 @@ static int setup_proc_entry( struct net_device *dev,
 	proc_set_user(apriv->proc_entry, proc_kuid, proc_kgid);
 
 	/* Setup the StatsDelta */
-	entry = proc_create_data("StatsDelta", S_IRUGO & proc_perm,
+	entry = proc_create_data("StatsDelta", 0444 & proc_perm,
 				 apriv->proc_entry, &proc_statsdelta_ops, dev);
 	if (!entry)
 		goto fail;
 	proc_set_user(entry, proc_kuid, proc_kgid);
 
 	/* Setup the Stats */
-	entry = proc_create_data("Stats", S_IRUGO & proc_perm,
+	entry = proc_create_data("Stats", 0444 & proc_perm,
 				 apriv->proc_entry, &proc_stats_ops, dev);
 	if (!entry)
 		goto fail;
 	proc_set_user(entry, proc_kuid, proc_kgid);
 
 	/* Setup the Status */
-	entry = proc_create_data("Status", S_IRUGO & proc_perm,
+	entry = proc_create_data("Status", 0444 & proc_perm,
 				 apriv->proc_entry, &proc_status_ops, dev);
 	if (!entry)
 		goto fail;
@@ -7127,7 +7127,7 @@ static int airo_get_aplist(struct net_device *dev,
 	int i;
 	int loseSync = capable(CAP_NET_ADMIN) ? 1: -1;
 
-	qual = kmalloc(IW_MAX_AP * sizeof(*qual), GFP_KERNEL);
+	qual = kmalloc_array(IW_MAX_AP, sizeof(*qual), GFP_KERNEL);
 	if (!qual)
 		return -ENOMEM;
 
@@ -7837,7 +7837,7 @@ static int writerids(struct net_device *dev, aironet_ioctl *comp) {
 	struct airo_info *ai = dev->ml_priv;
 	int  ridcode;
         int  enabled;
-	static int (* writer)(struct airo_info *, u16 rid, const void *, int, int);
+	int (*writer)(struct airo_info *, u16 rid, const void *, int, int);
 	unsigned char *iobuf;
 
 	/* Only super-user can write RIDs */

@@ -257,7 +257,7 @@ struct jpu_fmt {
 };
 
 /**
- * jpu_q_data - parameters of one queue
+ * struct jpu_q_data - parameters of one queue
  * @fmtinfo: driver-specific format of this queue
  * @format: multiplanar format of this queue
  * @sequence: sequence number
@@ -269,7 +269,7 @@ struct jpu_q_data {
 };
 
 /**
- * jpu_ctx - the device context data
+ * struct jpu_ctx - the device context data
  * @jpu: JPEG IP device for this context
  * @encoder: compression (encode) operation or decompression (decode)
  * @compr_quality: destination image quality in compression (encode) mode
@@ -1280,7 +1280,7 @@ static int jpu_open(struct file *file)
 		/* ...issue software reset */
 		ret = jpu_reset(jpu);
 		if (ret)
-			goto device_prepare_rollback;
+			goto jpu_reset_rollback;
 	}
 
 	jpu->ref_count++;
@@ -1288,6 +1288,8 @@ static int jpu_open(struct file *file)
 	mutex_unlock(&jpu->mutex);
 	return 0;
 
+jpu_reset_rollback:
+	clk_disable_unprepare(jpu->clk);
 device_prepare_rollback:
 	mutex_unlock(&jpu->mutex);
 v4l_prepare_rollback:
@@ -1506,7 +1508,7 @@ static void jpu_job_abort(void *priv)
 		jpu_cleanup(ctx, true);
 }
 
-static struct v4l2_m2m_ops jpu_m2m_ops = {
+static const struct v4l2_m2m_ops jpu_m2m_ops = {
 	.device_run	= jpu_device_run,
 	.job_ready	= jpu_job_ready,
 	.job_abort	= jpu_job_abort,

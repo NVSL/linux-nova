@@ -107,7 +107,7 @@ void rxe_mem_cleanup(struct rxe_pool_entry *arg)
 	}
 }
 
-static int rxe_mem_alloc(struct rxe_dev *rxe, struct rxe_mem *mem, int num_buf)
+static int rxe_mem_alloc(struct rxe_mem *mem, int num_buf)
 {
 	int i;
 	int num_map;
@@ -145,7 +145,7 @@ err1:
 	return -ENOMEM;
 }
 
-int rxe_mem_init_dma(struct rxe_dev *rxe, struct rxe_pd *pd,
+int rxe_mem_init_dma(struct rxe_pd *pd,
 		     int access, struct rxe_mem *mem)
 {
 	rxe_mem_init(access, mem);
@@ -158,7 +158,7 @@ int rxe_mem_init_dma(struct rxe_dev *rxe, struct rxe_pd *pd,
 	return 0;
 }
 
-int rxe_mem_init_user(struct rxe_dev *rxe, struct rxe_pd *pd, u64 start,
+int rxe_mem_init_user(struct rxe_pd *pd, u64 start,
 		      u64 length, u64 iova, int access, struct ib_udata *udata,
 		      struct rxe_mem *mem)
 {
@@ -184,7 +184,7 @@ int rxe_mem_init_user(struct rxe_dev *rxe, struct rxe_pd *pd, u64 start,
 
 	rxe_mem_init(access, mem);
 
-	err = rxe_mem_alloc(rxe, mem, num_buf);
+	err = rxe_mem_alloc(mem, num_buf);
 	if (err) {
 		pr_warn("err %d from rxe_mem_alloc\n", err);
 		ib_umem_release(umem);
@@ -236,7 +236,7 @@ err1:
 	return err;
 }
 
-int rxe_mem_init_fast(struct rxe_dev *rxe, struct rxe_pd *pd,
+int rxe_mem_init_fast(struct rxe_pd *pd,
 		      int max_pages, struct rxe_mem *mem)
 {
 	int err;
@@ -246,7 +246,7 @@ int rxe_mem_init_fast(struct rxe_dev *rxe, struct rxe_pd *pd,
 	/* In fastreg, we also set the rkey */
 	mem->ibmr.rkey = mem->ibmr.lkey;
 
-	err = rxe_mem_alloc(rxe, mem, max_pages);
+	err = rxe_mem_alloc(mem, max_pages);
 	if (err)
 		goto err1;
 
@@ -367,11 +367,11 @@ int rxe_mem_copy(struct rxe_mem *mem, u64 iova, void *addr, int length,
 		dest = (dir == to_mem_obj) ?
 			((void *)(uintptr_t)iova) : addr;
 
+		memcpy(dest, src, length);
+
 		if (crcp)
 			*crcp = rxe_crc32(to_rdev(mem->pd->ibpd.device),
-					*crcp, src, length);
-
-		memcpy(dest, src, length);
+					*crcp, dest, length);
 
 		return 0;
 	}
@@ -401,11 +401,11 @@ int rxe_mem_copy(struct rxe_mem *mem, u64 iova, void *addr, int length,
 		if (bytes > length)
 			bytes = length;
 
+		memcpy(dest, src, bytes);
+
 		if (crcp)
 			crc = rxe_crc32(to_rdev(mem->pd->ibpd.device),
-					crc, src, bytes);
-
-		memcpy(dest, src, bytes);
+					crc, dest, bytes);
 
 		length	-= bytes;
 		addr	+= bytes;
@@ -434,7 +434,6 @@ err1:
  * under the control of a dma descriptor
  */
 int copy_data(
-	struct rxe_dev		*rxe,
 	struct rxe_pd		*pd,
 	int			access,
 	struct rxe_dma_info	*dma,

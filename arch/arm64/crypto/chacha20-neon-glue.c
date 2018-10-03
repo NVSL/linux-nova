@@ -1,7 +1,7 @@
 /*
  * ChaCha20 256-bit cipher algorithm, RFC7539, arm64 NEON functions
  *
- * Copyright (C) 2016 Linaro, Ltd. <ard.biesheuvel@linaro.org>
+ * Copyright (C) 2016 - 2017 Linaro, Ltd. <ard.biesheuvel@linaro.org>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -26,6 +26,7 @@
 
 #include <asm/hwcap.h>
 #include <asm/neon.h>
+#include <asm/simd.h>
 
 asmlinkage void chacha20_block_xor_neon(u32 *state, u8 *dst, const u8 *src);
 asmlinkage void chacha20_4block_xor_neon(u32 *state, u8 *dst, const u8 *src);
@@ -36,12 +37,19 @@ static void chacha20_doneon(u32 *state, u8 *dst, const u8 *src,
 	u8 buf[CHACHA20_BLOCK_SIZE];
 
 	while (bytes >= CHACHA20_BLOCK_SIZE * 4) {
+		kernel_neon_begin();
 		chacha20_4block_xor_neon(state, dst, src);
+		kernel_neon_end();
 		bytes -= CHACHA20_BLOCK_SIZE * 4;
 		src += CHACHA20_BLOCK_SIZE * 4;
 		dst += CHACHA20_BLOCK_SIZE * 4;
 		state[12] += 4;
 	}
+
+	if (!bytes)
+		return;
+
+	kernel_neon_begin();
 	while (bytes >= CHACHA20_BLOCK_SIZE) {
 		chacha20_block_xor_neon(state, dst, src);
 		bytes -= CHACHA20_BLOCK_SIZE;
@@ -54,6 +62,7 @@ static void chacha20_doneon(u32 *state, u8 *dst, const u8 *src,
 		chacha20_block_xor_neon(state, buf, buf);
 		memcpy(dst, buf, bytes);
 	}
+	kernel_neon_end();
 }
 
 static int chacha20_neon(struct skcipher_request *req)
@@ -64,14 +73,13 @@ static int chacha20_neon(struct skcipher_request *req)
 	u32 state[16];
 	int err;
 
-	if (req->cryptlen <= CHACHA20_BLOCK_SIZE)
+	if (!may_use_simd() || req->cryptlen <= CHACHA20_BLOCK_SIZE)
 		return crypto_chacha20_crypt(req);
 
-	err = skcipher_walk_virt(&walk, req, true);
+	err = skcipher_walk_virt(&walk, req, false);
 
 	crypto_chacha20_init(state, ctx, walk.iv);
 
-	kernel_neon_begin();
 	while (walk.nbytes > 0) {
 		unsigned int nbytes = walk.nbytes;
 
@@ -82,7 +90,6 @@ static int chacha20_neon(struct skcipher_request *req)
 				nbytes);
 		err = skcipher_walk_done(&walk, walk.nbytes - nbytes);
 	}
-	kernel_neon_end();
 
 	return err;
 }

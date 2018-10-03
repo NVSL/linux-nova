@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  *	SUCS NET3:
  *
@@ -71,12 +72,10 @@ static inline int connection_based(struct sock *sk)
 static int receiver_wake_function(wait_queue_entry_t *wait, unsigned int mode, int sync,
 				  void *key)
 {
-	unsigned long bits = (unsigned long)key;
-
 	/*
 	 * Avoid a wakeup if event not interesting for us
 	 */
-	if (bits && !(bits & (POLLIN | POLLERR)))
+	if (key && !(key_to_poll(key) & (EPOLLIN | EPOLLERR)))
 		return 0;
 	return autoremove_wake_function(wait, mode, sync, key);
 }
@@ -188,7 +187,7 @@ struct sk_buff *__skb_try_recv_from_queue(struct sock *sk,
 			}
 			if (!skb->len) {
 				skb = skb_set_peeked(skb);
-				if (unlikely(IS_ERR(skb))) {
+				if (IS_ERR(skb)) {
 					*err = PTR_ERR(skb);
 					return NULL;
 				}
@@ -579,6 +578,51 @@ fault:
 }
 EXPORT_SYMBOL(skb_copy_datagram_from_iter);
 
+int __zerocopy_sg_from_iter(struct sock *sk, struct sk_buff *skb,
+			    struct iov_iter *from, size_t length)
+{
+	int frag = skb_shinfo(skb)->nr_frags;
+
+	while (length && iov_iter_count(from)) {
+		struct page *pages[MAX_SKB_FRAGS];
+		size_t start;
+		ssize_t copied;
+		unsigned long truesize;
+		int n = 0;
+
+		if (frag == MAX_SKB_FRAGS)
+			return -EMSGSIZE;
+
+		copied = iov_iter_get_pages(from, pages, length,
+					    MAX_SKB_FRAGS - frag, &start);
+		if (copied < 0)
+			return -EFAULT;
+
+		iov_iter_advance(from, copied);
+		length -= copied;
+
+		truesize = PAGE_ALIGN(copied + start);
+		skb->data_len += copied;
+		skb->len += copied;
+		skb->truesize += truesize;
+		if (sk && sk->sk_type == SOCK_STREAM) {
+			sk->sk_wmem_queued += truesize;
+			sk_mem_charge(sk, truesize);
+		} else {
+			refcount_add(truesize, &skb->sk->sk_wmem_alloc);
+		}
+		while (copied) {
+			int size = min_t(int, copied, PAGE_SIZE - start);
+			skb_fill_page_desc(skb, frag++, pages[n], start, size);
+			start = 0;
+			copied -= size;
+			n++;
+		}
+	}
+	return 0;
+}
+EXPORT_SYMBOL(__zerocopy_sg_from_iter);
+
 /**
  *	zerocopy_sg_from_iter - Build a zerocopy datagram from an iov_iter
  *	@skb: buffer to copy
@@ -591,45 +635,13 @@ EXPORT_SYMBOL(skb_copy_datagram_from_iter);
  */
 int zerocopy_sg_from_iter(struct sk_buff *skb, struct iov_iter *from)
 {
-	int len = iov_iter_count(from);
-	int copy = min_t(int, skb_headlen(skb), len);
-	int frag = 0;
+	int copy = min_t(int, skb_headlen(skb), iov_iter_count(from));
 
 	/* copy up to skb headlen */
 	if (skb_copy_datagram_from_iter(skb, 0, from, copy))
 		return -EFAULT;
 
-	while (iov_iter_count(from)) {
-		struct page *pages[MAX_SKB_FRAGS];
-		size_t start;
-		ssize_t copied;
-		unsigned long truesize;
-		int n = 0;
-
-		if (frag == MAX_SKB_FRAGS)
-			return -EMSGSIZE;
-
-		copied = iov_iter_get_pages(from, pages, ~0U,
-					    MAX_SKB_FRAGS - frag, &start);
-		if (copied < 0)
-			return -EFAULT;
-
-		iov_iter_advance(from, copied);
-
-		truesize = PAGE_ALIGN(copied + start);
-		skb->data_len += copied;
-		skb->len += copied;
-		skb->truesize += truesize;
-		refcount_add(truesize, &skb->sk->sk_wmem_alloc);
-		while (copied) {
-			int size = min_t(int, copied, PAGE_SIZE - start);
-			skb_fill_page_desc(skb, frag++, pages[n], start, size);
-			start = 0;
-			copied -= size;
-			n++;
-		}
-	}
-	return 0;
+	return __zerocopy_sg_from_iter(NULL, skb, from, ~0U);
 }
 EXPORT_SYMBOL(zerocopy_sg_from_iter);
 
@@ -819,33 +831,33 @@ EXPORT_SYMBOL(skb_copy_and_csum_datagram_msg);
  *	and you use a different write policy from sock_writeable()
  *	then please supply your own write_space callback.
  */
-unsigned int datagram_poll(struct file *file, struct socket *sock,
+__poll_t datagram_poll(struct file *file, struct socket *sock,
 			   poll_table *wait)
 {
 	struct sock *sk = sock->sk;
-	unsigned int mask;
+	__poll_t mask;
 
 	sock_poll_wait(file, sk_sleep(sk), wait);
 	mask = 0;
 
 	/* exceptional events? */
 	if (sk->sk_err || !skb_queue_empty(&sk->sk_error_queue))
-		mask |= POLLERR |
-			(sock_flag(sk, SOCK_SELECT_ERR_QUEUE) ? POLLPRI : 0);
+		mask |= EPOLLERR |
+			(sock_flag(sk, SOCK_SELECT_ERR_QUEUE) ? EPOLLPRI : 0);
 
 	if (sk->sk_shutdown & RCV_SHUTDOWN)
-		mask |= POLLRDHUP | POLLIN | POLLRDNORM;
+		mask |= EPOLLRDHUP | EPOLLIN | EPOLLRDNORM;
 	if (sk->sk_shutdown == SHUTDOWN_MASK)
-		mask |= POLLHUP;
+		mask |= EPOLLHUP;
 
 	/* readable? */
 	if (!skb_queue_empty(&sk->sk_receive_queue))
-		mask |= POLLIN | POLLRDNORM;
+		mask |= EPOLLIN | EPOLLRDNORM;
 
 	/* Connection-based need to check for termination and startup */
 	if (connection_based(sk)) {
 		if (sk->sk_state == TCP_CLOSE)
-			mask |= POLLHUP;
+			mask |= EPOLLHUP;
 		/* connection hasn't started yet? */
 		if (sk->sk_state == TCP_SYN_SENT)
 			return mask;
@@ -853,7 +865,7 @@ unsigned int datagram_poll(struct file *file, struct socket *sock,
 
 	/* writable? */
 	if (sock_writeable(sk))
-		mask |= POLLOUT | POLLWRNORM | POLLWRBAND;
+		mask |= EPOLLOUT | EPOLLWRNORM | EPOLLWRBAND;
 	else
 		sk_set_bit(SOCKWQ_ASYNC_NOSPACE, sk);
 

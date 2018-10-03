@@ -303,8 +303,8 @@ static void __init init_one_iic(unsigned int hw_cpu, unsigned long addr,
 	iic->node = of_node_get(node);
 	out_be64(&iic->regs->prio, 0);
 
-	printk(KERN_INFO "IIC for CPU %d target id 0x%x : %s\n",
-	       hw_cpu, iic->target_id, node->full_name);
+	printk(KERN_INFO "IIC for CPU %d target id 0x%x : %pOF\n",
+	       hw_cpu, iic->target_id, node);
 }
 
 static int __init setup_iic(void)
@@ -315,8 +315,7 @@ static int __init setup_iic(void)
 	struct cbe_iic_regs __iomem *node_iic;
 	const u32 *np;
 
-	for (dn = NULL;
-	     (dn = of_find_node_by_name(dn,"interrupt-controller")) != NULL;) {
+	for_each_node_by_name(dn, "interrupt-controller") {
 		if (!of_device_is_compatible(dn,
 				     "IBM,CBEA-Internal-Interrupt-Controller"))
 			continue;

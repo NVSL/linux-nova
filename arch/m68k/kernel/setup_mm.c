@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  *  linux/arch/m68k/kernel/setup.c
  *
@@ -104,10 +105,6 @@ EXPORT_SYMBOL(mach_heartbeat);
 #endif
 #ifdef CONFIG_M68K_L2_CACHE
 void (*mach_l2_flush) (int);
-#endif
-#if IS_ENABLED(CONFIG_INPUT_M68K_BEEP)
-void (*mach_beep)(unsigned int, unsigned int);
-EXPORT_SYMBOL(mach_beep);
 #endif
 #if defined(CONFIG_ISA) && defined(MULTI_ISA)
 int isa_type;
@@ -343,6 +340,8 @@ void __init setup_arch(char **cmdline_p)
 #ifdef CONFIG_COLDFIRE
 	case MACH_M54XX:
 	case MACH_M5441X:
+		cf_bootmem_alloc();
+		cf_mmu_context_init();
 		config_BSP(NULL, 0);
 		break;
 #endif
@@ -528,21 +527,9 @@ static int hardware_proc_show(struct seq_file *m, void *v)
 	return 0;
 }
 
-static int hardware_proc_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, hardware_proc_show, NULL);
-}
-
-static const struct file_operations hardware_proc_fops = {
-	.open		= hardware_proc_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= single_release,
-};
-
 static int __init proc_hardware_init(void)
 {
-	proc_create("hardware", 0, NULL, &hardware_proc_fops);
+	proc_create_single("hardware", 0, NULL, hardware_proc_show);
 	return 0;
 }
 module_init(proc_hardware_init);

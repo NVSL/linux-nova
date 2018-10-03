@@ -538,4 +538,9 @@ struct dpni_rsp_get_taildrop {
 	__le32 threshold;
 };
 
+struct dpni_rsp_get_api_version {
+	__le16 major;
+	__le16 minor;
+};
+
 #endif /* _FSL_DPNI_CMD_H */

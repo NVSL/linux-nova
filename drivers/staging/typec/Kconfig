@@ -1,13 +1,5 @@
 menu "USB Power Delivery and Type-C drivers"
 
-config TYPEC_TCPM
-	tristate "USB Type-C Port Controller Manager"
-	depends on USB
-	select TYPEC
-	help
-	  The Type-C Port Controller Manager provides a USB PD and USB Type-C
-	  state machine for use with Type-C Port Controllers.
-
 if TYPEC_TCPM
 
 config TYPEC_TCPCI
@@ -17,7 +9,14 @@ config TYPEC_TCPCI
 	help
 	  Type-C Port Controller driver for TCPCI-compliant controller.
 
-source "drivers/staging/typec/fusb302/Kconfig"
+config TYPEC_RT1711H
+	tristate "Richtek RT1711H Type-C chip driver"
+	depends on I2C
+	select TYPEC_TCPCI
+	help
+	  Richtek RT1711H Type-C chip driver that works with
+	  Type-C Port Controller Manager to provide USB PD and USB
+	  Type-C functionalities.
 
 endif
 

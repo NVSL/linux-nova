@@ -16,10 +16,14 @@ Media Bus Formats
 
     * - __u32
       - ``width``
-      - Image width, in pixels.
+      - Image width in pixels.
     * - __u32
       - ``height``
-      - Image height, in pixels.
+      - Image height in pixels. If ``field`` is one of ``V4L2_FIELD_TOP``,
+	``V4L2_FIELD_BOTTOM`` or ``V4L2_FIELD_ALTERNATE`` then height
+	refers to the number of lines in the field, otherwise it refers to
+	the number of lines in the frame (which is twice the field height
+	for interlaced formats).
     * - __u32
       - ``code``
       - Format code, from enum
@@ -1586,7 +1590,7 @@ JEIDA defined bit mapping will be named
 
 .. raw:: latex
 
-    \begin{adjustbox}{width=\columnwidth}
+    \tiny
 
 .. _v4l2-mbus-pixelcode-rgb-lvds:
 
@@ -1784,7 +1788,7 @@ JEIDA defined bit mapping will be named
 
 .. raw:: latex
 
-    \end{adjustbox}\newline\newline
+    \normalsize
 
 
 Bayer Formats
@@ -7321,11 +7325,14 @@ following information.
 
 The following table lists existing HSV/HSL formats.
 
+
 .. raw:: latex
 
-    \newline\newline\begin{adjustbox}{width=\columnwidth}
+    \begingroup
+    \tiny
+    \setlength{\tabcolsep}{2pt}
 
-.. tabularcolumns:: |p{6.2cm}|p{1.6cm}|p{0.7cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|
+.. tabularcolumns:: |p{3.0cm}|p{0.60cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|
 
 .. _v4l2-mbus-pixelcode-hsv:
 
@@ -7413,7 +7420,7 @@ The following table lists existing HSV/HSL formats.
 
 .. raw:: latex
 
-    \end{adjustbox}\newline\newline
+    \normalsize
 
 
 JPEG Compressed Formats
@@ -7435,7 +7442,7 @@ The following table lists existing JPEG compressed formats.
 
 .. _v4l2-mbus-pixelcode-jpeg:
 
-.. tabularcolumns:: |p{5.6cm}|p{1.2cm}|p{10.7cm}|
+.. tabularcolumns:: |p{5.4cm}|p{1.4cm}|p{10.7cm}|
 
 .. flat-table:: JPEG Formats
     :header-rows:  1
@@ -7468,7 +7475,7 @@ formats.
 
 .. _v4l2-mbus-pixelcode-vendor-specific:
 
-.. tabularcolumns:: |p{6.6cm}|p{1.2cm}|p{9.7cm}|
+.. tabularcolumns:: |p{6.8cm}|p{1.4cm}|p{9.3cm}|
 
 .. flat-table:: Vendor and device specific formats
     :header-rows:  1

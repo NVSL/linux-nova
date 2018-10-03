@@ -119,12 +119,15 @@ enum ieee80211_sta_info_flags {
 #define HT_AGG_STATE_START_CB		6
 #define HT_AGG_STATE_STOP_CB		7
 
+DECLARE_EWMA(avg_signal, 10, 8)
 enum ieee80211_agg_stop_reason {
 	AGG_STOP_DECLINED,
 	AGG_STOP_LOCAL_REQUEST,
 	AGG_STOP_PEER_REQUEST,
 	AGG_STOP_DESTROY_STA,
 };
+
+struct sta_info;
 
 /**
  * struct tid_ampdu_tx - TID aggregation information (Tx).
@@ -133,8 +136,10 @@ enum ieee80211_agg_stop_reason {
  * @session_timer: check if we keep Tx-ing on the TID (by timeout value)
  * @addba_resp_timer: timer for peer's response to addba request
  * @pending: pending frames queue -- use sta's spinlock to protect
+ * @sta: station we are attached to
  * @dialog_token: dialog token for aggregation session
  * @timeout: session timeout value to be filled in ADDBA requests
+ * @tid: TID number
  * @state: session state (see above)
  * @last_tx: jiffies of last tx activity
  * @stop_initiator: initiator of a session stop
@@ -158,6 +163,7 @@ struct tid_ampdu_tx {
 	struct timer_list session_timer;
 	struct timer_list addba_resp_timer;
 	struct sk_buff_head pending;
+	struct sta_info *sta;
 	unsigned long state;
 	unsigned long last_tx;
 	u16 timeout;
@@ -169,6 +175,7 @@ struct tid_ampdu_tx {
 	u16 failed_bar_ssn;
 	bool bar_pending;
 	bool amsdu;
+	u8 tid;
 };
 
 /**
@@ -181,12 +188,14 @@ struct tid_ampdu_tx {
  * @reorder_time: jiffies when skb was added
  * @session_timer: check if peer keeps Tx-ing on the TID (by timeout value)
  * @reorder_timer: releases expired frames from the reorder buffer.
+ * @sta: station we are attached to
  * @last_rx: jiffies of last rx activity
  * @head_seq_num: head sequence number in reordering buffer.
  * @stored_mpdu_num: number of MPDUs in reordering buffer
  * @ssn: Starting Sequence Number expected to be aggregated.
  * @buf_size: buffer size for incoming A-MPDUs
  * @timeout: reset timer value (in TUs).
+ * @tid: TID number
  * @rcu_head: RCU head used for freeing this struct
  * @reorder_lock: serializes access to reorder buffer, see below.
  * @auto_seq: used for offloaded BA sessions to automatically pick head_seq_and
@@ -208,6 +217,7 @@ struct tid_ampdu_rx {
 	u64 reorder_buf_filtered;
 	struct sk_buff_head *reorder_buf;
 	unsigned long *reorder_time;
+	struct sta_info *sta;
 	struct timer_list session_timer;
 	struct timer_list reorder_timer;
 	unsigned long last_rx;
@@ -216,6 +226,7 @@ struct tid_ampdu_rx {
 	u16 ssn;
 	u16 buf_size;
 	u16 timeout;
+	u8 tid;
 	u8 auto_seq:1,
 	   removed:1,
 	   started:1;
@@ -344,6 +355,7 @@ DECLARE_EWMA(mesh_fail_avg, 20, 8)
  * @plink_state: peer link state
  * @plink_timeout: timeout of peer link
  * @plink_timer: peer link watch timer
+ * @plink_sta: peer link watch timer's sta_info
  * @t_offset: timing offset relative to this host
  * @t_offset_setpoint: reference timing offset of this sta to be used when
  * 	calculating clockdrift
@@ -356,6 +368,7 @@ DECLARE_EWMA(mesh_fail_avg, 20, 8)
  */
 struct mesh_sta {
 	struct timer_list plink_timer;
+	struct sta_info *plink_sta;
 
 	s64 t_offset;
 	s64 t_offset_setpoint;
@@ -398,7 +411,7 @@ struct ieee80211_sta_rx_stats {
 	u64 msdu[IEEE80211_NUM_TIDS + 1];
 };
 
-/**
+/*
  * The bandwidth threshold below which the per-station CoDel parameters will be
  * scaled to be more lenient (to prevent starvation of slow stations). This
  * value will be scaled by the number of active stations when it is being
@@ -445,7 +458,6 @@ struct ieee80211_sta_rx_stats {
  *	plus one for non-QoS frames)
  * @tid_seq: per-TID sequence numbers for sending to this STA
  * @ampdu_mlme: A-MPDU state machine state
- * @timer_to_tid: identity mapping to ID timers
  * @mesh: mesh STA information
  * @debugfs_dir: debug filesystem directory dentry
  * @dead: set to true when sta is unlinked
@@ -537,6 +549,9 @@ struct sta_info {
 		u64 msdu_retries[IEEE80211_NUM_TIDS + 1];
 		u64 msdu_failed[IEEE80211_NUM_TIDS + 1];
 		unsigned long last_ack;
+		s8 last_ack_signal;
+		bool ack_signal_filled;
+		struct ewma_avg_signal avg_ack_signal;
 	} status_stats;
 
 	/* Updated from TX path only, no locking requirements */
@@ -552,7 +567,6 @@ struct sta_info {
 	 * Aggregation information, locked with lock.
 	 */
 	struct sta_ampdu_mlme ampdu_mlme;
-	u8 timer_to_tid[IEEE80211_NUM_TIDS];
 
 #ifdef CONFIG_MAC80211_DEBUGFS
 	struct dentry *debugfs_dir;
@@ -730,7 +744,8 @@ static inline int sta_info_flush(struct ieee80211_sub_if_data *sdata)
 void sta_set_rate_info_tx(struct sta_info *sta,
 			  const struct ieee80211_tx_rate *rate,
 			  struct rate_info *rinfo);
-void sta_set_sinfo(struct sta_info *sta, struct station_info *sinfo);
+void sta_set_sinfo(struct sta_info *sta, struct station_info *sinfo,
+		   bool tidstats);
 
 u32 sta_get_expected_throughput(struct sta_info *sta);
 

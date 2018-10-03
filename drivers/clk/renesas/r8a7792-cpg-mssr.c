@@ -53,7 +53,6 @@ static const struct cpg_core_clk r8a7792_core_clks[] __initconst = {
 	DEF_FIXED(".pll1_div2", CLK_PLL1_DIV2, CLK_PLL1, 2, 1),
 
 	/* Core Clock Outputs */
-	DEF_BASE("lb",   R8A7792_CLK_LB,   CLK_TYPE_GEN2_LB,   CLK_PLL1),
 	DEF_BASE("qspi", R8A7792_CLK_QSPI, CLK_TYPE_GEN2_QSPI, CLK_PLL1_DIV2),
 
 	DEF_FIXED("z",      R8A7792_CLK_Z,     CLK_PLL0,          1, 1),
@@ -63,6 +62,7 @@ static const struct cpg_core_clk r8a7792_core_clks[] __initconst = {
 	DEF_FIXED("hp",     R8A7792_CLK_HP,    CLK_PLL1,         12, 1),
 	DEF_FIXED("i",      R8A7792_CLK_I,     CLK_PLL1,          3, 1),
 	DEF_FIXED("b",      R8A7792_CLK_B,     CLK_PLL1,         12, 1),
+	DEF_FIXED("lb",     R8A7792_CLK_LB,    CLK_PLL1,         24, 1),
 	DEF_FIXED("p",      R8A7792_CLK_P,     CLK_PLL1,         24, 1),
 	DEF_FIXED("cl",     R8A7792_CLK_CL,    CLK_PLL1,         48, 1),
 	DEF_FIXED("m2",     R8A7792_CLK_M2,    CLK_PLL1,          8, 1),
@@ -98,6 +98,7 @@ static const struct mssr_mod_clk r8a7792_mod_clks[] __initconst = {
 	DEF_MOD("tpu0",			 304,	R8A7792_CLK_CP),
 	DEF_MOD("sdhi0",		 314,	R8A7792_CLK_SD),
 	DEF_MOD("cmt1",			 329,	R8A7792_CLK_R),
+	DEF_MOD("rwdt",			 402,	R8A7792_CLK_R),
 	DEF_MOD("irqc",			 407,	R8A7792_CLK_CP),
 	DEF_MOD("intc-sys",		 408,	R8A7792_CLK_ZS),
 	DEF_MOD("audio-dmac0",		 502,	R8A7792_CLK_HP),
@@ -118,6 +119,13 @@ static const struct mssr_mod_clk r8a7792_mod_clks[] __initconst = {
 	DEF_MOD("vin1",			 810,	R8A7792_CLK_ZG),
 	DEF_MOD("vin0",			 811,	R8A7792_CLK_ZG),
 	DEF_MOD("etheravb",		 812,	R8A7792_CLK_HP),
+	DEF_MOD("imr-lx3",		 821,	R8A7792_CLK_ZG),
+	DEF_MOD("imr-lsx3-1",		 822,	R8A7792_CLK_ZG),
+	DEF_MOD("imr-lsx3-0",		 823,	R8A7792_CLK_ZG),
+	DEF_MOD("imr-lsx3-5",		 825,	R8A7792_CLK_ZG),
+	DEF_MOD("imr-lsx3-4",		 826,	R8A7792_CLK_ZG),
+	DEF_MOD("imr-lsx3-3",		 827,	R8A7792_CLK_ZG),
+	DEF_MOD("imr-lsx3-2",		 828,	R8A7792_CLK_ZG),
 	DEF_MOD("gyro-adc",		 901,	R8A7792_CLK_P),
 	DEF_MOD("gpio7",		 904,	R8A7792_CLK_CP),
 	DEF_MOD("gpio6",		 905,	R8A7792_CLK_CP),
@@ -147,6 +155,7 @@ static const struct mssr_mod_clk r8a7792_mod_clks[] __initconst = {
 };
 
 static const unsigned int r8a7792_crit_mod_clks[] __initconst = {
+	MOD_CLK_ID(402),	/* RWDT */
 	MOD_CLK_ID(408),	/* INTC-SYS (GIC) */
 };
 

@@ -51,6 +51,7 @@
 #include <linux/kthread.h>
 #include <linux/tick.h>
 #include <linux/rcupdate_wait.h>
+#include <linux/sched/isolation.h>
 
 #define CREATE_TRACE_POINTS
 
@@ -225,54 +226,6 @@ core_initcall(rcu_set_runtime_mode);
 
 #endif /* #if !defined(CONFIG_TINY_RCU) || defined(CONFIG_SRCU) */
 
-#ifdef CONFIG_PREEMPT_RCU
-
-/*
- * Preemptible RCU implementation for rcu_read_lock().
- * Just increment ->rcu_read_lock_nesting, shared state will be updated
- * if we block.
- */
-void __rcu_read_lock(void)
-{
-	current->rcu_read_lock_nesting++;
-	barrier();  /* critical section after entry code. */
-}
-EXPORT_SYMBOL_GPL(__rcu_read_lock);
-
-/*
- * Preemptible RCU implementation for rcu_read_unlock().
- * Decrement ->rcu_read_lock_nesting.  If the result is zero (outermost
- * rcu_read_unlock()) and ->rcu_read_unlock_special is non-zero, then
- * invoke rcu_read_unlock_special() to clean up after a context switch
- * in an RCU read-side critical section and other special cases.
- */
-void __rcu_read_unlock(void)
-{
-	struct task_struct *t = current;
-
-	if (t->rcu_read_lock_nesting != 1) {
-		--t->rcu_read_lock_nesting;
-	} else {
-		barrier();  /* critical section before exit code. */
-		t->rcu_read_lock_nesting = INT_MIN;
-		barrier();  /* assign before ->rcu_read_unlock_special load */
-		if (unlikely(READ_ONCE(t->rcu_read_unlock_special.s)))
-			rcu_read_unlock_special(t);
-		barrier();  /* ->rcu_read_unlock_special load before assign */
-		t->rcu_read_lock_nesting = 0;
-	}
-#ifdef CONFIG_PROVE_LOCKING
-	{
-		int rrln = READ_ONCE(t->rcu_read_lock_nesting);
-
-		WARN_ON_ONCE(rrln < 0 && rrln > INT_MIN / 2);
-	}
-#endif /* #ifdef CONFIG_PROVE_LOCKING */
-}
-EXPORT_SYMBOL_GPL(__rcu_read_unlock);
-
-#endif /* #ifdef CONFIG_PREEMPT_RCU */
-
 #ifdef CONFIG_DEBUG_LOCK_ALLOC
 static struct lock_class_key rcu_lock_key;
 struct lockdep_map rcu_lock_map =
@@ -421,11 +374,13 @@ void init_rcu_head(struct rcu_head *head)
 {
 	debug_object_init(head, &rcuhead_debug_descr);
 }
+EXPORT_SYMBOL_GPL(init_rcu_head);
 
 void destroy_rcu_head(struct rcu_head *head)
 {
 	debug_object_free(head, &rcuhead_debug_descr);
 }
+EXPORT_SYMBOL_GPL(destroy_rcu_head);
 
 static bool rcuhead_is_static_object(void *addr)
 {
@@ -494,6 +449,7 @@ EXPORT_SYMBOL_GPL(do_trace_rcu_torture_read);
 #endif
 
 int rcu_cpu_stall_suppress __read_mostly; /* 1 = suppress stall warnings. */
+EXPORT_SYMBOL_GPL(rcu_cpu_stall_suppress);
 static int rcu_cpu_stall_timeout __read_mostly = CONFIG_RCU_CPU_STALL_TIMEOUT;
 
 module_param(rcu_cpu_stall_suppress, int, 0644);
@@ -568,14 +524,13 @@ static DECLARE_WAIT_QUEUE_HEAD(rcu_tasks_cbs_wq);
 static DEFINE_RAW_SPINLOCK(rcu_tasks_cbs_lock);
 
 /* Track exiting tasks in order to allow them to be waited for. */
-DEFINE_SRCU(tasks_rcu_exit_srcu);
+DEFINE_STATIC_SRCU(tasks_rcu_exit_srcu);
 
 /* Control stall timeouts.  Disable with <= 0, otherwise jiffies till stall. */
 #define RCU_TASK_STALL_TIMEOUT (HZ * 60 * 10)
 static int rcu_task_stall_timeout __read_mostly = RCU_TASK_STALL_TIMEOUT;
 module_param(rcu_task_stall_timeout, int, 0644);
 
-static void rcu_spawn_tasks_kthread(void);
 static struct task_struct *rcu_tasks_kthread_ptr;
 
 /**
@@ -600,7 +555,6 @@ void call_rcu_tasks(struct rcu_head *rhp, rcu_callback_t func)
 {
 	unsigned long flags;
 	bool needwake;
-	bool havetask = READ_ONCE(rcu_tasks_kthread_ptr);
 
 	rhp->next = NULL;
 	rhp->func = func;
@@ -610,11 +564,8 @@ void call_rcu_tasks(struct rcu_head *rhp, rcu_callback_t func)
 	rcu_tasks_cbs_tail = &rhp->next;
 	raw_spin_unlock_irqrestore(&rcu_tasks_cbs_lock, flags);
 	/* We can't create the thread unless interrupts are enabled. */
-	if ((needwake && havetask) ||
-	    (!havetask && !irqs_disabled_flags(flags))) {
-		rcu_spawn_tasks_kthread();
+	if (needwake && READ_ONCE(rcu_tasks_kthread_ptr))
 		wake_up(&rcu_tasks_cbs_wq);
-	}
 }
 EXPORT_SYMBOL_GPL(call_rcu_tasks);
 
@@ -625,7 +576,7 @@ EXPORT_SYMBOL_GPL(call_rcu_tasks);
  * grace period has elapsed, in other words after all currently
  * executing rcu-tasks read-side critical sections have elapsed.  These
  * read-side critical sections are delimited by calls to schedule(),
- * cond_resched_rcu_qs(), idle execution, userspace execution, calls
+ * cond_resched_tasks_rcu_qs(), idle execution, userspace execution, calls
  * to synchronize_rcu_tasks(), and (in theory, anyway) cond_resched().
  *
  * This is a very specialized primitive, intended only for a few uses in
@@ -718,7 +669,7 @@ static int __noreturn rcu_tasks_kthread(void *arg)
 	LIST_HEAD(rcu_tasks_holdouts);
 
 	/* Run on housekeeping CPUs by default.  Sysadm can move if desired. */
-	housekeeping_affine(current);
+	housekeeping_affine(current, HK_FLAG_RCU);
 
 	/*
 	 * Each pass through the following loop makes one check for
@@ -853,26 +804,33 @@ static int __noreturn rcu_tasks_kthread(void *arg)
 	}
 }
 
-/* Spawn rcu_tasks_kthread() at first call to call_rcu_tasks(). */
-static void rcu_spawn_tasks_kthread(void)
+/* Spawn rcu_tasks_kthread() at core_initcall() time. */
+static int __init rcu_spawn_tasks_kthread(void)
 {
-	static DEFINE_MUTEX(rcu_tasks_kthread_mutex);
 	struct task_struct *t;
 
-	if (READ_ONCE(rcu_tasks_kthread_ptr)) {
-		smp_mb(); /* Ensure caller sees full kthread. */
-		return;
-	}
-	mutex_lock(&rcu_tasks_kthread_mutex);
-	if (rcu_tasks_kthread_ptr) {
-		mutex_unlock(&rcu_tasks_kthread_mutex);
-		return;
-	}
 	t = kthread_run(rcu_tasks_kthread, NULL, "rcu_tasks_kthread");
 	BUG_ON(IS_ERR(t));
 	smp_mb(); /* Ensure others see full kthread. */
 	WRITE_ONCE(rcu_tasks_kthread_ptr, t);
-	mutex_unlock(&rcu_tasks_kthread_mutex);
+	return 0;
+}
+core_initcall(rcu_spawn_tasks_kthread);
+
+/* Do the srcu_read_lock() for the above synchronize_srcu().  */
+void exit_tasks_rcu_start(void)
+{
+	preempt_disable();
+	current->rcu_tasks_idx = __srcu_read_lock(&tasks_rcu_exit_srcu);
+	preempt_enable();
+}
+
+/* Do the srcu_read_unlock() for the above synchronize_srcu().  */
+void exit_tasks_rcu_finish(void)
+{
+	preempt_disable();
+	__srcu_read_unlock(&tasks_rcu_exit_srcu, current->rcu_tasks_idx);
+	preempt_enable();
 }
 
 #endif /* #ifdef CONFIG_TASKS_RCU */

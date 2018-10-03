@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __PERF_HIST_H
 #define __PERF_HIST_H
 
@@ -47,6 +48,7 @@ enum hist_column {
 	HISTC_GLOBAL_WEIGHT,
 	HISTC_MEM_DADDR_SYMBOL,
 	HISTC_MEM_DADDR_DSO,
+	HISTC_MEM_PHYS_DADDR,
 	HISTC_MEM_LOCKED,
 	HISTC_MEM_TLB,
 	HISTC_MEM_LVL,
@@ -59,6 +61,7 @@ enum hist_column {
 	HISTC_SRCLINE_TO,
 	HISTC_TRACE,
 	HISTC_SYM_SIZE,
+	HISTC_DSO_SIZE,
 	HISTC_NR_COLS, /* Last entry */
 };
 
@@ -82,6 +85,7 @@ struct hists {
 	struct events_stats	stats;
 	u64			event_stream;
 	u16			col_len[HISTC_NR_COLS];
+	bool			has_callchains;
 	int			socket_filter;
 	struct perf_hpp_list	*hpp_list;
 	struct list_head	hpp_formats;
@@ -105,7 +109,6 @@ struct hist_entry_iter {
 	int curr;
 
 	bool hide_unresolved;
-	int max_stack;
 
 	struct perf_evsel *evsel;
 	struct perf_sample *sample;
@@ -216,6 +219,11 @@ static inline struct hists *evsel__hists(struct perf_evsel *evsel)
 {
 	struct hists_evsel *hevsel = (struct hists_evsel *)evsel;
 	return &hevsel->hists;
+}
+
+static __pure inline bool hists__has_callchains(struct hists *hists)
+{
+	return hists->has_callchains;
 }
 
 int hists__init(void);
@@ -417,18 +425,24 @@ struct hist_browser_timer {
 	int refresh;
 };
 
+struct annotation_options;
+
 #ifdef HAVE_SLANG_SUPPORT
 #include "../ui/keysyms.h"
 int map_symbol__tui_annotate(struct map_symbol *ms, struct perf_evsel *evsel,
-			     struct hist_browser_timer *hbt);
+			     struct hist_browser_timer *hbt,
+			     struct annotation_options *annotation_opts);
 
 int hist_entry__tui_annotate(struct hist_entry *he, struct perf_evsel *evsel,
-			     struct hist_browser_timer *hbt);
+			     struct hist_browser_timer *hbt,
+			     struct annotation_options *annotation_opts);
 
 int perf_evlist__tui_browse_hists(struct perf_evlist *evlist, const char *help,
 				  struct hist_browser_timer *hbt,
 				  float min_pcnt,
-				  struct perf_env *env);
+				  struct perf_env *env,
+				  bool warn_lost_event,
+				  struct annotation_options *annotation_options);
 int script_browse(const char *script_opt);
 #else
 static inline
@@ -436,20 +450,24 @@ int perf_evlist__tui_browse_hists(struct perf_evlist *evlist __maybe_unused,
 				  const char *help __maybe_unused,
 				  struct hist_browser_timer *hbt __maybe_unused,
 				  float min_pcnt __maybe_unused,
-				  struct perf_env *env __maybe_unused)
+				  struct perf_env *env __maybe_unused,
+				  bool warn_lost_event __maybe_unused,
+				  struct annotation_options *annotation_options __maybe_unused)
 {
 	return 0;
 }
 static inline int map_symbol__tui_annotate(struct map_symbol *ms __maybe_unused,
 					   struct perf_evsel *evsel __maybe_unused,
-					   struct hist_browser_timer *hbt __maybe_unused)
+					   struct hist_browser_timer *hbt __maybe_unused,
+					   struct annotation_options *annotation_options __maybe_unused)
 {
 	return 0;
 }
 
 static inline int hist_entry__tui_annotate(struct hist_entry *he __maybe_unused,
 					   struct perf_evsel *evsel __maybe_unused,
-					   struct hist_browser_timer *hbt __maybe_unused)
+					   struct hist_browser_timer *hbt __maybe_unused,
+					   struct annotation_options *annotation_opts __maybe_unused)
 {
 	return 0;
 }
@@ -500,5 +518,11 @@ int __hpp__slsmg_color_printf(struct perf_hpp *hpp, const char *fmt, ...);
 int __hist_entry__snprintf(struct hist_entry *he, struct perf_hpp *hpp,
 			   struct perf_hpp_list *hpp_list);
 int hists__fprintf_headers(struct hists *hists, FILE *fp);
+int __hists__scnprintf_title(struct hists *hists, char *bf, size_t size, bool show_freq);
+
+static inline int hists__scnprintf_title(struct hists *hists, char *bf, size_t size)
+{
+	return __hists__scnprintf_title(hists, bf, size, true);
+}
 
 #endif	/* __PERF_HIST_H */

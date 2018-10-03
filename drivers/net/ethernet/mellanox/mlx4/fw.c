@@ -36,6 +36,8 @@
 #include <linux/mlx4/cmd.h>
 #include <linux/module.h>
 #include <linux/cache.h>
+#include <linux/kernel.h>
+#include <uapi/rdma/mlx4-abi.h>
 
 #include "fw.h"
 #include "icm.h"
@@ -56,12 +58,12 @@ MODULE_PARM_DESC(enable_qos, "Enable Enhanced QoS support (default: off)");
 #define MLX4_GET(dest, source, offset)				      \
 	do {							      \
 		void *__p = (char *) (source) + (offset);	      \
-		u64 val;                                              \
-		switch (sizeof (dest)) {			      \
+		__be64 val;                                           \
+		switch (sizeof(dest)) {				      \
 		case 1: (dest) = *(u8 *) __p;	    break;	      \
 		case 2: (dest) = be16_to_cpup(__p); break;	      \
 		case 4: (dest) = be32_to_cpup(__p); break;	      \
-		case 8: val = get_unaligned((u64 *)__p);              \
+		case 8: val = get_unaligned((__be64 *)__p);           \
 			(dest) = be64_to_cpu(val);  break;            \
 		default: __buggy_use_of_MLX4_GET();		      \
 		}						      \
@@ -162,6 +164,8 @@ static void dump_dev_cap_flags2(struct mlx4_dev *dev, u64 flags)
 		[35] = "Diag counters per port",
 		[36] = "QinQ VST mode support",
 		[37] = "sl to vl mapping table change event support",
+		[38] = "user MAC support",
+		[39] = "Report driver version to FW support",
 	};
 	int i;
 
@@ -679,22 +683,22 @@ int mlx4_QUERY_FUNC_CAP(struct mlx4_dev *dev, u8 gen_or_port,
 
 	if (func_cap->flags1 & QUERY_FUNC_CAP_VF_ENABLE_QP0) {
 		MLX4_GET(qkey, outbox, QUERY_FUNC_CAP_PRIV_VF_QKEY_OFFSET);
-		func_cap->qp0_qkey = qkey;
+		func_cap->spec_qps.qp0_qkey = qkey;
 	} else {
-		func_cap->qp0_qkey = 0;
+		func_cap->spec_qps.qp0_qkey = 0;
 	}
 
 	MLX4_GET(size, outbox, QUERY_FUNC_CAP_QP0_TUNNEL);
-	func_cap->qp0_tunnel_qpn = size & 0xFFFFFF;
+	func_cap->spec_qps.qp0_tunnel = size & 0xFFFFFF;
 
 	MLX4_GET(size, outbox, QUERY_FUNC_CAP_QP0_PROXY);
-	func_cap->qp0_proxy_qpn = size & 0xFFFFFF;
+	func_cap->spec_qps.qp0_proxy = size & 0xFFFFFF;
 
 	MLX4_GET(size, outbox, QUERY_FUNC_CAP_QP1_TUNNEL);
-	func_cap->qp1_tunnel_qpn = size & 0xFFFFFF;
+	func_cap->spec_qps.qp1_tunnel = size & 0xFFFFFF;
 
 	MLX4_GET(size, outbox, QUERY_FUNC_CAP_QP1_PROXY);
-	func_cap->qp1_proxy_qpn = size & 0xFFFFFF;
+	func_cap->spec_qps.qp1_proxy = size & 0xFFFFFF;
 
 	if (func_cap->flags1 & QUERY_FUNC_CAP_FLAGS1_NIC_INFO)
 		MLX4_GET(func_cap->phys_port_id, outbox,
@@ -778,6 +782,7 @@ int mlx4_QUERY_DEV_CAP(struct mlx4_dev *dev, struct mlx4_dev_cap *dev_cap)
 #define QUERY_DEV_CAP_MAX_DESC_SZ_SQ_OFFSET	0x52
 #define QUERY_DEV_CAP_MAX_SG_RQ_OFFSET		0x55
 #define QUERY_DEV_CAP_MAX_DESC_SZ_RQ_OFFSET	0x56
+#define QUERY_DEV_CAP_USER_MAC_EN_OFFSET	0x5C
 #define QUERY_DEV_CAP_SVLAN_BY_QP_OFFSET	0x5D
 #define QUERY_DEV_CAP_MAX_QP_MCG_OFFSET		0x61
 #define QUERY_DEV_CAP_RSVD_MCG_OFFSET		0x62
@@ -949,6 +954,9 @@ int mlx4_QUERY_DEV_CAP(struct mlx4_dev *dev, struct mlx4_dev_cap *dev_cap)
 	MLX4_GET(size, outbox, QUERY_DEV_CAP_MAX_DESC_SZ_SQ_OFFSET);
 	dev_cap->max_sq_desc_sz = size;
 
+	MLX4_GET(field, outbox, QUERY_DEV_CAP_USER_MAC_EN_OFFSET);
+	if (field & (1 << 2))
+		dev_cap->flags2 |= MLX4_DEV_CAP_FLAG2_USER_MAC_EN;
 	MLX4_GET(field, outbox, QUERY_DEV_CAP_SVLAN_BY_QP_OFFSET);
 	if (field & 0x1)
 		dev_cap->flags2 |= MLX4_DEV_CAP_FLAG2_SVLAN_BY_QP;
@@ -1031,6 +1039,8 @@ int mlx4_QUERY_DEV_CAP(struct mlx4_dev *dev, struct mlx4_dev_cap *dev_cap)
 		dev_cap->flags2 |= MLX4_DEV_CAP_FLAG2_ETH_BACKPL_AN_REP;
 	if (field32 & (1 << 7))
 		dev_cap->flags2 |= MLX4_DEV_CAP_FLAG2_RECOVERABLE_ERROR_EVENT;
+	if (field32 & (1 << 8))
+		dev_cap->flags2 |= MLX4_DEV_CAP_FLAG2_DRIVER_VERSION_TO_FW;
 	MLX4_GET(field32, outbox, QUERY_DEV_CAP_DIAG_RPRT_PER_PORT);
 	if (field32 & (1 << 17))
 		dev_cap->flags2 |= MLX4_DEV_CAP_FLAG2_DIAG_PER_PORT;
@@ -1534,7 +1544,7 @@ int mlx4_map_cmd(struct mlx4_dev *dev, u16 op, struct mlx4_icm *icm, u64 virt)
 		for (i = 0; i < mlx4_icm_size(&iter) >> lg; ++i) {
 			if (virt != -1) {
 				pages[nent * 2] = cpu_to_be64(virt);
-				virt += 1 << lg;
+				virt += 1ULL << lg;
 			}
 
 			pages[nent * 2 + 1] =
@@ -1853,6 +1863,8 @@ int mlx4_INIT_HCA(struct mlx4_dev *dev, struct mlx4_init_hca_param *param)
 #define  INIT_HCA_UC_STEERING_OFFSET	 (INIT_HCA_MCAST_OFFSET + 0x18)
 #define	 INIT_HCA_LOG_MC_TABLE_SZ_OFFSET (INIT_HCA_MCAST_OFFSET + 0x1b)
 #define  INIT_HCA_DEVICE_MANAGED_FLOW_STEERING_EN	0x6
+#define  INIT_HCA_DRIVER_VERSION_OFFSET   0x140
+#define  INIT_HCA_DRIVER_VERSION_SZ       0x40
 #define  INIT_HCA_FS_PARAM_OFFSET         0x1d0
 #define  INIT_HCA_FS_BASE_OFFSET          (INIT_HCA_FS_PARAM_OFFSET + 0x00)
 #define  INIT_HCA_FS_LOG_ENTRY_SZ_OFFSET  (INIT_HCA_FS_PARAM_OFFSET + 0x12)
@@ -1942,6 +1954,13 @@ int mlx4_INIT_HCA(struct mlx4_dev *dev, struct mlx4_init_hca_param *param)
 
 	if (dev->caps.flags2 & MLX4_DEV_CAP_FLAG2_RECOVERABLE_ERROR_EVENT)
 		*(inbox + INIT_HCA_RECOVERABLE_ERROR_EVENT_OFFSET / 4) |= cpu_to_be32(1 << 31);
+
+	if (dev->caps.flags2 & MLX4_DEV_CAP_FLAG2_DRIVER_VERSION_TO_FW) {
+		u8 *dst = (u8 *)(inbox + INIT_HCA_DRIVER_VERSION_OFFSET / 4);
+
+		strncpy(dst, DRV_NAME_FOR_FW, INIT_HCA_DRIVER_VERSION_SZ - 1);
+		mlx4_dbg(dev, "Reporting Driver Version to FW: %s\n", dst);
+	}
 
 	/* QPC/EEC/CQC/EQC/RDMARC attributes */
 
@@ -2450,14 +2469,14 @@ int mlx4_config_dev_retrieval(struct mlx4_dev *dev,
 	csum_mask = (config_dev.rx_checksum_val >> CONFIG_DEV_RX_CSUM_MODE_PORT1_BIT_OFFSET) &
 			CONFIG_DEV_RX_CSUM_MODE_MASK;
 
-	if (csum_mask >= sizeof(config_dev_csum_flags)/sizeof(config_dev_csum_flags[0]))
+	if (csum_mask >= ARRAY_SIZE(config_dev_csum_flags))
 		return -EINVAL;
 	params->rx_csum_flags_port_1 = config_dev_csum_flags[csum_mask];
 
 	csum_mask = (config_dev.rx_checksum_val >> CONFIG_DEV_RX_CSUM_MODE_PORT2_BIT_OFFSET) &
 			CONFIG_DEV_RX_CSUM_MODE_MASK;
 
-	if (csum_mask >= sizeof(config_dev_csum_flags)/sizeof(config_dev_csum_flags[0]))
+	if (csum_mask >= ARRAY_SIZE(config_dev_csum_flags))
 		return -EINVAL;
 	params->rx_csum_flags_port_2 = config_dev_csum_flags[csum_mask];
 

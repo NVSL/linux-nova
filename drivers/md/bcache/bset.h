@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _BCACHE_BSET_H
 #define _BCACHE_BSET_H
 
@@ -346,7 +347,7 @@ static inline struct bkey *bch_bset_search(struct btree_keys *b,
 /* Sorting */
 
 struct bset_sort_state {
-	mempool_t		*pool;
+	mempool_t		pool;
 
 	unsigned		page_order;
 	unsigned		crit_factor;
@@ -530,14 +531,15 @@ int __bch_keylist_realloc(struct keylist *, unsigned);
 #ifdef CONFIG_BCACHE_DEBUG
 
 int __bch_count_data(struct btree_keys *);
-void __bch_check_keys(struct btree_keys *, const char *, ...);
+void __printf(2, 3) __bch_check_keys(struct btree_keys *, const char *, ...);
 void bch_dump_bset(struct btree_keys *, struct bset *, unsigned);
 void bch_dump_bucket(struct btree_keys *);
 
 #else
 
 static inline int __bch_count_data(struct btree_keys *b) { return -1; }
-static inline void __bch_check_keys(struct btree_keys *b, const char *fmt, ...) {}
+static inline void __printf(2, 3)
+	__bch_check_keys(struct btree_keys *b, const char *fmt, ...) {}
 static inline void bch_dump_bucket(struct btree_keys *b) {}
 void bch_dump_bset(struct btree_keys *, struct bset *, unsigned);
 

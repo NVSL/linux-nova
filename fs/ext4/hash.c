@@ -1,12 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  *  linux/fs/ext4/hash.c
  *
  * Copyright (C) 2002 by Theodore Ts'o
- *
- * This file is released under the GPL v2.
- *
- * This file may be redistributed under the terms of the GNU Public
- * License.
  */
 
 #include <linux/fs.h>
@@ -148,8 +144,6 @@ static void str2hashbuf_signed(const char *msg, int len, __u32 *buf, int num)
 	if (len > num*4)
 		len = num * 4;
 	for (i = 0; i < len; i++) {
-		if ((i % 4) == 0)
-			val = pad;
 		val = ((int) scp[i]) + (val << 8);
 		if ((i % 4) == 3) {
 			*buf++ = val;
@@ -176,8 +170,6 @@ static void str2hashbuf_unsigned(const char *msg, int len, __u32 *buf, int num)
 	if (len > num*4)
 		len = num * 4;
 	for (i = 0; i < len; i++) {
-		if ((i % 4) == 0)
-			val = pad;
 		val = ((int) ucp[i]) + (val << 8);
 		if ((i % 4) == 3) {
 			*buf++ = val;

@@ -47,7 +47,7 @@ static int dvb_usbv2_download_firmware(struct dvb_usb_device *d,
 	ret = request_firmware(&fw, name, &d->udev->dev);
 	if (ret < 0) {
 		dev_err(&d->udev->dev,
-				"%s: Did not find the firmware file '%s'. Please see linux/Documentation/dvb/ for more details on firmware-problems. Status %d\n",
+				"%s: Did not find the firmware file '%s' (status %d). You can use <kernel_dir>/scripts/get_dvb_firmware to get the firmware\n",
 				KBUILD_MODNAME, name, ret);
 		goto err;
 	}
@@ -154,13 +154,12 @@ static int dvb_usbv2_remote_init(struct dvb_usb_device *d)
 	}
 
 	dev->dev.parent = &d->udev->dev;
-	dev->input_name = d->name;
+	dev->device_name = d->name;
 	usb_make_path(d->udev, d->rc_phys, sizeof(d->rc_phys));
 	strlcat(d->rc_phys, "/ir0", sizeof(d->rc_phys));
 	dev->input_phys = d->rc_phys;
 	usb_to_input_id(d->udev, &dev->input_id);
-	/* TODO: likely RC-core should took const char * */
-	dev->driver_name = (char *) d->props->driver_name;
+	dev->driver_name = d->props->driver_name;
 	dev->map_name = d->rc.map_name;
 	dev->allowed_protocols = d->rc.allowed_protos;
 	dev->change_protocol = d->rc.change_protocol;
@@ -629,8 +628,7 @@ static int dvb_usb_fe_sleep(struct dvb_frontend *fe)
 	}
 
 	ret = dvb_usbv2_device_power_ctrl(d, 0);
-	if (ret < 0)
-		goto err;
+
 err:
 	if (!adap->suspend_resume_active) {
 		adap->active_fe = -1;
@@ -856,8 +854,6 @@ static int dvb_usbv2_exit(struct dvb_usb_device *d)
 	dvb_usbv2_remote_exit(d);
 	dvb_usbv2_adapter_exit(d);
 	dvb_usbv2_i2c_exit(d);
-	kfree(d->priv);
-	kfree(d);
 
 	return 0;
 }
@@ -936,7 +932,7 @@ int dvb_usbv2_probe(struct usb_interface *intf,
 	if (intf->cur_altsetting->desc.bInterfaceNumber !=
 			d->props->bInterfaceNumber) {
 		ret = -ENODEV;
-		goto err_free_all;
+		goto err_kfree_d;
 	}
 
 	mutex_init(&d->usb_mutex);
@@ -948,8 +944,14 @@ int dvb_usbv2_probe(struct usb_interface *intf,
 			dev_err(&d->udev->dev, "%s: kzalloc() failed\n",
 					KBUILD_MODNAME);
 			ret = -ENOMEM;
-			goto err_free_all;
+			goto err_kfree_d;
 		}
+	}
+
+	if (d->props->probe) {
+		ret = d->props->probe(d);
+		if (ret)
+			goto err_kfree_priv;
 	}
 
 	if (d->props->identify_state) {
@@ -1003,6 +1005,12 @@ exit:
 	return 0;
 err_free_all:
 	dvb_usbv2_exit(d);
+	if (d->props->disconnect)
+		d->props->disconnect(d);
+err_kfree_priv:
+	kfree(d->priv);
+err_kfree_d:
+	kfree(d);
 err:
 	dev_dbg(&udev->dev, "%s: failed=%d\n", __func__, ret);
 	return ret;
@@ -1022,6 +1030,12 @@ void dvb_usbv2_disconnect(struct usb_interface *intf)
 		d->props->exit(d);
 
 	dvb_usbv2_exit(d);
+
+	if (d->props->disconnect)
+		d->props->disconnect(d);
+
+	kfree(d->priv);
+	kfree(d);
 
 	pr_info("%s: '%s:%s' successfully deinitialized and disconnected\n",
 		KBUILD_MODNAME, drvname, devname);

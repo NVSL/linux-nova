@@ -1104,8 +1104,9 @@ static struct ubifs_znode *dirty_cow_bottom_up(struct ubifs_info *c,
 	ubifs_assert(znode);
 	if (c->zroot.znode->level > BOTTOM_UP_HEIGHT) {
 		kfree(c->bottom_up_buf);
-		c->bottom_up_buf = kmalloc(c->zroot.znode->level * sizeof(int),
-					   GFP_NOFS);
+		c->bottom_up_buf = kmalloc_array(c->zroot.znode->level,
+						 sizeof(int),
+						 GFP_NOFS);
 		if (!c->bottom_up_buf)
 			return ERR_PTR(-ENOMEM);
 		path = c->bottom_up_buf;
@@ -1890,35 +1891,28 @@ static int search_dh_cookie(struct ubifs_info *c, const union ubifs_key *key,
 	union ubifs_key *dkey;
 
 	for (;;) {
-		if (!err) {
-			err = tnc_next(c, &znode, n);
-			if (err)
-				goto out;
-		}
-
 		zbr = &znode->zbranch[*n];
 		dkey = &zbr->key;
 
 		if (key_inum(c, dkey) != key_inum(c, key) ||
 		    key_type(c, dkey) != key_type(c, key)) {
-			err = -ENOENT;
-			goto out;
+			return -ENOENT;
 		}
 
 		err = tnc_read_hashed_node(c, zbr, dent);
 		if (err)
-			goto out;
+			return err;
 
 		if (key_hash(c, key) == key_hash(c, dkey) &&
 		    le32_to_cpu(dent->cookie) == cookie) {
 			*zn = znode;
-			goto out;
+			return 0;
 		}
+
+		err = tnc_next(c, &znode, n);
+		if (err)
+			return err;
 	}
-
-out:
-
-	return err;
 }
 
 static int do_lookup_dh(struct ubifs_info *c, const union ubifs_key *key,

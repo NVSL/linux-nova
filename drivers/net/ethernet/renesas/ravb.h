@@ -991,6 +991,7 @@ struct ravb_private {
 	struct net_device *ndev;
 	struct platform_device *pdev;
 	void __iomem *addr;
+	struct clk *clk;
 	struct mdiobb_ctrl mdiobb;
 	u32 num_rx_ring[NUM_RX_QUEUE];
 	u32 num_tx_ring[NUM_TX_QUEUE];
@@ -1017,6 +1018,7 @@ struct ravb_private {
 	u32 dirty_rx[NUM_RX_QUEUE];	/* Producer ring indices */
 	u32 cur_tx[NUM_TX_QUEUE];
 	u32 dirty_tx[NUM_TX_QUEUE];
+	u32 rx_buf_sz;			/* Based on MTU+slack. */
 	struct napi_struct napi[NUM_RX_QUEUE];
 	struct work_struct work;
 	/* MII transceiver section. */
@@ -1033,6 +1035,7 @@ struct ravb_private {
 
 	unsigned no_avb_link:1;
 	unsigned avb_link_active_low:1;
+	unsigned wol_enabled:1;
 };
 
 static inline u32 ravb_read(struct net_device *ndev, enum ravb_reg reg)

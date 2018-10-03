@@ -451,13 +451,18 @@ static void sh_mobile_ceu_stop_streaming(struct vb2_queue *q)
 	struct soc_camera_host *ici = to_soc_camera_host(icd->parent);
 	struct sh_mobile_ceu_dev *pcdev = ici->priv;
 	struct list_head *buf_head, *tmp;
+	struct vb2_v4l2_buffer *vbuf;
 
 	spin_lock_irq(&pcdev->lock);
 
 	pcdev->active = NULL;
 
-	list_for_each_safe(buf_head, tmp, &pcdev->capture)
+	list_for_each_safe(buf_head, tmp, &pcdev->capture) {
+		vbuf = &list_entry(buf_head, struct sh_mobile_ceu_buffer,
+				   queue)->vb;
+		vb2_buffer_done(&vbuf->vb2_buf, VB2_BUF_STATE_DONE);
 		list_del_init(buf_head);
+	}
 
 	spin_unlock_irq(&pcdev->lock);
 
@@ -1106,7 +1111,7 @@ static void sh_mobile_ceu_put_formats(struct soc_camera_device *icd)
 /*
  * CEU can scale and crop, but we don't want to waste bandwidth and kill the
  * framerate by always requesting the maximum image from the client. See
- * Documentation/video4linux/sh_mobile_ceu_camera.txt for a description of
+ * Documentation/media/v4l-drivers/sh_mobile_ceu_camera.rst for a description of
  * scaling and cropping algorithms and for the meaning of referenced here steps.
  */
 static int sh_mobile_ceu_set_selection(struct soc_camera_device *icd,
@@ -1553,7 +1558,7 @@ static int sh_mobile_ceu_set_liveselection(struct soc_camera_device *icd,
 	return ret;
 }
 
-static unsigned int sh_mobile_ceu_poll(struct file *file, poll_table *pt)
+static __poll_t sh_mobile_ceu_poll(struct file *file, poll_table *pt)
 {
 	struct soc_camera_device *icd = file->private_data;
 
@@ -1708,11 +1713,10 @@ static int sh_mobile_ceu_probe(struct platform_device *pdev)
 		err = dma_declare_coherent_memory(&pdev->dev, res->start,
 						  res->start,
 						  resource_size(res),
-						  DMA_MEMORY_MAP |
 						  DMA_MEMORY_EXCLUSIVE);
-		if (!err) {
+		if (err) {
 			dev_err(&pdev->dev, "Unable to declare CEU memory.\n");
-			return -ENXIO;
+			return err;
 		}
 
 		pcdev->video_limit = resource_size(res);

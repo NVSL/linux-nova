@@ -1,5 +1,5 @@
 /*
- * Copyright(c) 2015-2017 Intel Corporation.
+ * Copyright(c) 2015-2018 Intel Corporation.
  *
  * This file is provided under a dual BSD/GPLv2 license.  When using or
  * redistributing this file, you may do so under either license.
@@ -61,6 +61,7 @@
 #include "sdma.h"
 #include "debugfs.h"
 #include "vnic.h"
+#include "fault.h"
 
 #undef pr_fmt
 #define pr_fmt(fmt) DRIVER_NAME ": " fmt
@@ -96,7 +97,6 @@ MODULE_PARM_DESC(cap_mask, "Bit mask of enabled/disabled HW features");
 
 MODULE_LICENSE("Dual BSD/GPL");
 MODULE_DESCRIPTION("Intel Omni-Path Architecture driver");
-MODULE_VERSION(HFI1_DRIVER_VERSION);
 
 /*
  * MAX_PKT_RCV is the max # if packets processed per receive interrupt.
@@ -160,22 +160,6 @@ static int hfi1_caps_get(char *buffer, const struct kernel_param *kp)
 	return scnprintf(buffer, PAGE_SIZE, "0x%lx", cap_mask);
 }
 
-const char *get_unit_name(int unit)
-{
-	static char iname[16];
-
-	snprintf(iname, sizeof(iname), DRIVER_NAME "_%u", unit);
-	return iname;
-}
-
-const char *get_card_name(struct rvt_dev_info *rdi)
-{
-	struct hfi1_ibdev *ibdev = container_of(rdi, struct hfi1_ibdev, rdi);
-	struct hfi1_devdata *dd = container_of(ibdev,
-					       struct hfi1_devdata, verbs_dev);
-	return get_unit_name(dd->unit);
-}
-
 struct pci_dev *get_pci_dev(struct rvt_dev_info *rdi)
 {
 	struct hfi1_ibdev *ibdev = container_of(rdi, struct hfi1_ibdev, rdi);
@@ -196,7 +180,7 @@ int hfi1_count_active_units(void)
 
 	spin_lock_irqsave(&hfi1_devs_lock, flags);
 	list_for_each_entry(dd, &hfi1_dev_list, list) {
-		if (!(dd->flags & HFI1_PRESENT) || !dd->kregbase)
+		if (!(dd->flags & HFI1_PRESENT) || !dd->kregbase1)
 			continue;
 		for (pidx = 0; pidx < dd->num_pports; ++pidx) {
 			ppd = dd->pport + pidx;
@@ -224,6 +208,27 @@ static inline void *get_egrbuf(const struct hfi1_ctxtdata *rcd, u64 rhf,
 			(offset * RCV_BUF_BLOCK_SIZE));
 }
 
+static inline void *hfi1_get_header(struct hfi1_devdata *dd,
+				    __le32 *rhf_addr)
+{
+	u32 offset = rhf_hdrq_offset(rhf_to_cpu(rhf_addr));
+
+	return (void *)(rhf_addr - dd->rhf_offset + offset);
+}
+
+static inline struct ib_header *hfi1_get_msgheader(struct hfi1_devdata *dd,
+						   __le32 *rhf_addr)
+{
+	return (struct ib_header *)hfi1_get_header(dd, rhf_addr);
+}
+
+static inline struct hfi1_16b_header
+		*hfi1_get_16B_header(struct hfi1_devdata *dd,
+				     __le32 *rhf_addr)
+{
+	return (struct hfi1_16b_header *)hfi1_get_header(dd, rhf_addr);
+}
+
 /*
  * Validate and encode the a given RcvArray Buffer size.
  * The function will check whether the given size falls within
@@ -249,45 +254,60 @@ static void rcv_hdrerr(struct hfi1_ctxtdata *rcd, struct hfi1_pportdata *ppd,
 {
 	struct ib_header *rhdr = packet->hdr;
 	u32 rte = rhf_rcv_type_err(packet->rhf);
-	int lnh = ib_get_lnh(rhdr);
+	u32 mlid_base;
 	struct hfi1_ibport *ibp = rcd_to_iport(rcd);
 	struct hfi1_devdata *dd = ppd->dd;
-	struct rvt_dev_info *rdi = &dd->verbs_dev.rdi;
+	struct hfi1_ibdev *verbs_dev = &dd->verbs_dev;
+	struct rvt_dev_info *rdi = &verbs_dev->rdi;
+
+	if ((packet->rhf & RHF_DC_ERR) &&
+	    hfi1_dbg_fault_suppress_err(verbs_dev))
+		return;
 
 	if (packet->rhf & (RHF_VCRC_ERR | RHF_ICRC_ERR))
 		return;
 
+	if (packet->etype == RHF_RCV_TYPE_BYPASS) {
+		goto drop;
+	} else {
+		u8 lnh = ib_get_lnh(rhdr);
+
+		mlid_base = be16_to_cpu(IB_MULTICAST_LID_BASE);
+		if (lnh == HFI1_LRH_BTH) {
+			packet->ohdr = &rhdr->u.oth;
+		} else if (lnh == HFI1_LRH_GRH) {
+			packet->ohdr = &rhdr->u.l.oth;
+			packet->grh = &rhdr->u.l.grh;
+		} else {
+			goto drop;
+		}
+	}
+
 	if (packet->rhf & RHF_TID_ERR) {
 		/* For TIDERR and RC QPs preemptively schedule a NAK */
-		struct ib_other_headers *ohdr = NULL;
 		u32 tlen = rhf_pkt_len(packet->rhf); /* in bytes */
-		u16 lid  = ib_get_dlid(rhdr);
+		u32 dlid = ib_get_dlid(rhdr);
 		u32 qp_num;
-		u32 rcv_flags = 0;
 
 		/* Sanity check packet */
 		if (tlen < 24)
 			goto drop;
 
 		/* Check for GRH */
-		if (lnh == HFI1_LRH_BTH) {
-			ohdr = &rhdr->u.oth;
-		} else if (lnh == HFI1_LRH_GRH) {
+		if (packet->grh) {
 			u32 vtf;
+			struct ib_grh *grh = packet->grh;
 
-			ohdr = &rhdr->u.l.oth;
-			if (rhdr->u.l.grh.next_hdr != IB_GRH_NEXT_HDR)
+			if (grh->next_hdr != IB_GRH_NEXT_HDR)
 				goto drop;
-			vtf = be32_to_cpu(rhdr->u.l.grh.version_tclass_flow);
+			vtf = be32_to_cpu(grh->version_tclass_flow);
 			if ((vtf >> IB_GRH_VERSION_SHIFT) != IB_GRH_VERSION)
 				goto drop;
-			rcv_flags |= HFI1_HAS_GRH;
-		} else {
-			goto drop;
 		}
+
 		/* Get the destination QP number. */
-		qp_num = be32_to_cpu(ohdr->bth[1]) & RVT_QPN_MASK;
-		if (lid < be16_to_cpu(IB_MULTICAST_LID_BASE)) {
+		qp_num = ib_bth_get_qpn(packet->ohdr);
+		if (dlid < mlid_base) {
 			struct rvt_qp *qp;
 			unsigned long flags;
 
@@ -312,11 +332,7 @@ static void rcv_hdrerr(struct hfi1_ctxtdata *rcd, struct hfi1_pportdata *ppd,
 
 			switch (qp->ibqp.qp_type) {
 			case IB_QPT_RC:
-				hfi1_rc_hdrerr(
-					rcd,
-					rhdr,
-					rcv_flags,
-					qp);
+				hfi1_rc_hdrerr(rcd, packet, qp);
 				break;
 			default:
 				/* For now don't handle any other QP types */
@@ -332,9 +348,8 @@ static void rcv_hdrerr(struct hfi1_ctxtdata *rcd, struct hfi1_pportdata *ppd,
 	switch (rte) {
 	case RHF_RTE_ERROR_OP_CODE_ERR:
 	{
-		u32 opcode;
 		void *ebuf = NULL;
-		__be32 *bth = NULL;
+		u8 opcode;
 
 		if (rhf_use_egr_bfr(packet->rhf))
 			ebuf = packet->ebuf;
@@ -342,16 +357,7 @@ static void rcv_hdrerr(struct hfi1_ctxtdata *rcd, struct hfi1_pportdata *ppd,
 		if (!ebuf)
 			goto drop; /* this should never happen */
 
-		if (lnh == HFI1_LRH_BTH)
-			bth = (__be32 *)ebuf;
-		else if (lnh == HFI1_LRH_GRH)
-			bth = (__be32 *)((char *)ebuf + sizeof(struct ib_grh));
-		else
-			goto drop;
-
-		opcode = be32_to_cpu(bth[0]) >> 24;
-		opcode &= 0xff;
-
+		opcode = ib_bth_get_opcode(packet->ohdr);
 		if (opcode == IB_OPCODE_CNP) {
 			/*
 			 * Only in pre-B0 h/w is the CNP_OPCODE handled
@@ -365,7 +371,7 @@ static void rcv_hdrerr(struct hfi1_ctxtdata *rcd, struct hfi1_pportdata *ppd,
 			sc5 = hfi1_9B_get_sc5(rhdr, packet->rhf);
 			sl = ibp->sc_to_sl[sc5];
 
-			lqpn = be32_to_cpu(bth[1]) & RVT_QPN_MASK;
+			lqpn = ib_bth_get_qpn(packet->ohdr);
 			rcu_read_lock();
 			qp = rvt_lookup_qpn(rdi, &ibp->rvp, lqpn);
 			if (!qp) {
@@ -385,6 +391,7 @@ static void rcv_hdrerr(struct hfi1_ctxtdata *rcd, struct hfi1_pportdata *ppd,
 				svc_type = IB_CC_SVCTYPE_UC;
 				break;
 			default:
+				rcu_read_unlock();
 				goto drop;
 			}
 
@@ -415,33 +422,57 @@ static inline void init_packet(struct hfi1_ctxtdata *rcd,
 	packet->rhf = rhf_to_cpu(packet->rhf_addr);
 	packet->rhqoff = rcd->head;
 	packet->numpkt = 0;
-	packet->rcv_flags = 0;
 }
+
+/* We support only two types - 9B and 16B for now */
+static const hfi1_handle_cnp hfi1_handle_cnp_tbl[2] = {
+	[HFI1_PKT_TYPE_9B] = &return_cnp,
+	[HFI1_PKT_TYPE_16B] = &return_cnp_16B
+};
 
 void hfi1_process_ecn_slowpath(struct rvt_qp *qp, struct hfi1_packet *pkt,
 			       bool do_cnp)
 {
 	struct hfi1_ibport *ibp = to_iport(qp->ibqp.device, qp->port_num);
-	struct ib_header *hdr = pkt->hdr;
+	struct hfi1_pportdata *ppd = ppd_from_ibp(ibp);
 	struct ib_other_headers *ohdr = pkt->ohdr;
-	struct ib_grh *grh = NULL;
+	struct ib_grh *grh = pkt->grh;
 	u32 rqpn = 0, bth1;
-	u16 rlid, dlid = ib_get_dlid(hdr);
-	u8 sc, svc_type;
+	u16 pkey;
+	u32 rlid, slid, dlid = 0;
+	u8 hdr_type, sc, svc_type;
 	bool is_mcast = false;
 
-	if (pkt->rcv_flags & HFI1_HAS_GRH)
-		grh = &hdr->u.l.grh;
+	/* can be called from prescan */
+	if (pkt->etype == RHF_RCV_TYPE_BYPASS) {
+		is_mcast = hfi1_is_16B_mcast(dlid);
+		pkey = hfi1_16B_get_pkey(pkt->hdr);
+		sc = hfi1_16B_get_sc(pkt->hdr);
+		dlid = hfi1_16B_get_dlid(pkt->hdr);
+		slid = hfi1_16B_get_slid(pkt->hdr);
+		hdr_type = HFI1_PKT_TYPE_16B;
+	} else {
+		is_mcast = (dlid > be16_to_cpu(IB_MULTICAST_LID_BASE)) &&
+			   (dlid != be16_to_cpu(IB_LID_PERMISSIVE));
+		pkey = ib_bth_get_pkey(ohdr);
+		sc = hfi1_9B_get_sc5(pkt->hdr, pkt->rhf);
+		dlid = ib_get_dlid(pkt->hdr);
+		slid = ib_get_slid(pkt->hdr);
+		hdr_type = HFI1_PKT_TYPE_9B;
+	}
 
 	switch (qp->ibqp.qp_type) {
+	case IB_QPT_UD:
+		dlid = ppd->lid;
+		rlid = slid;
+		rqpn = ib_get_sqpn(pkt->ohdr);
+		svc_type = IB_CC_SVCTYPE_UD;
+		break;
 	case IB_QPT_SMI:
 	case IB_QPT_GSI:
-	case IB_QPT_UD:
-		rlid = ib_get_slid(hdr);
-		rqpn = be32_to_cpu(ohdr->u.ud.deth[1]) & RVT_QPN_MASK;
+		rlid = slid;
+		rqpn = ib_get_sqpn(pkt->ohdr);
 		svc_type = IB_CC_SVCTYPE_UD;
-		is_mcast = (dlid > be16_to_cpu(IB_MULTICAST_LID_BASE)) &&
-			(dlid != be16_to_cpu(IB_LID_PERMISSIVE));
 		break;
 	case IB_QPT_UC:
 		rlid = rdma_ah_get_dlid(&qp->remote_ah_attr);
@@ -457,17 +488,13 @@ void hfi1_process_ecn_slowpath(struct rvt_qp *qp, struct hfi1_packet *pkt,
 		return;
 	}
 
-	sc = hfi1_9B_get_sc5(hdr, pkt->rhf);
-
 	bth1 = be32_to_cpu(ohdr->bth[1]);
-	if (do_cnp && (bth1 & IB_FECN_SMASK)) {
-		u16 pkey = (u16)be32_to_cpu(ohdr->bth[0]);
-
-		return_cnp(ibp, qp, rqpn, pkey, dlid, rlid, sc, grh);
-	}
+	/* Call appropriate CNP handler */
+	if (do_cnp && (bth1 & IB_FECN_SMASK))
+		hfi1_handle_cnp_tbl[hdr_type](ibp, qp, rqpn, pkey,
+					      dlid, rlid, sc, grh);
 
 	if (!is_mcast && (bth1 & IB_BECN_SMASK)) {
-		struct hfi1_pportdata *ppd = ppd_from_ibp(ibp);
 		u32 lqpn = bth1 & RVT_QPN_MASK;
 		u8 sl = ibp->sc_to_sl[sc];
 
@@ -591,9 +618,10 @@ static void __prescan_rxq(struct hfi1_packet *packet)
 
 		if (lnh == HFI1_LRH_BTH) {
 			packet->ohdr = &hdr->u.oth;
+			packet->grh = NULL;
 		} else if (lnh == HFI1_LRH_GRH) {
 			packet->ohdr = &hdr->u.l.oth;
-			packet->rcv_flags |= HFI1_HAS_GRH;
+			packet->grh = &hdr->u.l.grh;
 		} else {
 			goto next; /* just in case */
 		}
@@ -624,9 +652,10 @@ next:
 	}
 }
 
-static void process_rcv_qp_work(struct hfi1_ctxtdata *rcd)
+static void process_rcv_qp_work(struct hfi1_packet *packet)
 {
 	struct rvt_qp *qp, *nqp;
+	struct hfi1_ctxtdata *rcd = packet->rcd;
 
 	/*
 	 * Iterate over all QPs waiting to respond.
@@ -636,7 +665,8 @@ static void process_rcv_qp_work(struct hfi1_ctxtdata *rcd)
 		list_del_init(&qp->rspwait);
 		if (qp->r_flags & RVT_R_RSP_NAK) {
 			qp->r_flags &= ~RVT_R_RSP_NAK;
-			hfi1_send_rc_ack(rcd, qp, 0);
+			packet->qp = qp;
+			hfi1_send_rc_ack(packet, 0);
 		}
 		if (qp->r_flags & RVT_R_RSP_SEND) {
 			unsigned long flags;
@@ -657,7 +687,7 @@ static noinline int max_packet_exceeded(struct hfi1_packet *packet, int thread)
 	if (thread) {
 		if ((packet->numpkt & (MAX_PKT_RECV_THREAD - 1)) == 0)
 			/* allow defered processing */
-			process_rcv_qp_work(packet->rcd);
+			process_rcv_qp_work(packet);
 		cond_resched();
 		return RCV_PKT_OK;
 	} else {
@@ -698,10 +728,8 @@ static inline int process_rcv_packet(struct hfi1_packet *packet, int thread)
 {
 	int ret;
 
-	packet->hdr = hfi1_get_msgheader(packet->rcd->dd,
-					 packet->rhf_addr);
-	packet->hlen = (u8 *)packet->rhf_addr - (u8 *)packet->hdr;
 	packet->etype = rhf_rcv_type(packet->rhf);
+
 	/* total length */
 	packet->tlen = rhf_pkt_len(packet->rhf); /* in bytes */
 	/* retrieve eager buffer details */
@@ -759,7 +787,7 @@ static inline void process_rcv_update(int last, struct hfi1_packet *packet)
 			       packet->etail, 0, 0);
 		packet->updegr = 0;
 	}
-	packet->rcv_flags = 0;
+	packet->grh = NULL;
 }
 
 static inline void finish_packet(struct hfi1_packet *packet)
@@ -801,7 +829,7 @@ int handle_receive_interrupt_nodma_rtail(struct hfi1_ctxtdata *rcd, int thread)
 			last = RCV_PKT_DONE;
 		process_rcv_update(last, &packet);
 	}
-	process_rcv_qp_work(rcd);
+	process_rcv_qp_work(&packet);
 	rcd->head = packet.rhqoff;
 bail:
 	finish_packet(&packet);
@@ -830,16 +858,17 @@ int handle_receive_interrupt_dma_rtail(struct hfi1_ctxtdata *rcd, int thread)
 			last = RCV_PKT_DONE;
 		process_rcv_update(last, &packet);
 	}
-	process_rcv_qp_work(rcd);
+	process_rcv_qp_work(&packet);
 	rcd->head = packet.rhqoff;
 bail:
 	finish_packet(&packet);
 	return last;
 }
 
-static inline void set_nodma_rtail(struct hfi1_devdata *dd, u8 ctxt)
+static inline void set_nodma_rtail(struct hfi1_devdata *dd, u16 ctxt)
 {
-	int i;
+	struct hfi1_ctxtdata *rcd;
+	u16 i;
 
 	/*
 	 * For dynamically allocated kernel contexts (like vnic) switch
@@ -847,19 +876,28 @@ static inline void set_nodma_rtail(struct hfi1_devdata *dd, u8 ctxt)
 	 * interrupt handler for all statically allocated kernel contexts.
 	 */
 	if (ctxt >= dd->first_dyn_alloc_ctxt) {
-		dd->rcd[ctxt]->do_interrupt =
-			&handle_receive_interrupt_nodma_rtail;
+		rcd = hfi1_rcd_get_by_index_safe(dd, ctxt);
+		if (rcd) {
+			rcd->do_interrupt =
+				&handle_receive_interrupt_nodma_rtail;
+			hfi1_rcd_put(rcd);
+		}
 		return;
 	}
 
-	for (i = HFI1_CTRL_CTXT + 1; i < dd->first_dyn_alloc_ctxt; i++)
-		dd->rcd[i]->do_interrupt =
-			&handle_receive_interrupt_nodma_rtail;
+	for (i = HFI1_CTRL_CTXT + 1; i < dd->first_dyn_alloc_ctxt; i++) {
+		rcd = hfi1_rcd_get_by_index(dd, i);
+		if (rcd)
+			rcd->do_interrupt =
+				&handle_receive_interrupt_nodma_rtail;
+		hfi1_rcd_put(rcd);
+	}
 }
 
-static inline void set_dma_rtail(struct hfi1_devdata *dd, u8 ctxt)
+static inline void set_dma_rtail(struct hfi1_devdata *dd, u16 ctxt)
 {
-	int i;
+	struct hfi1_ctxtdata *rcd;
+	u16 i;
 
 	/*
 	 * For dynamically allocated kernel contexts (like vnic) switch
@@ -867,27 +905,38 @@ static inline void set_dma_rtail(struct hfi1_devdata *dd, u8 ctxt)
 	 * interrupt handler for all statically allocated kernel contexts.
 	 */
 	if (ctxt >= dd->first_dyn_alloc_ctxt) {
-		dd->rcd[ctxt]->do_interrupt =
-			&handle_receive_interrupt_dma_rtail;
+		rcd = hfi1_rcd_get_by_index_safe(dd, ctxt);
+		if (rcd) {
+			rcd->do_interrupt =
+				&handle_receive_interrupt_dma_rtail;
+			hfi1_rcd_put(rcd);
+		}
 		return;
 	}
 
-	for (i = HFI1_CTRL_CTXT + 1; i < dd->first_dyn_alloc_ctxt; i++)
-		dd->rcd[i]->do_interrupt =
-			&handle_receive_interrupt_dma_rtail;
+	for (i = HFI1_CTRL_CTXT + 1; i < dd->first_dyn_alloc_ctxt; i++) {
+		rcd = hfi1_rcd_get_by_index(dd, i);
+		if (rcd)
+			rcd->do_interrupt =
+				&handle_receive_interrupt_dma_rtail;
+		hfi1_rcd_put(rcd);
+	}
 }
 
 void set_all_slowpath(struct hfi1_devdata *dd)
 {
-	int i;
+	struct hfi1_ctxtdata *rcd;
+	u16 i;
 
 	/* HFI1_CTRL_CTXT must always use the slow path interrupt handler */
 	for (i = HFI1_CTRL_CTXT + 1; i < dd->num_rcv_contexts; i++) {
-		struct hfi1_ctxtdata *rcd = dd->rcd[i];
-
-		if ((i < dd->first_dyn_alloc_ctxt) ||
-		    (rcd && rcd->sc && (rcd->sc->type == SC_KERNEL)))
+		rcd = hfi1_rcd_get_by_index(dd, i);
+		if (!rcd)
+			continue;
+		if (i < dd->first_dyn_alloc_ctxt || rcd->is_vnic)
 			rcd->do_interrupt = &handle_receive_interrupt;
+
+		hfi1_rcd_put(rcd);
 	}
 }
 
@@ -896,20 +945,30 @@ static inline int set_armed_to_active(struct hfi1_ctxtdata *rcd,
 				      struct hfi1_devdata *dd)
 {
 	struct work_struct *lsaw = &rcd->ppd->linkstate_active_work;
-	struct ib_header *hdr = hfi1_get_msgheader(packet->rcd->dd,
-						   packet->rhf_addr);
 	u8 etype = rhf_rcv_type(packet->rhf);
+	u8 sc = SC15_PACKET;
 
-	if (etype == RHF_RCV_TYPE_IB &&
-	    hfi1_9B_get_sc5(hdr, packet->rhf) != 0xf) {
-		int hwstate = read_logical_state(dd);
+	if (etype == RHF_RCV_TYPE_IB) {
+		struct ib_header *hdr = hfi1_get_msgheader(packet->rcd->dd,
+							   packet->rhf_addr);
+		sc = hfi1_9B_get_sc5(hdr, packet->rhf);
+	} else if (etype == RHF_RCV_TYPE_BYPASS) {
+		struct hfi1_16b_header *hdr = hfi1_get_16B_header(
+						packet->rcd->dd,
+						packet->rhf_addr);
+		sc = hfi1_16B_get_sc(hdr);
+	}
+	if (sc != SC15_PACKET) {
+		int hwstate = driver_lstate(rcd->ppd);
 
-		if (hwstate != LSTATE_ACTIVE) {
-			dd_dev_info(dd, "Unexpected link state %d\n", hwstate);
+		if (hwstate != IB_PORT_ACTIVE) {
+			dd_dev_info(dd,
+				    "Unexpected link state %s\n",
+				    opa_lstate_name(hwstate));
 			return 0;
 		}
 
-		queue_work(rcd->ppd->hfi1_wq, lsaw);
+		queue_work(rcd->ppd->link_wq, lsaw);
 		return 1;
 	}
 	return 0;
@@ -1029,7 +1088,7 @@ int handle_receive_interrupt(struct hfi1_ctxtdata *rcd, int thread)
 		process_rcv_update(last, &packet);
 	}
 
-	process_rcv_qp_work(rcd);
+	process_rcv_qp_work(&packet);
 	rcd->head = packet.rhqoff;
 
 bail:
@@ -1063,7 +1122,8 @@ void receive_interrupt_work(struct work_struct *work)
 	struct hfi1_pportdata *ppd = container_of(work, struct hfi1_pportdata,
 						  linkstate_active_work);
 	struct hfi1_devdata *dd = ppd->dd;
-	int i;
+	struct hfi1_ctxtdata *rcd;
+	u16 i;
 
 	/* Received non-SC15 packet implies neighbor_normal */
 	ppd->neighbor_normal = 1;
@@ -1073,8 +1133,12 @@ void receive_interrupt_work(struct work_struct *work)
 	 * Interrupt all statically allocated kernel contexts that could
 	 * have had an interrupt during auto activation.
 	 */
-	for (i = HFI1_CTRL_CTXT; i < dd->first_dyn_alloc_ctxt; i++)
-		force_recv_intr(dd->rcd[i]);
+	for (i = HFI1_CTRL_CTXT; i < dd->first_dyn_alloc_ctxt; i++) {
+		rcd = hfi1_rcd_get_by_index(dd, i);
+		if (rcd)
+			force_recv_intr(rcd);
+		hfi1_rcd_put(rcd);
+	}
 }
 
 /*
@@ -1197,9 +1261,9 @@ void shutdown_led_override(struct hfi1_pportdata *ppd)
 	write_csr(dd, DCC_CFG_LED_CNTRL, 0);
 }
 
-static void run_led_override(unsigned long opaque)
+static void run_led_override(struct timer_list *t)
 {
-	struct hfi1_pportdata *ppd = (struct hfi1_pportdata *)opaque;
+	struct hfi1_pportdata *ppd = from_timer(ppd, t, led_override_timer);
 	struct hfi1_devdata *dd = ppd->dd;
 	unsigned long timeout;
 	int phase_idx;
@@ -1243,8 +1307,7 @@ void hfi1_start_led_override(struct hfi1_pportdata *ppd, unsigned int timeon,
 	 * timeout so the handler will be called soon to look at our request.
 	 */
 	if (!timer_pending(&ppd->led_override_timer)) {
-		setup_timer(&ppd->led_override_timer, run_led_override,
-			    (unsigned long)ppd);
+		timer_setup(&ppd->led_override_timer, run_led_override, 0);
 		ppd->led_override_timer.expires = jiffies + 1;
 		add_timer(&ppd->led_override_timer);
 		atomic_set(&ppd->led_override_timer_active, 1);
@@ -1264,10 +1327,9 @@ void hfi1_start_led_override(struct hfi1_pportdata *ppd, unsigned int timeon,
  */
 int hfi1_reset_device(int unit)
 {
-	int ret, i;
+	int ret;
 	struct hfi1_devdata *dd = hfi1_lookup(unit);
 	struct hfi1_pportdata *ppd;
-	unsigned long flags;
 	int pidx;
 
 	if (!dd) {
@@ -1277,7 +1339,7 @@ int hfi1_reset_device(int unit)
 
 	dd_dev_info(dd, "Reset on unit %u requested\n", unit);
 
-	if (!dd->kregbase || !(dd->flags & HFI1_PRESENT)) {
+	if (!dd->kregbase1 || !(dd->flags & HFI1_PRESENT)) {
 		dd_dev_info(dd,
 			    "Invalid unit number %u or not initialized or not present\n",
 			    unit);
@@ -1285,17 +1347,15 @@ int hfi1_reset_device(int unit)
 		goto bail;
 	}
 
-	spin_lock_irqsave(&dd->uctxt_lock, flags);
+	/* If there are any user/vnic contexts, we cannot reset */
+	mutex_lock(&hfi1_mutex);
 	if (dd->rcd)
-		for (i = dd->first_dyn_alloc_ctxt;
-		     i < dd->num_rcv_contexts; i++) {
-			if (!dd->rcd[i])
-				continue;
-			spin_unlock_irqrestore(&dd->uctxt_lock, flags);
+		if (hfi1_stats.sps_ctxts) {
+			mutex_unlock(&hfi1_mutex);
 			ret = -EBUSY;
 			goto bail;
 		}
-	spin_unlock_irqrestore(&dd->uctxt_lock, flags);
+	mutex_unlock(&hfi1_mutex);
 
 	for (pidx = 0; pidx < dd->num_pports; ++pidx) {
 		ppd = dd->pport + pidx;
@@ -1319,6 +1379,175 @@ int hfi1_reset_device(int unit)
 
 bail:
 	return ret;
+}
+
+static inline void hfi1_setup_ib_header(struct hfi1_packet *packet)
+{
+	packet->hdr = (struct hfi1_ib_message_header *)
+			hfi1_get_msgheader(packet->rcd->dd,
+					   packet->rhf_addr);
+	packet->hlen = (u8 *)packet->rhf_addr - (u8 *)packet->hdr;
+}
+
+static int hfi1_bypass_ingress_pkt_check(struct hfi1_packet *packet)
+{
+	struct hfi1_pportdata *ppd = packet->rcd->ppd;
+
+	/* slid and dlid cannot be 0 */
+	if ((!packet->slid) || (!packet->dlid))
+		return -EINVAL;
+
+	/* Compare port lid with incoming packet dlid */
+	if ((!(hfi1_is_16B_mcast(packet->dlid))) &&
+	    (packet->dlid !=
+		opa_get_lid(be32_to_cpu(OPA_LID_PERMISSIVE), 16B))) {
+		if (packet->dlid != ppd->lid)
+			return -EINVAL;
+	}
+
+	/* No multicast packets with SC15 */
+	if ((hfi1_is_16B_mcast(packet->dlid)) && (packet->sc == 0xF))
+		return -EINVAL;
+
+	/* Packets with permissive DLID always on SC15 */
+	if ((packet->dlid == opa_get_lid(be32_to_cpu(OPA_LID_PERMISSIVE),
+					 16B)) &&
+	    (packet->sc != 0xF))
+		return -EINVAL;
+
+	return 0;
+}
+
+static int hfi1_setup_9B_packet(struct hfi1_packet *packet)
+{
+	struct hfi1_ibport *ibp = rcd_to_iport(packet->rcd);
+	struct ib_header *hdr;
+	u8 lnh;
+
+	hfi1_setup_ib_header(packet);
+	hdr = packet->hdr;
+
+	lnh = ib_get_lnh(hdr);
+	if (lnh == HFI1_LRH_BTH) {
+		packet->ohdr = &hdr->u.oth;
+		packet->grh = NULL;
+	} else if (lnh == HFI1_LRH_GRH) {
+		u32 vtf;
+
+		packet->ohdr = &hdr->u.l.oth;
+		packet->grh = &hdr->u.l.grh;
+		if (packet->grh->next_hdr != IB_GRH_NEXT_HDR)
+			goto drop;
+		vtf = be32_to_cpu(packet->grh->version_tclass_flow);
+		if ((vtf >> IB_GRH_VERSION_SHIFT) != IB_GRH_VERSION)
+			goto drop;
+	} else {
+		goto drop;
+	}
+
+	/* Query commonly used fields from packet header */
+	packet->payload = packet->ebuf;
+	packet->opcode = ib_bth_get_opcode(packet->ohdr);
+	packet->slid = ib_get_slid(hdr);
+	packet->dlid = ib_get_dlid(hdr);
+	if (unlikely((packet->dlid >= be16_to_cpu(IB_MULTICAST_LID_BASE)) &&
+		     (packet->dlid != be16_to_cpu(IB_LID_PERMISSIVE))))
+		packet->dlid += opa_get_mcast_base(OPA_MCAST_NR) -
+				be16_to_cpu(IB_MULTICAST_LID_BASE);
+	packet->sl = ib_get_sl(hdr);
+	packet->sc = hfi1_9B_get_sc5(hdr, packet->rhf);
+	packet->pad = ib_bth_get_pad(packet->ohdr);
+	packet->extra_byte = 0;
+	packet->pkey = ib_bth_get_pkey(packet->ohdr);
+	packet->migrated = ib_bth_is_migration(packet->ohdr);
+
+	return 0;
+drop:
+	ibp->rvp.n_pkt_drops++;
+	return -EINVAL;
+}
+
+static int hfi1_setup_bypass_packet(struct hfi1_packet *packet)
+{
+	/*
+	 * Bypass packets have a different header/payload split
+	 * compared to an IB packet.
+	 * Current split is set such that 16 bytes of the actual
+	 * header is in the header buffer and the remining is in
+	 * the eager buffer. We chose 16 since hfi1 driver only
+	 * supports 16B bypass packets and we will be able to
+	 * receive the entire LRH with such a split.
+	 */
+
+	struct hfi1_ctxtdata *rcd = packet->rcd;
+	struct hfi1_pportdata *ppd = rcd->ppd;
+	struct hfi1_ibport *ibp = &ppd->ibport_data;
+	u8 l4;
+
+	packet->hdr = (struct hfi1_16b_header *)
+			hfi1_get_16B_header(packet->rcd->dd,
+					    packet->rhf_addr);
+	l4 = hfi1_16B_get_l4(packet->hdr);
+	if (l4 == OPA_16B_L4_IB_LOCAL) {
+		packet->ohdr = packet->ebuf;
+		packet->grh = NULL;
+		packet->opcode = ib_bth_get_opcode(packet->ohdr);
+		packet->pad = hfi1_16B_bth_get_pad(packet->ohdr);
+		/* hdr_len_by_opcode already has an IB LRH factored in */
+		packet->hlen = hdr_len_by_opcode[packet->opcode] +
+			(LRH_16B_BYTES - LRH_9B_BYTES);
+		packet->migrated = opa_bth_is_migration(packet->ohdr);
+	} else if (l4 == OPA_16B_L4_IB_GLOBAL) {
+		u32 vtf;
+		u8 grh_len = sizeof(struct ib_grh);
+
+		packet->ohdr = packet->ebuf + grh_len;
+		packet->grh = packet->ebuf;
+		packet->opcode = ib_bth_get_opcode(packet->ohdr);
+		packet->pad = hfi1_16B_bth_get_pad(packet->ohdr);
+		/* hdr_len_by_opcode already has an IB LRH factored in */
+		packet->hlen = hdr_len_by_opcode[packet->opcode] +
+			(LRH_16B_BYTES - LRH_9B_BYTES) + grh_len;
+		packet->migrated = opa_bth_is_migration(packet->ohdr);
+
+		if (packet->grh->next_hdr != IB_GRH_NEXT_HDR)
+			goto drop;
+		vtf = be32_to_cpu(packet->grh->version_tclass_flow);
+		if ((vtf >> IB_GRH_VERSION_SHIFT) != IB_GRH_VERSION)
+			goto drop;
+	} else if (l4 == OPA_16B_L4_FM) {
+		packet->mgmt = packet->ebuf;
+		packet->ohdr = NULL;
+		packet->grh = NULL;
+		packet->opcode = IB_OPCODE_UD_SEND_ONLY;
+		packet->pad = OPA_16B_L4_FM_PAD;
+		packet->hlen = OPA_16B_L4_FM_HLEN;
+		packet->migrated = false;
+	} else {
+		goto drop;
+	}
+
+	/* Query commonly used fields from packet header */
+	packet->payload = packet->ebuf + packet->hlen - LRH_16B_BYTES;
+	packet->slid = hfi1_16B_get_slid(packet->hdr);
+	packet->dlid = hfi1_16B_get_dlid(packet->hdr);
+	if (unlikely(hfi1_is_16B_mcast(packet->dlid)))
+		packet->dlid += opa_get_mcast_base(OPA_MCAST_NR) -
+				opa_get_lid(opa_get_mcast_base(OPA_MCAST_NR),
+					    16B);
+	packet->sc = hfi1_16B_get_sc(packet->hdr);
+	packet->sl = ibp->sc_to_sl[packet->sc];
+	packet->extra_byte = SIZE_OF_LT;
+	packet->pkey = hfi1_16B_get_pkey(packet->hdr);
+
+	if (hfi1_bypass_ingress_pkt_check(packet))
+		goto drop;
+
+	return 0;
+drop:
+	hfi1_cdbg(PKT, "%s: packet dropped\n", __func__);
+	ibp->rvp.n_pkt_drops++;
+	return -EINVAL;
 }
 
 void handle_eflags(struct hfi1_packet *packet)
@@ -1348,22 +1577,13 @@ void handle_eflags(struct hfi1_packet *packet)
  */
 int process_receive_ib(struct hfi1_packet *packet)
 {
-	if (unlikely(hfi1_dbg_fault_packet(packet)))
+	if (hfi1_setup_9B_packet(packet))
 		return RHF_RCV_CONTINUE;
 
-	trace_hfi1_rcvhdr(packet->rcd->ppd->dd,
-			  packet->rcd->ctxt,
-			  rhf_err_flags(packet->rhf),
-			  RHF_RCV_TYPE_IB,
-			  packet->hlen,
-			  packet->tlen,
-			  packet->updegr,
-			  rhf_egr_index(packet->rhf));
-
-	if (unlikely(
-		 (hfi1_dbg_fault_suppress_err(&packet->rcd->dd->verbs_dev) &&
-		 (packet->rhf & RHF_DC_ERR))))
+	if (unlikely(hfi1_dbg_should_fault_rx(packet)))
 		return RHF_RCV_CONTINUE;
+
+	trace_hfi1_rcvhdr(packet);
 
 	if (unlikely(rhf_err_flags(packet->rhf))) {
 		handle_eflags(packet);
@@ -1380,8 +1600,8 @@ static inline bool hfi1_is_vnic_packet(struct hfi1_packet *packet)
 	if (packet->rcd->is_vnic)
 		return true;
 
-	if ((HFI1_GET_L2_TYPE(packet->ebuf) == OPA_VNIC_L2_TYPE) &&
-	    (HFI1_GET_L4_TYPE(packet->ebuf) == OPA_VNIC_L4_ETHR))
+	if ((hfi1_16B_get_l2(packet->ebuf) == OPA_16B_L2_TYPE) &&
+	    (hfi1_16B_get_l4(packet->ebuf) == OPA_16B_L4_ETHR))
 		return true;
 
 	return false;
@@ -1391,25 +1611,40 @@ int process_receive_bypass(struct hfi1_packet *packet)
 {
 	struct hfi1_devdata *dd = packet->rcd->dd;
 
-	if (unlikely(rhf_err_flags(packet->rhf))) {
-		handle_eflags(packet);
-	} else if (hfi1_is_vnic_packet(packet)) {
+	if (hfi1_is_vnic_packet(packet)) {
 		hfi1_vnic_bypass_rcv(packet);
 		return RHF_RCV_CONTINUE;
 	}
 
-	dd_dev_err(dd, "Unsupported bypass packet. Dropping\n");
-	incr_cntr64(&dd->sw_rcv_bypass_packet_errors);
-	if (!(dd->err_info_rcvport.status_and_code & OPA_EI_STATUS_SMASK)) {
-		u64 *flits = packet->ebuf;
+	if (hfi1_setup_bypass_packet(packet))
+		return RHF_RCV_CONTINUE;
 
-		if (flits && !(packet->rhf & RHF_LEN_ERR)) {
-			dd->err_info_rcvport.packet_flit1 = flits[0];
-			dd->err_info_rcvport.packet_flit2 =
-				packet->tlen > sizeof(flits[0]) ? flits[1] : 0;
+	trace_hfi1_rcvhdr(packet);
+
+	if (unlikely(rhf_err_flags(packet->rhf))) {
+		handle_eflags(packet);
+		return RHF_RCV_CONTINUE;
+	}
+
+	if (hfi1_16B_get_l2(packet->hdr) == 0x2) {
+		hfi1_16B_rcv(packet);
+	} else {
+		dd_dev_err(dd,
+			   "Bypass packets other than 16B are not supported in normal operation. Dropping\n");
+		incr_cntr64(&dd->sw_rcv_bypass_packet_errors);
+		if (!(dd->err_info_rcvport.status_and_code &
+		      OPA_EI_STATUS_SMASK)) {
+			u64 *flits = packet->ebuf;
+
+			if (flits && !(packet->rhf & RHF_LEN_ERR)) {
+				dd->err_info_rcvport.packet_flit1 = flits[0];
+				dd->err_info_rcvport.packet_flit2 =
+					packet->tlen > sizeof(flits[0]) ?
+					flits[1] : 0;
+			}
+			dd->err_info_rcvport.status_and_code |=
+				(OPA_EI_STATUS_SMASK | BAD_L2_ERR);
 		}
-		dd->err_info_rcvport.status_and_code |=
-			(OPA_EI_STATUS_SMASK | BAD_L2_ERR);
 	}
 	return RHF_RCV_CONTINUE;
 }
@@ -1419,9 +1654,11 @@ int process_receive_error(struct hfi1_packet *packet)
 	/* KHdrHCRCErr -- KDETH packet with a bad HCRC */
 	if (unlikely(
 		 hfi1_dbg_fault_suppress_err(&packet->rcd->dd->verbs_dev) &&
-		 rhf_rcv_type_err(packet->rhf) == 3))
+		 (rhf_rcv_type_err(packet->rhf) == RHF_RCV_TYPE_ERROR ||
+		  packet->rhf & RHF_DC_ERR)))
 		return RHF_RCV_CONTINUE;
 
+	hfi1_setup_ib_header(packet);
 	handle_eflags(packet);
 
 	if (unlikely(rhf_err_flags(packet->rhf)))
@@ -1433,8 +1670,10 @@ int process_receive_error(struct hfi1_packet *packet)
 
 int kdeth_process_expected(struct hfi1_packet *packet)
 {
-	if (unlikely(hfi1_dbg_fault_packet(packet)))
+	hfi1_setup_9B_packet(packet);
+	if (unlikely(hfi1_dbg_should_fault_rx(packet)))
 		return RHF_RCV_CONTINUE;
+
 	if (unlikely(rhf_err_flags(packet->rhf)))
 		handle_eflags(packet);
 
@@ -1445,10 +1684,11 @@ int kdeth_process_expected(struct hfi1_packet *packet)
 
 int kdeth_process_eager(struct hfi1_packet *packet)
 {
+	hfi1_setup_9B_packet(packet);
+	if (unlikely(hfi1_dbg_should_fault_rx(packet)))
+		return RHF_RCV_CONTINUE;
 	if (unlikely(rhf_err_flags(packet->rhf)))
 		handle_eflags(packet);
-	if (unlikely(hfi1_dbg_fault_packet(packet)))
-		return RHF_RCV_CONTINUE;
 
 	dd_dev_err(packet->rcd->dd,
 		   "Unhandled eager packet received. Dropping.\n");
@@ -1460,4 +1700,63 @@ int process_receive_invalid(struct hfi1_packet *packet)
 	dd_dev_err(packet->rcd->dd, "Invalid packet type %d. Dropping\n",
 		   rhf_rcv_type(packet->rhf));
 	return RHF_RCV_CONTINUE;
+}
+
+void seqfile_dump_rcd(struct seq_file *s, struct hfi1_ctxtdata *rcd)
+{
+	struct hfi1_packet packet;
+	struct ps_mdata mdata;
+
+	seq_printf(s, "Rcd %u: RcvHdr cnt %u entsize %u %s head %llu tail %llu\n",
+		   rcd->ctxt, rcd->rcvhdrq_cnt, rcd->rcvhdrqentsize,
+		   HFI1_CAP_KGET_MASK(rcd->flags, DMA_RTAIL) ?
+		   "dma_rtail" : "nodma_rtail",
+		   read_uctxt_csr(rcd->dd, rcd->ctxt, RCV_HDR_HEAD) &
+		   RCV_HDR_HEAD_HEAD_MASK,
+		   read_uctxt_csr(rcd->dd, rcd->ctxt, RCV_HDR_TAIL));
+
+	init_packet(rcd, &packet);
+	init_ps_mdata(&mdata, &packet);
+
+	while (1) {
+		struct hfi1_devdata *dd = rcd->dd;
+		__le32 *rhf_addr = (__le32 *)rcd->rcvhdrq + mdata.ps_head +
+					 dd->rhf_offset;
+		struct ib_header *hdr;
+		u64 rhf = rhf_to_cpu(rhf_addr);
+		u32 etype = rhf_rcv_type(rhf), qpn;
+		u8 opcode;
+		u32 psn;
+		u8 lnh;
+
+		if (ps_done(&mdata, rhf, rcd))
+			break;
+
+		if (ps_skip(&mdata, rhf, rcd))
+			goto next;
+
+		if (etype > RHF_RCV_TYPE_IB)
+			goto next;
+
+		packet.hdr = hfi1_get_msgheader(dd, rhf_addr);
+		hdr = packet.hdr;
+
+		lnh = be16_to_cpu(hdr->lrh[0]) & 3;
+
+		if (lnh == HFI1_LRH_BTH)
+			packet.ohdr = &hdr->u.oth;
+		else if (lnh == HFI1_LRH_GRH)
+			packet.ohdr = &hdr->u.l.oth;
+		else
+			goto next; /* just in case */
+
+		opcode = (be32_to_cpu(packet.ohdr->bth[0]) >> 24);
+		qpn = be32_to_cpu(packet.ohdr->bth[1]) & RVT_QPN_MASK;
+		psn = mask_psn(be32_to_cpu(packet.ohdr->bth[2]));
+
+		seq_printf(s, "\tEnt %u: opcode 0x%x, qpn 0x%x, psn 0x%x\n",
+			   mdata.ps_head, opcode, qpn, psn);
+next:
+		update_ps_mdata(&mdata, rcd);
+	}
 }

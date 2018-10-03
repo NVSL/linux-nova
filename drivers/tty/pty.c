@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  *  Copyright (C) 1991, 1992  Linus Torvalds
  *
@@ -109,16 +110,19 @@ static void pty_unthrottle(struct tty_struct *tty)
 static int pty_write(struct tty_struct *tty, const unsigned char *buf, int c)
 {
 	struct tty_struct *to = tty->link;
+	unsigned long flags;
 
 	if (tty->stopped)
 		return 0;
 
 	if (c > 0) {
+		spin_lock_irqsave(&to->port->lock, flags);
 		/* Stuff the data into the input queue of the other end */
 		c = tty_insert_flip_string(to->port, buf, c);
 		/* And shovel */
 		if (c)
 			tty_flip_buffer_push(to->port);
+		spin_unlock_irqrestore(&to->port->lock, flags);
 	}
 	return c;
 }
@@ -343,7 +347,7 @@ static void pty_start(struct tty_struct *tty)
 		tty->ctrl_status &= ~TIOCPKT_STOP;
 		tty->ctrl_status |= TIOCPKT_START;
 		spin_unlock_irqrestore(&tty->ctrl_lock, flags);
-		wake_up_interruptible_poll(&tty->link->read_wait, POLLIN);
+		wake_up_interruptible_poll(&tty->link->read_wait, EPOLLIN);
 	}
 }
 
@@ -356,7 +360,7 @@ static void pty_stop(struct tty_struct *tty)
 		tty->ctrl_status &= ~TIOCPKT_START;
 		tty->ctrl_status |= TIOCPKT_STOP;
 		spin_unlock_irqrestore(&tty->ctrl_lock, flags);
-		wake_up_interruptible_poll(&tty->link->read_wait, POLLIN);
+		wake_up_interruptible_poll(&tty->link->read_wait, EPOLLIN);
 	}
 }
 
@@ -742,6 +746,11 @@ static void pty_unix98_remove(struct tty_driver *driver, struct tty_struct *tty)
 	}
 }
 
+static void pty_show_fdinfo(struct tty_struct *tty, struct seq_file *m)
+{
+	seq_printf(m, "tty-index:\t%d\n", tty->index);
+}
+
 static const struct tty_operations ptm_unix98_ops = {
 	.lookup = ptm_unix98_lookup,
 	.install = pty_unix98_install,
@@ -756,7 +765,8 @@ static const struct tty_operations ptm_unix98_ops = {
 	.ioctl = pty_unix98_ioctl,
 	.compat_ioctl = pty_unix98_compat_ioctl,
 	.resize = pty_resize,
-	.cleanup = pty_cleanup
+	.cleanup = pty_cleanup,
+	.show_fdinfo = pty_show_fdinfo,
 };
 
 static const struct tty_operations pty_unix98_ops = {

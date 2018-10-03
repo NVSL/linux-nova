@@ -85,6 +85,7 @@ struct vfio_group {
 	struct list_head		unbound_list;
 	struct mutex			unbound_lock;
 	atomic_t			opened;
+	wait_queue_head_t		container_q;
 	bool				noiommu;
 	struct kvm			*kvm;
 	struct blocking_notifier_head	notifier;
@@ -138,9 +139,10 @@ struct iommu_group *vfio_iommu_group_get(struct device *dev)
 	iommu_group_set_name(group, "vfio-noiommu");
 	iommu_group_set_iommudata(group, &noiommu, NULL);
 	ret = iommu_group_add_device(group, dev);
-	iommu_group_put(group);
-	if (ret)
+	if (ret) {
+		iommu_group_put(group);
 		return NULL;
+	}
 
 	/*
 	 * Where to taint?  At this point we've added an IOMMU group for a
@@ -337,6 +339,7 @@ static struct vfio_group *vfio_create_group(struct iommu_group *iommu_group)
 	mutex_init(&group->unbound_lock);
 	atomic_set(&group->container_users, 0);
 	atomic_set(&group->opened, 0);
+	init_waitqueue_head(&group->container_q);
 	group->iommu_group = iommu_group;
 #ifdef CONFIG_VFIO_NOIOMMU
 	group->noiommu = (iommu_group_get_iommudata(iommu_group) == &noiommu);
@@ -627,8 +630,6 @@ static const char * const vfio_driver_whitelist[] = { "pci-stub" };
 
 static bool vfio_dev_whitelisted(struct device *dev, struct device_driver *drv)
 {
-	int i;
-
 	if (dev_is_pci(dev)) {
 		struct pci_dev *pdev = to_pci_dev(dev);
 
@@ -636,12 +637,9 @@ static bool vfio_dev_whitelisted(struct device *dev, struct device_driver *drv)
 			return true;
 	}
 
-	for (i = 0; i < ARRAY_SIZE(vfio_driver_whitelist); i++) {
-		if (!strcmp(drv->name, vfio_driver_whitelist[i]))
-			return true;
-	}
-
-	return false;
+	return match_string(vfio_driver_whitelist,
+			    ARRAY_SIZE(vfio_driver_whitelist),
+			    drv->name) >= 0;
 }
 
 /*
@@ -662,7 +660,7 @@ static int vfio_dev_viable(struct device *dev, void *data)
 {
 	struct vfio_group *group = data;
 	struct vfio_device *device;
-	struct device_driver *drv = ACCESS_ONCE(dev->driver);
+	struct device_driver *drv = READ_ONCE(dev->driver);
 	struct vfio_unbound_dev *unbound;
 	int ret = -EINVAL;
 
@@ -993,6 +991,23 @@ void *vfio_del_group_dev(struct device *dev)
 		}
 	} while (ret <= 0);
 
+	/*
+	 * In order to support multiple devices per group, devices can be
+	 * plucked from the group while other devices in the group are still
+	 * in use.  The container persists with this group and those remaining
+	 * devices still attached.  If the user creates an isolation violation
+	 * by binding this device to another driver while the group is still in
+	 * use, that's their fault.  However, in the case of removing the last,
+	 * or potentially the only, device in the group there can be no other
+	 * in-use devices in the group.  The user has done their due diligence
+	 * and we should lay no claims to those devices.  In order to do that,
+	 * we need to make sure the group is detached from the container.
+	 * Without this stall, we're potentially racing with a user process
+	 * that may attempt to immediately bind this device to another driver.
+	 */
+	if (list_empty(&group->device_list))
+		wait_event(group->container_q, !group->container);
+
 	vfio_group_put(group);
 
 	return device_data;
@@ -1298,6 +1313,7 @@ static void __vfio_group_unset_container(struct vfio_group *group)
 					  group->iommu_group);
 
 	group->container = NULL;
+	wake_up(&group->container_q);
 	list_del(&group->container_next);
 
 	/* Detaching the last group deprivileges a container, remove iommu */
@@ -1836,62 +1852,18 @@ void vfio_info_cap_shift(struct vfio_info_cap *caps, size_t offset)
 }
 EXPORT_SYMBOL(vfio_info_cap_shift);
 
-static int sparse_mmap_cap(struct vfio_info_cap *caps, void *cap_type)
+int vfio_info_add_capability(struct vfio_info_cap *caps,
+			     struct vfio_info_cap_header *cap, size_t size)
 {
 	struct vfio_info_cap_header *header;
-	struct vfio_region_info_cap_sparse_mmap *sparse_cap, *sparse = cap_type;
-	size_t size;
 
-	size = sizeof(*sparse) + sparse->nr_areas *  sizeof(*sparse->areas);
-	header = vfio_info_cap_add(caps, size,
-				   VFIO_REGION_INFO_CAP_SPARSE_MMAP, 1);
+	header = vfio_info_cap_add(caps, size, cap->id, cap->version);
 	if (IS_ERR(header))
 		return PTR_ERR(header);
 
-	sparse_cap = container_of(header,
-			struct vfio_region_info_cap_sparse_mmap, header);
-	sparse_cap->nr_areas = sparse->nr_areas;
-	memcpy(sparse_cap->areas, sparse->areas,
-	       sparse->nr_areas * sizeof(*sparse->areas));
+	memcpy(header + 1, cap + 1, size - sizeof(*header));
+
 	return 0;
-}
-
-static int region_type_cap(struct vfio_info_cap *caps, void *cap_type)
-{
-	struct vfio_info_cap_header *header;
-	struct vfio_region_info_cap_type *type_cap, *cap = cap_type;
-
-	header = vfio_info_cap_add(caps, sizeof(*cap),
-				   VFIO_REGION_INFO_CAP_TYPE, 1);
-	if (IS_ERR(header))
-		return PTR_ERR(header);
-
-	type_cap = container_of(header, struct vfio_region_info_cap_type,
-				header);
-	type_cap->type = cap->type;
-	type_cap->subtype = cap->subtype;
-	return 0;
-}
-
-int vfio_info_add_capability(struct vfio_info_cap *caps, int cap_type_id,
-			     void *cap_type)
-{
-	int ret = -EINVAL;
-
-	if (!cap_type)
-		return 0;
-
-	switch (cap_type_id) {
-	case VFIO_REGION_INFO_CAP_SPARSE_MMAP:
-		ret = sparse_mmap_cap(caps, cap_type);
-		break;
-
-	case VFIO_REGION_INFO_CAP_TYPE:
-		ret = region_type_cap(caps, cap_type);
-		break;
-	}
-
-	return ret;
 }
 EXPORT_SYMBOL(vfio_info_add_capability);
 

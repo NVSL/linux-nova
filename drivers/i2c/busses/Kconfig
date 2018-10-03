@@ -123,14 +123,17 @@ config I2C_I801
 	    Wildcat Point (PCH)
 	    Wildcat Point-LP (PCH)
 	    BayTrail (SOC)
+	    Braswell (SOC)
 	    Sunrise Point-H (PCH)
 	    Sunrise Point-LP (PCH)
+	    Kaby Lake-H (PCH)
 	    DNV (SOC)
 	    Broxton (SOC)
 	    Lewisburg (PCH)
 	    Gemini Lake (SOC)
 	    Cannon Lake-H (PCH)
 	    Cannon Lake-LP (PCH)
+	    Cedar Fork (PCH)
 
 	  This driver can also be built as a module.  If so, the module
 	  will be called i2c-i801.
@@ -188,6 +191,18 @@ config I2C_PIIX4
 
 	  This driver can also be built as a module.  If so, the module
 	  will be called i2c-piix4.
+
+config I2C_CHT_WC
+	tristate "Intel Cherry Trail Whiskey Cove PMIC smbus controller"
+	depends on INTEL_SOC_PMIC_CHTWC
+	help
+	  If you say yes to this option, support will be included for the
+	  SMBus controller found in the Intel Cherry Trail Whiskey Cove PMIC
+	  found on some Intel Cherry Trail systems.
+
+	  Note this controller is hooked up to a TI bq24292i charger-IC,
+	  combined with a FUSB302 Type-C port-controller as such it is advised
+	  to also select CONFIG_TYPEC_FUSB302=m.
 
 config I2C_NFORCE2
 	tristate "Nvidia nForce2, nForce3 and nForce4"
@@ -328,6 +343,16 @@ config I2C_POWERMAC
 
 comment "I2C system bus drivers (mostly embedded / system-on-chip)"
 
+config I2C_ALTERA
+	tristate "Altera Soft IP I2C"
+	depends on (ARCH_SOCFPGA || NIOS2) && OF
+	help
+	  If you say yes to this option, support will be included for the
+	  Altera Soft IP I2C interfaces on SoCFPGA and Nios2 architectures.
+
+	  This driver can also be built as a module.  If so, the module
+	  will be called i2c-altera.
+
 config I2C_ASPEED
 	tristate "Aspeed I2C Controller"
 	depends on ARCH_ASPEED || COMPILE_TEST
@@ -418,24 +443,6 @@ config I2C_BRCMSTB
 	  I2C interface on the Broadcom Settop SoCs.
 
 	  If you do not need I2C interface, say N.
-
-config I2C_BLACKFIN_TWI
-	tristate "Blackfin TWI I2C support"
-	depends on BLACKFIN
-	depends on !BF561 && !BF531 && !BF532 && !BF533
-	help
-	  This is the I2C bus driver for Blackfin on-chip TWI interface.
-
-	  This driver can also be built as a module.  If so, the module
-	  will be called i2c-bfin-twi.
-
-config I2C_BLACKFIN_TWI_CLK_KHZ
-	int "Blackfin TWI I2C clock (kHz)"
-	depends on I2C_BLACKFIN_TWI
-	range 21 400
-	default 50
-	help
-	  The unit of the TWI clock is kHz.
 
 config I2C_CADENCE
 	tristate "Cadence I2C Controller"
@@ -579,6 +586,14 @@ config I2C_GPIO
 	  This is a very simple bitbanging I2C driver utilizing the
 	  arch-neutral GPIO API to control the SCL and SDA lines.
 
+config I2C_GPIO_FAULT_INJECTOR
+	bool "GPIO-based fault injector"
+	depends on I2C_GPIO
+	help
+	  This adds some functionality to the i2c-gpio driver which can inject
+	  faults to an I2C bus, so another bus master can be stress-tested.
+	  This is for debugging. If unsure, say 'no'.
+
 config I2C_HIGHLANDER
 	tristate "Highlander FPGA SMBus interface"
 	depends on SH_HIGHLANDER
@@ -603,7 +618,7 @@ config I2C_IBM_IIC
 
 config I2C_IMG
 	tristate "Imagination Technologies I2C SCB Controller"
-	depends on MIPS || METAG || COMPILE_TEST
+	depends on MIPS || COMPILE_TEST
 	help
 	  Say Y here if you want to use the IMG I2C SCB controller,
 	  available on the TZ1090 and other IMG SoCs.
@@ -691,7 +706,6 @@ config I2C_MPC
 config I2C_MT65XX
 	tristate "MediaTek I2C adapter"
 	depends on ARCH_MEDIATEK || COMPILE_TEST
-	depends on HAS_DMA
 	help
 	  This selects the MediaTek(R) Integrated Inter Circuit bus driver
 	  for MT65xx and MT81xx.
@@ -869,7 +883,6 @@ config I2C_SH7760
 
 config I2C_SH_MOBILE
 	tristate "SuperH Mobile I2C Controller"
-	depends on HAS_DMA
 	depends on ARCH_SHMOBILE || ARCH_RENESAS || COMPILE_TEST
 	help
 	  If you say yes to this option, support will be included for the
@@ -900,6 +913,13 @@ config I2C_SIRF
 	  This driver can also be built as a module.  If so, the module
 	  will be called i2c-sirf.
 
+config I2C_SPRD
+	bool "Spreadtrum I2C interface"
+	depends on I2C=y && ARCH_SPRD
+	help
+	  If you say yes to this option, support will be included for the
+	  Spreadtrum I2C interface.
+
 config I2C_ST
 	tristate "STMicroelectronics SSC I2C support"
 	depends on ARCH_STI
@@ -919,6 +939,17 @@ config I2C_STM32F4
 
 	  This driver can also be built as module. If so, the module
 	  will be called i2c-stm32f4.
+
+config I2C_STM32F7
+	tristate "STMicroelectronics STM32F7 I2C support"
+	depends on ARCH_STM32 || COMPILE_TEST
+	select I2C_SLAVE
+	help
+	  Enable this option to add support for STM32 I2C controller embedded
+	  in STM32F7 SoCs.
+
+	  This driver can also be built as module. If so, the module
+	  will be called i2c-stm32f7.
 
 config I2C_STU300
 	tristate "ST Microelectronics DDC I2C interface"
@@ -945,6 +976,16 @@ config I2C_SUN6I_P2WI
 	  accesses), except that it only supports one slave device.
 	  This interface is used to connect to specific PMIC devices (like the
 	  AXP221).
+
+config I2C_SYNQUACER
+	tristate "Socionext SynQuacer I2C controller"
+	depends on ARCH_SYNQUACER || COMPILE_TEST
+	help
+	  Say Y here to include support for the I2C controller used in some
+	  Fujitsu and Socionext SoCs.
+
+	  This driver can also be built as a module. If so, the module
+	  will be called i2c-synquacer.
 
 config I2C_TEGRA
 	tristate "NVIDIA Tegra internal I2C controller"
@@ -1055,7 +1096,6 @@ config I2C_XLP9XX
 
 config I2C_RCAR
 	tristate "Renesas R-Car I2C Controller"
-	depends on HAS_DMA
 	depends on ARCH_RENESAS || COMPILE_TEST
 	select I2C_SLAVE
 	help

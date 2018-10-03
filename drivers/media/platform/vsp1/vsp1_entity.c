@@ -1,14 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * vsp1_entity.c  --  R-Car VSP1 Base Entity
  *
  * Copyright (C) 2013-2014 Renesas Electronics Corporation
  *
  * Contact: Laurent Pinchart (laurent.pinchart@ideasonboard.com)
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
  */
 
 #include <linux/device.h>
@@ -24,18 +20,12 @@
 #include "vsp1_pipe.h"
 #include "vsp1_rwpf.h"
 
-static inline struct vsp1_entity *
-media_entity_to_vsp1_entity(struct media_entity *entity)
-{
-	return container_of(entity, struct vsp1_entity, subdev.entity);
-}
-
 void vsp1_entity_route_setup(struct vsp1_entity *entity,
 			     struct vsp1_pipeline *pipe,
-			     struct vsp1_dl_list *dl)
+			     struct vsp1_dl_body *dlb)
 {
 	struct vsp1_entity *source;
-	struct vsp1_entity *sink;
+	u32 route;
 
 	if (entity->type == VSP1_ENTITY_HGO) {
 		u32 smppt;
@@ -44,11 +34,11 @@ void vsp1_entity_route_setup(struct vsp1_entity *entity,
 		 * The HGO is a special case, its routing is configured on the
 		 * sink pad.
 		 */
-		source = media_entity_to_vsp1_entity(entity->sources[0]);
+		source = entity->sources[0];
 		smppt = (pipe->output->entity.index << VI6_DPR_SMPPT_TGW_SHIFT)
 		      | (source->route->output << VI6_DPR_SMPPT_PT_SHIFT);
 
-		vsp1_dl_list_write(dl, VI6_DPR_HGO_SMPPT, smppt);
+		vsp1_dl_body_write(dlb, VI6_DPR_HGO_SMPPT, smppt);
 		return;
 	} else if (entity->type == VSP1_ENTITY_HGT) {
 		u32 smppt;
@@ -57,11 +47,11 @@ void vsp1_entity_route_setup(struct vsp1_entity *entity,
 		 * The HGT is a special case, its routing is configured on the
 		 * sink pad.
 		 */
-		source = media_entity_to_vsp1_entity(entity->sources[0]);
+		source = entity->sources[0];
 		smppt = (pipe->output->entity.index << VI6_DPR_SMPPT_TGW_SHIFT)
 		      | (source->route->output << VI6_DPR_SMPPT_PT_SHIFT);
 
-		vsp1_dl_list_write(dl, VI6_DPR_HGT_SMPPT, smppt);
+		vsp1_dl_body_write(dlb, VI6_DPR_HGT_SMPPT, smppt);
 		return;
 	}
 
@@ -69,9 +59,40 @@ void vsp1_entity_route_setup(struct vsp1_entity *entity,
 	if (source->route->reg == 0)
 		return;
 
-	sink = media_entity_to_vsp1_entity(source->sink);
-	vsp1_dl_list_write(dl, source->route->reg,
-			   sink->route->inputs[source->sink_pad]);
+	route = source->sink->route->inputs[source->sink_pad];
+	/*
+	 * The ILV and BRS share the same data path route. The extra BRSSEL bit
+	 * selects between the ILV and BRS.
+	 */
+	if (source->type == VSP1_ENTITY_BRS)
+		route |= VI6_DPR_ROUTE_BRSSEL;
+	vsp1_dl_body_write(dlb, source->route->reg, route);
+}
+
+void vsp1_entity_configure_stream(struct vsp1_entity *entity,
+				  struct vsp1_pipeline *pipe,
+				  struct vsp1_dl_body *dlb)
+{
+	if (entity->ops->configure_stream)
+		entity->ops->configure_stream(entity, pipe, dlb);
+}
+
+void vsp1_entity_configure_frame(struct vsp1_entity *entity,
+				 struct vsp1_pipeline *pipe,
+				 struct vsp1_dl_list *dl,
+				 struct vsp1_dl_body *dlb)
+{
+	if (entity->ops->configure_frame)
+		entity->ops->configure_frame(entity, pipe, dl, dlb);
+}
+
+void vsp1_entity_configure_partition(struct vsp1_entity *entity,
+				     struct vsp1_pipeline *pipe,
+				     struct vsp1_dl_list *dl,
+				     struct vsp1_dl_body *dlb)
+{
+	if (entity->ops->configure_partition)
+		entity->ops->configure_partition(entity, pipe, dl, dlb);
 }
 
 /* -----------------------------------------------------------------------------
@@ -312,9 +333,106 @@ done:
 	return ret;
 }
 
+/*
+ * vsp1_subdev_set_pad_format - Subdev pad set_fmt handler
+ * @subdev: V4L2 subdevice
+ * @cfg: V4L2 subdev pad configuration
+ * @fmt: V4L2 subdev format
+ * @codes: Array of supported media bus codes
+ * @ncodes: Number of supported media bus codes
+ * @min_width: Minimum image width
+ * @min_height: Minimum image height
+ * @max_width: Maximum image width
+ * @max_height: Maximum image height
+ *
+ * This function implements the subdev set_fmt pad operation for entities that
+ * do not support scaling or cropping. It defaults to the first supplied media
+ * bus code if the requested code isn't supported, clamps the size to the
+ * supplied minimum and maximum, and propagates the sink pad format to the
+ * source pad.
+ */
+int vsp1_subdev_set_pad_format(struct v4l2_subdev *subdev,
+			       struct v4l2_subdev_pad_config *cfg,
+			       struct v4l2_subdev_format *fmt,
+			       const unsigned int *codes, unsigned int ncodes,
+			       unsigned int min_width, unsigned int min_height,
+			       unsigned int max_width, unsigned int max_height)
+{
+	struct vsp1_entity *entity = to_vsp1_entity(subdev);
+	struct v4l2_subdev_pad_config *config;
+	struct v4l2_mbus_framefmt *format;
+	struct v4l2_rect *selection;
+	unsigned int i;
+	int ret = 0;
+
+	mutex_lock(&entity->lock);
+
+	config = vsp1_entity_get_pad_config(entity, cfg, fmt->which);
+	if (!config) {
+		ret = -EINVAL;
+		goto done;
+	}
+
+	format = vsp1_entity_get_pad_format(entity, config, fmt->pad);
+
+	if (fmt->pad == entity->source_pad) {
+		/* The output format can't be modified. */
+		fmt->format = *format;
+		goto done;
+	}
+
+	/*
+	 * Default to the first media bus code if the requested format is not
+	 * supported.
+	 */
+	for (i = 0; i < ncodes; ++i) {
+		if (fmt->format.code == codes[i])
+			break;
+	}
+
+	format->code = i < ncodes ? codes[i] : codes[0];
+	format->width = clamp_t(unsigned int, fmt->format.width,
+				min_width, max_width);
+	format->height = clamp_t(unsigned int, fmt->format.height,
+				 min_height, max_height);
+	format->field = V4L2_FIELD_NONE;
+	format->colorspace = V4L2_COLORSPACE_SRGB;
+
+	fmt->format = *format;
+
+	/* Propagate the format to the source pad. */
+	format = vsp1_entity_get_pad_format(entity, config, entity->source_pad);
+	*format = fmt->format;
+
+	/* Reset the crop and compose rectangles */
+	selection = vsp1_entity_get_pad_selection(entity, config, fmt->pad,
+						  V4L2_SEL_TGT_CROP);
+	selection->left = 0;
+	selection->top = 0;
+	selection->width = format->width;
+	selection->height = format->height;
+
+	selection = vsp1_entity_get_pad_selection(entity, config, fmt->pad,
+						  V4L2_SEL_TGT_COMPOSE);
+	selection->left = 0;
+	selection->top = 0;
+	selection->width = format->width;
+	selection->height = format->height;
+
+done:
+	mutex_unlock(&entity->lock);
+	return ret;
+}
+
 /* -----------------------------------------------------------------------------
  * Media Operations
  */
+
+static inline struct vsp1_entity *
+media_entity_to_vsp1_entity(struct media_entity *entity)
+{
+	return container_of(entity, struct vsp1_entity, subdev.entity);
+}
 
 static int vsp1_entity_link_setup_source(const struct media_pad *source_pad,
 					 const struct media_pad *sink_pad,
@@ -339,7 +457,7 @@ static int vsp1_entity_link_setup_source(const struct media_pad *source_pad,
 		    sink->type != VSP1_ENTITY_HGT) {
 			if (source->sink)
 				return -EBUSY;
-			source->sink = sink_pad->entity;
+			source->sink = sink;
 			source->sink_pad = sink_pad->index;
 		}
 	} else {
@@ -355,15 +473,17 @@ static int vsp1_entity_link_setup_sink(const struct media_pad *source_pad,
 				       u32 flags)
 {
 	struct vsp1_entity *sink;
+	struct vsp1_entity *source;
 
 	sink = media_entity_to_vsp1_entity(sink_pad->entity);
+	source = media_entity_to_vsp1_entity(source_pad->entity);
 
 	if (flags & MEDIA_LNK_FL_ENABLED) {
 		/* Fan-in is limited to one. */
 		if (sink->sources[sink_pad->index])
 			return -EBUSY;
 
-		sink->sources[sink_pad->index] = source_pad->entity;
+		sink->sources[sink_pad->index] = source;
 	} else {
 		sink->sources[sink_pad->index] = NULL;
 	}
@@ -445,11 +565,17 @@ struct media_pad *vsp1_entity_remote_pad(struct media_pad *pad)
 	{ VSP1_ENTITY_UDS, idx, VI6_DPR_UDS_ROUTE(idx),			\
 	  { VI6_DPR_NODE_UDS(idx) }, VI6_DPR_NODE_UDS(idx) }
 
+#define VSP1_ENTITY_ROUTE_UIF(idx)					\
+	{ VSP1_ENTITY_UIF, idx, VI6_DPR_UIF_ROUTE(idx),			\
+	  { VI6_DPR_NODE_UIF(idx) }, VI6_DPR_NODE_UIF(idx) }
+
 #define VSP1_ENTITY_ROUTE_WPF(idx)					\
 	{ VSP1_ENTITY_WPF, idx, 0,					\
 	  { VI6_DPR_NODE_WPF(idx) }, VI6_DPR_NODE_WPF(idx) }
 
 static const struct vsp1_route vsp1_routes[] = {
+	{ VSP1_ENTITY_BRS, 0, VI6_DPR_ILV_BRS_ROUTE,
+	  { VI6_DPR_NODE_BRS_IN(0), VI6_DPR_NODE_BRS_IN(1) }, 0 },
 	{ VSP1_ENTITY_BRU, 0, VI6_DPR_BRU_ROUTE,
 	  { VI6_DPR_NODE_BRU_IN(0), VI6_DPR_NODE_BRU_IN(1),
 	    VI6_DPR_NODE_BRU_IN(2), VI6_DPR_NODE_BRU_IN(3),
@@ -459,7 +585,8 @@ static const struct vsp1_route vsp1_routes[] = {
 	{ VSP1_ENTITY_HGT, 0, 0, { 0, }, 0 },
 	VSP1_ENTITY_ROUTE(HSI),
 	VSP1_ENTITY_ROUTE(HST),
-	{ VSP1_ENTITY_LIF, 0, 0, { VI6_DPR_NODE_LIF, }, VI6_DPR_NODE_LIF },
+	{ VSP1_ENTITY_LIF, 0, 0, { 0, }, 0 },
+	{ VSP1_ENTITY_LIF, 1, 0, { 0, }, 0 },
 	VSP1_ENTITY_ROUTE(LUT),
 	VSP1_ENTITY_ROUTE_RPF(0),
 	VSP1_ENTITY_ROUTE_RPF(1),
@@ -470,6 +597,8 @@ static const struct vsp1_route vsp1_routes[] = {
 	VSP1_ENTITY_ROUTE_UDS(0),
 	VSP1_ENTITY_ROUTE_UDS(1),
 	VSP1_ENTITY_ROUTE_UDS(2),
+	VSP1_ENTITY_ROUTE_UIF(0),	/* Named UIF4 in the documentation */
+	VSP1_ENTITY_ROUTE_UIF(1),	/* Named UIF5 in the documentation */
 	VSP1_ENTITY_ROUTE_WPF(0),
 	VSP1_ENTITY_ROUTE_WPF(1),
 	VSP1_ENTITY_ROUTE_WPF(2),
@@ -501,7 +630,8 @@ int vsp1_entity_init(struct vsp1_device *vsp1, struct vsp1_entity *entity,
 	entity->source_pad = num_pads - 1;
 
 	/* Allocate and initialize pads. */
-	entity->pads = devm_kzalloc(vsp1->dev, num_pads * sizeof(*entity->pads),
+	entity->pads = devm_kcalloc(vsp1->dev,
+				    num_pads, sizeof(*entity->pads),
 				    GFP_KERNEL);
 	if (entity->pads == NULL)
 		return -ENOMEM;

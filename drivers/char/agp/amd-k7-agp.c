@@ -21,7 +21,7 @@
 #define AMD_TLBFLUSH	0x0c	/* In mmio region (32-bit register) */
 #define AMD_CACHEENTRY	0x10	/* In mmio region (32-bit register) */
 
-static struct pci_device_id agp_amdk7_pci_table[];
+static const struct pci_device_id agp_amdk7_pci_table[];
 
 struct amd_page_map {
 	unsigned long *real;
@@ -85,7 +85,8 @@ static int amd_create_gatt_pages(int nr_tables)
 	int retval = 0;
 	int i;
 
-	tables = kzalloc((nr_tables + 1) * sizeof(struct amd_page_map *),GFP_KERNEL);
+	tables = kcalloc(nr_tables + 1, sizeof(struct amd_page_map *),
+			 GFP_KERNEL);
 	if (tables == NULL)
 		return -ENOMEM;
 
@@ -508,7 +509,7 @@ static int agp_amdk7_resume(struct pci_dev *pdev)
 #endif /* CONFIG_PM */
 
 /* must be the same order as name table above */
-static struct pci_device_id agp_amdk7_pci_table[] = {
+static const struct pci_device_id agp_amdk7_pci_table[] = {
 	{
 	.class		= (PCI_CLASS_BRIDGE_HOST << 8),
 	.class_mask	= ~0,

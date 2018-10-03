@@ -106,9 +106,7 @@ static int iser_create_device_ib_res(struct iser_device *device)
 
 	INIT_IB_EVENT_HANDLER(&device->event_handler, ib_dev,
 			      iser_event_handler);
-	if (ib_register_event_handler(&device->event_handler))
-		goto cq_err;
-
+	ib_register_event_handler(&device->event_handler);
 	return 0;
 
 cq_err:
@@ -141,7 +139,7 @@ static void iser_free_device_ib_res(struct iser_device *device)
 		comp->cq = NULL;
 	}
 
-	(void)ib_unregister_event_handler(&device->event_handler);
+	ib_unregister_event_handler(&device->event_handler);
 	ib_dealloc_pd(device->pd);
 
 	kfree(device->comps);
@@ -705,19 +703,34 @@ iser_calc_scsi_params(struct iser_conn *iser_conn,
 		      unsigned int max_sectors)
 {
 	struct iser_device *device = iser_conn->ib_conn.device;
+	struct ib_device_attr *attr = &device->ib_device->attrs;
 	unsigned short sg_tablesize, sup_sg_tablesize;
+	unsigned short reserved_mr_pages;
+
+	/*
+	 * FRs without SG_GAPS or FMRs can only map up to a (device) page per
+	 * entry, but if the first entry is misaligned we'll end up using two
+	 * entries (head and tail) for a single page worth data, so one
+	 * additional entry is required.
+	 */
+	if ((attr->device_cap_flags & IB_DEVICE_MEM_MGT_EXTENSIONS) &&
+	    (attr->device_cap_flags & IB_DEVICE_SG_GAPS_REG))
+		reserved_mr_pages = 0;
+	else
+		reserved_mr_pages = 1;
 
 	sg_tablesize = DIV_ROUND_UP(max_sectors * 512, SIZE_4K);
-	if (device->ib_device->attrs.device_cap_flags &
-			IB_DEVICE_MEM_MGT_EXTENSIONS)
+	if (attr->device_cap_flags & IB_DEVICE_MEM_MGT_EXTENSIONS)
 		sup_sg_tablesize =
 			min_t(
 			 uint, ISCSI_ISER_MAX_SG_TABLESIZE,
-			 device->ib_device->attrs.max_fast_reg_page_list_len);
+			 attr->max_fast_reg_page_list_len - reserved_mr_pages);
 	else
 		sup_sg_tablesize = ISCSI_ISER_MAX_SG_TABLESIZE;
 
 	iser_conn->scsi_sg_tablesize = min(sg_tablesize, sup_sg_tablesize);
+	iser_conn->pages_per_mr =
+		iser_conn->scsi_sg_tablesize + reserved_mr_pages;
 }
 
 /**
@@ -1148,7 +1161,7 @@ void iser_err_comp(struct ib_wc *wc, const char *type)
 	if (wc->status != IB_WC_WR_FLUSH_ERR) {
 		struct iser_conn *iser_conn = to_iser_conn(wc->qp->qp_context);
 
-		iser_err("%s failure: %s (%d) vend_err %x\n", type,
+		iser_err("%s failure: %s (%d) vend_err %#x\n", type,
 			 ib_wc_status_msg(wc->status), wc->status,
 			 wc->vendor_err);
 

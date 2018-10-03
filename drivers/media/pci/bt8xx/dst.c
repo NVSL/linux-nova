@@ -28,7 +28,7 @@
 #include <linux/vmalloc.h>
 #include <linux/delay.h>
 #include <asm/div64.h>
-#include "dvb_frontend.h"
+#include <media/dvb_frontend.h>
 #include "dst_priv.h"
 #include "dst_common.h"
 
@@ -1657,7 +1657,7 @@ static int dst_tune_frontend(struct dvb_frontend* fe,
 	return 0;
 }
 
-static int dst_get_tuning_algo(struct dvb_frontend *fe)
+static enum dvbfe_algo dst_get_tuning_algo(struct dvb_frontend *fe)
 {
 	return dst_algo ? DVBFE_ALGO_HW : DVBFE_ALGO_SW;
 }

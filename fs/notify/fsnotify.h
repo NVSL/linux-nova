@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __FS_NOTIFY_FSNOTIFY_H_
 #define __FS_NOTIFY_FSNOTIFY_H_
 
@@ -7,12 +8,6 @@
 #include <linux/types.h>
 
 #include "../mount.h"
-
-struct fsnotify_iter_info {
-	struct fsnotify_mark *inode_mark;
-	struct fsnotify_mark *vfsmount_mark;
-	int srcu_idx;
-};
 
 /* destroy all events sitting in this groups notification queue */
 extern void fsnotify_flush_notify(struct fsnotify_group *group);

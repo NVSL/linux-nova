@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /* vio.c: Virtual I/O channel devices probing infrastructure.
  *
  *    Copyright (c) 2003-2005 IBM Corp.
@@ -246,6 +247,7 @@ u64 vio_vdev_node(struct mdesc_handle *hp, struct vio_dev *vdev)
 
 	return node;
 }
+EXPORT_SYMBOL(vio_vdev_node);
 
 static void vio_fill_channel_info(struct mdesc_handle *hp, u64 mp,
 				  struct vio_dev *vdev)
@@ -401,7 +403,7 @@ static struct vio_dev *vio_create_one(struct mdesc_handle *hp, u64 mp,
 	if (err) {
 		printk(KERN_ERR "VIO: Could not register device %s, err=%d\n",
 		       dev_name(&vdev->dev), err);
-		kfree(vdev);
+		put_device(&vdev->dev);
 		return NULL;
 	}
 	if (vdev->dp)

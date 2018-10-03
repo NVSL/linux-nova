@@ -390,7 +390,8 @@ mwifiex_sdio_remove(struct sdio_func *func)
 	mwifiex_dbg(adapter, INFO, "info: SDIO func num=%d\n", func->num);
 
 	ret = mwifiex_sdio_read_fw_status(adapter, &firmware_stat);
-	if (firmware_stat == FIRMWARE_READY_SDIO && !adapter->mfg_mode) {
+	if (!ret && firmware_stat == FIRMWARE_READY_SDIO &&
+	    !adapter->mfg_mode) {
 		mwifiex_deauthenticate_all(adapter);
 
 		priv = mwifiex_get_priv(adapter, MWIFIEX_BSS_ROLE_ANY);
@@ -465,6 +466,17 @@ static int mwifiex_sdio_suspend(struct device *dev)
 	return ret;
 }
 
+static void mwifiex_sdio_coredump(struct device *dev)
+{
+	struct sdio_func *func = dev_to_sdio_func(dev);
+	struct sdio_mmc_card *card;
+
+	card = sdio_get_drvdata(func);
+	if (!test_and_set_bit(MWIFIEX_IFACE_WORK_DEVICE_DUMP,
+			      &card->work_flags))
+		schedule_work(&card->work);
+}
+
 /* Device ID for SD8786 */
 #define SDIO_DEVICE_ID_MARVELL_8786   (0x9116)
 /* Device ID for SD8787 */
@@ -514,6 +526,7 @@ static struct sdio_driver mwifiex_sdio = {
 	.remove = mwifiex_sdio_remove,
 	.drv = {
 		.owner = THIS_MODULE,
+		.coredump = mwifiex_sdio_coredump,
 		.pm = &mwifiex_sdio_pm_ops,
 	}
 };
@@ -2093,15 +2106,16 @@ static int mwifiex_init_sdio(struct mwifiex_adapter *adapter)
 		return -ENOMEM;
 
 	/* Allocate skb pointer buffers */
-	card->mpa_rx.skb_arr = kzalloc((sizeof(void *)) *
-				       card->mp_agg_pkt_limit, GFP_KERNEL);
+	card->mpa_rx.skb_arr = kcalloc(card->mp_agg_pkt_limit, sizeof(void *),
+				       GFP_KERNEL);
 	if (!card->mpa_rx.skb_arr) {
 		kfree(card->mp_regs);
 		return -ENOMEM;
 	}
 
-	card->mpa_rx.len_arr = kzalloc(sizeof(*card->mpa_rx.len_arr) *
-				       card->mp_agg_pkt_limit, GFP_KERNEL);
+	card->mpa_rx.len_arr = kcalloc(card->mp_agg_pkt_limit,
+				       sizeof(*card->mpa_rx.len_arr),
+				       GFP_KERNEL);
 	if (!card->mpa_rx.len_arr) {
 		kfree(card->mp_regs);
 		kfree(card->mpa_rx.skb_arr);
@@ -2504,15 +2518,21 @@ done:
 static void mwifiex_sdio_device_dump_work(struct mwifiex_adapter *adapter)
 {
 	struct sdio_mmc_card *card = adapter->card;
-	int drv_info_size;
-	void *drv_info;
 
-	drv_info_size = mwifiex_drv_info_dump(adapter, &drv_info);
+	adapter->devdump_data = vzalloc(MWIFIEX_FW_DUMP_SIZE);
+	if (!adapter->devdump_data) {
+		mwifiex_dbg(adapter, ERROR,
+			    "vzalloc devdump data failure!\n");
+		return;
+	}
+
+	mwifiex_drv_info_dump(adapter);
 	if (card->fw_dump_enh)
 		mwifiex_sdio_generic_fw_dump(adapter);
 	else
 		mwifiex_sdio_fw_dump(adapter);
-	mwifiex_upload_device_dump(adapter, drv_info, drv_info_size);
+	mwifiex_prepare_fw_dump_info(adapter);
+	mwifiex_upload_device_dump(adapter);
 }
 
 static void mwifiex_sdio_work(struct work_struct *work)

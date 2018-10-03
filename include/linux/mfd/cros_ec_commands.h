@@ -285,6 +285,14 @@ enum host_event_code {
 	EC_HOST_EVENT_HANG_DETECT = 20,
 	/* Hang detect logic detected a hang and warm rebooted the AP */
 	EC_HOST_EVENT_HANG_REBOOT = 21,
+	/* PD MCU triggering host event */
+	EC_HOST_EVENT_PD_MCU = 22,
+
+	/* EC desires to change state of host-controlled USB mux */
+	EC_HOST_EVENT_USB_MUX = 28,
+
+	/* EC RTC event occurred */
+	EC_HOST_EVENT_RTC = 26,
 
 	/*
 	 * The high bit of the event mask is not used as a host event code.  If
@@ -794,6 +802,8 @@ enum ec_feature_code {
 	EC_FEATURE_USB_MUX = 23,
 	/* Motion Sensor code has an internal software FIFO */
 	EC_FEATURE_MOTION_SENSE_FIFO = 24,
+	/* EC has RTC feature that can be controlled by host commands */
+	EC_FEATURE_RTC = 27,
 };
 
 #define EC_FEATURE_MASK_0(event_code) (1UL << (event_code % 32))
@@ -1703,6 +1713,9 @@ struct ec_response_rtc {
 /* These all use ec_params_rtc */
 #define EC_CMD_RTC_SET_VALUE 0x46
 #define EC_CMD_RTC_SET_ALARM 0x47
+
+/* Pass as param to SET_ALARM to clear the current alarm */
+#define EC_RTC_ALARM_CLEAR 0
 
 /*****************************************************************************/
 /* Port80 log access */
@@ -2899,10 +2912,100 @@ enum usb_pd_control_mux {
 	USB_PD_CTRL_MUX_AUTO = 5,
 };
 
+enum usb_pd_control_swap {
+	USB_PD_CTRL_SWAP_NONE = 0,
+	USB_PD_CTRL_SWAP_DATA = 1,
+	USB_PD_CTRL_SWAP_POWER = 2,
+	USB_PD_CTRL_SWAP_VCONN = 3,
+	USB_PD_CTRL_SWAP_COUNT
+};
+
 struct ec_params_usb_pd_control {
 	uint8_t port;
 	uint8_t role;
 	uint8_t mux;
+	uint8_t swap;
+} __packed;
+
+#define PD_CTRL_RESP_ENABLED_COMMS      (1 << 0) /* Communication enabled */
+#define PD_CTRL_RESP_ENABLED_CONNECTED  (1 << 1) /* Device connected */
+#define PD_CTRL_RESP_ENABLED_PD_CAPABLE (1 << 2) /* Partner is PD capable */
+
+#define PD_CTRL_RESP_ROLE_POWER         BIT(0) /* 0=SNK/1=SRC */
+#define PD_CTRL_RESP_ROLE_DATA          BIT(1) /* 0=UFP/1=DFP */
+#define PD_CTRL_RESP_ROLE_VCONN         BIT(2) /* Vconn status */
+#define PD_CTRL_RESP_ROLE_DR_POWER      BIT(3) /* Partner is dualrole power */
+#define PD_CTRL_RESP_ROLE_DR_DATA       BIT(4) /* Partner is dualrole data */
+#define PD_CTRL_RESP_ROLE_USB_COMM      BIT(5) /* Partner USB comm capable */
+#define PD_CTRL_RESP_ROLE_EXT_POWERED   BIT(6) /* Partner externally powerd */
+
+struct ec_response_usb_pd_control_v1 {
+	uint8_t enabled;
+	uint8_t role;
+	uint8_t polarity;
+	char state[32];
+} __packed;
+
+#define EC_CMD_USB_PD_PORTS 0x102
+
+/* Maximum number of PD ports on a device, num_ports will be <= this */
+#define EC_USB_PD_MAX_PORTS 8
+
+struct ec_response_usb_pd_ports {
+	uint8_t num_ports;
+} __packed;
+
+#define EC_CMD_USB_PD_POWER_INFO 0x103
+
+#define PD_POWER_CHARGING_PORT 0xff
+struct ec_params_usb_pd_power_info {
+	uint8_t port;
+} __packed;
+
+enum usb_chg_type {
+	USB_CHG_TYPE_NONE,
+	USB_CHG_TYPE_PD,
+	USB_CHG_TYPE_C,
+	USB_CHG_TYPE_PROPRIETARY,
+	USB_CHG_TYPE_BC12_DCP,
+	USB_CHG_TYPE_BC12_CDP,
+	USB_CHG_TYPE_BC12_SDP,
+	USB_CHG_TYPE_OTHER,
+	USB_CHG_TYPE_VBUS,
+	USB_CHG_TYPE_UNKNOWN,
+};
+
+struct usb_chg_measures {
+	uint16_t voltage_max;
+	uint16_t voltage_now;
+	uint16_t current_max;
+	uint16_t current_lim;
+} __packed;
+
+struct ec_response_usb_pd_power_info {
+	uint8_t role;
+	uint8_t type;
+	uint8_t dualrole;
+	uint8_t reserved1;
+	struct usb_chg_measures meas;
+	uint32_t max_power;
+} __packed;
+
+/* Get info about USB-C SS muxes */
+#define EC_CMD_USB_PD_MUX_INFO 0x11a
+
+struct ec_params_usb_pd_mux_info {
+	uint8_t port; /* USB-C port number */
+} __packed;
+
+/* Flags representing mux state */
+#define USB_PD_MUX_USB_ENABLED       (1 << 0)
+#define USB_PD_MUX_DP_ENABLED        (1 << 1)
+#define USB_PD_MUX_POLARITY_INVERTED (1 << 2)
+#define USB_PD_MUX_HPD_IRQ           (1 << 3)
+
+struct ec_response_usb_pd_mux_info {
+	uint8_t flags; /* USB_PD_MUX_*-encoded USB mux state */
 } __packed;
 
 /*****************************************************************************/

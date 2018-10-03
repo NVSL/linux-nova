@@ -147,7 +147,7 @@ static int ff400_switch_fetching_mode(struct snd_ff *ff, bool enable)
 	__le32 *reg;
 	int i;
 
-	reg = kzalloc(sizeof(__le32) * 18, GFP_KERNEL);
+	reg = kcalloc(18, sizeof(__le32), GFP_KERNEL);
 	if (reg == NULL)
 		return -ENOMEM;
 
@@ -356,7 +356,7 @@ static void ff400_dump_clock_config(struct snd_ff *ff,
 	snd_iprintf(buffer, "Sync to clock source: %s\n", src);
 }
 
-struct snd_ff_protocol snd_ff_protocol_ff400 = {
+const struct snd_ff_protocol snd_ff_protocol_ff400 = {
 	.get_clock		= ff400_get_clock,
 	.begin_session		= ff400_begin_session,
 	.finish_session		= ff400_finish_session,

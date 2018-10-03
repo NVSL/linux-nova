@@ -52,7 +52,7 @@ struct go7007_snd {
 	int capturing;
 };
 
-static struct snd_pcm_hardware go7007_snd_capture_hw = {
+static const struct snd_pcm_hardware go7007_snd_capture_hw = {
 	.info			= (SNDRV_PCM_INFO_MMAP |
 					SNDRV_PCM_INFO_INTERLEAVED |
 					SNDRV_PCM_INFO_BLOCK_TRANSFER |
@@ -227,7 +227,7 @@ int go7007_snd_init(struct go7007 *go)
 {
 	static int dev;
 	struct go7007_snd *gosnd;
-	int ret = 0;
+	int ret;
 
 	if (dev >= SNDRV_CARDS)
 		return -ENODEV;

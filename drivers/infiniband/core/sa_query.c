@@ -50,6 +50,7 @@
 #include <uapi/rdma/ib_user_sa.h>
 #include <rdma/ib_marshall.h>
 #include <rdma/ib_addr.h>
+#include <rdma/opa_addr.h>
 #include "sa.h"
 #include "core_priv.h"
 
@@ -861,7 +862,7 @@ static int ib_nl_send_msg(struct ib_sa_query *query, gfp_t gfp_mask)
 	/* Repair the nlmsg header length */
 	nlmsg_end(skb, nlh);
 
-	ret = ibnl_multicast(skb, nlh, RDMA_NL_GROUP_LS, gfp_mask);
+	ret = rdma_nl_multicast(skb, RDMA_NL_GROUP_LS, gfp_mask);
 	if (!ret)
 		ret = len;
 	else
@@ -1021,9 +1022,9 @@ static void ib_nl_request_timeout(struct work_struct *work)
 }
 
 int ib_nl_handle_set_timeout(struct sk_buff *skb,
-			     struct netlink_callback *cb)
+			     struct nlmsghdr *nlh,
+			     struct netlink_ext_ack *extack)
 {
-	const struct nlmsghdr *nlh = (struct nlmsghdr *)cb->nlh;
 	int timeout, delta, abs_delta;
 	const struct nlattr *attr;
 	unsigned long flags;
@@ -1033,8 +1034,7 @@ int ib_nl_handle_set_timeout(struct sk_buff *skb,
 	int ret;
 
 	if (!(nlh->nlmsg_flags & NLM_F_REQUEST) ||
-	    !(NETLINK_CB(skb).sk) ||
-	    !netlink_capable(skb, CAP_NET_ADMIN))
+	    !(NETLINK_CB(skb).sk))
 		return -EPERM;
 
 	ret = nla_parse(tb, LS_NLA_TYPE_MAX - 1, nlmsg_data(nlh),
@@ -1098,9 +1098,9 @@ static inline int ib_nl_is_good_resolve_resp(const struct nlmsghdr *nlh)
 }
 
 int ib_nl_handle_resolve_resp(struct sk_buff *skb,
-			      struct netlink_callback *cb)
+			      struct nlmsghdr *nlh,
+			      struct netlink_ext_ack *extack)
 {
-	const struct nlmsghdr *nlh = (struct nlmsghdr *)cb->nlh;
 	unsigned long flags;
 	struct ib_sa_query *query;
 	struct ib_mad_send_buf *send_buf;
@@ -1109,8 +1109,7 @@ int ib_nl_handle_resolve_resp(struct sk_buff *skb,
 	int ret;
 
 	if ((nlh->nlmsg_flags & NLM_F_REQUEST) ||
-	    !(NETLINK_CB(skb).sk) ||
-	    !netlink_capable(skb, CAP_NET_ADMIN))
+	    !(NETLINK_CB(skb).sk))
 		return -EPERM;
 
 	spin_lock_irqsave(&ib_nl_request_lock, flags);
@@ -1228,119 +1227,136 @@ static u8 get_src_path_mask(struct ib_device *device, u8 port_num)
 	return src_path_mask;
 }
 
-int ib_init_ah_from_path(struct ib_device *device, u8 port_num,
-			 struct sa_path_rec *rec,
-			 struct rdma_ah_attr *ah_attr)
+static int
+roce_resolve_route_from_path(struct ib_device *device, u8 port_num,
+			     struct sa_path_rec *rec)
 {
+	struct net_device *resolved_dev;
+	struct net_device *ndev;
+	struct net_device *idev;
+	struct rdma_dev_addr dev_addr = {
+		.bound_dev_if = ((sa_path_get_ifindex(rec) >= 0) ?
+				 sa_path_get_ifindex(rec) : 0),
+		.net = sa_path_get_ndev(rec) ?
+			sa_path_get_ndev(rec) :
+			&init_net
+	};
+	union {
+		struct sockaddr     _sockaddr;
+		struct sockaddr_in  _sockaddr_in;
+		struct sockaddr_in6 _sockaddr_in6;
+	} sgid_addr, dgid_addr;
 	int ret;
+
+	if (rec->roce.route_resolved)
+		return 0;
+
+	if (!device->get_netdev)
+		return -EOPNOTSUPP;
+
+	rdma_gid2ip(&sgid_addr._sockaddr, &rec->sgid);
+	rdma_gid2ip(&dgid_addr._sockaddr, &rec->dgid);
+
+	/* validate the route */
+	ret = rdma_resolve_ip_route(&sgid_addr._sockaddr,
+				    &dgid_addr._sockaddr, &dev_addr);
+	if (ret)
+		return ret;
+
+	if ((dev_addr.network == RDMA_NETWORK_IPV4 ||
+	     dev_addr.network == RDMA_NETWORK_IPV6) &&
+	    rec->rec_type != SA_PATH_REC_TYPE_ROCE_V2)
+		return -EINVAL;
+
+	idev = device->get_netdev(device, port_num);
+	if (!idev)
+		return -ENODEV;
+
+	resolved_dev = dev_get_by_index(dev_addr.net,
+					dev_addr.bound_dev_if);
+	if (!resolved_dev) {
+		ret = -ENODEV;
+		goto done;
+	}
+	ndev = ib_get_ndev_from_path(rec);
+	rcu_read_lock();
+	if ((ndev && ndev != resolved_dev) ||
+	    (resolved_dev != idev &&
+	     !rdma_is_upper_dev_rcu(idev, resolved_dev)))
+		ret = -EHOSTUNREACH;
+	rcu_read_unlock();
+	dev_put(resolved_dev);
+	if (ndev)
+		dev_put(ndev);
+done:
+	dev_put(idev);
+	if (!ret)
+		rec->roce.route_resolved = true;
+	return ret;
+}
+
+static int init_ah_attr_grh_fields(struct ib_device *device, u8 port_num,
+				   struct sa_path_rec *rec,
+				   struct rdma_ah_attr *ah_attr)
+{
+	enum ib_gid_type type = sa_conv_pathrec_to_gid_type(rec);
+	struct net_device *ndev;
 	u16 gid_index;
-	int use_roce;
-	struct net_device *ndev = NULL;
+	int ret;
 
-	memset(ah_attr, 0, sizeof *ah_attr);
+	ndev = ib_get_ndev_from_path(rec);
+	ret = ib_find_cached_gid_by_port(device, &rec->sgid, type,
+					 port_num, ndev, &gid_index);
+	if (ndev)
+		dev_put(ndev);
+	if (ret)
+		return ret;
+
+	rdma_ah_set_grh(ah_attr, &rec->dgid,
+			be32_to_cpu(rec->flow_label),
+			gid_index, rec->hop_limit,
+			rec->traffic_class);
+	return 0;
+}
+
+int ib_init_ah_attr_from_path(struct ib_device *device, u8 port_num,
+			      struct sa_path_rec *rec,
+			      struct rdma_ah_attr *ah_attr)
+{
+	int ret = 0;
+
+	memset(ah_attr, 0, sizeof(*ah_attr));
 	ah_attr->type = rdma_ah_find_type(device, port_num);
-
-	rdma_ah_set_dlid(ah_attr, be32_to_cpu(sa_path_get_dlid(rec)));
 	rdma_ah_set_sl(ah_attr, rec->sl);
-	rdma_ah_set_path_bits(ah_attr, be32_to_cpu(sa_path_get_slid(rec)) &
-			      get_src_path_mask(device, port_num));
 	rdma_ah_set_port_num(ah_attr, port_num);
 	rdma_ah_set_static_rate(ah_attr, rec->rate);
-	use_roce = rdma_cap_eth_ah(device, port_num);
 
-	if (use_roce) {
-		struct net_device *idev;
-		struct net_device *resolved_dev;
-		struct rdma_dev_addr dev_addr = {
-			.bound_dev_if = ((sa_path_get_ifindex(rec) >= 0) ?
-					 sa_path_get_ifindex(rec) : 0),
-			.net = sa_path_get_ndev(rec) ?
-				sa_path_get_ndev(rec) :
-				&init_net
-		};
-		union {
-			struct sockaddr     _sockaddr;
-			struct sockaddr_in  _sockaddr_in;
-			struct sockaddr_in6 _sockaddr_in6;
-		} sgid_addr, dgid_addr;
-
-		if (!device->get_netdev)
-			return -EOPNOTSUPP;
-
-		rdma_gid2ip(&sgid_addr._sockaddr, &rec->sgid);
-		rdma_gid2ip(&dgid_addr._sockaddr, &rec->dgid);
-
-		/* validate the route */
-		ret = rdma_resolve_ip_route(&sgid_addr._sockaddr,
-					    &dgid_addr._sockaddr, &dev_addr);
+	if (sa_path_is_roce(rec)) {
+		ret = roce_resolve_route_from_path(device, port_num, rec);
 		if (ret)
 			return ret;
 
-		if ((dev_addr.network == RDMA_NETWORK_IPV4 ||
-		     dev_addr.network == RDMA_NETWORK_IPV6) &&
-		    rec->rec_type != SA_PATH_REC_TYPE_ROCE_V2)
-			return -EINVAL;
+		memcpy(ah_attr->roce.dmac, sa_path_get_dmac(rec), ETH_ALEN);
+	} else {
+		rdma_ah_set_dlid(ah_attr, be32_to_cpu(sa_path_get_dlid(rec)));
+		if (sa_path_is_opa(rec) &&
+		    rdma_ah_get_dlid(ah_attr) == be16_to_cpu(IB_LID_PERMISSIVE))
+			rdma_ah_set_make_grd(ah_attr, true);
 
-		idev = device->get_netdev(device, port_num);
-		if (!idev)
-			return -ENODEV;
-
-		resolved_dev = dev_get_by_index(dev_addr.net,
-						dev_addr.bound_dev_if);
-		if (resolved_dev->flags & IFF_LOOPBACK) {
-			dev_put(resolved_dev);
-			resolved_dev = idev;
-			dev_hold(resolved_dev);
-		}
-		ndev = ib_get_ndev_from_path(rec);
-		rcu_read_lock();
-		if ((ndev && ndev != resolved_dev) ||
-		    (resolved_dev != idev &&
-		     !rdma_is_upper_dev_rcu(idev, resolved_dev)))
-			ret = -EHOSTUNREACH;
-		rcu_read_unlock();
-		dev_put(idev);
-		dev_put(resolved_dev);
-		if (ret) {
-			if (ndev)
-				dev_put(ndev);
-			return ret;
-		}
+		rdma_ah_set_path_bits(ah_attr,
+				      be32_to_cpu(sa_path_get_slid(rec)) &
+				      get_src_path_mask(device, port_num));
 	}
 
-	if (rec->hop_limit > 0 || use_roce) {
-		enum ib_gid_type type = sa_conv_pathrec_to_gid_type(rec);
-
-		ret = ib_find_cached_gid_by_port(device, &rec->sgid, type,
-						 port_num, ndev, &gid_index);
-		if (ret) {
-			if (ndev)
-				dev_put(ndev);
-			return ret;
-		}
-
-		rdma_ah_set_grh(ah_attr, &rec->dgid,
-				be32_to_cpu(rec->flow_label),
-				gid_index, rec->hop_limit,
-				rec->traffic_class);
-		if (ndev)
-			dev_put(ndev);
-	}
-
-	if (use_roce) {
-		u8 *dmac = sa_path_get_dmac(rec);
-
-		if (!dmac)
-			return -EINVAL;
-		memcpy(ah_attr->roce.dmac, dmac, ETH_ALEN);
-	}
-
-	return 0;
+	if (rec->hop_limit > 0 || sa_path_is_roce(rec))
+		ret = init_ah_attr_grh_fields(device, port_num, rec, ah_attr);
+	return ret;
 }
-EXPORT_SYMBOL(ib_init_ah_from_path);
+EXPORT_SYMBOL(ib_init_ah_attr_from_path);
 
 static int alloc_mad(struct ib_sa_query *query, gfp_t gfp_mask)
 {
+	struct rdma_ah_attr ah_attr;
 	unsigned long flags;
 
 	spin_lock_irqsave(&query->port->ah_lock, flags);
@@ -1352,6 +1368,15 @@ static int alloc_mad(struct ib_sa_query *query, gfp_t gfp_mask)
 	query->sm_ah = query->port->sm_ah;
 	spin_unlock_irqrestore(&query->port->ah_lock, flags);
 
+	/*
+	 * Always check if sm_ah has valid dlid assigned,
+	 * before querying for class port info
+	 */
+	if ((rdma_query_ah(query->sm_ah->ah, &ah_attr) < 0) ||
+	    !rdma_is_valid_unicast_lid(&ah_attr)) {
+		kref_put(&query->sm_ah->ref, free_sm_ah);
+		return -EAGAIN;
+	}
 	query->mad_buf = ib_create_send_mad(query->port->agent, 1,
 					    query->sm_ah->pkey_index,
 					    0, IB_MGMT_SA_HDR, IB_MGMT_SA_DATA,
@@ -1420,7 +1445,7 @@ static int send_mad(struct ib_sa_query *query, int timeout_ms, gfp_t gfp_mask)
 
 	if ((query->flags & IB_SA_ENABLE_LOCAL_SERVICE) &&
 	    (!(query->flags & IB_SA_QUERY_OPA))) {
-		if (!ibnl_chk_listeners(RDMA_NL_GROUP_LS)) {
+		if (!rdma_nl_chk_listeners(RDMA_NL_GROUP_LS)) {
 			if (!ib_nl_make_request(query, gfp_mask))
 				return id;
 		}
@@ -2290,12 +2315,15 @@ static void update_sm_ah(struct work_struct *work)
 	rdma_ah_set_sl(&ah_attr, port_attr.sm_sl);
 	rdma_ah_set_port_num(&ah_attr, port->port_num);
 	if (port_attr.grh_required) {
-		rdma_ah_set_ah_flags(&ah_attr, IB_AH_GRH);
-
-		rdma_ah_set_subnet_prefix(&ah_attr,
-					  cpu_to_be64(port_attr.subnet_prefix));
-		rdma_ah_set_interface_id(&ah_attr,
-					 cpu_to_be64(IB_SA_WELL_KNOWN_GUID));
+		if (ah_attr.type == RDMA_AH_ATTR_TYPE_OPA) {
+			rdma_ah_set_make_grd(&ah_attr, true);
+		} else {
+			rdma_ah_set_ah_flags(&ah_attr, IB_AH_GRH);
+			rdma_ah_set_subnet_prefix(&ah_attr,
+						  cpu_to_be64(port_attr.subnet_prefix));
+			rdma_ah_set_interface_id(&ah_attr,
+						 cpu_to_be64(IB_SA_WELL_KNOWN_GUID));
+		}
 	}
 
 	new_ah->ah = rdma_create_ah(port->agent->qp->pd, &ah_attr);
@@ -2410,8 +2438,7 @@ static void ib_sa_add_one(struct ib_device *device)
 	 */
 
 	INIT_IB_EVENT_HANDLER(&sa_dev->event_handler, device, ib_sa_event);
-	if (ib_register_event_handler(&sa_dev->event_handler))
-		goto err;
+	ib_register_event_handler(&sa_dev->event_handler);
 
 	for (i = 0; i <= e - s; ++i) {
 		if (rdma_cap_ib_sa(device, i + 1))

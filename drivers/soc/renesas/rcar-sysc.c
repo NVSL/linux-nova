@@ -194,11 +194,12 @@ static int rcar_sysc_pd_power_on(struct generic_pm_domain *genpd)
 
 static bool has_cpg_mstp;
 
-static void __init rcar_sysc_pd_setup(struct rcar_sysc_pd *pd)
+static int __init rcar_sysc_pd_setup(struct rcar_sysc_pd *pd)
 {
 	struct generic_pm_domain *genpd = &pd->genpd;
 	const char *name = pd->genpd.name;
 	struct dev_power_governor *gov = &simple_qos_governor;
+	int error;
 
 	if (pd->flags & PD_CPU) {
 		/*
@@ -224,7 +225,7 @@ static void __init rcar_sysc_pd_setup(struct rcar_sysc_pd *pd)
 
 	if (!(pd->flags & (PD_CPU | PD_SCU))) {
 		/* Enable Clock Domain for I/O devices */
-		genpd->flags |= GENPD_FLAG_PM_CLK;
+		genpd->flags |= GENPD_FLAG_PM_CLK | GENPD_FLAG_ACTIVE_WAKEUP;
 		if (has_cpg_mstp) {
 			genpd->attach_dev = cpg_mstp_attach_dev;
 			genpd->detach_dev = cpg_mstp_detach_dev;
@@ -251,15 +252,22 @@ static void __init rcar_sysc_pd_setup(struct rcar_sysc_pd *pd)
 	rcar_sysc_power_up(&pd->ch);
 
 finalize:
-	pm_genpd_init(genpd, gov, false);
+	error = pm_genpd_init(genpd, gov, false);
+	if (error)
+		pr_err("Failed to init PM domain %s: %d\n", name, error);
+
+	return error;
 }
 
-static const struct of_device_id rcar_sysc_matches[] = {
+static const struct of_device_id rcar_sysc_matches[] __initconst = {
 #ifdef CONFIG_SYSC_R8A7743
 	{ .compatible = "renesas,r8a7743-sysc", .data = &r8a7743_sysc_info },
 #endif
 #ifdef CONFIG_SYSC_R8A7745
 	{ .compatible = "renesas,r8a7745-sysc", .data = &r8a7745_sysc_info },
+#endif
+#ifdef CONFIG_SYSC_R8A77470
+	{ .compatible = "renesas,r8a77470-sysc", .data = &r8a77470_sysc_info },
 #endif
 #ifdef CONFIG_SYSC_R8A7779
 	{ .compatible = "renesas,r8a7779-sysc", .data = &r8a7779_sysc_info },
@@ -283,6 +291,21 @@ static const struct of_device_id rcar_sysc_matches[] = {
 #endif
 #ifdef CONFIG_SYSC_R8A7796
 	{ .compatible = "renesas,r8a7796-sysc", .data = &r8a7796_sysc_info },
+#endif
+#ifdef CONFIG_SYSC_R8A77965
+	{ .compatible = "renesas,r8a77965-sysc", .data = &r8a77965_sysc_info },
+#endif
+#ifdef CONFIG_SYSC_R8A77970
+	{ .compatible = "renesas,r8a77970-sysc", .data = &r8a77970_sysc_info },
+#endif
+#ifdef CONFIG_SYSC_R8A77980
+	{ .compatible = "renesas,r8a77980-sysc", .data = &r8a77980_sysc_info },
+#endif
+#ifdef CONFIG_SYSC_R8A77990
+	{ .compatible = "renesas,r8a77990-sysc", .data = &r8a77990_sysc_info },
+#endif
+#ifdef CONFIG_SYSC_R8A77995
+	{ .compatible = "renesas,r8a77995-sysc", .data = &r8a77995_sysc_info },
 #endif
 	{ /* sentinel */ }
 };
@@ -323,7 +346,7 @@ static int __init rcar_sysc_pd_init(void)
 
 	base = of_iomap(np, 0);
 	if (!base) {
-		pr_warn("%s: Cannot map regs\n", np->full_name);
+		pr_warn("%pOF: Cannot map regs\n", np);
 		error = -ENOMEM;
 		goto out_put;
 	}
@@ -348,15 +371,18 @@ static int __init rcar_sysc_pd_init(void)
 	 */
 	syscimr = ioread32(base + SYSCIMR);
 	syscimr |= syscier;
-	pr_debug("%s: syscimr = 0x%08x\n", np->full_name, syscimr);
+	pr_debug("%pOF: syscimr = 0x%08x\n", np, syscimr);
 	iowrite32(syscimr, base + SYSCIMR);
 
 	/*
 	 * SYSC needs all interrupt sources enabled to control power.
 	 */
-	pr_debug("%s: syscier = 0x%08x\n", np->full_name, syscier);
+	pr_debug("%pOF: syscier = 0x%08x\n", np, syscier);
 	iowrite32(syscier, base + SYSCIER);
 
+	/*
+	 * First, create all PM domains
+	 */
 	for (i = 0; i < info->num_areas; i++) {
 		const struct rcar_sysc_area *area = &info->areas[i];
 		struct rcar_sysc_pd *pd;
@@ -379,12 +405,27 @@ static int __init rcar_sysc_pd_init(void)
 		pd->ch.isr_bit = area->isr_bit;
 		pd->flags = area->flags;
 
-		rcar_sysc_pd_setup(pd);
-		if (area->parent >= 0)
-			pm_genpd_add_subdomain(domains->domains[area->parent],
-					       &pd->genpd);
+		error = rcar_sysc_pd_setup(pd);
+		if (error)
+			goto out_put;
 
 		domains->domains[area->isr_bit] = &pd->genpd;
+	}
+
+	/*
+	 * Second, link all PM domains to their parents
+	 */
+	for (i = 0; i < info->num_areas; i++) {
+		const struct rcar_sysc_area *area = &info->areas[i];
+
+		if (!area->name || area->parent < 0)
+			continue;
+
+		error = pm_genpd_add_subdomain(domains->domains[area->parent],
+					       domains->domains[area->isr_bit]);
+		if (error)
+			pr_warn("Failed to add PM subdomain %s to parent %u\n",
+				area->name, area->parent);
 	}
 
 	error = of_genpd_add_provider_onecell(np, &domains->onecell_data);

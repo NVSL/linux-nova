@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * ld script for the x86 kernel
  *
@@ -24,6 +25,7 @@
 #include <asm/asm-offsets.h>
 #include <asm/thread_info.h>
 #include <asm/page_types.h>
+#include <asm/orc_lookup.h>
 #include <asm/cache.h>
 #include <asm/boot.h>
 
@@ -59,10 +61,16 @@ jiffies_64 = jiffies;
 		. = ALIGN(HPAGE_SIZE);				\
 		__end_rodata_hpage_align = .;
 
+#define ALIGN_ENTRY_TEXT_BEGIN	. = ALIGN(PMD_SIZE);
+#define ALIGN_ENTRY_TEXT_END	. = ALIGN(PMD_SIZE);
+
 #else
 
 #define X64_ALIGN_RODATA_BEGIN
 #define X64_ALIGN_RODATA_END
+
+#define ALIGN_ENTRY_TEXT_BEGIN
+#define ALIGN_ENTRY_TEXT_END
 
 #endif
 
@@ -94,17 +102,35 @@ SECTIONS
 		_stext = .;
 		/* bootstrapping code */
 		HEAD_TEXT
-		. = ALIGN(8);
 		TEXT_TEXT
 		SCHED_TEXT
 		CPUIDLE_TEXT
 		LOCK_TEXT
 		KPROBES_TEXT
+		ALIGN_ENTRY_TEXT_BEGIN
 		ENTRY_TEXT
 		IRQENTRY_TEXT
+		ALIGN_ENTRY_TEXT_END
 		SOFTIRQENTRY_TEXT
 		*(.fixup)
 		*(.gnu.warning)
+
+#ifdef CONFIG_X86_64
+		. = ALIGN(PAGE_SIZE);
+		__entry_trampoline_start = .;
+		_entry_trampoline = .;
+		*(.entry_trampoline)
+		. = ALIGN(PAGE_SIZE);
+		__entry_trampoline_end = .;
+		ASSERT(. - _entry_trampoline == PAGE_SIZE, "entry trampoline is too big");
+#endif
+
+#ifdef CONFIG_RETPOLINE
+		__indirect_thunk_start = .;
+		*(.text.__x86.indirect_thunk)
+		__indirect_thunk_end = .;
+#endif
+
 		/* End of text section */
 		_etext = .;
 	} :text = 0x9090
@@ -148,6 +174,8 @@ SECTIONS
 
 	BUG_TABLE
 
+	ORC_UNWIND_TABLE
+
 	. = ALIGN(PAGE_SIZE);
 	__vvar_page = .;
 
@@ -171,7 +199,7 @@ SECTIONS
 		. = __vvar_beginning_hack + PAGE_SIZE;
 	} :data
 
-       . = ALIGN(__vvar_page + PAGE_SIZE, PAGE_SIZE);
+	. = ALIGN(__vvar_page + PAGE_SIZE, PAGE_SIZE);
 
 	/* Init code and data - will be freed after init */
 	. = ALIGN(PAGE_SIZE);
@@ -339,8 +367,8 @@ SECTIONS
 	. = ALIGN(PAGE_SIZE);		/* keep VO_INIT_SIZE page aligned */
 	_end = .;
 
-        STABS_DEBUG
-        DWARF_DEBUG
+	STABS_DEBUG
+	DWARF_DEBUG
 
 	/* Sections to be discarded */
 	DISCARDS

@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2014 Imagination Technologies
- * Author: Paul Burton <paul.burton@imgtec.com>
+ * Author: Paul Burton <paul.burton@mips.com>
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -12,13 +12,13 @@
 #include <linux/init.h>
 #include <linux/percpu.h>
 #include <linux/slab.h>
+#include <linux/suspend.h>
 
 #include <asm/asm-offsets.h>
 #include <asm/cacheflush.h>
 #include <asm/cacheops.h>
 #include <asm/idle.h>
-#include <asm/mips-cm.h>
-#include <asm/mips-cpc.h>
+#include <asm/mips-cps.h>
 #include <asm/mipsmtregs.h>
 #include <asm/pm.h>
 #include <asm/pm-cps.h>
@@ -49,7 +49,7 @@ static DEFINE_PER_CPU_READ_MOSTLY(cps_nc_entry_fn[CPS_PM_STATE_COUNT],
 				  nc_asm_enter);
 
 /* Bitmap indicating which states are supported by the system */
-DECLARE_BITMAP(state_support, CPS_PM_STATE_COUNT);
+static DECLARE_BITMAP(state_support, CPS_PM_STATE_COUNT);
 
 /*
  * Indicates the number of coupled VPEs ready to operate in a non-coherent
@@ -114,7 +114,7 @@ static void coupled_barrier(atomic_t *a, unsigned online)
 int cps_pm_enter_state(enum cps_pm_state state)
 {
 	unsigned cpu = smp_processor_id();
-	unsigned core = current_cpu_data.core;
+	unsigned core = cpu_core(&current_cpu_data);
 	unsigned online, left;
 	cpumask_t *coupled_mask = this_cpu_ptr(&online_coupled);
 	u32 *core_ready_count, *nc_core_ready_count;
@@ -167,7 +167,7 @@ int cps_pm_enter_state(enum cps_pm_state state)
 	nc_core_ready_count = nc_addr;
 
 	/* Ensure ready_count is zero-initialised before the assembly runs */
-	ACCESS_ONCE(*nc_core_ready_count) = 0;
+	WRITE_ONCE(*nc_core_ready_count, 0);
 	coupled_barrier(&per_cpu(pm_barrier, core), online);
 
 	/* Run the generated entry code */
@@ -486,7 +486,7 @@ static void *cps_gen_entry_code(unsigned cpu, enum cps_pm_state state)
 		* defined by the interAptiv & proAptiv SUMs as ensuring that the
 		*  operation resulting from the preceding store is complete.
 		*/
-		uasm_i_addiu(&p, t0, zero, 1 << cpu_data[cpu].core);
+		uasm_i_addiu(&p, t0, zero, 1 << cpu_core(&cpu_data[cpu]));
 		uasm_i_sw(&p, t0, 0, r_pcohctl);
 		uasm_i_lw(&p, t0, 0, r_pcohctl);
 
@@ -569,8 +569,8 @@ static void *cps_gen_entry_code(unsigned cpu, enum cps_pm_state state)
 	 * rest will just be performing a rather unusual nop.
 	 */
 	uasm_i_addiu(&p, t0, zero, mips_cm_revision() < CM_REV_CM3
-				? CM_GCR_Cx_COHERENCE_COHDOMAINEN_MSK
-				: CM3_GCR_Cx_COHERENCE_COHEN_MSK);
+				? CM_GCR_Cx_COHERENCE_COHDOMAINEN
+				: CM3_GCR_Cx_COHERENCE_COHEN);
 
 	uasm_i_sw(&p, t0, 0, r_pcohctl);
 	uasm_i_lw(&p, t0, 0, r_pcohctl);
@@ -640,7 +640,7 @@ out_err:
 static int cps_pm_online_cpu(unsigned int cpu)
 {
 	enum cps_pm_state state;
-	unsigned core = cpu_data[cpu].core;
+	unsigned core = cpu_core(&cpu_data[cpu]);
 	void *entry_fn, *core_rc;
 
 	for (state = CPS_PM_NC_WAIT; state < CPS_PM_STATE_COUNT; state++) {
@@ -671,6 +671,34 @@ static int cps_pm_online_cpu(unsigned int cpu)
 	return 0;
 }
 
+static int cps_pm_power_notifier(struct notifier_block *this,
+				 unsigned long event, void *ptr)
+{
+	unsigned int stat;
+
+	switch (event) {
+	case PM_SUSPEND_PREPARE:
+		stat = read_cpc_cl_stat_conf();
+		/*
+		 * If we're attempting to suspend the system and power down all
+		 * of the cores, the JTAG detect bit indicates that the CPC will
+		 * instead put the cores into clock-off state. In this state
+		 * a connected debugger can cause the CPU to attempt
+		 * interactions with the powered down system. At best this will
+		 * fail. At worst, it can hang the NoC, requiring a hard reset.
+		 * To avoid this, just block system suspend if a JTAG probe
+		 * is detected.
+		 */
+		if (stat & CPC_Cx_STAT_CONF_EJTAG_PROBE) {
+			pr_warn("JTAG probe is connected - abort suspend\n");
+			return NOTIFY_BAD;
+		}
+		return NOTIFY_DONE;
+	default:
+		return NOTIFY_DONE;
+	}
+}
+
 static int __init cps_pm_init(void)
 {
 	/* A CM is required for all non-coherent states */
@@ -692,7 +720,7 @@ static int __init cps_pm_init(void)
 	/* Detect whether a CPC is present */
 	if (mips_cpc_present()) {
 		/* Detect whether clock gating is implemented */
-		if (read_cpc_cl_stat_conf() & CPC_Cx_STAT_CONF_CLKGAT_IMPL_MSK)
+		if (read_cpc_cl_stat_conf() & CPC_Cx_STAT_CONF_CLKGAT_IMPL)
 			set_bit(CPS_PM_CLOCK_GATED, state_support);
 		else
 			pr_warn("pm-cps: CPC does not support clock gating\n");
@@ -705,6 +733,8 @@ static int __init cps_pm_init(void)
 	} else {
 		pr_warn("pm-cps: no CPC, clock & power gating unavailable\n");
 	}
+
+	pm_notifier(cps_pm_power_notifier, 0);
 
 	return cpuhp_setup_state(CPUHP_AP_ONLINE_DYN, "mips/cps_pm:online",
 				 cps_pm_online_cpu, NULL);

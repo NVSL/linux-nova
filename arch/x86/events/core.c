@@ -27,6 +27,7 @@
 #include <linux/cpu.h>
 #include <linux/bitops.h>
 #include <linux/device.h>
+#include <linux/nospec.h>
 
 #include <asm/apic.h>
 #include <asm/stacktrace.h>
@@ -48,7 +49,7 @@ DEFINE_PER_CPU(struct cpu_hw_events, cpu_hw_events) = {
 	.enabled = 1,
 };
 
-struct static_key rdpmc_always_available = STATIC_KEY_INIT_FALSE;
+DEFINE_STATIC_KEY_FALSE(rdpmc_always_available_key);
 
 u64 __read_mostly hw_cache_event_ids
 				[PERF_COUNT_HW_CACHE_MAX]
@@ -304,17 +305,20 @@ set_ext_hw_attr(struct hw_perf_event *hwc, struct perf_event *event)
 
 	config = attr->config;
 
-	cache_type = (config >>  0) & 0xff;
+	cache_type = (config >> 0) & 0xff;
 	if (cache_type >= PERF_COUNT_HW_CACHE_MAX)
 		return -EINVAL;
+	cache_type = array_index_nospec(cache_type, PERF_COUNT_HW_CACHE_MAX);
 
 	cache_op = (config >>  8) & 0xff;
 	if (cache_op >= PERF_COUNT_HW_CACHE_OP_MAX)
 		return -EINVAL;
+	cache_op = array_index_nospec(cache_op, PERF_COUNT_HW_CACHE_OP_MAX);
 
 	cache_result = (config >> 16) & 0xff;
 	if (cache_result >= PERF_COUNT_HW_CACHE_RESULT_MAX)
 		return -EINVAL;
+	cache_result = array_index_nospec(cache_result, PERF_COUNT_HW_CACHE_RESULT_MAX);
 
 	val = hw_cache_event_ids[cache_type][cache_op][cache_result];
 
@@ -421,6 +425,8 @@ int x86_setup_perfctr(struct perf_event *event)
 	if (attr->config >= x86_pmu.max_events)
 		return -EINVAL;
 
+	attr->config = array_index_nospec((unsigned long)attr->config, x86_pmu.max_events);
+
 	/*
 	 * The generic map:
 	 */
@@ -487,22 +493,28 @@ static inline int precise_br_compat(struct perf_event *event)
 	return m == b;
 }
 
+int x86_pmu_max_precise(void)
+{
+	int precise = 0;
+
+	/* Support for constant skid */
+	if (x86_pmu.pebs_active && !x86_pmu.pebs_broken) {
+		precise++;
+
+		/* Support for IP fixup */
+		if (x86_pmu.lbr_nr || x86_pmu.intel_cap.pebs_format >= 2)
+			precise++;
+
+		if (x86_pmu.pebs_prec_dist)
+			precise++;
+	}
+	return precise;
+}
+
 int x86_pmu_hw_config(struct perf_event *event)
 {
 	if (event->attr.precise_ip) {
-		int precise = 0;
-
-		/* Support for constant skid */
-		if (x86_pmu.pebs_active && !x86_pmu.pebs_broken) {
-			precise++;
-
-			/* Support for IP fixup */
-			if (x86_pmu.lbr_nr || x86_pmu.intel_cap.pebs_format >= 2)
-				precise++;
-
-			if (x86_pmu.pebs_prec_dist)
-				precise++;
-		}
+		int precise = x86_pmu_max_precise();
 
 		if (event->attr.precise_ip > precise)
 			return -EOPNOTSUPP;
@@ -984,7 +996,7 @@ static int collect_events(struct cpu_hw_events *cpuc, struct perf_event *leader,
 	if (!dogrp)
 		return n;
 
-	list_for_each_entry(event, &leader->sibling_list, group_entry) {
+	for_each_sibling_event(event, leader) {
 		if (!is_x86_event(event) ||
 		    event->state <= PERF_EVENT_STATE_OFF)
 			continue;
@@ -1150,16 +1162,13 @@ int x86_perf_event_set_period(struct perf_event *event)
 
 	per_cpu(pmc_prev_left[idx], smp_processor_id()) = left;
 
-	if (!(hwc->flags & PERF_X86_EVENT_AUTO_RELOAD) ||
-	    local64_read(&hwc->prev_count) != (u64)-left) {
-		/*
-		 * The hw event starts counting from this event offset,
-		 * mark it to be able to extra future deltas:
-		 */
-		local64_set(&hwc->prev_count, (u64)-left);
+	/*
+	 * The hw event starts counting from this event offset,
+	 * mark it to be able to extra future deltas:
+	 */
+	local64_set(&hwc->prev_count, (u64)-left);
 
-		wrmsrl(hwc->event_base, (u64)(-left) & x86_pmu.cntval_mask);
-	}
+	wrmsrl(hwc->event_base, (u64)(-left) & x86_pmu.cntval_mask);
 
 	/*
 	 * Due to erratum on certan cpu we need
@@ -1628,7 +1637,7 @@ __init struct attribute **merge_attr(struct attribute **a, struct attribute **b)
 		j++;
 	j++;
 
-	new = kmalloc(sizeof(struct attribute *) * j, GFP_KERNEL);
+	new = kmalloc_array(j, sizeof(struct attribute *), GFP_KERNEL);
 	if (!new)
 		return NULL;
 
@@ -1751,6 +1760,7 @@ ssize_t x86_event_sysfs_show(char *page, u64 config, u64 event)
 }
 
 static struct attribute_group x86_pmu_attr_group;
+static struct attribute_group x86_pmu_caps_group;
 
 static int __init init_hw_perf_events(void)
 {
@@ -1798,6 +1808,14 @@ static int __init init_hw_perf_events(void)
 				   0, x86_pmu.num_counters, 0, 0);
 
 	x86_pmu_format_group.attrs = x86_pmu.format_attrs;
+
+	if (x86_pmu.caps_attrs) {
+		struct attribute **tmp;
+
+		tmp = merge_attr(x86_pmu_caps_group.attrs, x86_pmu.caps_attrs);
+		if (!WARN_ON(!tmp))
+			x86_pmu_caps_group.attrs = tmp;
+	}
 
 	if (x86_pmu.event_attrs)
 		x86_pmu_events_group.attrs = x86_pmu.event_attrs;
@@ -1869,6 +1887,8 @@ early_initcall(init_hw_perf_events);
 
 static inline void x86_pmu_read(struct perf_event *event)
 {
+	if (x86_pmu.read)
+		return x86_pmu.read(event);
 	x86_perf_event_update(event);
 }
 
@@ -2103,7 +2123,8 @@ static int x86_pmu_event_init(struct perf_event *event)
 			event->destroy(event);
 	}
 
-	if (ACCESS_ONCE(x86_pmu.attr_rdpmc))
+	if (READ_ONCE(x86_pmu.attr_rdpmc) &&
+	    !(event->hw.flags & PERF_X86_EVENT_LARGE_PEBS))
 		event->hw.flags |= PERF_X86_EVENT_RDPMC_ALLOWED;
 
 	return err;
@@ -2191,9 +2212,9 @@ static ssize_t set_attr_rdpmc(struct device *cdev,
 		 * but only root can trigger it, so it's okay.
 		 */
 		if (val == 2)
-			static_key_slow_inc(&rdpmc_always_available);
+			static_branch_inc(&rdpmc_always_available_key);
 		else
-			static_key_slow_dec(&rdpmc_always_available);
+			static_branch_dec(&rdpmc_always_available_key);
 		on_each_cpu(refresh_pce, NULL, 1);
 	}
 
@@ -2213,10 +2234,30 @@ static struct attribute_group x86_pmu_attr_group = {
 	.attrs = x86_pmu_attrs,
 };
 
+static ssize_t max_precise_show(struct device *cdev,
+				  struct device_attribute *attr,
+				  char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%d\n", x86_pmu_max_precise());
+}
+
+static DEVICE_ATTR_RO(max_precise);
+
+static struct attribute *x86_pmu_caps_attrs[] = {
+	&dev_attr_max_precise.attr,
+	NULL
+};
+
+static struct attribute_group x86_pmu_caps_group = {
+	.name = "caps",
+	.attrs = x86_pmu_caps_attrs,
+};
+
 static const struct attribute_group *x86_pmu_attr_groups[] = {
 	&x86_pmu_attr_group,
 	&x86_pmu_format_group,
 	&x86_pmu_events_group,
+	&x86_pmu_caps_group,
 	NULL,
 };
 
@@ -2336,7 +2377,7 @@ static unsigned long get_segment_base(unsigned int segment)
 		struct ldt_struct *ldt;
 
 		/* IRQs are off, so this synchronizes with smp_store_release */
-		ldt = lockless_dereference(current->active_mm->context.ldt);
+		ldt = READ_ONCE(current->active_mm->context.ldt);
 		if (!ldt || idx >= ldt->nr_entries)
 			return 0;
 
@@ -2356,7 +2397,7 @@ static unsigned long get_segment_base(unsigned int segment)
 
 #ifdef CONFIG_IA32_EMULATION
 
-#include <asm/compat.h>
+#include <linux/compat.h>
 
 static inline int
 perf_callchain_user32(struct pt_regs *regs, struct perf_callchain_entry_ctx *entry)

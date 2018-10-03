@@ -69,15 +69,50 @@ struct srcu_struct { };
 
 void call_srcu(struct srcu_struct *sp, struct rcu_head *head,
 		void (*func)(struct rcu_head *head));
-void cleanup_srcu_struct(struct srcu_struct *sp);
+void _cleanup_srcu_struct(struct srcu_struct *sp, bool quiesced);
 int __srcu_read_lock(struct srcu_struct *sp) __acquires(sp);
 void __srcu_read_unlock(struct srcu_struct *sp, int idx) __releases(sp);
 void synchronize_srcu(struct srcu_struct *sp);
+
+/**
+ * cleanup_srcu_struct - deconstruct a sleep-RCU structure
+ * @sp: structure to clean up.
+ *
+ * Must invoke this after you are finished using a given srcu_struct that
+ * was initialized via init_srcu_struct(), else you leak memory.
+ */
+static inline void cleanup_srcu_struct(struct srcu_struct *sp)
+{
+	_cleanup_srcu_struct(sp, false);
+}
+
+/**
+ * cleanup_srcu_struct_quiesced - deconstruct a quiesced sleep-RCU structure
+ * @sp: structure to clean up.
+ *
+ * Must invoke this after you are finished using a given srcu_struct that
+ * was initialized via init_srcu_struct(), else you leak memory.  Also,
+ * all grace-period processing must have completed.
+ *
+ * "Completed" means that the last synchronize_srcu() and
+ * synchronize_srcu_expedited() calls must have returned before the call
+ * to cleanup_srcu_struct_quiesced().  It also means that the callback
+ * from the last call_srcu() must have been invoked before the call to
+ * cleanup_srcu_struct_quiesced(), but you can use srcu_barrier() to help
+ * with this last.  Violating these rules will get you a WARN_ON() splat
+ * (with high probability, anyway), and will also cause the srcu_struct
+ * to be leaked.
+ */
+static inline void cleanup_srcu_struct_quiesced(struct srcu_struct *sp)
+{
+	_cleanup_srcu_struct(sp, true);
+}
 
 #ifdef CONFIG_DEBUG_LOCK_ALLOC
 
 /**
  * srcu_read_lock_held - might we be in SRCU read-side critical section?
+ * @sp: The srcu_struct structure to check
  *
  * If CONFIG_DEBUG_LOCK_ALLOC is selected, returns nonzero iff in an SRCU
  * read-side critical section.  In absence of CONFIG_DEBUG_LOCK_ALLOC,
@@ -91,7 +126,7 @@ void synchronize_srcu(struct srcu_struct *sp);
  * relies on normal RCU, it can be called from the CPU which
  * is in the idle loop from an RCU point of view or offline.
  */
-static inline int srcu_read_lock_held(struct srcu_struct *sp)
+static inline int srcu_read_lock_held(const struct srcu_struct *sp)
 {
 	if (!debug_lockdep_rcu_enabled())
 		return 1;
@@ -100,7 +135,7 @@ static inline int srcu_read_lock_held(struct srcu_struct *sp)
 
 #else /* #ifdef CONFIG_DEBUG_LOCK_ALLOC */
 
-static inline int srcu_read_lock_held(struct srcu_struct *sp)
+static inline int srcu_read_lock_held(const struct srcu_struct *sp)
 {
 	return 1;
 }

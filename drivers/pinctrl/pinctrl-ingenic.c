@@ -460,7 +460,7 @@ static inline bool ingenic_get_pin_config(struct ingenic_pinctrl *jzpc,
 	return val & BIT(idx);
 }
 
-static struct pinctrl_ops ingenic_pctlops = {
+static const struct pinctrl_ops ingenic_pctlops = {
 	.get_groups_count = pinctrl_generic_get_group_count,
 	.get_group_name = pinctrl_generic_get_group_name,
 	.get_group_pins = pinctrl_generic_get_group_pins,
@@ -536,14 +536,14 @@ static int ingenic_pinmux_gpio_set_direction(struct pinctrl_dev *pctldev,
 		ingenic_config_pin(jzpc, pin, JZ4770_GPIO_PAT1, input);
 	} else {
 		ingenic_config_pin(jzpc, pin, JZ4740_GPIO_SELECT, false);
-		ingenic_config_pin(jzpc, pin, JZ4740_GPIO_DIR, input);
+		ingenic_config_pin(jzpc, pin, JZ4740_GPIO_DIR, !input);
 		ingenic_config_pin(jzpc, pin, JZ4740_GPIO_FUNC, false);
 	}
 
 	return 0;
 }
 
-static struct pinmux_ops ingenic_pmxops = {
+static const struct pinmux_ops ingenic_pmxops = {
 	.get_functions_count = pinmux_generic_get_function_count,
 	.get_function_name = pinmux_generic_get_function_name,
 	.get_function_groups = pinmux_generic_get_function_groups,
@@ -696,7 +696,7 @@ static int ingenic_pinconf_group_set(struct pinctrl_dev *pctldev,
 	return 0;
 }
 
-static struct pinconf_ops ingenic_confops = {
+static const struct pinconf_ops ingenic_confops = {
 	.is_generic = true,
 	.pin_config_get = ingenic_pinconf_get,
 	.pin_config_set = ingenic_pinconf_set,
@@ -717,7 +717,7 @@ static const struct of_device_id ingenic_pinctrl_of_match[] = {
 	{},
 };
 
-int ingenic_pinctrl_probe(struct platform_device *pdev)
+static int ingenic_pinctrl_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct ingenic_pinctrl *jzpc;
@@ -736,10 +736,8 @@ int ingenic_pinctrl_probe(struct platform_device *pdev)
 
 	base = devm_ioremap_resource(dev,
 			platform_get_resource(pdev, IORESOURCE_MEM, 0));
-	if (IS_ERR(base)) {
-		dev_err(dev, "Failed to ioremap registers\n");
+	if (IS_ERR(base))
 		return PTR_ERR(base);
-	}
 
 	jzpc->map = devm_regmap_init_mmio(dev, base,
 			&ingenic_pinctrl_regmap_config);
@@ -772,8 +770,8 @@ int ingenic_pinctrl_probe(struct platform_device *pdev)
 	pctl_desc->pmxops = &ingenic_pmxops;
 	pctl_desc->confops = &ingenic_confops;
 	pctl_desc->npins = chip_info->num_chips * PINS_PER_GPIO_CHIP;
-	pctl_desc->pins = jzpc->pdesc = devm_kzalloc(&pdev->dev,
-			sizeof(*jzpc->pdesc) * pctl_desc->npins, GFP_KERNEL);
+	pctl_desc->pins = jzpc->pdesc = devm_kcalloc(&pdev->dev,
+			pctl_desc->npins, sizeof(*jzpc->pdesc), GFP_KERNEL);
 	if (!jzpc->pdesc)
 		return -ENOMEM;
 

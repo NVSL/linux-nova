@@ -13,11 +13,13 @@
 #include <linux/dma-mapping.h>
 #include <linux/platform_device.h>
 #include <linux/gpio.h>
+#include <linux/gpio/machine.h>
 #include <linux/i2c.h>
 #include <linux/platform_data/pcf857x.h>
 #include <linux/platform_data/at24.h>
+#include <linux/platform_data/gpio-davinci.h>
 #include <linux/mtd/mtd.h>
-#include <linux/mtd/nand.h>
+#include <linux/mtd/rawnand.h>
 #include <linux/mtd/partitions.h>
 #include <linux/mtd/physmap.h>
 #include <linux/phy.h>
@@ -151,6 +153,7 @@ static struct davinci_aemif_timing davinci_evm_nandflash_timing = {
 };
 
 static struct davinci_nand_pdata davinci_evm_nandflash_data = {
+	.core_chipsel	= 0,
 	.parts		= davinci_evm_nandflash_partition,
 	.nr_parts	= ARRAY_SIZE(davinci_evm_nandflash_partition),
 	.ecc_mode	= NAND_ECC_HW,
@@ -595,18 +598,31 @@ static struct i2c_board_info __initdata i2c_info[] =  {
 	},
 };
 
+#define DM644X_I2C_SDA_PIN	GPIO_TO_PIN(2, 12)
+#define DM644X_I2C_SCL_PIN	GPIO_TO_PIN(2, 11)
+
+static struct gpiod_lookup_table i2c_recovery_gpiod_table = {
+	.dev_id = "i2c_davinci.1",
+	.table = {
+		GPIO_LOOKUP("davinci_gpio.0", DM644X_I2C_SDA_PIN, "sda",
+			    GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN),
+		GPIO_LOOKUP("davinci_gpio.0", DM644X_I2C_SCL_PIN, "scl",
+			    GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN),
+	},
+};
+
 /* The msp430 uses a slow bitbanged I2C implementation (ergo 20 KHz),
  * which requires 100 usec of idle bus after i2c writes sent to it.
  */
 static struct davinci_i2c_platform_data i2c_pdata = {
 	.bus_freq	= 20 /* kHz */,
 	.bus_delay	= 100 /* usec */,
-	.sda_pin        = 44,
-	.scl_pin        = 43,
+	.gpio_recovery	= true,
 };
 
 static void __init evm_init_i2c(void)
 {
+	gpiod_add_lookup_table(&i2c_recovery_gpiod_table);
 	davinci_init_i2c(&i2c_pdata);
 	i2c_add_driver(&dm6446evm_msp_driver);
 	i2c_register_board_info(1, i2c_info, ARRAY_SIZE(i2c_info));
@@ -757,6 +773,8 @@ static __init void davinci_evm_init(void)
 	struct clk *aemif_clk;
 	struct davinci_soc_info *soc_info = &davinci_soc_info;
 
+	dm644x_init_devices();
+
 	ret = dm644x_gpio_register();
 	if (ret)
 		pr_warn("%s: GPIO init failed: %d\n", __func__, ret);
@@ -817,9 +835,8 @@ MACHINE_START(DAVINCI_EVM, "DaVinci DM644x EVM")
 	.atag_offset  = 0x100,
 	.map_io	      = davinci_evm_map_io,
 	.init_irq     = davinci_irq_init,
-	.init_time	= davinci_timer_init,
+	.init_time	= dm644x_init_time,
 	.init_machine = davinci_evm_init,
 	.init_late	= davinci_init_late,
 	.dma_zone_size	= SZ_128M,
-	.restart	= davinci_restart,
 MACHINE_END

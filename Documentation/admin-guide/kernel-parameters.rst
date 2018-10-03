@@ -89,7 +89,6 @@ parameter is applicable::
 	APM	Advanced Power Management support is enabled.
 	ARM	ARM architecture is enabled.
 	AX25	Appropriate AX.25 support is enabled.
-	BLACKFIN Blackfin architecture is enabled.
 	CLK	Common clock infrastructure is enabled.
 	CMA	Contiguous Memory Area support is enabled.
 	DRM	Direct Rendering Management support is enabled.
@@ -109,6 +108,7 @@ parameter is applicable::
 	IPV6	IPv6 support is enabled.
 	ISAPNP	ISA PnP code is enabled.
 	ISDN	Appropriate ISDN support is enabled.
+	ISOL	CPU Isolation is enabled.
 	JOY	Appropriate joystick support is enabled.
 	KGDB	Kernel debugger support is enabled.
 	KVM	Kernel Virtual Machine support is enabled.
@@ -138,6 +138,7 @@ parameter is applicable::
 	PPT	Parallel port support is enabled.
 	PS2	Appropriate PS/2 support is enabled.
 	RAM	RAM disk support is enabled.
+	RDT	Intel Resource Director Technology.
 	S390	S390 architecture is enabled.
 	SCSI	Appropriate SCSI support is enabled.
 			A lot of drivers have their options described inside

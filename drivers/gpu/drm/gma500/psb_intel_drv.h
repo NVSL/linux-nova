@@ -172,7 +172,6 @@ struct gma_crtc {
 	int plane;
 	uint32_t cursor_addr;
 	struct gtt_range *cursor_gt;
-	u8 lut_r[256], lut_g[256], lut_b[256];
 	u8 lut_adj[256];
 	struct psb_intel_framebuffer *fbdev_fb;
 	/* a mode_set for fbdev users on this crtc */
@@ -256,7 +255,7 @@ extern int intelfb_remove(struct drm_device *dev,
 extern bool psb_intel_lvds_mode_fixup(struct drm_encoder *encoder,
 				      const struct drm_display_mode *mode,
 				      struct drm_display_mode *adjusted_mode);
-extern int psb_intel_lvds_mode_valid(struct drm_connector *connector,
+extern enum drm_mode_status psb_intel_lvds_mode_valid(struct drm_connector *connector,
 				     struct drm_display_mode *mode);
 extern int psb_intel_lvds_set_property(struct drm_connector *connector,
 					struct drm_property *property,

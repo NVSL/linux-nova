@@ -430,7 +430,7 @@ static int metapage_writepage(struct page *page, struct writeback_control *wbc)
 		len = min(xlen, (int)JFS_SBI(inode->i_sb)->nbperpage);
 
 		bio = bio_alloc(GFP_NOFS, 1);
-		bio->bi_bdev = inode->i_sb->s_bdev;
+		bio_set_dev(bio, inode->i_sb->s_bdev);
 		bio->bi_iter.bi_sector = pblock << (inode->i_blkbits - 9);
 		bio->bi_end_io = metapage_write_end_io;
 		bio->bi_private = page;
@@ -510,7 +510,7 @@ static int metapage_readpage(struct file *fp, struct page *page)
 				submit_bio(bio);
 
 			bio = bio_alloc(GFP_NOFS, 1);
-			bio->bi_bdev = inode->i_sb->s_bdev;
+			bio_set_dev(bio, inode->i_sb->s_bdev);
 			bio->bi_iter.bi_sector =
 				pblock << (inode->i_blkbits - 9);
 			bio->bi_end_io = metapage_read_end_io;
@@ -663,6 +663,8 @@ struct metapage *__get_metapage(struct inode *inode, unsigned long lblock,
 	} else {
 		INCREMENT(mpStat.pagealloc);
 		mp = alloc_metapage(GFP_NOFS);
+		if (!mp)
+			goto unlock;
 		mp->page = page;
 		mp->sb = inode->i_sb;
 		mp->flag = 0;
@@ -813,7 +815,7 @@ void __invalidate_metapages(struct inode *ip, s64 addr, int len)
 }
 
 #ifdef CONFIG_JFS_STATISTICS
-static int jfs_mpstat_proc_show(struct seq_file *m, void *v)
+int jfs_mpstat_proc_show(struct seq_file *m, void *v)
 {
 	seq_printf(m,
 		       "JFS Metapage statistics\n"
@@ -826,16 +828,4 @@ static int jfs_mpstat_proc_show(struct seq_file *m, void *v)
 		       mpStat.lockwait);
 	return 0;
 }
-
-static int jfs_mpstat_proc_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, jfs_mpstat_proc_show, NULL);
-}
-
-const struct file_operations jfs_mpstat_proc_fops = {
-	.open		= jfs_mpstat_proc_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= single_release,
-};
 #endif

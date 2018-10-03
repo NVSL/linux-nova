@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0
 config MIPS
 	bool
 	default y
@@ -6,8 +7,6 @@ config MIPS
 	select ARCH_DISCARD_MEMBLOCK
 	select ARCH_HAS_ELF_RANDOMIZE
 	select ARCH_HAS_TICK_BROADCAST if GENERIC_CLOCKEVENTS_BROADCAST
-	select ARCH_MIGHT_HAVE_PC_PARPORT
-	select ARCH_MIGHT_HAVE_PC_SERIO
 	select ARCH_SUPPORTS_UPROBES
 	select ARCH_USE_BUILTIN_BSWAP
 	select ARCH_USE_CMPXCHG_LOCKREF if 64BIT
@@ -23,6 +22,11 @@ config MIPS
 	select GENERIC_CPU_AUTOPROBE
 	select GENERIC_IRQ_PROBE
 	select GENERIC_IRQ_SHOW
+	select GENERIC_LIB_ASHLDI3
+	select GENERIC_LIB_ASHRDI3
+	select GENERIC_LIB_CMPDI2
+	select GENERIC_LIB_LSHRDI3
+	select GENERIC_LIB_UCMPDI2
 	select GENERIC_PCI_IOMAP
 	select GENERIC_SCHED_CLOCK if !CAVIUM_OCTEON_SOC
 	select GENERIC_SMP_IDLE_THREAD
@@ -37,13 +41,11 @@ config MIPS
 	select HAVE_ARCH_TRANSPARENT_HUGEPAGE if CPU_SUPPORTS_HUGEPAGES && 64BIT
 	select HAVE_CBPF_JIT if (!64BIT && !CPU_MICROMIPS)
 	select HAVE_EBPF_JIT if (64BIT && !CPU_MICROMIPS)
-	select HAVE_CC_STACKPROTECTOR
 	select HAVE_CONTEXT_TRACKING
 	select HAVE_COPY_THREAD_TLS
 	select HAVE_C_RECORDMCOUNT
 	select HAVE_DEBUG_KMEMLEAK
 	select HAVE_DEBUG_STACKOVERFLOW
-	select HAVE_DMA_API_DEBUG
 	select HAVE_DMA_CONTIGUOUS
 	select HAVE_DYNAMIC_FTRACE
 	select HAVE_EXIT_THREAD
@@ -63,8 +65,10 @@ config MIPS
 	select HAVE_OPROFILE
 	select HAVE_PERF_EVENTS
 	select HAVE_REGS_AND_STACK_ACCESS_API
+	select HAVE_RSEQ
+	select HAVE_STACKPROTECTOR
 	select HAVE_SYSCALL_TRACEPOINTS
-	select HAVE_VIRT_CPU_ACCOUNTING_GEN
+	select HAVE_VIRT_CPU_ACCOUNTING_GEN if 64BIT || !SMP
 	select IRQ_FORCED_THREADING
 	select MODULES_USE_ELF_RELA if MODULES && 64BIT
 	select MODULES_USE_ELF_REL if MODULES
@@ -77,7 +81,7 @@ menu "Machine selection"
 
 choice
 	prompt "System type"
-	default SGI_IP22
+	default MIPS_GENERIC
 
 config MIPS_GENERIC
 	bool "Generic board-agnostic MIPS kernel"
@@ -118,12 +122,12 @@ config MIPS_GENERIC
 	select SYS_SUPPORTS_MULTITHREADING
 	select SYS_SUPPORTS_RELOCATABLE
 	select SYS_SUPPORTS_SMARTMIPS
-	select USB_EHCI_BIG_ENDIAN_DESC if BIG_ENDIAN
-	select USB_EHCI_BIG_ENDIAN_MMIO if BIG_ENDIAN
-	select USB_OHCI_BIG_ENDIAN_DESC if BIG_ENDIAN
-	select USB_OHCI_BIG_ENDIAN_MMIO if BIG_ENDIAN
-	select USB_UHCI_BIG_ENDIAN_DESC if BIG_ENDIAN
-	select USB_UHCI_BIG_ENDIAN_MMIO if BIG_ENDIAN
+	select USB_EHCI_BIG_ENDIAN_DESC if CPU_BIG_ENDIAN
+	select USB_EHCI_BIG_ENDIAN_MMIO if CPU_BIG_ENDIAN
+	select USB_OHCI_BIG_ENDIAN_DESC if CPU_BIG_ENDIAN
+	select USB_OHCI_BIG_ENDIAN_MMIO if CPU_BIG_ENDIAN
+	select USB_UHCI_BIG_ENDIAN_DESC if CPU_BIG_ENDIAN
+	select USB_UHCI_BIG_ENDIAN_MMIO if CPU_BIG_ENDIAN
 	select USE_OF
 	help
 	  Select this to build a kernel which aims to support multiple boards,
@@ -133,7 +137,7 @@ config MIPS_GENERIC
 
 config MIPS_ALCHEMY
 	bool "Alchemy processor based machines"
-	select ARCH_PHYS_ADDR_T_64BIT
+	select PHYS_ADDR_T_64BIT
 	select CEVT_R4K
 	select CSRC_R4K
 	select IRQ_MIPS_CPU
@@ -201,6 +205,7 @@ config ATH79
 	select SYS_SUPPORTS_MIPS16
 	select SYS_SUPPORTS_ZBOOT_UART_PROM
 	select USE_OF
+	select USB_EHCI_ROOT_HUB_TT if USB_EHCI_HCD_PLATFORM
 	help
 	  Support for the Atheros AR71XX/AR724X/AR913X SoCs.
 
@@ -232,6 +237,7 @@ config BMIPS_GENERIC
 	select USB_EHCI_BIG_ENDIAN_MMIO if CPU_BIG_ENDIAN
 	select USB_OHCI_BIG_ENDIAN_DESC if CPU_BIG_ENDIAN
 	select USB_OHCI_BIG_ENDIAN_MMIO if CPU_BIG_ENDIAN
+	select HARDIRQS_SW_RESEND
 	help
 	  Build a generic DT-based kernel image that boots on select
 	  BCM33xx cable modem chips, BCM63xx DSL chips, and BCM7xxx set-top
@@ -251,12 +257,14 @@ config BCM47XX
 	select SYS_SUPPORTS_32BIT_KERNEL
 	select SYS_SUPPORTS_LITTLE_ENDIAN
 	select SYS_SUPPORTS_MIPS16
+	select SYS_SUPPORTS_ZBOOT
 	select SYS_HAS_EARLY_PRINTK
 	select USE_GENERIC_EARLY_PRINTK_8250
 	select GPIOLIB
 	select LEDS_GPIO_REGISTER
 	select BCM47XX_NVRAM
 	select BCM47XX_SPROM
+	select BCM47XX_SSB if !BCM47XX_BCMA
 	help
 	 Support for BCM47XX based boards
 
@@ -275,6 +283,7 @@ config BCM63XX
 	select GPIOLIB
 	select HAVE_CLK
 	select MIPS_L1_CACHE_SHIFT_4
+	select CLKDEV_LOOKUP
 	help
 	 Support for BCM63XX based boards
 
@@ -337,6 +346,8 @@ config MACH_DECSTATION
 
 config MACH_JAZZ
 	bool "Jazz family of machines"
+	select ARCH_MIGHT_HAVE_PC_PARPORT
+	select ARCH_MIGHT_HAVE_PC_SERIO
 	select FW_ARC
 	select FW_ARC32
 	select ARCH_MAY_HAVE_PC_FDC
@@ -386,6 +397,7 @@ config LANTIQ
 	select SYS_SUPPORTS_32BIT_KERNEL
 	select SYS_SUPPORTS_MIPS16
 	select SYS_SUPPORTS_MULTITHREADING
+	select SYS_SUPPORTS_VPE_LOADER
 	select SYS_HAS_EARLY_PRINTK
 	select GPIOLIB
 	select SWAP_IO_SPACE
@@ -426,6 +438,7 @@ config MACH_LOONGSON32
 
 config MACH_LOONGSON64
 	bool "Loongson-2/3 family of machines"
+	select ARCH_HAS_PHYS_TO_DMA
 	select SYS_SUPPORTS_ZBOOT
 	help
 	  This enables the support of Loongson-2/3 family of machines.
@@ -467,32 +480,11 @@ config MACH_PISTACHIO
 	help
 	  This enables support for the IMG Pistachio SoC platform.
 
-config MACH_XILFPGA
-	bool "MIPSfpga Xilinx based boards"
-	select BOOT_ELF32
-	select BOOT_RAW
-	select BUILTIN_DTB
-	select CEVT_R4K
-	select COMMON_CLK
-	select CSRC_R4K
-	select GPIOLIB
-	select IRQ_MIPS_CPU
-	select LIBFDT
-	select MIPS_CPU_SCACHE
-	select SYS_HAS_EARLY_PRINTK
-	select SYS_HAS_CPU_MIPS32_R2
-	select SYS_SUPPORTS_32BIT_KERNEL
-	select SYS_SUPPORTS_LITTLE_ENDIAN
-	select SYS_SUPPORTS_ZBOOT_UART16550
-	select USE_OF
-	select USE_GENERIC_EARLY_PRINTK_8250
-	select XILINX_INTC
-	help
-	  This enables support for the IMG University Program MIPSfpga platform.
-
 config MIPS_MALTA
 	bool "MIPS Malta board"
 	select ARCH_MAY_HAVE_PC_FDC
+	select ARCH_MIGHT_HAVE_PC_PARPORT
+	select ARCH_MIGHT_HAVE_PC_SERIO
 	select BOOT_ELF32
 	select BOOT_RAW
 	select BUILTIN_DTB
@@ -536,6 +528,7 @@ config MIPS_MALTA
 	select SYS_SUPPORTS_MIPS16
 	select SYS_SUPPORTS_MULTITHREADING
 	select SYS_SUPPORTS_SMARTMIPS
+	select SYS_SUPPORTS_VPE_LOADER
 	select SYS_SUPPORTS_ZBOOT
 	select SYS_SUPPORTS_RELOCATABLE
 	select USE_OF
@@ -629,6 +622,7 @@ config SGI_IP22
 	bool "SGI IP22 (Indy/Indigo2)"
 	select FW_ARC
 	select FW_ARC32
+	select ARCH_MIGHT_HAVE_PC_SERIO
 	select BOOT_ELF32
 	select CEVT_R4K
 	select CSRC_R4K
@@ -691,6 +685,7 @@ config SGI_IP28
 	bool "SGI IP28 (Indigo2 R10k)"
 	select FW_ARC
 	select FW_ARC64
+	select ARCH_MIGHT_HAVE_PC_SERIO
 	select BOOT_ELF64
 	select CEVT_R4K
 	select CSRC_R4K
@@ -840,6 +835,8 @@ config SNI_RM
 	select FW_ARC32 if CPU_LITTLE_ENDIAN
 	select FW_SNIPROM if CPU_BIG_ENDIAN
 	select ARCH_MAY_HAVE_PC_FDC
+	select ARCH_MIGHT_HAVE_PC_PARPORT
+	select ARCH_MIGHT_HAVE_PC_SERIO
 	select BOOT_ELF32
 	select CEVT_R4K
 	select CSRC_R4K
@@ -897,7 +894,8 @@ config MIKROTIK_RB532
 config CAVIUM_OCTEON_SOC
 	bool "Cavium Networks Octeon SoC based boards"
 	select CEVT_R4K
-	select ARCH_PHYS_ADDR_T_64BIT
+	select ARCH_HAS_PHYS_TO_DMA
+	select PHYS_ADDR_T_64BIT
 	select DMA_COHERENT
 	select SYS_SUPPORTS_64BIT_KERNEL
 	select SYS_SUPPORTS_BIG_ENDIAN
@@ -915,9 +913,11 @@ config CAVIUM_OCTEON_SOC
 	select USE_OF
 	select ARCH_SPARSEMEM_ENABLE
 	select SYS_SUPPORTS_SMP
-	select NR_CPUS_DEFAULT_16
+	select NR_CPUS_DEFAULT_64
+	select MIPS_NR_CPU_NR_MAP_1024
 	select BUILTIN_DTB
 	select MTD_COMPLEX_MAPPINGS
+	select SWIOTLB
 	select SYS_SUPPORTS_RELOCATABLE
 	help
 	  This option supports all of the Octeon reference boards from Cavium
@@ -942,7 +942,7 @@ config NLM_XLR_BOARD
 	select SWAP_IO_SPACE
 	select SYS_SUPPORTS_32BIT_KERNEL
 	select SYS_SUPPORTS_64BIT_KERNEL
-	select ARCH_PHYS_ADDR_T_64BIT
+	select PHYS_ADDR_T_64BIT
 	select SYS_SUPPORTS_BIG_ENDIAN
 	select SYS_SUPPORTS_HIGHMEM
 	select DMA_COHERENT
@@ -968,7 +968,7 @@ config NLM_XLP_BOARD
 	select HW_HAS_PCI
 	select SYS_SUPPORTS_32BIT_KERNEL
 	select SYS_SUPPORTS_64BIT_KERNEL
-	select ARCH_PHYS_ADDR_T_64BIT
+	select PHYS_ADDR_T_64BIT
 	select GPIOLIB
 	select SYS_SUPPORTS_BIG_ENDIAN
 	select SYS_SUPPORTS_LITTLE_ENDIAN
@@ -1033,7 +1033,6 @@ source "arch/mips/loongson32/Kconfig"
 source "arch/mips/loongson64/Kconfig"
 source "arch/mips/netlogic/Kconfig"
 source "arch/mips/paravirt/Kconfig"
-source "arch/mips/xilfpga/Kconfig"
 
 endmenu
 
@@ -1108,9 +1107,6 @@ config GPIO_TXX9
 config FW_CFE
 	bool
 
-config ARCH_DMA_ADDR_T_64BIT
-	def_bool (HIGHMEM && ARCH_PHYS_ADDR_T_64BIT) || 64BIT
-
 config ARCH_SUPPORTS_UPROBES
 	bool
 
@@ -1128,9 +1124,6 @@ config DMA_COHERENT
 config DMA_NONCOHERENT
 	bool
 	select NEED_DMA_MAP_STATE
-
-config NEED_DMA_MAP_STATE
-	bool
 
 config SYS_HAS_EARLY_PRINTK
 	bool
@@ -1380,6 +1373,7 @@ config CPU_LOONGSON3
 	select MIPS_PGD_C0_CONTEXT
 	select MIPS_L1_CACHE_SHIFT_6
 	select GPIOLIB
+	select SWIOTLB
 	help
 		The Loongson 3 processor implements the MIPS64R2 instruction
 		set with many extensions.
@@ -1627,14 +1621,6 @@ config CPU_R5500
 	  NEC VR5500 and VR5500A series processors implement 64-bit MIPS IV
 	  instruction set.
 
-config CPU_R6000
-	bool "R6000"
-	depends on SYS_HAS_CPU_R6000
-	select CPU_SUPPORTS_32BIT_KERNEL
-	help
-	  MIPS Technologies R6000 and R6000A series processors.  Note these
-	  processors are extremely rare and the support for them is incomplete.
-
 config CPU_NEVADA
 	bool "RM52xx"
 	depends on SYS_HAS_CPU_NEVADA
@@ -1785,7 +1771,7 @@ config CPU_MIPS32_R5_XPA
 	depends on SYS_SUPPORTS_HIGHMEM
 	select XPA
 	select HIGHMEM
-	select ARCH_PHYS_ADDR_T_64BIT
+	select PHYS_ADDR_T_64BIT
 	default n
 	help
 	  Choose this option if you want to enable the Extended Physical
@@ -1950,9 +1936,6 @@ config SYS_HAS_CPU_R5432
 config SYS_HAS_CPU_R5500
 	bool
 
-config SYS_HAS_CPU_R6000
-	bool
-
 config SYS_HAS_CPU_NEVADA
 	bool
 
@@ -2047,6 +2030,7 @@ config CPU_MIPSR6
 	select CPU_HAS_RIXI
 	select HAVE_ARCH_BITREVERSE
 	select MIPS_ASID_BITS_VARIABLE
+	select MIPS_CRC_SUPPORT
 	select MIPS_SPRAM
 
 config EVA
@@ -2180,7 +2164,7 @@ config PAGE_SIZE_32KB
 
 config PAGE_SIZE_64KB
 	bool "64kB"
-	depends on !CPU_R3000 && !CPU_TX39XX && !CPU_R6000
+	depends on !CPU_R3000 && !CPU_TX39XX
 	help
 	  Using 64kB page size will result in higher performance kernel at
 	  the price of higher memory consumption.  This option is available on
@@ -2248,11 +2232,11 @@ config CPU_HAS_PREFETCH
 
 config CPU_GENERIC_DUMP_TLB
 	bool
-	default y if !(CPU_R3000 || CPU_R6000 || CPU_R8000 || CPU_TX39XX)
+	default y if !(CPU_R3000 || CPU_R8000 || CPU_TX39XX)
 
 config CPU_R4K_FPU
 	bool
-	default y if !(CPU_R3000 || CPU_R6000 || CPU_TX39XX || CPU_CAVIUM_OCTEON)
+	default y if !(CPU_R3000 || CPU_TX39XX)
 
 config CPU_R4K_CACHE_TLB
 	bool
@@ -2260,6 +2244,7 @@ config CPU_R4K_CACHE_TLB
 
 config MIPS_MT_SMP
 	bool "MIPS MT SMP support (1 TC on each available VPE)"
+	default y
 	depends on SYS_SUPPORTS_MULTITHREADING && !CPU_MIPSR6 && !CPU_MICROMIPS
 	select CPU_MIPSR2_IRQ_VI
 	select CPU_MIPSR2_IRQ_EI
@@ -2311,9 +2296,16 @@ config MIPSR2_TO_R6_EMULATOR
 	  The only reason this is a build-time option is to save ~14K from the
 	  final kernel image.
 
+config SYS_SUPPORTS_VPE_LOADER
+	bool
+	depends on SYS_SUPPORTS_MULTITHREADING
+	help
+	  Indicates that the platform supports the VPE loader, and provides
+	  physical_memsize.
+
 config MIPS_VPE_LOADER
 	bool "VPE loader support."
-	depends on SYS_SUPPORTS_MULTITHREADING && MODULES
+	depends on SYS_SUPPORTS_VPE_LOADER && MODULES
 	select CPU_MIPSR2_IRQ_VI
 	select CPU_MIPSR2_IRQ_EI
 	select MIPS_MT
@@ -2344,7 +2336,6 @@ config MIPS_VPE_LOADER_TOM
 config MIPS_VPE_APSP_API
 	bool "Enable support for AP/SP API (RTLX)"
 	depends on MIPS_VPE_LOADER
-	help
 
 config MIPS_VPE_APSP_API_CMP
 	bool
@@ -2376,7 +2367,6 @@ config MIPS_CPS
 	bool "MIPS Coherent Processing System support"
 	depends on SYS_SUPPORTS_MIPS_CPS
 	select MIPS_CM
-	select MIPS_CPC
 	select MIPS_CPS_PM if HOTPLUG_CPU
 	select SMP
 	select SYNC_R4K if (CEVT_R4K || CSRC_R4K)
@@ -2393,11 +2383,11 @@ config MIPS_CPS
 
 config MIPS_CPS_PM
 	depends on MIPS_CPS
-	select MIPS_CPC
 	bool
 
 config MIPS_CM
 	bool
+	select MIPS_CPC
 
 config MIPS_CPC
 	bool
@@ -2412,9 +2402,6 @@ config SB1_PASS_2_1_WORKAROUNDS
 	depends on CPU_SB1 && CPU_SB1_PASS_2
 	default y
 
-
-config ARCH_PHYS_ADDR_T_64BIT
-       bool
 
 choice
 	prompt "SmartMIPS or microMIPS ASE support"
@@ -2514,6 +2501,9 @@ config MIPS_ASID_BITS
 config MIPS_ASID_BITS_VARIABLE
 	bool
 
+config MIPS_CRC_SUPPORT
+	bool
+
 #
 # - Highmem only makes sense for the 32-bit kernel.
 # - The current highmem code will only work properly on physically indexed
@@ -2564,7 +2554,7 @@ config ARCH_DISCONTIGMEM_ENABLE
 	  Say Y to support efficient handling of discontiguous physical memory,
 	  for architectures which are either NUMA (Non-Uniform Memory Access)
 	  or have huge holes in the physical address space for other reasons.
-	  See <file:Documentation/vm/numa> for more.
+	  See <file:Documentation/vm/numa.rst> for more.
 
 config ARCH_SPARSEMEM_ENABLE
 	bool
@@ -2736,6 +2726,15 @@ config NR_CPUS
 config MIPS_PERF_SHARED_TC_COUNTERS
 	bool
 
+config MIPS_NR_CPU_NR_MAP_1024
+	bool
+
+config MIPS_NR_CPU_NR_MAP
+	int
+	depends on SMP
+	default 1024 if MIPS_NR_CPU_NR_MAP_1024
+	default NR_CPUS if !MIPS_NR_CPU_NR_MAP_1024
+
 #
 # Timer Interrupt Frequency Configuration
 #
@@ -2853,8 +2852,7 @@ config CRASH_DUMP
 
 config PHYSICAL_START
 	hex "Physical address where the kernel is loaded"
-	default "0xffffffff84000000" if 64BIT
-	default "0x84000000" if 32BIT
+	default "0xffffffff84000000"
 	depends on CRASH_DUMP
 	help
 	  This gives the CKSEG0 or KSEG0 address where the kernel is loaded.

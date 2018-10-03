@@ -2,10 +2,14 @@ config VIRTIO
 	tristate
 	---help---
 	  This option is selected by any driver which implements the virtio
-	  bus, such as CONFIG_VIRTIO_PCI, CONFIG_VIRTIO_MMIO, CONFIG_LGUEST,
-	  CONFIG_RPMSG or CONFIG_S390_GUEST.
+	  bus, such as CONFIG_VIRTIO_PCI, CONFIG_VIRTIO_MMIO, CONFIG_RPMSG
+	  or CONFIG_S390_GUEST.
 
-menu "Virtio drivers"
+menuconfig VIRTIO_MENU
+	bool "Virtio drivers"
+	default y
+
+if VIRTIO_MENU
 
 config VIRTIO_PCI
 	tristate "PCI driver for virtio devices"
@@ -79,4 +83,4 @@ config VIRTIO_MMIO_CMDLINE_DEVICES
 
 	 If unsure, say 'N'.
 
-endmenu
+endif # VIRTIO_MENU

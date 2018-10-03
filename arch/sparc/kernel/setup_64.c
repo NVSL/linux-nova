@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  *  linux/arch/sparc64/kernel/setup.c
  *
@@ -293,11 +294,18 @@ static void __init sun4v_patch(void)
 	case SUN4V_CHIP_SPARC_M7:
 	case SUN4V_CHIP_SPARC_M8:
 	case SUN4V_CHIP_SPARC_SN:
+		sun4v_patch_1insn_range(&__sun_m7_1insn_patch,
+					&__sun_m7_1insn_patch_end);
 		sun_m7_patch_2insn_range(&__sun_m7_2insn_patch,
 					 &__sun_m7_2insn_patch_end);
 		break;
 	default:
 		break;
+	}
+
+	if (sun4v_chip_type != SUN4V_CHIP_NIAGARA1) {
+		sun4v_patch_1insn_range(&__fast_win_ctrl_1insn_patch,
+					&__fast_win_ctrl_1insn_patch_end);
 	}
 
 	sun4v_hvapi_init();
@@ -363,6 +371,7 @@ void __init start_early_boot(void)
 	check_if_starfire();
 	per_cpu_patch();
 	sun4v_patch();
+	smp_init_cpu_poke();
 
 	cpu = hard_smp_processor_id();
 	if (cpu >= NR_CPUS) {

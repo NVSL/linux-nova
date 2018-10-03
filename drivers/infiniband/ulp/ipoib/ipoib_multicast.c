@@ -816,7 +816,10 @@ void ipoib_mcast_send(struct net_device *dev, u8 *daddr, struct sk_buff *skb)
 		spin_lock_irqsave(&priv->lock, flags);
 		if (!neigh) {
 			neigh = ipoib_neigh_alloc(daddr, dev);
-			if (neigh) {
+			/* Make sure that the neigh will be added only
+			 * once to mcast list.
+			 */
+			if (neigh && list_empty(&neigh->list)) {
 				kref_get(&mcast->ah->ref);
 				neigh->ah	= mcast->ah;
 				list_add_tail(&neigh->list, &mcast->neigh_list);
@@ -883,7 +886,6 @@ void ipoib_mcast_restart_task(struct work_struct *work)
 	struct netdev_hw_addr *ha;
 	struct ipoib_mcast *mcast, *tmcast;
 	LIST_HEAD(remove_list);
-	unsigned long flags;
 	struct ib_sa_mcmember_rec rec;
 
 	if (!test_bit(IPOIB_FLAG_OPER_UP, &priv->flags))
@@ -895,9 +897,8 @@ void ipoib_mcast_restart_task(struct work_struct *work)
 
 	ipoib_dbg_mcast(priv, "restarting multicast task\n");
 
-	local_irq_save(flags);
-	netif_addr_lock(dev);
-	spin_lock(&priv->lock);
+	netif_addr_lock_bh(dev);
+	spin_lock_irq(&priv->lock);
 
 	/*
 	 * Unfortunately, the networking core only gives us a list of all of
@@ -975,9 +976,8 @@ void ipoib_mcast_restart_task(struct work_struct *work)
 		}
 	}
 
-	spin_unlock(&priv->lock);
-	netif_addr_unlock(dev);
-	local_irq_restore(flags);
+	spin_unlock_irq(&priv->lock);
+	netif_addr_unlock_bh(dev);
 
 	ipoib_mcast_remove_list(&remove_list);
 
@@ -985,9 +985,9 @@ void ipoib_mcast_restart_task(struct work_struct *work)
 	 * Double check that we are still up
 	 */
 	if (test_bit(IPOIB_FLAG_OPER_UP, &priv->flags)) {
-		spin_lock_irqsave(&priv->lock, flags);
+		spin_lock_irq(&priv->lock);
 		__ipoib_mcast_schedule_join_thread(priv, NULL, 0);
-		spin_unlock_irqrestore(&priv->lock, flags);
+		spin_unlock_irq(&priv->lock);
 	}
 }
 

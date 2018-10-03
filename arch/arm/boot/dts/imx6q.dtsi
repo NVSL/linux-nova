@@ -1,12 +1,6 @@
-
-/*
- * Copyright 2013 Freescale Semiconductor, Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- */
+// SPDX-License-Identifier: GPL-2.0
+//
+// Copyright 2013 Freescale Semiconductor, Inc.
 
 #include <dt-bindings/interrupt-controller/irq.h>
 #include "imx6q-pinfunc.h"
@@ -79,15 +73,15 @@
 	};
 
 	soc {
-		ocram: sram@00900000 {
+		ocram: sram@900000 {
 			compatible = "mmio-sram";
 			reg = <0x00900000 0x40000>;
 			clocks = <&clks IMX6QDL_CLK_OCRAM>;
 		};
 
-		aips-bus@02000000 { /* AIPS1 */
-			spba-bus@02000000 {
-				ecspi5: ecspi@02018000 {
+		aips-bus@2000000 { /* AIPS1 */
+			spba-bus@2000000 {
+				ecspi5: ecspi@2018000 {
 					#address-cells = <1>;
 					#size-cells = <0>;
 					compatible = "fsl,imx6q-ecspi", "fsl,imx51-ecspi";
@@ -96,18 +90,18 @@
 					clocks = <&clks IMX6Q_CLK_ECSPI5>,
 						 <&clks IMX6Q_CLK_ECSPI5>;
 					clock-names = "ipg", "per";
-					dmas = <&sdma 11 7 1>, <&sdma 12 7 2>;
+					dmas = <&sdma 11 8 1>, <&sdma 12 8 2>;
 					dma-names = "rx", "tx";
 					status = "disabled";
 				};
 			};
 
-			iomuxc: iomuxc@020e0000 {
+			iomuxc: iomuxc@20e0000 {
 				compatible = "fsl,imx6q-iomuxc";
 			};
 		};
 
-		sata: sata@02200000 {
+		sata: sata@2200000 {
 			compatible = "fsl,imx6q-ahci";
 			reg = <0x02200000 0x4000>;
 			interrupts = <0 39 IRQ_TYPE_LEVEL_HIGH>;
@@ -118,7 +112,7 @@
 			status = "disabled";
 		};
 
-		gpu_vg: gpu@02204000 {
+		gpu_vg: gpu@2204000 {
 			compatible = "vivante,gc";
 			reg = <0x02204000 0x4000>;
 			interrupts = <0 11 IRQ_TYPE_LEVEL_HIGH>;
@@ -128,7 +122,7 @@
 			power-domains = <&pd_pu>;
 		};
 
-		ipu2: ipu@02800000 {
+		ipu2: ipu@2800000 {
 			#address-cells = <1>;
 			#size-cells = <0>;
 			compatible = "fsl,imx6q-ipu";
@@ -162,22 +156,27 @@
 				#size-cells = <0>;
 				reg = <2>;
 
-				ipu2_di0_disp0: disp0-endpoint {
+				ipu2_di0_disp0: endpoint@0 {
+					reg = <0>;
 				};
 
-				ipu2_di0_hdmi: hdmi-endpoint {
+				ipu2_di0_hdmi: endpoint@1 {
+					reg = <1>;
 					remote-endpoint = <&hdmi_mux_2>;
 				};
 
-				ipu2_di0_mipi: mipi-endpoint {
+				ipu2_di0_mipi: endpoint@2 {
+					reg = <2>;
 					remote-endpoint = <&mipi_mux_2>;
 				};
 
-				ipu2_di0_lvds0: lvds0-endpoint {
+				ipu2_di0_lvds0: endpoint@3 {
+					reg = <3>;
 					remote-endpoint = <&lvds0_mux_2>;
 				};
 
-				ipu2_di0_lvds1: lvds1-endpoint {
+				ipu2_di0_lvds1: endpoint@4 {
+					reg = <4>;
 					remote-endpoint = <&lvds1_mux_2>;
 				};
 			};
@@ -187,19 +186,23 @@
 				#size-cells = <0>;
 				reg = <3>;
 
-				ipu2_di1_hdmi: hdmi-endpoint {
+				ipu2_di1_hdmi: endpoint@1 {
+					reg = <1>;
 					remote-endpoint = <&hdmi_mux_3>;
 				};
 
-				ipu2_di1_mipi: mipi-endpoint {
+				ipu2_di1_mipi: endpoint@2 {
+					reg = <2>;
 					remote-endpoint = <&mipi_mux_3>;
 				};
 
-				ipu2_di1_lvds0: lvds0-endpoint {
+				ipu2_di1_lvds0: endpoint@3 {
+					reg = <3>;
 					remote-endpoint = <&lvds0_mux_3>;
 				};
 
-				ipu2_di1_lvds1: lvds1-endpoint {
+				ipu2_di1_lvds1: endpoint@4 {
+					reg = <4>;
 					remote-endpoint = <&lvds1_mux_3>;
 				};
 			};
@@ -214,11 +217,6 @@
 	display-subsystem {
 		compatible = "fsl,imx-display-subsystem";
 		ports = <&ipu1_di0>, <&ipu1_di1>, <&ipu2_di0>, <&ipu2_di1>;
-	};
-
-	gpu-subsystem {
-		compatible = "fsl,imx-gpu-subsystem";
-		cores = <&gpu_2d>, <&gpu_3d>, <&gpu_vg>;
 	};
 };
 

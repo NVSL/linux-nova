@@ -1,12 +1,11 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
- *	drivers/pci/setup-irq.c
+ * Support routines for initializing a PCI subsystem
  *
  * Extruded from code written by
  *      Dave Rusling (david.rusling@reo.mts.dec.com)
  *      David Mosberger (davidm@cs.arizona.edu)
  *	David Miller (davem@redhat.com)
- *
- * Support routines for initializing a PCI subsystem.
  */
 
 
@@ -17,12 +16,6 @@
 #include <linux/cache.h>
 #include "pci.h"
 
-void __weak pcibios_update_irq(struct pci_dev *dev, int irq)
-{
-	dev_dbg(&dev->dev, "assigning IRQ %02d\n", irq);
-	pci_write_config_byte(dev, PCI_INTERRUPT_LINE, irq);
-}
-
 void pci_assign_irq(struct pci_dev *dev)
 {
 	u8 pin;
@@ -31,7 +24,7 @@ void pci_assign_irq(struct pci_dev *dev)
 	struct pci_host_bridge *hbrg = pci_find_host_bridge(dev->bus);
 
 	if (!(hbrg->map_irq)) {
-		dev_dbg(&dev->dev, "runtime IRQ mapping not provided by arch\n");
+		pci_dbg(dev, "runtime IRQ mapping not provided by arch\n");
 		return;
 	}
 
@@ -61,33 +54,9 @@ void pci_assign_irq(struct pci_dev *dev)
 	}
 	dev->irq = irq;
 
-	dev_dbg(&dev->dev, "assign IRQ: got %d\n", dev->irq);
+	pci_dbg(dev, "assign IRQ: got %d\n", dev->irq);
 
 	/* Always tell the device, so the driver knows what is
 	   the real IRQ to use; the device does not use it. */
-	pcibios_update_irq(dev, irq);
+	pci_write_config_byte(dev, PCI_INTERRUPT_LINE, irq);
 }
-
-void pci_fixup_irqs(u8 (*swizzle)(struct pci_dev *, u8 *),
-		    int (*map_irq)(const struct pci_dev *, u8, u8))
-{
-	/*
-	 * Implement pci_fixup_irqs() through pci_assign_irq().
-	 * This code should be remove eventually, it is a wrapper
-	 * around pci_assign_irq() interface to keep current
-	 * pci_fixup_irqs() behaviour unchanged on architecture
-	 * code still relying on its interface.
-	 */
-	struct pci_dev *dev = NULL;
-	struct pci_host_bridge *hbrg = NULL;
-
-	for_each_pci_dev(dev) {
-		hbrg = pci_find_host_bridge(dev->bus);
-		hbrg->swizzle_irq = swizzle;
-		hbrg->map_irq = map_irq;
-		pci_assign_irq(dev);
-		hbrg->swizzle_irq = NULL;
-		hbrg->map_irq = NULL;
-	}
-}
-EXPORT_SYMBOL_GPL(pci_fixup_irqs);

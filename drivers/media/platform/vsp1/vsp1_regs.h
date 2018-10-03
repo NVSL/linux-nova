@@ -1,13 +1,10 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * vsp1_regs.h  --  R-Car VSP1 Registers Definitions
  *
  * Copyright (C) 2013 Renesas Electronics Corporation
  *
  * Contact: Laurent Pinchart (laurent.pinchart@ideasonboard.com)
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2
- * as published by the Free Software Foundation.
  */
 
 #ifndef __VSP1_REGS_H__
@@ -18,6 +15,7 @@
  */
 
 #define VI6_CMD(n)			(0x0000 + (n) * 4)
+#define VI6_CMD_UPDHDR			(1 << 4)
 #define VI6_CMD_STRCMD			(1 << 0)
 
 #define VI6_CLK_DCSWT			0x0018
@@ -224,7 +222,7 @@
 #define VI6_RPF_MULT_ALPHA_P_MMD_RATIO	(1 << 8)
 #define VI6_RPF_MULT_ALPHA_P_MMD_IMAGE	(2 << 8)
 #define VI6_RPF_MULT_ALPHA_P_MMD_BOTH	(3 << 8)
-#define VI6_RPF_MULT_ALPHA_RATIO_MASK	(0xff < 0)
+#define VI6_RPF_MULT_ALPHA_RATIO_MASK	(0xff << 0)
 #define VI6_RPF_MULT_ALPHA_RATIO_SHIFT	0
 
 /* -----------------------------------------------------------------------------
@@ -238,6 +236,10 @@
 #define VI6_WPF_SRCRPF_VIRACT_SUB	(1 << 28)
 #define VI6_WPF_SRCRPF_VIRACT_MST	(2 << 28)
 #define VI6_WPF_SRCRPF_VIRACT_MASK	(3 << 28)
+#define VI6_WPF_SRCRPF_VIRACT2_DIS	(0 << 24)
+#define VI6_WPF_SRCRPF_VIRACT2_SUB	(1 << 24)
+#define VI6_WPF_SRCRPF_VIRACT2_MST	(2 << 24)
+#define VI6_WPF_SRCRPF_VIRACT2_MASK	(3 << 24)
 #define VI6_WPF_SRCRPF_RPF_ACT_DIS(n)	(0 << ((n) * 2))
 #define VI6_WPF_SRCRPF_RPF_ACT_SUB(n)	(1 << ((n) * 2))
 #define VI6_WPF_SRCRPF_RPF_ACT_MST(n)	(2 << ((n) * 2))
@@ -306,6 +308,44 @@
 #define VI6_WPF_WRBCK_CTRL_WBMD		(1 << 0)
 
 /* -----------------------------------------------------------------------------
+ * UIF Control Registers
+ */
+
+#define VI6_UIF_OFFSET			0x100
+
+#define VI6_UIF_DISCOM_DOCMCR		0x1c00
+#define VI6_UIF_DISCOM_DOCMCR_CMPRU	(1 << 16)
+#define VI6_UIF_DISCOM_DOCMCR_CMPR	(1 << 0)
+
+#define VI6_UIF_DISCOM_DOCMSTR		0x1c04
+#define VI6_UIF_DISCOM_DOCMSTR_CMPPRE	(1 << 1)
+#define VI6_UIF_DISCOM_DOCMSTR_CMPST	(1 << 0)
+
+#define VI6_UIF_DISCOM_DOCMCLSTR	0x1c08
+#define VI6_UIF_DISCOM_DOCMCLSTR_CMPCLPRE	(1 << 1)
+#define VI6_UIF_DISCOM_DOCMCLSTR_CMPCLST	(1 << 0)
+
+#define VI6_UIF_DISCOM_DOCMIENR		0x1c0c
+#define VI6_UIF_DISCOM_DOCMIENR_CMPPREIEN	(1 << 1)
+#define VI6_UIF_DISCOM_DOCMIENR_CMPIEN		(1 << 0)
+
+#define VI6_UIF_DISCOM_DOCMMDR		0x1c10
+#define VI6_UIF_DISCOM_DOCMMDR_INTHRH(n)	((n) << 16)
+
+#define VI6_UIF_DISCOM_DOCMPMR		0x1c14
+#define VI6_UIF_DISCOM_DOCMPMR_CMPDFF(n)	((n) << 17)
+#define VI6_UIF_DISCOM_DOCMPMR_CMPDFA(n)	((n) << 8)
+#define VI6_UIF_DISCOM_DOCMPMR_CMPDAUF		(1 << 7)
+#define VI6_UIF_DISCOM_DOCMPMR_SEL(n)		((n) << 0)
+
+#define VI6_UIF_DISCOM_DOCMECRCR	0x1c18
+#define VI6_UIF_DISCOM_DOCMCCRCR	0x1c1c
+#define VI6_UIF_DISCOM_DOCMSPXR		0x1c20
+#define VI6_UIF_DISCOM_DOCMSPYR		0x1c24
+#define VI6_UIF_DISCOM_DOCMSZXR		0x1c28
+#define VI6_UIF_DISCOM_DOCMSZYR		0x1c2c
+
+/* -----------------------------------------------------------------------------
  * DPR Control Registers
  */
 
@@ -321,6 +361,8 @@
 #define VI6_DPR_HST_ROUTE		0x2044
 #define VI6_DPR_HSI_ROUTE		0x2048
 #define VI6_DPR_BRU_ROUTE		0x204c
+#define VI6_DPR_ILV_BRS_ROUTE		0x2050
+#define VI6_DPR_ROUTE_BRSSEL		(1 << 28)
 #define VI6_DPR_ROUTE_FXA_MASK		(0xff << 16)
 #define VI6_DPR_ROUTE_FXA_SHIFT		16
 #define VI6_DPR_ROUTE_FP_MASK		(0x3f << 8)
@@ -335,7 +377,10 @@
 #define VI6_DPR_SMPPT_PT_MASK		(0x3f << 0)
 #define VI6_DPR_SMPPT_PT_SHIFT		0
 
+#define VI6_DPR_UIF_ROUTE(n)		(0x2074 + (n) * 4)
+
 #define VI6_DPR_NODE_RPF(n)		(n)
+#define VI6_DPR_NODE_UIF(n)		(12 + (n))
 #define VI6_DPR_NODE_SRU		16
 #define VI6_DPR_NODE_UDS(n)		(17 + (n))
 #define VI6_DPR_NODE_LUT		22
@@ -344,7 +389,8 @@
 #define VI6_DPR_NODE_CLU		29
 #define VI6_DPR_NODE_HST		30
 #define VI6_DPR_NODE_HSI		31
-#define VI6_DPR_NODE_LIF		55
+#define VI6_DPR_NODE_BRS_IN(n)		(38 + (n))
+#define VI6_DPR_NODE_LIF		55		/* Gen2 only */
 #define VI6_DPR_NODE_WPF(n)		(56 + (n))
 #define VI6_DPR_NODE_UNUSED		63
 
@@ -388,6 +434,7 @@
 #define VI6_UDS_CTRL_NE_RCR		(1 << 18)
 #define VI6_UDS_CTRL_NE_GY		(1 << 17)
 #define VI6_UDS_CTRL_NE_BCB		(1 << 16)
+#define VI6_UDS_CTRL_AMDSLH		(1 << 2)
 #define VI6_UDS_CTRL_TDIPC		(1 << 1)
 
 #define VI6_UDS_SCALE			0x2304
@@ -420,10 +467,23 @@
 #define VI6_UDS_PASS_BWIDTH_V_MASK	(0x7f << 0)
 #define VI6_UDS_PASS_BWIDTH_V_SHIFT	0
 
+#define VI6_UDS_HPHASE			0x2314
+#define VI6_UDS_HPHASE_HSTP_MASK	(0xfff << 16)
+#define VI6_UDS_HPHASE_HSTP_SHIFT	16
+#define VI6_UDS_HPHASE_HEDP_MASK	(0xfff << 0)
+#define VI6_UDS_HPHASE_HEDP_SHIFT	0
+
 #define VI6_UDS_IPC			0x2318
 #define VI6_UDS_IPC_FIELD		(1 << 27)
 #define VI6_UDS_IPC_VEDP_MASK		(0xfff << 0)
 #define VI6_UDS_IPC_VEDP_SHIFT		0
+
+#define VI6_UDS_HSZCLIP			0x231c
+#define VI6_UDS_HSZCLIP_HCEN		(1 << 28)
+#define VI6_UDS_HSZCLIP_HCL_OFST_MASK	(0xff << 16)
+#define VI6_UDS_HSZCLIP_HCL_OFST_SHIFT	16
+#define VI6_UDS_HSZCLIP_HCL_SIZE_MASK	(0x1fff << 0)
+#define VI6_UDS_HSZCLIP_HCL_SIZE_SHIFT	0
 
 #define VI6_UDS_CLIP_SIZE		0x2324
 #define VI6_UDS_CLIP_SIZE_HSIZE_MASK	(0x1fff << 16)
@@ -476,7 +536,7 @@
 #define VI6_HSI_CTRL_EN			(1 << 0)
 
 /* -----------------------------------------------------------------------------
- * BRU Control Registers
+ * BRS and BRU Control Registers
  */
 
 #define VI6_ROP_NOP			0
@@ -496,7 +556,10 @@
 #define VI6_ROP_NAND			14
 #define VI6_ROP_SET			15
 
-#define VI6_BRU_INCTRL			0x2c00
+#define VI6_BRU_BASE			0x2c00
+#define VI6_BRS_BASE			0x3900
+
+#define VI6_BRU_INCTRL			0x0000
 #define VI6_BRU_INCTRL_NRM		(1 << 28)
 #define VI6_BRU_INCTRL_DnON		(1 << (16 + (n)))
 #define VI6_BRU_INCTRL_DITHn_OFF	(0 << ((n) * 4))
@@ -508,19 +571,19 @@
 #define VI6_BRU_INCTRL_DITHn_MASK	(7 << ((n) * 4))
 #define VI6_BRU_INCTRL_DITHn_SHIFT	((n) * 4)
 
-#define VI6_BRU_VIRRPF_SIZE		0x2c04
+#define VI6_BRU_VIRRPF_SIZE		0x0004
 #define VI6_BRU_VIRRPF_SIZE_HSIZE_MASK	(0x1fff << 16)
 #define VI6_BRU_VIRRPF_SIZE_HSIZE_SHIFT	16
 #define VI6_BRU_VIRRPF_SIZE_VSIZE_MASK	(0x1fff << 0)
 #define VI6_BRU_VIRRPF_SIZE_VSIZE_SHIFT	0
 
-#define VI6_BRU_VIRRPF_LOC		0x2c08
+#define VI6_BRU_VIRRPF_LOC		0x0008
 #define VI6_BRU_VIRRPF_LOC_HCOORD_MASK	(0x1fff << 16)
 #define VI6_BRU_VIRRPF_LOC_HCOORD_SHIFT	16
 #define VI6_BRU_VIRRPF_LOC_VCOORD_MASK	(0x1fff << 0)
 #define VI6_BRU_VIRRPF_LOC_VCOORD_SHIFT	0
 
-#define VI6_BRU_VIRRPF_COL		0x2c0c
+#define VI6_BRU_VIRRPF_COL		0x000c
 #define VI6_BRU_VIRRPF_COL_A_MASK	(0xff << 24)
 #define VI6_BRU_VIRRPF_COL_A_SHIFT	24
 #define VI6_BRU_VIRRPF_COL_RCR_MASK	(0xff << 16)
@@ -530,7 +593,7 @@
 #define VI6_BRU_VIRRPF_COL_BCB_MASK	(0xff << 0)
 #define VI6_BRU_VIRRPF_COL_BCB_SHIFT	0
 
-#define VI6_BRU_CTRL(n)			(0x2c10 + (n) * 8 + ((n) <= 3 ? 0 : 4))
+#define VI6_BRU_CTRL(n)			(0x0010 + (n) * 8 + ((n) <= 3 ? 0 : 4))
 #define VI6_BRU_CTRL_RBC		(1 << 31)
 #define VI6_BRU_CTRL_DSTSEL_BRUIN(n)	(((n) <= 3 ? (n) : (n)+1) << 20)
 #define VI6_BRU_CTRL_DSTSEL_VRPF	(4 << 20)
@@ -543,7 +606,7 @@
 #define VI6_BRU_CTRL_AROP(rop)		((rop) << 0)
 #define VI6_BRU_CTRL_AROP_MASK		(0xf << 0)
 
-#define VI6_BRU_BLD(n)			(0x2c14 + (n) * 8 + ((n) <= 3 ? 0 : 4))
+#define VI6_BRU_BLD(n)			(0x0014 + (n) * 8 + ((n) <= 3 ? 0 : 4))
 #define VI6_BRU_BLD_CBES		(1 << 31)
 #define VI6_BRU_BLD_CCMDX_DST_A		(0 << 28)
 #define VI6_BRU_BLD_CCMDX_255_DST_A	(1 << 28)
@@ -576,7 +639,7 @@
 #define VI6_BRU_BLD_COEFY_MASK		(0xff << 0)
 #define VI6_BRU_BLD_COEFY_SHIFT		0
 
-#define VI6_BRU_ROP			0x2c30
+#define VI6_BRU_ROP			0x0030	/* Only available on BRU */
 #define VI6_BRU_ROP_DSTSEL_BRUIN(n)	(((n) <= 3 ? (n) : (n)+1) << 20)
 #define VI6_BRU_ROP_DSTSEL_VRPF		(4 << 20)
 #define VI6_BRU_ROP_DSTSEL_MASK		(7 << 20)
@@ -653,6 +716,8 @@
  * LIF Control Registers
  */
 
+#define VI6_LIF_OFFSET			(-0x100)
+
 #define VI6_LIF_CTRL			0x3b00
 #define VI6_LIF_CTRL_OBTH_MASK		(0x7ff << 16)
 #define VI6_LIF_CTRL_OBTH_SHIFT		16
@@ -666,6 +731,11 @@
 #define VI6_LIF_CSBTH_LBTH_MASK		(0x7ff << 0)
 #define VI6_LIF_CSBTH_LBTH_SHIFT	0
 
+#define VI6_LIF_LBA			0x3b0c
+#define VI6_LIF_LBA_LBA0		(1 << 31)
+#define VI6_LIF_LBA_LBA1_MASK		(0xfff << 16)
+#define VI6_LIF_LBA_LBA1_SHIFT		16
+
 /* -----------------------------------------------------------------------------
  * Security Control Registers
  */
@@ -678,6 +748,7 @@
  */
 
 #define VI6_IP_VERSION			0x3f00
+#define VI6_IP_VERSION_MASK		(0xffff << 0)
 #define VI6_IP_VERSION_MODEL_MASK	(0xff << 8)
 #define VI6_IP_VERSION_MODEL_VSPS_H2	(0x09 << 8)
 #define VI6_IP_VERSION_MODEL_VSPR_H2	(0x0a << 8)
@@ -689,9 +760,20 @@
 #define VI6_IP_VERSION_MODEL_VSPBD_GEN3	(0x15 << 8)
 #define VI6_IP_VERSION_MODEL_VSPBC_GEN3	(0x16 << 8)
 #define VI6_IP_VERSION_MODEL_VSPD_GEN3	(0x17 << 8)
+#define VI6_IP_VERSION_MODEL_VSPD_V3	(0x18 << 8)
+#define VI6_IP_VERSION_MODEL_VSPDL_GEN3	(0x19 << 8)
+#define VI6_IP_VERSION_MODEL_VSPBS_GEN3	(0x1a << 8)
 #define VI6_IP_VERSION_SOC_MASK		(0xff << 0)
-#define VI6_IP_VERSION_SOC_H		(0x01 << 0)
-#define VI6_IP_VERSION_SOC_M		(0x02 << 0)
+#define VI6_IP_VERSION_SOC_H2		(0x01 << 0)
+#define VI6_IP_VERSION_SOC_V2H		(0x01 << 0)
+#define VI6_IP_VERSION_SOC_V3M		(0x01 << 0)
+#define VI6_IP_VERSION_SOC_M2		(0x02 << 0)
+#define VI6_IP_VERSION_SOC_M3W		(0x02 << 0)
+#define VI6_IP_VERSION_SOC_V3H		(0x02 << 0)
+#define VI6_IP_VERSION_SOC_H3		(0x03 << 0)
+#define VI6_IP_VERSION_SOC_D3		(0x04 << 0)
+#define VI6_IP_VERSION_SOC_M3N		(0x04 << 0)
+#define VI6_IP_VERSION_SOC_E3		(0x04 << 0)
 
 /* -----------------------------------------------------------------------------
  * RPF CLUT Registers

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #include <linux/err.h>
 #include <linux/module.h>
 #include <linux/io.h>
@@ -133,6 +134,9 @@ struct device * __init imx_soc_device_init(void)
 		break;
 	case MXC_CPU_IMX6ULL:
 		soc_id = "i.MX6ULL";
+		break;
+	case MXC_CPU_IMX6SLL:
+		soc_id = "i.MX6SLL";
 		break;
 	case MXC_CPU_IMX7D:
 		soc_id = "i.MX7D";

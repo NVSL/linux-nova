@@ -106,7 +106,7 @@ static const struct sysfs_ops esre_attr_ops = {
 };
 
 /* Generic ESRT Entry ("ESRE") support. */
-static ssize_t esre_fw_class_show(struct esre_entry *entry, char *buf)
+static ssize_t fw_class_show(struct esre_entry *entry, char *buf)
 {
 	char *str = buf;
 
@@ -117,18 +117,16 @@ static ssize_t esre_fw_class_show(struct esre_entry *entry, char *buf)
 	return str - buf;
 }
 
-static struct esre_attribute esre_fw_class = __ATTR(fw_class, 0400,
-	esre_fw_class_show, NULL);
+static struct esre_attribute esre_fw_class = __ATTR_RO_MODE(fw_class, 0400);
 
 #define esre_attr_decl(name, size, fmt) \
-static ssize_t esre_##name##_show(struct esre_entry *entry, char *buf) \
+static ssize_t name##_show(struct esre_entry *entry, char *buf) \
 { \
 	return sprintf(buf, fmt "\n", \
 		       le##size##_to_cpu(entry->esre.esre1->name)); \
 } \
 \
-static struct esre_attribute esre_##name = __ATTR(name, 0400, \
-	esre_##name##_show, NULL)
+static struct esre_attribute esre_##name = __ATTR_RO_MODE(name, 0400)
 
 esre_attr_decl(fw_type, 32, "%u");
 esre_attr_decl(fw_version, 32, "%u");
@@ -193,14 +191,13 @@ static int esre_create_sysfs_entry(void *esre, int entry_num)
 
 /* support for displaying ESRT fields at the top level */
 #define esrt_attr_decl(name, size, fmt) \
-static ssize_t esrt_##name##_show(struct kobject *kobj, \
+static ssize_t name##_show(struct kobject *kobj, \
 				  struct kobj_attribute *attr, char *buf)\
 { \
 	return sprintf(buf, fmt "\n", le##size##_to_cpu(esrt->name)); \
 } \
 \
-static struct kobj_attribute esrt_##name = __ATTR(name, 0400, \
-	esrt_##name##_show, NULL)
+static struct kobj_attribute esrt_##name = __ATTR_RO_MODE(name, 0400)
 
 esrt_attr_decl(fw_resource_count, 32, "%u");
 esrt_attr_decl(fw_resource_count_max, 32, "%u");
@@ -230,7 +227,7 @@ static umode_t esrt_attr_is_visible(struct kobject *kobj,
 	return attr->mode;
 }
 
-static struct attribute_group esrt_attr_group = {
+static const struct attribute_group esrt_attr_group = {
 	.attrs = esrt_attrs,
 	.is_visible = esrt_attr_is_visible,
 };
@@ -282,6 +279,7 @@ void __init efi_esrt_init(void)
 	}
 
 	memcpy(&tmpesrt, va, sizeof(tmpesrt));
+	early_memunmap(va, size);
 
 	if (tmpesrt.fw_resource_version == 1) {
 		entry_size = sizeof (*v1_entries);
@@ -294,7 +292,7 @@ void __init efi_esrt_init(void)
 	if (tmpesrt.fw_resource_count > 0 && max - size < entry_size) {
 		pr_err("ESRT memory map entry can only hold the header. (max: %zu size: %zu)\n",
 		       max - size, entry_size);
-		goto err_memunmap;
+		return;
 	}
 
 	/*
@@ -307,7 +305,7 @@ void __init efi_esrt_init(void)
 	if (tmpesrt.fw_resource_count > 128) {
 		pr_err("ESRT says fw_resource_count has very large value %d.\n",
 		       tmpesrt.fw_resource_count);
-		goto err_memunmap;
+		return;
 	}
 
 	/*
@@ -318,18 +316,10 @@ void __init efi_esrt_init(void)
 	if (max < size + entries_size) {
 		pr_err("ESRT does not fit on single memory map entry (size: %zu max: %zu)\n",
 		       size, max);
-		goto err_memunmap;
-	}
-
-	/* remap it with our (plausible) new pages */
-	early_memunmap(va, size);
-	size += entries_size;
-	va = early_memremap(efi.esrt, size);
-	if (!va) {
-		pr_err("early_memremap(%p, %zu) failed.\n", (void *)efi.esrt,
-		       size);
 		return;
 	}
+
+	size += entries_size;
 
 	esrt_data = (phys_addr_t)efi.esrt;
 	esrt_data_size = size;
@@ -339,8 +329,6 @@ void __init efi_esrt_init(void)
 	efi_mem_reserve(esrt_data, esrt_data_size);
 
 	pr_debug("esrt-init: loaded.\n");
-err_memunmap:
-	early_memunmap(va, size);
 }
 
 static int __init register_entries(void)
@@ -431,7 +419,7 @@ err_remove_group:
 err_remove_esrt:
 	kobject_put(esrt_kobj);
 err:
-	kfree(esrt);
+	memunmap(esrt);
 	esrt = NULL;
 	return error;
 }

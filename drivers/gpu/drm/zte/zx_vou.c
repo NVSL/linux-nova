@@ -350,7 +350,8 @@ static inline void vou_chn_set_update(struct zx_crtc *zcrtc)
 	zx_writel(zcrtc->chnreg + CHN_UPDATE, 1);
 }
 
-static void zx_crtc_enable(struct drm_crtc *crtc)
+static void zx_crtc_atomic_enable(struct drm_crtc *crtc,
+				  struct drm_crtc_state *old_state)
 {
 	struct drm_display_mode *mode = &crtc->state->adjusted_mode;
 	bool interlaced = mode->flags & DRM_MODE_FLAG_INTERLACE;
@@ -454,7 +455,8 @@ static void zx_crtc_enable(struct drm_crtc *crtc)
 		DRM_DEV_ERROR(vou->dev, "failed to enable pixclk: %d\n", ret);
 }
 
-static void zx_crtc_disable(struct drm_crtc *crtc)
+static void zx_crtc_atomic_disable(struct drm_crtc *crtc,
+				   struct drm_crtc_state *old_state)
 {
 	struct zx_crtc *zcrtc = to_zx_crtc(crtc);
 	const struct zx_crtc_bits *bits = zcrtc->bits;
@@ -490,9 +492,9 @@ static void zx_crtc_atomic_flush(struct drm_crtc *crtc,
 }
 
 static const struct drm_crtc_helper_funcs zx_crtc_helper_funcs = {
-	.enable = zx_crtc_enable,
-	.disable = zx_crtc_disable,
 	.atomic_flush = zx_crtc_atomic_flush,
+	.atomic_enable = zx_crtc_atomic_enable,
+	.atomic_disable = zx_crtc_atomic_disable,
 };
 
 static int zx_vou_enable_vblank(struct drm_crtc *crtc)
@@ -625,9 +627,10 @@ void zx_vou_layer_enable(struct drm_plane *plane)
 	zx_writel_mask(vou->osd + OSD_CTRL0, bits->enable, bits->enable);
 }
 
-void zx_vou_layer_disable(struct drm_plane *plane)
+void zx_vou_layer_disable(struct drm_plane *plane,
+			  struct drm_plane_state *old_state)
 {
-	struct zx_crtc *zcrtc = to_zx_crtc(plane->crtc);
+	struct zx_crtc *zcrtc = to_zx_crtc(old_state->crtc);
 	struct zx_vou_hw *vou = zcrtc->vou;
 	struct zx_plane *zplane = to_zx_plane(plane);
 	const struct vou_layer_bits *bits = zplane->bits;

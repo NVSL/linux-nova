@@ -867,6 +867,10 @@ static int cx25821_dev_setup(struct cx25821_dev *dev)
 	dev->nr = ++cx25821_devcount;
 	sprintf(dev->name, "cx25821[%d]", dev->nr);
 
+	if (dev->nr >= ARRAY_SIZE(card)) {
+		CX25821_INFO("dev->nr >= %zd", ARRAY_SIZE(card));
+		return -ENODEV;
+	}
 	if (dev->pci->device != 0x8210) {
 		pr_info("%s(): Exiting. Incorrect Hardware device = 0x%02x\n",
 			__func__, dev->pci->device);
@@ -881,9 +885,6 @@ static int cx25821_dev_setup(struct cx25821_dev *dev)
 		dev->channels[i].id = i;
 		dev->channels[i].sram_channels = &cx25821_sram_channels[i];
 	}
-
-	if (dev->nr > 1)
-		CX25821_INFO("dev->nr > 1!");
 
 	/* board config */
 	dev->board = 1;		/* card[dev->nr]; */
@@ -1390,10 +1391,7 @@ static struct pci_driver cx25821_pci_driver = {
 
 static int __init cx25821_init(void)
 {
-	pr_info("driver version %d.%d.%d loaded\n",
-		(CX25821_VERSION_CODE >> 16) & 0xff,
-		(CX25821_VERSION_CODE >> 8) & 0xff,
-		CX25821_VERSION_CODE & 0xff);
+	pr_info("driver loaded\n");
 	return pci_register_driver(&cx25821_pci_driver);
 }
 

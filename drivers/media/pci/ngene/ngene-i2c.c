@@ -147,10 +147,10 @@ done:
 
 static u32 ngene_i2c_functionality(struct i2c_adapter *adap)
 {
-	return I2C_FUNC_SMBUS_EMUL;
+	return I2C_FUNC_I2C | I2C_FUNC_SMBUS_EMUL;
 }
 
-static struct i2c_algorithm ngene_i2c_algo = {
+static const struct i2c_algorithm ngene_i2c_algo = {
 	.master_xfer = ngene_i2c_master_xfer,
 	.functionality = ngene_i2c_functionality,
 };

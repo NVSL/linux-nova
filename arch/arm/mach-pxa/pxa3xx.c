@@ -23,7 +23,7 @@
 #include <linux/io.h>
 #include <linux/of.h>
 #include <linux/syscore_ops.h>
-#include <linux/i2c/pxa-i2c.h>
+#include <linux/platform_data/i2c-pxa.h>
 
 #include <asm/mach/map.h>
 #include <asm/suspend.h>
@@ -445,6 +445,10 @@ static int __init pxa3xx_init(void)
 		NDCR = (NDCR & ~NDCR_ND_ARB_EN) | NDCR_ND_ARB_CNTL;
 
 		pxa3xx_init_pm();
+
+		enable_irq_wake(IRQ_WAKEUP0);
+		if (cpu_is_pxa320())
+			enable_irq_wake(IRQ_WAKEUP1);
 
 		register_syscore_ops(&pxa_irq_syscore_ops);
 		register_syscore_ops(&pxa3xx_mfp_syscore_ops);

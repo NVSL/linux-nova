@@ -359,6 +359,16 @@ static int n2_hash_async_finup(struct ahash_request *req)
 	return crypto_ahash_finup(&rctx->fallback_req);
 }
 
+static int n2_hash_async_noimport(struct ahash_request *req, const void *in)
+{
+	return -ENOSYS;
+}
+
+static int n2_hash_async_noexport(struct ahash_request *req, void *out)
+{
+	return -ENOSYS;
+}
+
 static int n2_hash_cra_init(struct crypto_tfm *tfm)
 {
 	const char *fallback_driver_name = crypto_tfm_alg_name(tfm);
@@ -1467,6 +1477,8 @@ static int __n2_register_one_ahash(const struct n2_hash_tmpl *tmpl)
 	ahash->final = n2_hash_async_final;
 	ahash->finup = n2_hash_async_finup;
 	ahash->digest = n2_hash_async_digest;
+	ahash->export = n2_hash_async_noexport;
+	ahash->import = n2_hash_async_noimport;
 
 	halg = &ahash->halg;
 	halg->digestsize = tmpl->digest_size;
@@ -1625,6 +1637,7 @@ static int queue_cache_init(void)
 					  CWQ_ENTRY_SIZE, 0, NULL);
 	if (!queue_cache[HV_NCS_QTYPE_CWQ - 1]) {
 		kmem_cache_destroy(queue_cache[HV_NCS_QTYPE_MAU - 1]);
+		queue_cache[HV_NCS_QTYPE_MAU - 1] = NULL;
 		return -ENOMEM;
 	}
 	return 0;
@@ -1634,6 +1647,8 @@ static void queue_cache_destroy(void)
 {
 	kmem_cache_destroy(queue_cache[HV_NCS_QTYPE_MAU - 1]);
 	kmem_cache_destroy(queue_cache[HV_NCS_QTYPE_CWQ - 1]);
+	queue_cache[HV_NCS_QTYPE_MAU - 1] = NULL;
+	queue_cache[HV_NCS_QTYPE_CWQ - 1] = NULL;
 }
 
 static long spu_queue_register_workfn(void *arg)
@@ -1730,8 +1745,8 @@ static int spu_mdesc_walk_arcs(struct mdesc_handle *mdesc,
 			continue;
 		id = mdesc_get_property(mdesc, tgt, "id", NULL);
 		if (table[*id] != NULL) {
-			dev_err(&dev->dev, "%s: SPU cpu slot already set.\n",
-				dev->dev.of_node->full_name);
+			dev_err(&dev->dev, "%pOF: SPU cpu slot already set.\n",
+				dev->dev.of_node);
 			return -EINVAL;
 		}
 		cpumask_set_cpu(*id, &p->sharing);
@@ -1751,8 +1766,8 @@ static int handle_exec_unit(struct spu_mdesc_info *ip, struct list_head *list,
 
 	p = kzalloc(sizeof(struct spu_queue), GFP_KERNEL);
 	if (!p) {
-		dev_err(&dev->dev, "%s: Could not allocate SPU queue.\n",
-			dev->dev.of_node->full_name);
+		dev_err(&dev->dev, "%pOF: Could not allocate SPU queue.\n",
+			dev->dev.of_node);
 		return -ENOMEM;
 	}
 
@@ -1904,12 +1919,12 @@ static int grab_global_resources(void)
 		goto out_hvapi_release;
 
 	err = -ENOMEM;
-	cpu_to_cwq = kzalloc(sizeof(struct spu_queue *) * NR_CPUS,
+	cpu_to_cwq = kcalloc(NR_CPUS, sizeof(struct spu_queue *),
 			     GFP_KERNEL);
 	if (!cpu_to_cwq)
 		goto out_queue_cache_destroy;
 
-	cpu_to_mau = kzalloc(sizeof(struct spu_queue *) * NR_CPUS,
+	cpu_to_mau = kcalloc(NR_CPUS, sizeof(struct spu_queue *),
 			     GFP_KERNEL);
 	if (!cpu_to_mau)
 		goto out_free_cwq_table;
@@ -1962,10 +1977,8 @@ static struct n2_crypto *alloc_n2cp(void)
 
 static void free_n2cp(struct n2_crypto *np)
 {
-	if (np->cwq_info.ino_table) {
-		kfree(np->cwq_info.ino_table);
-		np->cwq_info.ino_table = NULL;
-	}
+	kfree(np->cwq_info.ino_table);
+	np->cwq_info.ino_table = NULL;
 
 	kfree(np);
 }
@@ -1981,41 +1994,39 @@ static void n2_spu_driver_version(void)
 static int n2_crypto_probe(struct platform_device *dev)
 {
 	struct mdesc_handle *mdesc;
-	const char *full_name;
 	struct n2_crypto *np;
 	int err;
 
 	n2_spu_driver_version();
 
-	full_name = dev->dev.of_node->full_name;
-	pr_info("Found N2CP at %s\n", full_name);
+	pr_info("Found N2CP at %pOF\n", dev->dev.of_node);
 
 	np = alloc_n2cp();
 	if (!np) {
-		dev_err(&dev->dev, "%s: Unable to allocate n2cp.\n",
-			full_name);
+		dev_err(&dev->dev, "%pOF: Unable to allocate n2cp.\n",
+			dev->dev.of_node);
 		return -ENOMEM;
 	}
 
 	err = grab_global_resources();
 	if (err) {
-		dev_err(&dev->dev, "%s: Unable to grab "
-			"global resources.\n", full_name);
+		dev_err(&dev->dev, "%pOF: Unable to grab global resources.\n",
+			dev->dev.of_node);
 		goto out_free_n2cp;
 	}
 
 	mdesc = mdesc_grab();
 
 	if (!mdesc) {
-		dev_err(&dev->dev, "%s: Unable to grab MDESC.\n",
-			full_name);
+		dev_err(&dev->dev, "%pOF: Unable to grab MDESC.\n",
+			dev->dev.of_node);
 		err = -ENODEV;
 		goto out_free_global;
 	}
 	err = grab_mdesc_irq_props(mdesc, dev, &np->cwq_info, "n2cp");
 	if (err) {
-		dev_err(&dev->dev, "%s: Unable to grab IRQ props.\n",
-			full_name);
+		dev_err(&dev->dev, "%pOF: Unable to grab IRQ props.\n",
+			dev->dev.of_node);
 		mdesc_release(mdesc);
 		goto out_free_global;
 	}
@@ -2026,15 +2037,15 @@ static int n2_crypto_probe(struct platform_device *dev)
 	mdesc_release(mdesc);
 
 	if (err) {
-		dev_err(&dev->dev, "%s: CWQ MDESC scan failed.\n",
-			full_name);
+		dev_err(&dev->dev, "%pOF: CWQ MDESC scan failed.\n",
+			dev->dev.of_node);
 		goto out_free_global;
 	}
 
 	err = n2_register_algs();
 	if (err) {
-		dev_err(&dev->dev, "%s: Unable to register algorithms.\n",
-			full_name);
+		dev_err(&dev->dev, "%pOF: Unable to register algorithms.\n",
+			dev->dev.of_node);
 		goto out_free_spu_list;
 	}
 
@@ -2081,10 +2092,8 @@ static struct n2_mau *alloc_ncp(void)
 
 static void free_ncp(struct n2_mau *mp)
 {
-	if (mp->mau_info.ino_table) {
-		kfree(mp->mau_info.ino_table);
-		mp->mau_info.ino_table = NULL;
-	}
+	kfree(mp->mau_info.ino_table);
+	mp->mau_info.ino_table = NULL;
 
 	kfree(mp);
 }
@@ -2092,42 +2101,40 @@ static void free_ncp(struct n2_mau *mp)
 static int n2_mau_probe(struct platform_device *dev)
 {
 	struct mdesc_handle *mdesc;
-	const char *full_name;
 	struct n2_mau *mp;
 	int err;
 
 	n2_spu_driver_version();
 
-	full_name = dev->dev.of_node->full_name;
-	pr_info("Found NCP at %s\n", full_name);
+	pr_info("Found NCP at %pOF\n", dev->dev.of_node);
 
 	mp = alloc_ncp();
 	if (!mp) {
-		dev_err(&dev->dev, "%s: Unable to allocate ncp.\n",
-			full_name);
+		dev_err(&dev->dev, "%pOF: Unable to allocate ncp.\n",
+			dev->dev.of_node);
 		return -ENOMEM;
 	}
 
 	err = grab_global_resources();
 	if (err) {
-		dev_err(&dev->dev, "%s: Unable to grab "
-			"global resources.\n", full_name);
+		dev_err(&dev->dev, "%pOF: Unable to grab global resources.\n",
+			dev->dev.of_node);
 		goto out_free_ncp;
 	}
 
 	mdesc = mdesc_grab();
 
 	if (!mdesc) {
-		dev_err(&dev->dev, "%s: Unable to grab MDESC.\n",
-			full_name);
+		dev_err(&dev->dev, "%pOF: Unable to grab MDESC.\n",
+			dev->dev.of_node);
 		err = -ENODEV;
 		goto out_free_global;
 	}
 
 	err = grab_mdesc_irq_props(mdesc, dev, &mp->mau_info, "ncp");
 	if (err) {
-		dev_err(&dev->dev, "%s: Unable to grab IRQ props.\n",
-			full_name);
+		dev_err(&dev->dev, "%pOF: Unable to grab IRQ props.\n",
+			dev->dev.of_node);
 		mdesc_release(mdesc);
 		goto out_free_global;
 	}
@@ -2138,8 +2145,8 @@ static int n2_mau_probe(struct platform_device *dev)
 	mdesc_release(mdesc);
 
 	if (err) {
-		dev_err(&dev->dev, "%s: MAU MDESC scan failed.\n",
-			full_name);
+		dev_err(&dev->dev, "%pOF: MAU MDESC scan failed.\n",
+			dev->dev.of_node);
 		goto out_free_global;
 	}
 

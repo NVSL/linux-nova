@@ -45,8 +45,7 @@
  */
 int intel_vgpu_gpa_to_mmio_offset(struct intel_vgpu *vgpu, u64 gpa)
 {
-	u64 gttmmio_gpa = *(u64 *)(vgpu_cfg_space(vgpu) + PCI_BASE_ADDRESS_0) &
-			  ~GENMASK(3, 0);
+	u64 gttmmio_gpa = intel_vgpu_get_bar_gpa(vgpu, PCI_BASE_ADDRESS_0);
 	return gpa - gttmmio_gpa;
 }
 
@@ -77,34 +76,14 @@ static void failsafe_emulate_mmio_rw(struct intel_vgpu *vgpu, uint64_t pa,
 		else
 			intel_vgpu_default_mmio_write(vgpu, offset, p_data,
 					bytes);
-	} else if (reg_is_gtt(gvt, offset) &&
-			vgpu->gtt.ggtt_mm->virtual_page_table) {
+	} else if (reg_is_gtt(gvt, offset)) {
 		offset -= gvt->device_info.gtt_start_offset;
-		pt = vgpu->gtt.ggtt_mm->virtual_page_table + offset;
+		pt = vgpu->gtt.ggtt_mm->ggtt_mm.virtual_ggtt + offset;
 		if (read)
 			memcpy(p_data, pt, bytes);
 		else
 			memcpy(pt, p_data, bytes);
 
-	} else if (atomic_read(&vgpu->gtt.n_write_protected_guest_page)) {
-		struct intel_vgpu_guest_page *gp;
-
-		/* Since we enter the failsafe mode early during guest boot,
-		 * guest may not have chance to set up its ppgtt table, so
-		 * there should not be any wp pages for guest. Keep the wp
-		 * related code here in case we need to handle it in furture.
-		 */
-		gp = intel_vgpu_find_guest_page(vgpu, pa >> PAGE_SHIFT);
-		if (gp) {
-			/* remove write protection to prevent furture traps */
-			intel_vgpu_clean_guest_page(vgpu, gp);
-			if (read)
-				intel_gvt_hypervisor_read_gpa(vgpu, pa,
-						p_data, bytes);
-			else
-				intel_gvt_hypervisor_write_gpa(vgpu, pa,
-						p_data, bytes);
-		}
 	}
 	mutex_unlock(&gvt->lock);
 }
@@ -126,30 +105,11 @@ int intel_vgpu_emulate_mmio_read(struct intel_vgpu *vgpu, uint64_t pa,
 	unsigned int offset = 0;
 	int ret = -EINVAL;
 
-
 	if (vgpu->failsafe) {
 		failsafe_emulate_mmio_rw(vgpu, pa, p_data, bytes, true);
 		return 0;
 	}
 	mutex_lock(&gvt->lock);
-
-	if (atomic_read(&vgpu->gtt.n_write_protected_guest_page)) {
-		struct intel_vgpu_guest_page *gp;
-
-		gp = intel_vgpu_find_guest_page(vgpu, pa >> PAGE_SHIFT);
-		if (gp) {
-			ret = intel_gvt_hypervisor_read_gpa(vgpu, pa,
-					p_data, bytes);
-			if (ret) {
-				gvt_vgpu_err("guest page read error %d, "
-					"gfn 0x%lx, pa 0x%llx, var 0x%x, len %d\n",
-					ret, gp->gfn, pa, *(u32 *)p_data,
-					bytes);
-			}
-			mutex_unlock(&gvt->lock);
-			return ret;
-		}
-	}
 
 	offset = intel_vgpu_gpa_to_mmio_offset(vgpu, pa);
 
@@ -164,18 +124,16 @@ int intel_vgpu_emulate_mmio_read(struct intel_vgpu *vgpu, uint64_t pa,
 		if (WARN_ON(!reg_is_gtt(gvt, offset + bytes - 1)))
 			goto err;
 
-		ret = intel_vgpu_emulate_gtt_mmio_read(vgpu, offset,
+		ret = intel_vgpu_emulate_ggtt_mmio_read(vgpu, offset,
 				p_data, bytes);
 		if (ret)
 			goto err;
-		mutex_unlock(&gvt->lock);
-		return ret;
+		goto out;
 	}
 
 	if (WARN_ON_ONCE(!reg_is_mmio(gvt, offset))) {
 		ret = intel_gvt_hypervisor_read_gpa(vgpu, pa, p_data, bytes);
-		mutex_unlock(&gvt->lock);
-		return ret;
+		goto out;
 	}
 
 	if (WARN_ON(!reg_is_mmio(gvt, offset + bytes - 1)))
@@ -191,11 +149,13 @@ int intel_vgpu_emulate_mmio_read(struct intel_vgpu *vgpu, uint64_t pa,
 		goto err;
 
 	intel_gvt_mmio_set_accessed(gvt, offset);
-	mutex_unlock(&gvt->lock);
-	return 0;
+	ret = 0;
+	goto out;
+
 err:
 	gvt_vgpu_err("fail to emulate MMIO read %08x len %d\n",
 			offset, bytes);
+out:
 	mutex_unlock(&gvt->lock);
 	return ret;
 }
@@ -224,24 +184,6 @@ int intel_vgpu_emulate_mmio_write(struct intel_vgpu *vgpu, uint64_t pa,
 
 	mutex_lock(&gvt->lock);
 
-	if (atomic_read(&vgpu->gtt.n_write_protected_guest_page)) {
-		struct intel_vgpu_guest_page *gp;
-
-		gp = intel_vgpu_find_guest_page(vgpu, pa >> PAGE_SHIFT);
-		if (gp) {
-			ret = gp->handler(gp, pa, p_data, bytes);
-			if (ret) {
-				gvt_err("guest page write error %d, "
-					"gfn 0x%lx, pa 0x%llx, "
-					"var 0x%x, len %d\n",
-					ret, gp->gfn, pa,
-					*(u32 *)p_data, bytes);
-			}
-			mutex_unlock(&gvt->lock);
-			return ret;
-		}
-	}
-
 	offset = intel_vgpu_gpa_to_mmio_offset(vgpu, pa);
 
 	if (WARN_ON(bytes > 8))
@@ -255,18 +197,16 @@ int intel_vgpu_emulate_mmio_write(struct intel_vgpu *vgpu, uint64_t pa,
 		if (WARN_ON(!reg_is_gtt(gvt, offset + bytes - 1)))
 			goto err;
 
-		ret = intel_vgpu_emulate_gtt_mmio_write(vgpu, offset,
+		ret = intel_vgpu_emulate_ggtt_mmio_write(vgpu, offset,
 				p_data, bytes);
 		if (ret)
 			goto err;
-		mutex_unlock(&gvt->lock);
-		return ret;
+		goto out;
 	}
 
 	if (WARN_ON_ONCE(!reg_is_mmio(gvt, offset))) {
 		ret = intel_gvt_hypervisor_write_gpa(vgpu, pa, p_data, bytes);
-		mutex_unlock(&gvt->lock);
-		return ret;
+		goto out;
 	}
 
 	ret = intel_vgpu_mmio_reg_rw(vgpu, offset, p_data, bytes, false);
@@ -274,11 +214,12 @@ int intel_vgpu_emulate_mmio_write(struct intel_vgpu *vgpu, uint64_t pa,
 		goto err;
 
 	intel_gvt_mmio_set_accessed(gvt, offset);
-	mutex_unlock(&gvt->lock);
-	return 0;
+	ret = 0;
+	goto out;
 err:
 	gvt_vgpu_err("fail to emulate MMIO write %08x len %d\n", offset,
 		     bytes);
+out:
 	mutex_unlock(&gvt->lock);
 	return ret;
 }
@@ -299,12 +240,10 @@ void intel_vgpu_reset_mmio(struct intel_vgpu *vgpu, bool dmlr)
 		memcpy(vgpu->mmio.vreg, mmio, info->mmio_size);
 		memcpy(vgpu->mmio.sreg, mmio, info->mmio_size);
 
-		vgpu_vreg(vgpu, GEN6_GT_THREAD_STATUS_REG) = 0;
+		vgpu_vreg_t(vgpu, GEN6_GT_THREAD_STATUS_REG) = 0;
 
 		/* set the bit 0:2(Core C-State ) to C0 */
-		vgpu_vreg(vgpu, GEN6_GT_CORE_STATUS) = 0;
-
-		vgpu->mmio.disable_warn_untrack = false;
+		vgpu_vreg_t(vgpu, GEN6_GT_CORE_STATUS) = 0;
 	} else {
 #define GVT_GEN8_MMIO_RESET_OFFSET		(0x44200)
 		/* only reset the engine related, so starting with 0x44200
@@ -328,7 +267,7 @@ int intel_vgpu_init_mmio(struct intel_vgpu *vgpu)
 {
 	const struct intel_gvt_device_info *info = &vgpu->gvt->device_info;
 
-	vgpu->mmio.vreg = vzalloc(info->mmio_size * 2);
+	vgpu->mmio.vreg = vzalloc(array_size(info->mmio_size, 2));
 	if (!vgpu->mmio.vreg)
 		return -ENOMEM;
 

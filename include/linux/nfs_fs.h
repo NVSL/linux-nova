@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  *  linux/include/linux/nfs_fs.h
  *
@@ -22,6 +23,7 @@
 #include <linux/mm.h>
 #include <linux/pagemap.h>
 #include <linux/rbtree.h>
+#include <linux/refcount.h>
 #include <linux/rwsem.h>
 #include <linux/wait.h>
 
@@ -49,14 +51,13 @@
 struct nfs_access_entry {
 	struct rb_node		rb_node;
 	struct list_head	lru;
-	unsigned long		jiffies;
 	struct rpc_cred *	cred;
 	__u32			mask;
 	struct rcu_head		rcu_head;
 };
 
 struct nfs_lock_context {
-	atomic_t count;
+	refcount_t count;
 	struct list_head list;
 	struct nfs_open_context *open_context;
 	fl_owner_t lockowner;
@@ -154,7 +155,7 @@ struct nfs_inode {
 	 */
 	__be32			cookieverf[2];
 
-	unsigned long		nrequests;
+	atomic_long_t		nrequests;
 	struct nfs_mds_commit_info commit_info;
 
 	/* Open contexts for shared mmap writes */
@@ -163,6 +164,7 @@ struct nfs_inode {
 	/* Readers: in-flight sillydelete RPC calls */
 	/* Writers: rmdir */
 	struct rw_semaphore	rmdir_sem;
+	struct mutex		commit_mutex;
 
 #if IS_ENABLED(CONFIG_NFS_V4)
 	struct nfs4_cached_acl	*nfs4_acl;
@@ -184,16 +186,36 @@ struct nfs_inode {
 };
 
 /*
+ * Access bit flags
+ */
+#define NFS_ACCESS_READ        0x0001
+#define NFS_ACCESS_LOOKUP      0x0002
+#define NFS_ACCESS_MODIFY      0x0004
+#define NFS_ACCESS_EXTEND      0x0008
+#define NFS_ACCESS_DELETE      0x0010
+#define NFS_ACCESS_EXECUTE     0x0020
+
+/*
  * Cache validity bit flags
  */
-#define NFS_INO_INVALID_ATTR	0x0001		/* cached attrs are invalid */
-#define NFS_INO_INVALID_DATA	0x0002		/* cached data is invalid */
-#define NFS_INO_INVALID_ATIME	0x0004		/* cached atime is invalid */
-#define NFS_INO_INVALID_ACCESS	0x0008		/* cached access cred invalid */
-#define NFS_INO_INVALID_ACL	0x0010		/* cached acls are invalid */
-#define NFS_INO_REVAL_PAGECACHE	0x0020		/* must revalidate pagecache */
-#define NFS_INO_REVAL_FORCED	0x0040		/* force revalidation ignoring a delegation */
-#define NFS_INO_INVALID_LABEL	0x0080		/* cached label is invalid */
+#define NFS_INO_INVALID_DATA	BIT(1)		/* cached data is invalid */
+#define NFS_INO_INVALID_ATIME	BIT(2)		/* cached atime is invalid */
+#define NFS_INO_INVALID_ACCESS	BIT(3)		/* cached access cred invalid */
+#define NFS_INO_INVALID_ACL	BIT(4)		/* cached acls are invalid */
+#define NFS_INO_REVAL_PAGECACHE	BIT(5)		/* must revalidate pagecache */
+#define NFS_INO_REVAL_FORCED	BIT(6)		/* force revalidation ignoring a delegation */
+#define NFS_INO_INVALID_LABEL	BIT(7)		/* cached label is invalid */
+#define NFS_INO_INVALID_CHANGE	BIT(8)		/* cached change is invalid */
+#define NFS_INO_INVALID_CTIME	BIT(9)		/* cached ctime is invalid */
+#define NFS_INO_INVALID_MTIME	BIT(10)		/* cached mtime is invalid */
+#define NFS_INO_INVALID_SIZE	BIT(11)		/* cached size is invalid */
+#define NFS_INO_INVALID_OTHER	BIT(12)		/* other attrs are invalid */
+
+#define NFS_INO_INVALID_ATTR	(NFS_INO_INVALID_CHANGE \
+		| NFS_INO_INVALID_CTIME \
+		| NFS_INO_INVALID_MTIME \
+		| NFS_INO_INVALID_SIZE \
+		| NFS_INO_INVALID_OTHER)	/* inode metadata is invalid */
 
 /*
  * Bit offsets in flags field
@@ -280,10 +302,11 @@ static inline void nfs_mark_for_revalidate(struct inode *inode)
 	struct nfs_inode *nfsi = NFS_I(inode);
 
 	spin_lock(&inode->i_lock);
-	nfsi->cache_validity |= NFS_INO_INVALID_ATTR |
-				NFS_INO_REVAL_PAGECACHE |
-				NFS_INO_INVALID_ACCESS |
-				NFS_INO_INVALID_ACL;
+	nfsi->cache_validity |= NFS_INO_REVAL_PAGECACHE
+		| NFS_INO_INVALID_ACCESS
+		| NFS_INO_INVALID_ACL
+		| NFS_INO_INVALID_CHANGE
+		| NFS_INO_INVALID_CTIME;
 	if (S_ISDIR(inode->i_mode))
 		nfsi->cache_validity |= NFS_INO_INVALID_DATA;
 	spin_unlock(&inode->i_lock);
@@ -510,7 +533,7 @@ extern void nfs_commit_free(struct nfs_commit_data *data);
 static inline int
 nfs_have_writebacks(struct inode *inode)
 {
-	return NFS_I(inode)->nrequests != 0;
+	return atomic_long_read(&NFS_I(inode)->nrequests) != 0;
 }
 
 /*

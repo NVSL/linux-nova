@@ -32,6 +32,8 @@ u32 __hyp_text __init_stage2_translation(void)
 	 * PS is only 3. Fortunately, bit 19 is RES0 in VTCR_EL2...
 	 */
 	parange = read_sysreg(id_aa64mmfr0_el1) & 7;
+	if (parange > ID_AA64MMFR0_PARANGE_MAX)
+		parange = ID_AA64MMFR0_PARANGE_MAX;
 	val |= parange << 16;
 
 	/* Compute the actual PARange... */
@@ -70,7 +72,7 @@ u32 __hyp_text __init_stage2_translation(void)
 	 * Management in ID_AA64MMFR1_EL1 and enable the feature in VTCR_EL2.
 	 */
 	tmp = (read_sysreg(id_aa64mmfr1_el1) >> ID_AA64MMFR1_HADBS_SHIFT) & 0xf;
-	if (IS_ENABLED(CONFIG_ARM64_HW_AFDBM) && tmp)
+	if (tmp)
 		val |= VTCR_EL2_HA;
 
 	/*

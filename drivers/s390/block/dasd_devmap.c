@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Author(s)......: Holger Smolinski <Holger.Smolinski@de.ibm.com>
  *		    Horst Hummel <Horst.Hummel@de.ibm.com>
@@ -1326,7 +1327,7 @@ dasd_timeout_store(struct device *dev, struct device_attribute *attr,
 {
 	struct dasd_device *device;
 	struct request_queue *q;
-	unsigned long val, flags;
+	unsigned long val;
 
 	device = dasd_device_from_cdev(to_ccwdev(dev));
 	if (IS_ERR(device) || !device->block)
@@ -1342,16 +1343,10 @@ dasd_timeout_store(struct device *dev, struct device_attribute *attr,
 		dasd_put_device(device);
 		return -ENODEV;
 	}
-	spin_lock_irqsave(&device->block->request_queue_lock, flags);
-	if (!val)
-		blk_queue_rq_timed_out(q, NULL);
-	else
-		blk_queue_rq_timed_out(q, dasd_times_out);
 
 	device->blk_timeout = val;
 
 	blk_queue_rq_timeout(q, device->blk_timeout * HZ);
-	spin_unlock_irqrestore(&device->block->request_queue_lock, flags);
 
 	dasd_put_device(device);
 	return count;
@@ -1555,9 +1550,49 @@ dasd_path_threshold_store(struct device *dev, struct device_attribute *attr,
 	dasd_put_device(device);
 	return count;
 }
-
 static DEVICE_ATTR(path_threshold, 0644, dasd_path_threshold_show,
 		   dasd_path_threshold_store);
+
+/*
+ * configure if path is disabled after IFCC/CCC error threshold is
+ * exceeded
+ */
+static ssize_t
+dasd_path_autodisable_show(struct device *dev,
+				   struct device_attribute *attr, char *buf)
+{
+	struct dasd_devmap *devmap;
+	int flag;
+
+	devmap = dasd_find_busid(dev_name(dev));
+	if (!IS_ERR(devmap))
+		flag = (devmap->features & DASD_FEATURE_PATH_AUTODISABLE) != 0;
+	else
+		flag = (DASD_FEATURE_DEFAULT &
+			DASD_FEATURE_PATH_AUTODISABLE) != 0;
+	return snprintf(buf, PAGE_SIZE, flag ? "1\n" : "0\n");
+}
+
+static ssize_t
+dasd_path_autodisable_store(struct device *dev,
+				    struct device_attribute *attr,
+				    const char *buf, size_t count)
+{
+	unsigned int val;
+	int rc;
+
+	if (kstrtouint(buf, 0, &val) || val > 1)
+		return -EINVAL;
+
+	rc = dasd_set_feature(to_ccwdev(dev),
+			      DASD_FEATURE_PATH_AUTODISABLE, val);
+
+	return rc ? : count;
+}
+
+static DEVICE_ATTR(path_autodisable, 0644,
+		   dasd_path_autodisable_show,
+		   dasd_path_autodisable_store);
 /*
  * interval for IFCC/CCC checks
  * meaning time with no IFCC/CCC error before the error counter
@@ -1628,13 +1663,14 @@ static struct attribute * dasd_attrs[] = {
 	&dev_attr_host_access_count.attr,
 	&dev_attr_path_masks.attr,
 	&dev_attr_path_threshold.attr,
+	&dev_attr_path_autodisable.attr,
 	&dev_attr_path_interval.attr,
 	&dev_attr_path_reset.attr,
 	&dev_attr_hpf.attr,
 	NULL,
 };
 
-static struct attribute_group dasd_attr_group = {
+static const struct attribute_group dasd_attr_group = {
 	.attrs = dasd_attrs,
 };
 
@@ -1676,6 +1712,7 @@ dasd_set_feature(struct ccw_device *cdev, int feature, int flag)
 	spin_unlock(&dasd_devmap_lock);
 	return 0;
 }
+EXPORT_SYMBOL(dasd_set_feature);
 
 
 int

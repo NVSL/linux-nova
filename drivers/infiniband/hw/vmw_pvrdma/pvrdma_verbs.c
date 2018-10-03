@@ -83,6 +83,11 @@ int pvrdma_query_device(struct ib_device *ibdev,
 	props->max_qp_wr = dev->dsr->caps.max_qp_wr;
 	props->device_cap_flags = dev->dsr->caps.device_cap_flags;
 	props->max_sge = dev->dsr->caps.max_sge;
+	props->max_sge_rd = PVRDMA_GET_CAP(dev, dev->dsr->caps.max_sge,
+					   dev->dsr->caps.max_sge_rd);
+	props->max_srq = dev->dsr->caps.max_srq;
+	props->max_srq_wr = dev->dsr->caps.max_srq_wr;
+	props->max_srq_sge = dev->dsr->caps.max_srq_sge;
 	props->max_cq = dev->dsr->caps.max_cq;
 	props->max_cqe = dev->dsr->caps.max_cqe;
 	props->max_mr = dev->dsr->caps.max_mr;
@@ -101,7 +106,13 @@ int pvrdma_query_device(struct ib_device *ibdev,
 	    (dev->dsr->caps.bmme_flags & PVRDMA_BMME_FLAG_REMOTE_INV) &&
 	    (dev->dsr->caps.bmme_flags & PVRDMA_BMME_FLAG_FAST_REG_WR)) {
 		props->device_cap_flags |= IB_DEVICE_MEM_MGT_EXTENSIONS;
+		props->max_fast_reg_page_list_len = PVRDMA_GET_CAP(dev,
+				PVRDMA_MAX_FAST_REG_PAGES,
+				dev->dsr->caps.max_fast_reg_page_list_len);
 	}
+
+	props->device_cap_flags |= IB_DEVICE_PORT_ACTIVE_EVENT |
+				   IB_DEVICE_RC_RNR_NAK_GEN;
 
 	return 0;
 }
@@ -143,6 +154,7 @@ int pvrdma_query_port(struct ib_device *ibdev, u8 port,
 	props->gid_tbl_len = resp->attrs.gid_tbl_len;
 	props->port_cap_flags =
 		pvrdma_port_cap_flags_to_ib(resp->attrs.port_cap_flags);
+	props->port_cap_flags |= IB_PORT_CM_SUP | IB_PORT_IP_BASED_GIDS;
 	props->max_msg_sz = resp->attrs.max_msg_sz;
 	props->bad_pkey_cntr = resp->attrs.bad_pkey_cntr;
 	props->qkey_viol_cntr = resp->attrs.qkey_viol_cntr;
@@ -435,6 +447,7 @@ struct ib_pd *pvrdma_alloc_pd(struct ib_device *ibdev,
 	union pvrdma_cmd_resp rsp;
 	struct pvrdma_cmd_create_pd *cmd = &req.create_pd;
 	struct pvrdma_cmd_create_pd_resp *resp = &rsp.create_pd_resp;
+	struct pvrdma_alloc_pd_resp pd_resp = {0};
 	int ret;
 	void *ptr;
 
@@ -463,9 +476,10 @@ struct ib_pd *pvrdma_alloc_pd(struct ib_device *ibdev,
 	pd->privileged = !context;
 	pd->pd_handle = resp->pd_handle;
 	pd->pdn = resp->pd_handle;
+	pd_resp.pdn = resp->pd_handle;
 
 	if (context) {
-		if (ib_copy_to_udata(udata, &pd->pdn, sizeof(__u32))) {
+		if (ib_copy_to_udata(udata, &pd_resp, sizeof(pd_resp))) {
 			dev_warn(&dev->pdev->dev,
 				 "failed to copy back protection domain\n");
 			pvrdma_dealloc_pd(&pd->ibpd);
