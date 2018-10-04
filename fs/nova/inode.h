@@ -133,6 +133,12 @@ static inline struct nova_inode_info *NOVA_I(struct inode *inode)
 	return container_of(inode, struct nova_inode_info, vfs_inode);
 }
 
+static inline struct nova_inode_info_header *NOVA_IH(struct inode *inode)
+{
+	struct nova_inode_info *si = NOVA_I(inode);
+	return &si->header;
+}
+
 static inline struct nova_inode *nova_get_alter_inode(struct super_block *sb,
 	struct inode *inode)
 {
