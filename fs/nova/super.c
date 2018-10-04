@@ -124,12 +124,12 @@ static int nova_get_nvmm_info(struct super_block *sb,
 	struct dax_device *dax_dev;
 	int ret;
 
-	ret = bdev_dax_supported(sb, PAGE_SIZE);
+	ret = bdev_dax_supported(sb->s_bdev, PAGE_SIZE);
 	nova_dbg_verbose("%s: dax_supported = %d; bdev->super=0x%p",
 			 __func__, ret, sb->s_bdev->bd_super);
-	if (ret) {
+	if (!ret) {
 		nova_err(sb, "device does not support DAX\n");
-		return ret;
+		return -EINVAL;
 	}
 
 	sbi->s_bdev = sb->s_bdev;
@@ -996,7 +996,7 @@ static struct inode *nova_alloc_inode(struct super_block *sb)
 	if (!vi)
 		return NULL;
 
-	vi->vfs_inode.i_version = 1;
+	atomic64_set(&vi->vfs_inode.i_version, 1);
 
 	return &vi->vfs_inode;
 }

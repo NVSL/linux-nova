@@ -112,12 +112,12 @@ static int nova_update_dax_mapping(struct super_block *sb,
 	NOVA_START_TIMING(update_mapping_t, update_time);
 
 	start_blocknr = nova_get_blocknr(sb, entry->block, sih->i_blk_type);
-	spin_lock_irq(&mapping->tree_lock);
+	xa_lock_irq(&mapping->i_pages);
 	for (i = 0; i < num_pages; i++) {
 		curr_pgoff = start_pgoff + i;
 		blocknr = start_blocknr + i;
 
-		pentry = radix_tree_lookup_slot(&mapping->page_tree,
+		pentry = radix_tree_lookup_slot(&mapping->i_pages,
 						curr_pgoff);
 		if (pentry) {
 			value = (unsigned long)radix_tree_deref_slot(pentry);
@@ -128,12 +128,12 @@ static int nova_update_dax_mapping(struct super_block *sb,
 						value, new_value);
 			radix_tree_replace_slot(&sih->tree, pentry,
 						(void *)new_value);
-			radix_tree_tag_set(&mapping->page_tree, curr_pgoff,
+			radix_tree_tag_set(&mapping->i_pages, curr_pgoff,
 						PAGECACHE_TAG_DIRTY);
 		}
 	}
 
-	spin_unlock_irq(&mapping->tree_lock);
+	xa_unlock_irq(&mapping->i_pages);
 
 	NOVA_END_TIMING(update_mapping_t, update_time);
 	return ret;
