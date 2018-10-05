@@ -140,7 +140,7 @@ int nova_remove_dir_tree(struct super_block *sb,
 void nova_delete_dir_tree(struct super_block *sb,
 	struct nova_inode_info_header *sih)
 {
-	timing_t delete_time;
+	INIT_TIMING(delete_time);
 
 	NOVA_START_TIMING(delete_dir_tree_t, delete_time);
 
@@ -561,7 +561,7 @@ static int nova_readdir_slow_rbtree(struct file *file,
 static int nova_readdir_slow(struct file *file, struct dir_context *ctx)
 {
 	int ret;
-	timing_t readdir_time;
+	INIT_TIMING(readdir_time);
 
 	NOVA_START_TIMING(readdir_t, readdir_time);
 
