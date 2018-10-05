@@ -1072,6 +1072,8 @@ static int nova_dax_huge_fault(struct vm_fault *vmf,
 			      enum page_entry_size pe_size)
 {
 	int ret = 0;
+	int error = 0;
+	pfn_t pfn;
 	INIT_TIMING(fault_time);
 	struct address_space *mapping = vmf->vma->vm_file->f_mapping;
 	struct inode *inode = mapping->host;
@@ -1084,7 +1086,7 @@ static int nova_dax_huge_fault(struct vm_fault *vmf,
 	if (vmf->flags & FAULT_FLAG_WRITE)
 		file_update_time(vmf->vma->vm_file);
 
-	ret = dax_iomap_fault(vmf, pe_size, NULL, NULL, &nova_iomap_ops_lock);
+	ret = dax_iomap_fault(vmf, pe_size, &pfn, &error, &nova_iomap_ops_lock);
 
 	NOVA_END_TIMING(pmd_fault_t, fault_time);
 	return ret;
