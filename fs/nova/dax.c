@@ -1312,6 +1312,7 @@ static int nova_remove_write_vma(struct vm_area_struct *vma)
 	return 0;
 }
 
+#if 0
 static int nova_restore_page_write(struct vm_area_struct *vma,
 	unsigned long address)
 {
@@ -1330,6 +1331,7 @@ static int nova_restore_page_write(struct vm_area_struct *vma,
 
 	return 0;
 }
+#endif
 
 static void nova_vma_open(struct vm_area_struct *vma)
 {
