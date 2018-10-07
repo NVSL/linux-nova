@@ -697,6 +697,11 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 		goto out;
 	}
 
+	if (sbi->mount_snapshot) {
+		sb->s_flags |= MS_RDONLY;
+		nova_info("Snapshot: mount NOVA read-only\n");
+	}
+
 	if (nova_alloc_block_free_lists(sb)) {
 		retval = -ENOMEM;
 		nova_err(sb, "%s: Failed to allocate block free lists.",
