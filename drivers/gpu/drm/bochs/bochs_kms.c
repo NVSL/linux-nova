@@ -188,7 +188,7 @@ static int bochs_connector_get_modes(struct drm_connector *connector)
 	return count;
 }
 
-static int bochs_connector_mode_valid(struct drm_connector *connector,
+static enum drm_mode_status bochs_connector_mode_valid(struct drm_connector *connector,
 				      struct drm_display_mode *mode)
 {
 	struct bochs_device *bochs =
@@ -213,7 +213,7 @@ bochs_connector_best_encoder(struct drm_connector *connector)
 	int enc_id = connector->encoder_ids[0];
 	/* pick the encoder ids */
 	if (enc_id)
-		return drm_encoder_find(connector->dev, enc_id);
+		return drm_encoder_find(connector->dev, NULL, enc_id);
 	return NULL;
 }
 

@@ -53,7 +53,6 @@ enum tpm_pcrs { TPM_PCR0 = 0, TPM_PCR8 = 8 };
 extern int ima_policy_flag;
 
 /* set during initialization */
-extern int ima_initialized;
 extern int ima_used_chip;
 extern int ima_hash_algo;
 extern int ima_appraise;
@@ -177,6 +176,7 @@ static inline unsigned long ima_hash_key(u8 *digest)
 	hook(FILE_CHECK)		\
 	hook(MMAP_CHECK)		\
 	hook(BPRM_CHECK)		\
+	hook(CREDS_CHECK)		\
 	hook(POST_SETATTR)		\
 	hook(MODULE_CHECK)		\
 	hook(FIRMWARE_CHECK)		\
@@ -191,8 +191,8 @@ enum ima_hooks {
 };
 
 /* LIM API function definitions */
-int ima_get_action(struct inode *inode, int mask,
-		   enum ima_hooks func, int *pcr);
+int ima_get_action(struct inode *inode, const struct cred *cred, u32 secid,
+		   int mask, enum ima_hooks func, int *pcr);
 int ima_must_measure(struct inode *inode, int mask, enum ima_hooks func);
 int ima_collect_measurement(struct integrity_iint_cache *iint,
 			    struct file *file, void *buf, loff_t size,
@@ -212,8 +212,8 @@ void ima_free_template_entry(struct ima_template_entry *entry);
 const char *ima_d_path(const struct path *path, char **pathbuf, char *filename);
 
 /* IMA policy related functions */
-int ima_match_policy(struct inode *inode, enum ima_hooks func, int mask,
-		     int flags, int *pcr);
+int ima_match_policy(struct inode *inode, const struct cred *cred, u32 secid,
+		     enum ima_hooks func, int mask, int flags, int *pcr);
 void ima_init_policy(void);
 void ima_update_policy(void);
 void ima_update_policy_flag(void);

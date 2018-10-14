@@ -43,7 +43,7 @@ static int next_opcode(struct rxe_qp *qp, struct rxe_send_wqe *wqe,
 
 static inline void retry_first_write_send(struct rxe_qp *qp,
 					  struct rxe_send_wqe *wqe,
-					  unsigned mask, int npsn)
+					  unsigned int mask, int npsn)
 {
 	int i;
 
@@ -118,9 +118,9 @@ static void req_retry(struct rxe_qp *qp)
 	}
 }
 
-void rnr_nak_timer(unsigned long data)
+void rnr_nak_timer(struct timer_list *t)
 {
-	struct rxe_qp *qp = (struct rxe_qp *)data;
+	struct rxe_qp *qp = from_timer(qp, t, rnr_nak_timer);
 
 	pr_debug("qp#%d rnr nak timer fired\n", qp_num(qp));
 	rxe_run_task(&qp->req.task, 1);
@@ -490,7 +490,7 @@ static int fill_packet(struct rxe_qp *qp, struct rxe_send_wqe *wqe,
 			wqe->dma.resid -= paylen;
 			wqe->dma.sge_offset += paylen;
 		} else {
-			err = copy_data(rxe, qp->pd, 0, &wqe->dma,
+			err = copy_data(qp->pd, 0, &wqe->dma,
 					payload_addr(pkt), paylen,
 					from_mem_obj,
 					&crc);
@@ -594,13 +594,8 @@ int rxe_requester(void *arg)
 	rxe_add_ref(qp);
 
 next_wqe:
-	if (unlikely(!qp->valid))
+	if (unlikely(!qp->valid || qp->req.state == QP_STATE_ERROR))
 		goto exit;
-
-	if (unlikely(qp->req.state == QP_STATE_ERROR)) {
-		rxe_drain_req_pkts(qp, true);
-		goto exit;
-	}
 
 	if (unlikely(qp->req.state == QP_STATE_RESET)) {
 		qp->req.wqe_index = consumer_index(qp->sq.queue);
@@ -650,6 +645,9 @@ next_wqe:
 		} else {
 			goto exit;
 		}
+		if ((wqe->wr.send_flags & IB_SEND_SIGNALED) ||
+		    qp->sq_sig_type == IB_SIGNAL_ALL_WR)
+			rxe_run_task(&qp->comp.task, 1);
 		qp->req.wqe_index = next_index(qp->sq.queue,
 						qp->req.wqe_index);
 		goto next_wqe;
@@ -714,6 +712,7 @@ next_wqe:
 
 	if (fill_packet(qp, wqe, &pkt, skb, payload)) {
 		pr_debug("qp#%d Error during fill packet\n", qp_num(qp));
+		kfree_skb(skb);
 		goto err;
 	}
 
@@ -733,7 +732,6 @@ next_wqe:
 		rollback_state(wqe, qp, &rollback_wqe, rollback_psn);
 
 		if (ret == -EAGAIN) {
-			kfree_skb(skb);
 			rxe_run_task(&qp->req.task, 1);
 			goto exit;
 		}
@@ -746,7 +744,6 @@ next_wqe:
 	goto next_wqe;
 
 err:
-	kfree_skb(skb);
 	wqe->status = IB_WC_LOC_PROT_ERR;
 	wqe->state = wqe_state_error;
 	__rxe_do_task(&qp->comp.task);

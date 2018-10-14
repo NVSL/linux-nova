@@ -25,7 +25,7 @@
 	 * Also for U-Boot there must be a pre-existing /memory node.
 	 */
 	chosen {};
-	memory { device_type = "memory"; reg = <0 0>; };
+	memory { device_type = "memory"; };
 
 	aliases {
 		ethernet0 = &fec;
@@ -52,7 +52,7 @@
 		};
 	};
 
-	tzic: tz-interrupt-controller@0fffc000 {
+	tzic: tz-interrupt-controller@fffc000 {
 		compatible = "fsl,imx50-tzic", "fsl,imx53-tzic", "fsl,tzic";
 		interrupt-controller;
 		#interrupt-cells = <1>;
@@ -60,9 +60,6 @@
 	};
 
 	clocks {
-		#address-cells = <1>;
-		#size-cells = <0>;
-
 		ckil {
 			compatible = "fsl,imx-ckil", "fixed-clock";
 			#clock-cells = <0>;
@@ -443,6 +440,7 @@
 				clocks = <&clks IMX5_CLK_SDMA_GATE>,
 					 <&clks IMX5_CLK_SDMA_GATE>;
 				clock-names = "ipg", "ahb";
+				#dma-cells = <3>;
 				fsl,sdma-ram-script-name = "imx/sdma/sdma-imx50.bin";
 			};
 

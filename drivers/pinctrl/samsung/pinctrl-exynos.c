@@ -1,22 +1,17 @@
-/*
- * Exynos specific support for Samsung pinctrl/gpiolib driver with eint support.
- *
- * Copyright (c) 2012 Samsung Electronics Co., Ltd.
- *		http://www.samsung.com
- * Copyright (c) 2012 Linaro Ltd
- *		http://www.linaro.org
- *
- * Author: Thomas Abraham <thomas.ab@samsung.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This file contains the Samsung Exynos specific information required by the
- * the Samsung pinctrl/gpiolib driver. It also includes the implementation of
- * external gpio and wakeup interrupt support.
- */
+// SPDX-License-Identifier: GPL-2.0+
+//
+// Exynos specific support for Samsung pinctrl/gpiolib driver with eint support.
+//
+// Copyright (c) 2012 Samsung Electronics Co., Ltd.
+//		http://www.samsung.com
+// Copyright (c) 2012 Linaro Ltd
+//		http://www.linaro.org
+//
+// Author: Thomas Abraham <thomas.ab@samsung.com>
+//
+// This file contains the Samsung Exynos specific information required by the
+// the Samsung pinctrl/gpiolib driver. It also includes the implementation of
+// external gpio and wakeup interrupt support.
 
 #include <linux/device.h>
 #include <linux/interrupt.h>
@@ -30,6 +25,8 @@
 #include <linux/regmap.h>
 #include <linux/err.h>
 #include <linux/soc/samsung/exynos-pmu.h>
+
+#include <dt-bindings/pinctrl/samsung.h>
 
 #include "pinctrl-samsung.h"
 #include "pinctrl-exynos.h"
@@ -149,15 +146,10 @@ static int exynos_irq_set_type(struct irq_data *irqd, unsigned int type)
 
 static int exynos_irq_request_resources(struct irq_data *irqd)
 {
-	struct irq_chip *chip = irq_data_get_irq_chip(irqd);
-	struct exynos_irq_chip *our_chip = to_exynos_irq_chip(chip);
 	struct samsung_pin_bank *bank = irq_data_get_irq_chip_data(irqd);
 	const struct samsung_pin_bank_type *bank_type = bank->type;
-	unsigned int shift = EXYNOS_EINT_CON_LEN * irqd->hwirq;
-	unsigned long reg_con = our_chip->eint_con + bank->eint_offset;
-	unsigned long flags;
-	unsigned int mask;
-	unsigned int con;
+	unsigned long reg_con, flags;
+	unsigned int shift, mask, con;
 	int ret;
 
 	ret = gpiochip_lock_as_irq(&bank->gpio_chip, irqd->hwirq);
@@ -174,10 +166,10 @@ static int exynos_irq_request_resources(struct irq_data *irqd)
 
 	spin_lock_irqsave(&bank->slock, flags);
 
-	con = readl(bank->eint_base + reg_con);
+	con = readl(bank->pctl_base + reg_con);
 	con &= ~(mask << shift);
-	con |= EXYNOS_EINT_FUNC << shift;
-	writel(con, bank->eint_base + reg_con);
+	con |= EXYNOS_PIN_FUNC_EINT << shift;
+	writel(con, bank->pctl_base + reg_con);
 
 	spin_unlock_irqrestore(&bank->slock, flags);
 
@@ -186,15 +178,10 @@ static int exynos_irq_request_resources(struct irq_data *irqd)
 
 static void exynos_irq_release_resources(struct irq_data *irqd)
 {
-	struct irq_chip *chip = irq_data_get_irq_chip(irqd);
-	struct exynos_irq_chip *our_chip = to_exynos_irq_chip(chip);
 	struct samsung_pin_bank *bank = irq_data_get_irq_chip_data(irqd);
 	const struct samsung_pin_bank_type *bank_type = bank->type;
-	unsigned int shift = EXYNOS_EINT_CON_LEN * irqd->hwirq;
-	unsigned long reg_con = our_chip->eint_con + bank->eint_offset;
-	unsigned long flags;
-	unsigned int mask;
-	unsigned int con;
+	unsigned long reg_con, flags;
+	unsigned int shift, mask, con;
 
 	reg_con = bank->pctl_offset + bank_type->reg_offset[PINCFG_TYPE_FUNC];
 	shift = irqd->hwirq * bank_type->fld_width[PINCFG_TYPE_FUNC];
@@ -202,10 +189,10 @@ static void exynos_irq_release_resources(struct irq_data *irqd)
 
 	spin_lock_irqsave(&bank->slock, flags);
 
-	con = readl(bank->eint_base + reg_con);
+	con = readl(bank->pctl_base + reg_con);
 	con &= ~(mask << shift);
-	con |= FUNC_INPUT << shift;
-	writel(con, bank->eint_base + reg_con);
+	con |= EXYNOS_PIN_FUNC_INPUT << shift;
+	writel(con, bank->pctl_base + reg_con);
 
 	spin_unlock_irqrestore(&bank->slock, flags);
 
@@ -504,8 +491,9 @@ int exynos_eint_wkup_init(struct samsung_pinctrl_drv_data *d)
 			continue;
 		}
 
-		weint_data = devm_kzalloc(dev, bank->nr_pins
-					* sizeof(*weint_data), GFP_KERNEL);
+		weint_data = devm_kcalloc(dev,
+					  bank->nr_pins, sizeof(*weint_data),
+					  GFP_KERNEL);
 		if (!weint_data)
 			return -ENOMEM;
 

@@ -111,18 +111,15 @@ static inline void rcu_cpu_stall_reset(void) { }
 static inline void rcu_idle_enter(void) { }
 static inline void rcu_idle_exit(void) { }
 static inline void rcu_irq_enter(void) { }
-static inline bool rcu_irq_enter_disabled(void) { return false; }
 static inline void rcu_irq_exit_irqson(void) { }
 static inline void rcu_irq_enter_irqson(void) { }
 static inline void rcu_irq_exit(void) { }
 static inline void exit_rcu(void) { }
-
-#if defined(CONFIG_DEBUG_LOCK_ALLOC) || defined(CONFIG_SRCU)
-extern int rcu_scheduler_active __read_mostly;
+#ifdef CONFIG_SRCU
 void rcu_scheduler_starting(void);
-#else /* #if defined(CONFIG_DEBUG_LOCK_ALLOC) || defined(CONFIG_SRCU) */
+#else /* #ifndef CONFIG_SRCU */
 static inline void rcu_scheduler_starting(void) { }
-#endif /* #else #if defined(CONFIG_DEBUG_LOCK_ALLOC) || defined(CONFIG_SRCU) */
+#endif /* #else #ifndef CONFIG_SRCU */
 static inline void rcu_end_inkernel_boot(void) { }
 static inline bool rcu_is_watching(void) { return true; }
 
@@ -135,5 +132,6 @@ static inline void rcu_all_qs(void) { barrier(); }
 #define rcutree_offline_cpu      NULL
 #define rcutree_dead_cpu         NULL
 #define rcutree_dying_cpu        NULL
+static inline void rcu_cpu_starting(unsigned int cpu) { }
 
 #endif /* __LINUX_RCUTINY_H */

@@ -12,6 +12,7 @@
 #include <asm/unistd.h>
 #include <asm/ftrace.h>
 #include <asm/unwind.h>
+#include <asm/memory.h>
 #ifdef CONFIG_AEABI
 #include <asm/unistd-oabi.h>
 #endif
@@ -27,22 +28,37 @@
 
 #include "entry-header.S"
 
+saved_psr	.req	r8
+#if defined(CONFIG_TRACE_IRQFLAGS) || defined(CONFIG_CONTEXT_TRACKING)
+saved_pc	.req	r9
+#define TRACE(x...) x
+#else
+saved_pc	.req	lr
+#define TRACE(x...)
+#endif
 
+	.section .entry.text,"ax",%progbits
 	.align	5
-#if !(IS_ENABLED(CONFIG_TRACE_IRQFLAGS) || IS_ENABLED(CONFIG_CONTEXT_TRACKING))
+#if !(IS_ENABLED(CONFIG_TRACE_IRQFLAGS) || IS_ENABLED(CONFIG_CONTEXT_TRACKING) || \
+	IS_ENABLED(CONFIG_DEBUG_RSEQ))
 /*
  * This is the fast syscall return path.  We do as little as possible here,
  * such as avoiding writing r0 to the stack.  We only use this path if we
- * have tracing and context tracking disabled - the overheads from those
- * features make this path too inefficient.
+ * have tracing, context tracking and rseq debug disabled - the overheads
+ * from those features make this path too inefficient.
  */
 ret_fast_syscall:
+__ret_fast_syscall:
  UNWIND(.fnstart	)
  UNWIND(.cantunwind	)
 	disable_irq_notrace			@ disable interrupts
+	ldr	r2, [tsk, #TI_ADDR_LIMIT]
+	cmp	r2, #TASK_SIZE
+	blne	addr_limit_check_failed
 	ldr	r1, [tsk, #TI_FLAGS]		@ re-check for syscall tracing
 	tst	r1, #_TIF_SYSCALL_WORK | _TIF_WORK_MASK
 	bne	fast_work_pending
+
 
 	/* perform architecture specific actions before user return */
 	arch_ret_to_user r1, lr
@@ -57,15 +73,25 @@ fast_work_pending:
 	/* fall through to work_pending */
 #else
 /*
- * The "replacement" ret_fast_syscall for when tracing or context tracking
- * is enabled.  As we will need to call out to some C functions, we save
- * r0 first to avoid needing to save registers around each C function call.
+ * The "replacement" ret_fast_syscall for when tracing, context tracking,
+ * or rseq debug is enabled.  As we will need to call out to some C functions,
+ * we save r0 first to avoid needing to save registers around each C function
+ * call.
  */
 ret_fast_syscall:
+__ret_fast_syscall:
  UNWIND(.fnstart	)
  UNWIND(.cantunwind	)
 	str	r0, [sp, #S_R0 + S_OFF]!	@ save returned r0
+#if IS_ENABLED(CONFIG_DEBUG_RSEQ)
+	/* do_rseq_syscall needs interrupts enabled. */
+	mov	r0, sp				@ 'regs'
+	bl	do_rseq_syscall
+#endif
 	disable_irq_notrace			@ disable interrupts
+	ldr	r2, [tsk, #TI_ADDR_LIMIT]
+	cmp	r2, #TASK_SIZE
+	blne	addr_limit_check_failed
 	ldr	r1, [tsk, #TI_FLAGS]		@ re-check for syscall tracing
 	tst	r1, #_TIF_SYSCALL_WORK | _TIF_WORK_MASK
 	beq	no_work_pending
@@ -96,8 +122,17 @@ ENDPROC(ret_fast_syscall)
  */
 ENTRY(ret_to_user)
 ret_slow_syscall:
+#if IS_ENABLED(CONFIG_DEBUG_RSEQ)
+	/* do_rseq_syscall needs interrupts enabled. */
+	enable_irq_notrace			@ enable interrupts
+	mov	r0, sp				@ 'regs'
+	bl	do_rseq_syscall
+#endif
 	disable_irq_notrace			@ disable interrupts
 ENTRY(ret_to_user_from_irq)
+	ldr	r2, [tsk, #TI_ADDR_LIMIT]
+	cmp	r2, #TASK_SIZE
+	blne	addr_limit_check_failed
 	ldr	r1, [tsk, #TI_FLAGS]
 	tst	r1, #_TIF_WORK_MASK
 	bne	slow_work_pending
@@ -141,16 +176,17 @@ ENTRY(vector_swi)
  ARM(	stmdb	r8, {sp, lr}^		)	@ Calling sp, lr
  THUMB(	mov	r8, sp			)
  THUMB(	store_user_sp_lr r8, r10, S_SP	)	@ calling sp, lr
-	mrs	r8, spsr			@ called from non-FIQ mode, so ok.
-	str	lr, [sp, #S_PC]			@ Save calling PC
-	str	r8, [sp, #S_PSR]		@ Save CPSR
+	mrs	saved_psr, spsr			@ called from non-FIQ mode, so ok.
+ TRACE(	mov	saved_pc, lr		)
+	str	saved_pc, [sp, #S_PC]		@ Save calling PC
+	str	saved_psr, [sp, #S_PSR]		@ Save CPSR
 	str	r0, [sp, #S_OLD_R0]		@ Save OLD_R0
 #endif
 	zero_fp
 	alignment_trap r10, ip, __cr_alignment
-	enable_irq
-	ct_user_exit
-	get_thread_info tsk
+	asm_trace_hardirqs_on save=0
+	enable_irq_notrace
+	ct_user_exit save=0
 
 	/*
 	 * Get the system call number.
@@ -163,11 +199,11 @@ ENTRY(vector_swi)
 	 * value to determine if it is an EABI or an old ABI call.
 	 */
 #ifdef CONFIG_ARM_THUMB
-	tst	r8, #PSR_T_BIT
+	tst	saved_psr, #PSR_T_BIT
 	movne	r10, #0				@ no thumb OABI emulation
- USER(	ldreq	r10, [lr, #-4]		)	@ get SWI instruction
+ USER(	ldreq	r10, [saved_pc, #-4]	)	@ get SWI instruction
 #else
- USER(	ldr	r10, [lr, #-4]		)	@ get SWI instruction
+ USER(	ldr	r10, [saved_pc, #-4]	)	@ get SWI instruction
 #endif
  ARM_BE8(rev	r10, r10)			@ little endian instruction
 
@@ -178,14 +214,16 @@ ENTRY(vector_swi)
 	 */
 #elif defined(CONFIG_ARM_THUMB)
 	/* Legacy ABI only, possibly thumb mode. */
-	tst	r8, #PSR_T_BIT			@ this is SPSR from save_user_regs
+	tst	saved_psr, #PSR_T_BIT		@ this is SPSR from save_user_regs
 	addne	scno, r7, #__NR_SYSCALL_BASE	@ put OS number in
- USER(	ldreq	scno, [lr, #-4]		)
+ USER(	ldreq	scno, [saved_pc, #-4]	)
 
 #else
 	/* Legacy ABI only. */
- USER(	ldr	scno, [lr, #-4]		)	@ get SWI instruction
+ USER(	ldr	scno, [saved_pc, #-4]	)	@ get SWI instruction
 #endif
+
+	/* saved_psr and saved_pc are now dead */
 
 	uaccess_disable tbl
 
@@ -205,6 +243,12 @@ ENTRY(vector_swi)
 	bic	scno, scno, #0xff000000		@ mask off SWI op-code
 	eor	scno, scno, #__NR_SYSCALL_BASE	@ check OS number
 #endif
+	get_thread_info tsk
+	/*
+	 * Reload the registers that may have been corrupted on entry to
+	 * the syscall assembly (by tracing or context tracking.)
+	 */
+ TRACE(	ldmia	sp, {r0 - r3}		)
 
 local_restart:
 	ldr	r10, [tsk, #TI_FLAGS]		@ check for syscall tracing
@@ -213,9 +257,7 @@ local_restart:
 	tst	r10, #_TIF_SYSCALL_WORK		@ are we tracing syscalls?
 	bne	__sys_trace
 
-	cmp	scno, #NR_syscalls		@ check upper syscall limit
-	badr	lr, ret_fast_syscall		@ return address
-	ldrcc	pc, [tbl, scno, lsl #2]		@ call sys_* routine
+	invoke_syscall tbl, scno, r10, __ret_fast_syscall
 
 	add	r1, sp, #S_OFF
 2:	cmp	scno, #(__ARM_NR_BASE - __NR_SYSCALL_BASE)
@@ -234,8 +276,9 @@ local_restart:
 	 * current task.
 	 */
 9001:
-	sub	lr, lr, #4
+	sub	lr, saved_pc, #4
 	str	lr, [sp, #S_PC]
+	get_thread_info tsk
 	b	ret_fast_syscall
 #endif
 ENDPROC(vector_swi)
@@ -248,14 +291,8 @@ __sys_trace:
 	mov	r1, scno
 	add	r0, sp, #S_OFF
 	bl	syscall_trace_enter
-
-	badr	lr, __sys_trace_return		@ return address
-	mov	scno, r0			@ syscall number (possibly new)
-	add	r1, sp, #S_R0 + S_OFF		@ pointer to regs
-	cmp	scno, #NR_syscalls		@ check upper syscall limit
-	ldmccia	r1, {r0 - r6}			@ have to reload r0 - r6
-	stmccia	sp, {r4, r5}			@ and update the stack args
-	ldrcc	pc, [tbl, scno, lsl #2]		@ call sys_* routine
+	mov	scno, r0
+	invoke_syscall tbl, scno, r10, __sys_trace_return, reload=1
 	cmp	scno, #-1			@ skip the syscall?
 	bne	2b
 	add	sp, sp, #S_OFF			@ restore stack
@@ -333,6 +370,10 @@ sys_syscall:
 		bic	scno, r0, #__NR_OABI_SYSCALL_BASE
 		cmp	scno, #__NR_syscall - __NR_SYSCALL_BASE
 		cmpne	scno, #NR_syscalls	@ check range
+#ifdef CONFIG_CPU_SPECTRE
+		movhs	scno, #0
+		csdb
+#endif
 		stmloia	sp, {r5, r6}		@ shuffle args
 		movlo	r0, r1
 		movlo	r1, r2
@@ -371,17 +412,8 @@ ENDPROC(sys_fstatfs64_wrapper)
  * offset, we return EINVAL.
  */
 sys_mmap2:
-#if PAGE_SHIFT > 12
-		tst	r5, #PGOFF_MASK
-		moveq	r5, r5, lsr #PAGE_SHIFT - 12
-		streq	r5, [sp, #4]
-		beq	sys_mmap_pgoff
-		mov	r0, #-EINVAL
-		ret	lr
-#else
 		str	r5, [sp, #4]
 		b	sys_mmap_pgoff
-#endif
 ENDPROC(sys_mmap2)
 
 #ifdef CONFIG_OABI_COMPAT

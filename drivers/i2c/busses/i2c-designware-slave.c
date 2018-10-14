@@ -51,9 +51,7 @@ static void i2c_dw_configure_fifo_slave(struct dw_i2c_dev *dev)
  */
 static int i2c_dw_init_slave(struct dw_i2c_dev *dev)
 {
-	u32 sda_falling_time, scl_falling_time;
 	u32 reg, comp_param1;
-	u32 hcnt, lcnt;
 	int ret;
 
 	ret = i2c_dw_acquire_lock(dev);
@@ -77,69 +75,7 @@ static int i2c_dw_init_slave(struct dw_i2c_dev *dev)
 	comp_param1 = dw_readl(dev, DW_IC_COMP_PARAM_1);
 
 	/* Disable the adapter. */
-	__i2c_dw_enable_and_wait(dev, false);
-
-	/* Set standard and fast speed deviders for high/low periods. */
-	sda_falling_time = dev->sda_falling_time ?: 300; /* ns */
-	scl_falling_time = dev->scl_falling_time ?: 300; /* ns */
-
-	/* Set SCL timing parameters for standard-mode. */
-	if (dev->ss_hcnt && dev->ss_lcnt) {
-		hcnt = dev->ss_hcnt;
-		lcnt = dev->ss_lcnt;
-	} else {
-		hcnt = i2c_dw_scl_hcnt(i2c_dw_clk_rate(dev),
-				       4000,	/* tHD;STA = tHIGH = 4.0 us */
-				       sda_falling_time,
-				       0,	/* 0: DW default, 1: Ideal */
-				       0);	/* No offset */
-		lcnt = i2c_dw_scl_lcnt(i2c_dw_clk_rate(dev),
-				       4700,	/* tLOW = 4.7 us */
-				       scl_falling_time,
-				       0);	/* No offset */
-	}
-	dw_writel(dev, hcnt, DW_IC_SS_SCL_HCNT);
-	dw_writel(dev, lcnt, DW_IC_SS_SCL_LCNT);
-	dev_dbg(dev->dev, "Standard-mode HCNT:LCNT = %d:%d\n", hcnt, lcnt);
-
-	/* Set SCL timing parameters for fast-mode or fast-mode plus. */
-	if ((dev->clk_freq == 1000000) && dev->fp_hcnt && dev->fp_lcnt) {
-		hcnt = dev->fp_hcnt;
-		lcnt = dev->fp_lcnt;
-	} else if (dev->fs_hcnt && dev->fs_lcnt) {
-		hcnt = dev->fs_hcnt;
-		lcnt = dev->fs_lcnt;
-	} else {
-		hcnt = i2c_dw_scl_hcnt(i2c_dw_clk_rate(dev),
-				       600,	/* tHD;STA = tHIGH = 0.6 us */
-				       sda_falling_time,
-				       0,	/* 0: DW default, 1: Ideal */
-				       0);	/* No offset */
-		lcnt = i2c_dw_scl_lcnt(i2c_dw_clk_rate(dev),
-				       1300,	/* tLOW = 1.3 us */
-				       scl_falling_time,
-				       0);	/* No offset */
-	}
-	dw_writel(dev, hcnt, DW_IC_FS_SCL_HCNT);
-	dw_writel(dev, lcnt, DW_IC_FS_SCL_LCNT);
-	dev_dbg(dev->dev, "Fast-mode HCNT:LCNT = %d:%d\n", hcnt, lcnt);
-
-	if ((dev->slave_cfg & DW_IC_CON_SPEED_MASK) ==
-		DW_IC_CON_SPEED_HIGH) {
-		if ((comp_param1 & DW_IC_COMP_PARAM_1_SPEED_MODE_MASK)
-			!= DW_IC_COMP_PARAM_1_SPEED_MODE_HIGH) {
-			dev_err(dev->dev, "High Speed not supported!\n");
-			dev->slave_cfg &= ~DW_IC_CON_SPEED_MASK;
-			dev->slave_cfg |= DW_IC_CON_SPEED_FAST;
-		} else if (dev->hs_hcnt && dev->hs_lcnt) {
-			hcnt = dev->hs_hcnt;
-			lcnt = dev->hs_lcnt;
-			dw_writel(dev, hcnt, DW_IC_HS_SCL_HCNT);
-			dw_writel(dev, lcnt, DW_IC_HS_SCL_LCNT);
-			dev_dbg(dev->dev, "HighSpeed-mode HCNT:LCNT = %d:%d\n",
-				hcnt, lcnt);
-		}
-	}
+	__i2c_dw_disable(dev);
 
 	/* Configure SDA Hold Time if required. */
 	reg = dw_readl(dev, DW_IC_COMP_VERSION);
@@ -183,11 +119,11 @@ static int i2c_dw_reg_slave(struct i2c_client *slave)
 	 * Set slave address in the IC_SAR register,
 	 * the address to which the DW_apb_i2c responds.
 	 */
-	__i2c_dw_enable(dev, false);
+	__i2c_dw_disable_nowait(dev);
 	dw_writel(dev, slave->addr, DW_IC_SAR);
 	dev->slave = slave;
 
-	__i2c_dw_enable(dev, true);
+	__i2c_dw_enable(dev);
 
 	dev->cmd_err = 0;
 	dev->msg_write_idx = 0;
@@ -346,7 +282,7 @@ static irqreturn_t i2c_dw_isr_slave(int this_irq, void *dev_id)
 	return IRQ_RETVAL(ret);
 }
 
-static struct i2c_algorithm i2c_dw_algo = {
+static const struct i2c_algorithm i2c_dw_algo = {
 	.functionality = i2c_dw_func,
 	.reg_slave = i2c_dw_reg_slave,
 	.unreg_slave = i2c_dw_unreg_slave,

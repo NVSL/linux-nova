@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * (C) 2001 Clemson University and The University of Chicago
  *
@@ -70,9 +71,9 @@ static void put(struct slot_map *m, int slot)
 	spin_lock(&m->q.lock);
 	__clear_bit(slot, m->map);
 	v = ++m->c;
-	if (unlikely(v == 1))	/* no free slots -> one free slot */
+	if (v > 0)
 		wake_up_locked(&m->q);
-	else if (unlikely(v == -1))	/* finished dying */
+	if (unlikely(v == -1))     /* finished dying */
 		wake_up_all_locked(&m->q);
 	spin_unlock(&m->q.lock);
 }
@@ -137,7 +138,7 @@ static int get(struct slot_map *m)
 
 /* used to describe mapped buffers */
 struct orangefs_bufmap_desc {
-	void *uaddr;			/* user space address pointer */
+	void __user *uaddr;		/* user space address pointer */
 	struct page **page_array;	/* array of mapped pages */
 	int array_count;		/* size of above arrays */
 	struct list_head list_link;
@@ -183,7 +184,7 @@ orangefs_bufmap_free(struct orangefs_bufmap *bufmap)
 }
 
 /*
- * XXX: Can the size and shift change while the caller gives up the 
+ * XXX: Can the size and shift change while the caller gives up the
  * XXX: lock between calling this and doing something useful?
  */
 
@@ -214,20 +215,6 @@ int orangefs_bufmap_shift_query(void)
 static DECLARE_WAIT_QUEUE_HEAD(bufmap_waitq);
 static DECLARE_WAIT_QUEUE_HEAD(readdir_waitq);
 
-/*
- * orangefs_get_bufmap_init
- *
- * If bufmap_init is 1, then the shared memory system, including the
- * buffer_index_array, is available.  Otherwise, it is not.
- *
- * returns the value of bufmap_init
- */
-int orangefs_get_bufmap_init(void)
-{
-	return __orangefs_bufmap ? 1 : 0;
-}
-
-
 static struct orangefs_bufmap *
 orangefs_bufmap_alloc(struct ORANGEFS_dev_map_desc *user_desc)
 {
@@ -244,20 +231,14 @@ orangefs_bufmap_alloc(struct ORANGEFS_dev_map_desc *user_desc)
 
 	bufmap->buffer_index_array =
 		kzalloc(DIV_ROUND_UP(bufmap->desc_count, BITS_PER_LONG), GFP_KERNEL);
-	if (!bufmap->buffer_index_array) {
-		gossip_err("orangefs: could not allocate %d buffer indices\n",
-				bufmap->desc_count);
+	if (!bufmap->buffer_index_array)
 		goto out_free_bufmap;
-	}
 
 	bufmap->desc_array =
 		kcalloc(bufmap->desc_count, sizeof(struct orangefs_bufmap_desc),
 			GFP_KERNEL);
-	if (!bufmap->desc_array) {
-		gossip_err("orangefs: could not allocate %d descriptors\n",
-				bufmap->desc_count);
+	if (!bufmap->desc_array)
 		goto out_free_index_array;
-	}
 
 	bufmap->page_count = bufmap->total_size / PAGE_SIZE;
 
@@ -501,7 +482,7 @@ void orangefs_readdir_index_put(int buffer_index)
 }
 
 /*
- * we've been handed an iovec, we need to copy it to 
+ * we've been handed an iovec, we need to copy it to
  * the shared memory descriptor at "buffer_index".
  */
 int orangefs_bufmap_copy_from_iovec(struct iov_iter *iter,

@@ -71,10 +71,13 @@ via fw_create_instance(). This call creates a new struct device named after
 the firmware requested, and establishes it in the device hierarchy by
 associating the device used to make the request as the device's parent.
 The sysfs directory's file attributes are defined and controlled through
-the new device's class (firmare_class) and group (fw_dev_attr_groups).
-This is actually where the original firmware_class.c file name comes from,
-as originally the only firmware loading mechanism available was the
-mechanism we now use as a fallback mechanism.
+the new device's class (firmware_class) and group (fw_dev_attr_groups).
+This is actually where the original firmware_class module name came from,
+given that originally the only firmware loading mechanism available was the
+mechanism we now use as a fallback mechanism, which registers a struct class
+firmware_class. Because the attributes exposed are part of the module name, the
+module name firmware_class cannot be renamed in the future, to ensure backward
+compatibility with old userspace.
 
 To load firmware using the sysfs interface we expose a loading indicator,
 and a file upload firmware into:
@@ -83,7 +86,7 @@ and a file upload firmware into:
   * /sys/$DEVPATH/data
 
 To upload firmware you will echo 1 onto the loading file to indicate
-you are loading firmware. You then cat the firmware into the data file,
+you are loading firmware. You then write the firmware into the data file,
 and you notify the kernel the firmware is ready by echo'ing 0 onto
 the loading file.
 
@@ -112,7 +115,7 @@ Since a device is created for the sysfs interface to help load firmware as a
 fallback mechanism userspace can be informed of the addition of the device by
 relying on kobject uevents. The addition of the device into the device
 hierarchy means the fallback mechanism for firmware loading has been initiated.
-For details of implementation refer to _request_firmware_load(), in particular
+For details of implementation refer to fw_load_sysfs_fallback(), in particular
 on the use of dev_set_uevent_suppress() and kobject_uevent().
 
 The kernel's kobject uevent mechanism is implemented in lib/kobject_uevent.c,
@@ -136,7 +139,8 @@ by kobject uevents. This is specially exacerbated due to the fact that most
 distributions today disable CONFIG_FW_LOADER_USER_HELPER_FALLBACK.
 
 Refer to do_firmware_uevent() for details of the kobject event variables
-setup. Variables passwdd with a kobject add event:
+setup. The variables currently passed to userspace with a "kobject add"
+event are:
 
 * FIRMWARE=firmware name
 * TIMEOUT=timeout value

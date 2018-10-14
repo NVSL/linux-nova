@@ -49,6 +49,8 @@
 struct nfp_hwinfo;
 struct nfp_hwinfo *nfp_hwinfo_read(struct nfp_cpp *cpp);
 const char *nfp_hwinfo_lookup(struct nfp_hwinfo *hwinfo, const char *lookup);
+char *nfp_hwinfo_get_packed_strings(struct nfp_hwinfo *hwinfo);
+u32 nfp_hwinfo_get_packed_str_size(struct nfp_hwinfo *hwinfo);
 
 /* Implemented in nfp_nsp.c, low level functions */
 
@@ -92,10 +94,14 @@ int nfp_nsp_read_sensors(struct nfp_nsp *state, unsigned int sensor_mask,
 /* MAC Statistics Accumulator */
 #define NFP_RESOURCE_MAC_STATISTICS	"mac.stat"
 
+int nfp_resource_table_init(struct nfp_cpp *cpp);
+
 struct nfp_resource *
 nfp_resource_acquire(struct nfp_cpp *cpp, const char *name);
 
 void nfp_resource_release(struct nfp_resource *res);
+
+int nfp_resource_wait(struct nfp_cpp *cpp, const char *name, unsigned int secs);
 
 u32 nfp_resource_cpp_id(struct nfp_resource *res);
 

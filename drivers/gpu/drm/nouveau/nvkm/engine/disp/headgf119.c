@@ -39,7 +39,7 @@ gf119_head_vblank_get(struct nvkm_head *head)
 	nvkm_mask(device, 0x6100c0 + hoff, 0x00000001, 0x00000001);
 }
 
-static void
+void
 gf119_head_rgclk(struct nvkm_head *head, int div)
 {
 	struct nvkm_device *device = head->disp->engine.subdev.device;
@@ -93,4 +93,12 @@ int
 gf119_head_new(struct nvkm_disp *disp, int id)
 {
 	return nvkm_head_new_(&gf119_head, disp, id);
+}
+
+int
+gf119_head_cnt(struct nvkm_disp *disp, unsigned long *pmask)
+{
+	struct nvkm_device *device = disp->engine.subdev.device;
+	*pmask = nvkm_rd32(device, 0x612004) & 0x0000000f;
+	return nvkm_rd32(device, 0x022448);
 }

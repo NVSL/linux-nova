@@ -181,8 +181,9 @@ isert_alloc_rx_descriptors(struct isert_conn *isert_conn)
 	u64 dma_addr;
 	int i, j;
 
-	isert_conn->rx_descs = kzalloc(ISERT_QP_MAX_RECV_DTOS *
-				sizeof(struct iser_rx_desc), GFP_KERNEL);
+	isert_conn->rx_descs = kcalloc(ISERT_QP_MAX_RECV_DTOS,
+				       sizeof(struct iser_rx_desc),
+				       GFP_KERNEL);
 	if (!isert_conn->rx_descs)
 		return -ENOMEM;
 
@@ -741,6 +742,7 @@ isert_connect_error(struct rdma_cm_id *cma_id)
 {
 	struct isert_conn *isert_conn = cma_id->qp->qp_context;
 
+	ib_drain_qp(isert_conn->qp);
 	list_del_init(&isert_conn->node);
 	isert_conn->cm_id = NULL;
 	isert_put_conn(isert_conn);
@@ -788,10 +790,11 @@ isert_cma_handler(struct rdma_cm_id *cma_id, struct rdma_cm_event *event)
 		 * the rdma cm id
 		 */
 		return 1;
-	case RDMA_CM_EVENT_REJECTED:       /* FALLTHRU */
+	case RDMA_CM_EVENT_REJECTED:
 		isert_info("Connection rejected: %s\n",
 			   rdma_reject_msg(cma_id, event->status));
-	case RDMA_CM_EVENT_UNREACHABLE:    /* FALLTHRU */
+		/* fall through */
+	case RDMA_CM_EVENT_UNREACHABLE:
 	case RDMA_CM_EVENT_CONNECT_ERROR:
 		ret = isert_connect_error(cma_id);
 		break;
@@ -884,15 +887,9 @@ isert_login_post_send(struct isert_conn *isert_conn, struct iser_tx_desc *tx_des
 }
 
 static void
-isert_create_send_desc(struct isert_conn *isert_conn,
-		       struct isert_cmd *isert_cmd,
-		       struct iser_tx_desc *tx_desc)
+__isert_create_send_desc(struct isert_device *device,
+			 struct iser_tx_desc *tx_desc)
 {
-	struct isert_device *device = isert_conn->device;
-	struct ib_device *ib_dev = device->ib_device;
-
-	ib_dma_sync_single_for_cpu(ib_dev, tx_desc->dma_addr,
-				   ISER_HEADERS_LEN, DMA_TO_DEVICE);
 
 	memset(&tx_desc->iser_header, 0, sizeof(struct iser_ctrl));
 	tx_desc->iser_header.flags = ISCSI_CTRL;
@@ -903,6 +900,20 @@ isert_create_send_desc(struct isert_conn *isert_conn,
 		tx_desc->tx_sg[0].lkey = device->pd->local_dma_lkey;
 		isert_dbg("tx_desc %p lkey mismatch, fixing\n", tx_desc);
 	}
+}
+
+static void
+isert_create_send_desc(struct isert_conn *isert_conn,
+		       struct isert_cmd *isert_cmd,
+		       struct iser_tx_desc *tx_desc)
+{
+	struct isert_device *device = isert_conn->device;
+	struct ib_device *ib_dev = device->ib_device;
+
+	ib_dma_sync_single_for_cpu(ib_dev, tx_desc->dma_addr,
+				   ISER_HEADERS_LEN, DMA_TO_DEVICE);
+
+	__isert_create_send_desc(device, tx_desc);
 }
 
 static int
@@ -992,7 +1003,7 @@ isert_put_login_tx(struct iscsi_conn *conn, struct iscsi_login *login,
 	struct iser_tx_desc *tx_desc = &isert_conn->login_tx_desc;
 	int ret;
 
-	isert_create_send_desc(isert_conn, NULL, tx_desc);
+	__isert_create_send_desc(device, tx_desc);
 
 	memcpy(&tx_desc->iscsi_header, &login->rsp[0],
 	       sizeof(struct iscsi_hdr));
@@ -1569,9 +1580,7 @@ isert_put_cmd(struct isert_cmd *isert_cmd, bool comp_err)
 			transport_generic_free_cmd(&cmd->se_cmd, 0);
 			break;
 		}
-		/*
-		 * Fall-through
-		 */
+		/* fall through */
 	default:
 		iscsit_release_cmd(cmd);
 		break;
@@ -1749,8 +1758,9 @@ isert_do_control_comp(struct work_struct *work)
 	switch (cmd->i_state) {
 	case ISTATE_SEND_TASKMGTRSP:
 		iscsit_tmr_post_handler(cmd, cmd->conn);
-	case ISTATE_SEND_REJECT:   /* FALLTHRU */
-	case ISTATE_SEND_TEXTRSP:  /* FALLTHRU */
+		/* fall through */
+	case ISTATE_SEND_REJECT:
+	case ISTATE_SEND_TEXTRSP:
 		cmd->i_state = ISTATE_SENT_STATUS;
 		isert_completion_put(&isert_cmd->tx_desc, isert_cmd,
 				     ib_dev, false);
@@ -2105,10 +2115,13 @@ isert_set_sig_attrs(struct se_cmd *se_cmd, struct ib_sig_attrs *sig_attrs)
 		return -EINVAL;
 	}
 
-	sig_attrs->check_mask =
-	       (se_cmd->prot_checks & TARGET_DIF_CHECK_GUARD  ? 0xc0 : 0) |
-	       (se_cmd->prot_checks & TARGET_DIF_CHECK_REFTAG ? 0x30 : 0) |
-	       (se_cmd->prot_checks & TARGET_DIF_CHECK_REFTAG ? 0x0f : 0);
+	if (se_cmd->prot_checks & TARGET_DIF_CHECK_GUARD)
+		sig_attrs->check_mask |= IB_SIG_CHECK_GUARD;
+	if (se_cmd->prot_checks & TARGET_DIF_CHECK_APPTAG)
+		sig_attrs->check_mask |= IB_SIG_CHECK_APPTAG;
+	if (se_cmd->prot_checks & TARGET_DIF_CHECK_REFTAG)
+		sig_attrs->check_mask |= IB_SIG_CHECK_REFTAG;
+
 	return 0;
 }
 
@@ -2122,6 +2135,9 @@ isert_rdma_rw_ctx_post(struct isert_cmd *cmd, struct isert_conn *conn,
 	u64 addr;
 	u32 rkey, offset;
 	int ret;
+
+	if (cmd->ctx_init_done)
+		goto rdma_ctx_post;
 
 	if (dir == DMA_FROM_DEVICE) {
 		addr = cmd->write_va;
@@ -2150,11 +2166,15 @@ isert_rdma_rw_ctx_post(struct isert_cmd *cmd, struct isert_conn *conn,
 				se_cmd->t_data_sg, se_cmd->t_data_nents,
 				offset, addr, rkey, dir);
 	}
+
 	if (ret < 0) {
 		isert_err("Cmd: %p failed to prepare RDMA res\n", cmd);
 		return ret;
 	}
 
+	cmd->ctx_init_done = true;
+
+rdma_ctx_post:
 	ret = rdma_rw_ctx_post(&cmd->rw, conn->qp, port_num, cqe, chain_wr);
 	if (ret < 0)
 		isert_err("Cmd: %p failed to post RDMA res\n", cmd);
@@ -2710,7 +2730,6 @@ static void __exit isert_exit(void)
 }
 
 MODULE_DESCRIPTION("iSER-Target for mainline target infrastructure");
-MODULE_VERSION("1.0");
 MODULE_AUTHOR("nab@Linux-iSCSI.org");
 MODULE_LICENSE("GPL");
 

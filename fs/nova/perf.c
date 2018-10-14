@@ -364,7 +364,7 @@ static int nova_test_func_perf(struct super_block *sb, unsigned int func_id,
 	const memcpy_call_t *fmemcpy = NULL;
 	const checksum_call_t *fchecksum = NULL;
 	const raid5_call_t *fraid5 = NULL;
-	timing_t perf_time;
+	INIT_TIMING(perf_time);
 
 	cpu = get_cpu(); /* get cpu id and disable preemption */
 	reps = poolsize / size; /* raid calls will adjust this number */

@@ -105,18 +105,8 @@ static DECLARE_WORK(connector_reaper_work, fsnotify_connector_destroy_workfn);
 
 void fsnotify_get_mark(struct fsnotify_mark *mark)
 {
-	WARN_ON_ONCE(!atomic_read(&mark->refcnt));
-	atomic_inc(&mark->refcnt);
-}
-
-/*
- * Get mark reference when we found the mark via lockless traversal of object
- * list. Mark can be already removed from the list by now and on its way to be
- * destroyed once SRCU period ends.
- */
-static bool fsnotify_get_mark_safe(struct fsnotify_mark *mark)
-{
-	return atomic_inc_not_zero(&mark->refcnt);
+	WARN_ON_ONCE(!refcount_read(&mark->refcnt));
+	refcount_inc(&mark->refcnt);
 }
 
 static void __fsnotify_recalc_mask(struct fsnotify_mark_connector *conn)
@@ -129,9 +119,9 @@ static void __fsnotify_recalc_mask(struct fsnotify_mark_connector *conn)
 		if (mark->flags & FSNOTIFY_MARK_FLAG_ATTACHED)
 			new_mask |= mark->mask;
 	}
-	if (conn->flags & FSNOTIFY_OBJ_TYPE_INODE)
+	if (conn->type == FSNOTIFY_OBJ_TYPE_INODE)
 		conn->inode->i_fsnotify_mask = new_mask;
-	else if (conn->flags & FSNOTIFY_OBJ_TYPE_VFSMOUNT)
+	else if (conn->type == FSNOTIFY_OBJ_TYPE_VFSMOUNT)
 		real_mount(conn->mnt)->mnt_fsnotify_mask = new_mask;
 }
 
@@ -149,7 +139,7 @@ void fsnotify_recalc_mask(struct fsnotify_mark_connector *conn)
 	spin_lock(&conn->lock);
 	__fsnotify_recalc_mask(conn);
 	spin_unlock(&conn->lock);
-	if (conn->flags & FSNOTIFY_OBJ_TYPE_INODE)
+	if (conn->type == FSNOTIFY_OBJ_TYPE_INODE)
 		__fsnotify_update_child_dentry_flags(conn->inode);
 }
 
@@ -176,18 +166,18 @@ static struct inode *fsnotify_detach_connector_from_object(
 {
 	struct inode *inode = NULL;
 
-	if (conn->flags & FSNOTIFY_OBJ_TYPE_INODE) {
+	if (conn->type == FSNOTIFY_OBJ_TYPE_INODE) {
 		inode = conn->inode;
 		rcu_assign_pointer(inode->i_fsnotify_marks, NULL);
 		inode->i_fsnotify_mask = 0;
 		conn->inode = NULL;
-		conn->flags &= ~FSNOTIFY_OBJ_TYPE_INODE;
-	} else if (conn->flags & FSNOTIFY_OBJ_TYPE_VFSMOUNT) {
+		conn->type = FSNOTIFY_OBJ_TYPE_DETACHED;
+	} else if (conn->type == FSNOTIFY_OBJ_TYPE_VFSMOUNT) {
 		rcu_assign_pointer(real_mount(conn->mnt)->mnt_fsnotify_marks,
 				   NULL);
 		real_mount(conn->mnt)->mnt_fsnotify_mask = 0;
 		conn->mnt = NULL;
-		conn->flags &= ~FSNOTIFY_OBJ_TYPE_VFSMOUNT;
+		conn->type = FSNOTIFY_OBJ_TYPE_DETACHED;
 	}
 
 	return inode;
@@ -211,7 +201,7 @@ void fsnotify_put_mark(struct fsnotify_mark *mark)
 
 	/* Catch marks that were actually never attached to object */
 	if (!mark->connector) {
-		if (atomic_dec_and_test(&mark->refcnt))
+		if (refcount_dec_and_test(&mark->refcnt))
 			fsnotify_final_mark_destroy(mark);
 		return;
 	}
@@ -220,7 +210,7 @@ void fsnotify_put_mark(struct fsnotify_mark *mark)
 	 * We have to be careful so that traversals of obj_list under lock can
 	 * safely grab mark reference.
 	 */
-	if (!atomic_dec_and_lock(&mark->refcnt, &mark->connector->lock))
+	if (!refcount_dec_and_lock(&mark->refcnt, &mark->connector->lock))
 		return;
 
 	conn = mark->connector;
@@ -256,32 +246,60 @@ void fsnotify_put_mark(struct fsnotify_mark *mark)
 			   FSNOTIFY_REAPER_DELAY);
 }
 
+/*
+ * Get mark reference when we found the mark via lockless traversal of object
+ * list. Mark can be already removed from the list by now and on its way to be
+ * destroyed once SRCU period ends.
+ *
+ * Also pin the group so it doesn't disappear under us.
+ */
+static bool fsnotify_get_mark_safe(struct fsnotify_mark *mark)
+{
+	if (!mark)
+		return true;
+
+	if (refcount_inc_not_zero(&mark->refcnt)) {
+		spin_lock(&mark->lock);
+		if (mark->flags & FSNOTIFY_MARK_FLAG_ATTACHED) {
+			/* mark is attached, group is still alive then */
+			atomic_inc(&mark->group->user_waits);
+			spin_unlock(&mark->lock);
+			return true;
+		}
+		spin_unlock(&mark->lock);
+		fsnotify_put_mark(mark);
+	}
+	return false;
+}
+
+/*
+ * Puts marks and wakes up group destruction if necessary.
+ *
+ * Pairs with fsnotify_get_mark_safe()
+ */
+static void fsnotify_put_mark_wake(struct fsnotify_mark *mark)
+{
+	if (mark) {
+		struct fsnotify_group *group = mark->group;
+
+		fsnotify_put_mark(mark);
+		/*
+		 * We abuse notification_waitq on group shutdown for waiting for
+		 * all marks pinned when waiting for userspace.
+		 */
+		if (atomic_dec_and_test(&group->user_waits) && group->shutdown)
+			wake_up(&group->notification_waitq);
+	}
+}
+
 bool fsnotify_prepare_user_wait(struct fsnotify_iter_info *iter_info)
 {
-	struct fsnotify_group *group;
+	int type;
 
-	if (WARN_ON_ONCE(!iter_info->inode_mark && !iter_info->vfsmount_mark))
-		return false;
-
-	if (iter_info->inode_mark)
-		group = iter_info->inode_mark->group;
-	else
-		group = iter_info->vfsmount_mark->group;
-
-	/*
-	 * Since acquisition of mark reference is an atomic op as well, we can
-	 * be sure this inc is seen before any effect of refcount increment.
-	 */
-	atomic_inc(&group->user_waits);
-
-	if (iter_info->inode_mark) {
+	fsnotify_foreach_obj_type(type) {
 		/* This can fail if mark is being removed */
-		if (!fsnotify_get_mark_safe(iter_info->inode_mark))
-			goto out_wait;
-	}
-	if (iter_info->vfsmount_mark) {
-		if (!fsnotify_get_mark_safe(iter_info->vfsmount_mark))
-			goto out_inode;
+		if (!fsnotify_get_mark_safe(iter_info->marks[type]))
+			goto fail;
 	}
 
 	/*
@@ -292,34 +310,20 @@ bool fsnotify_prepare_user_wait(struct fsnotify_iter_info *iter_info)
 	srcu_read_unlock(&fsnotify_mark_srcu, iter_info->srcu_idx);
 
 	return true;
-out_inode:
-	if (iter_info->inode_mark)
-		fsnotify_put_mark(iter_info->inode_mark);
-out_wait:
-	if (atomic_dec_and_test(&group->user_waits) && group->shutdown)
-		wake_up(&group->notification_waitq);
+
+fail:
+	for (type--; type >= 0; type--)
+		fsnotify_put_mark_wake(iter_info->marks[type]);
 	return false;
 }
 
 void fsnotify_finish_user_wait(struct fsnotify_iter_info *iter_info)
 {
-	struct fsnotify_group *group = NULL;
+	int type;
 
 	iter_info->srcu_idx = srcu_read_lock(&fsnotify_mark_srcu);
-	if (iter_info->inode_mark) {
-		group = iter_info->inode_mark->group;
-		fsnotify_put_mark(iter_info->inode_mark);
-	}
-	if (iter_info->vfsmount_mark) {
-		group = iter_info->vfsmount_mark->group;
-		fsnotify_put_mark(iter_info->vfsmount_mark);
-	}
-	/*
-	 * We abuse notification_waitq on group shutdown for waiting for all
-	 * marks pinned when waiting for userspace.
-	 */
-	if (atomic_dec_and_test(&group->user_waits) && group->shutdown)
-		wake_up(&group->notification_waitq);
+	fsnotify_foreach_obj_type(type)
+		fsnotify_put_mark_wake(iter_info->marks[type]);
 }
 
 /*
@@ -338,7 +342,7 @@ void fsnotify_detach_mark(struct fsnotify_mark *mark)
 
 	WARN_ON_ONCE(!mutex_is_locked(&group->mark_mutex));
 	WARN_ON_ONCE(!srcu_read_lock_held(&fsnotify_mark_srcu) &&
-		     atomic_read(&mark->refcnt) < 1 +
+		     refcount_read(&mark->refcnt) < 1 +
 			!!(mark->flags & FSNOTIFY_MARK_FLAG_ATTACHED));
 
 	spin_lock(&mark->lock);
@@ -445,10 +449,10 @@ static int fsnotify_attach_connector_to_object(
 	spin_lock_init(&conn->lock);
 	INIT_HLIST_HEAD(&conn->list);
 	if (inode) {
-		conn->flags = FSNOTIFY_OBJ_TYPE_INODE;
+		conn->type = FSNOTIFY_OBJ_TYPE_INODE;
 		conn->inode = igrab(inode);
 	} else {
-		conn->flags = FSNOTIFY_OBJ_TYPE_VFSMOUNT;
+		conn->type = FSNOTIFY_OBJ_TYPE_VFSMOUNT;
 		conn->mnt = mnt;
 	}
 	/*
@@ -482,8 +486,7 @@ static struct fsnotify_mark_connector *fsnotify_grab_connector(
 	if (!conn)
 		goto out;
 	spin_lock(&conn->lock);
-	if (!(conn->flags & (FSNOTIFY_OBJ_TYPE_INODE |
-			     FSNOTIFY_OBJ_TYPE_VFSMOUNT))) {
+	if (conn->type == FSNOTIFY_OBJ_TYPE_DETACHED) {
 		spin_unlock(&conn->lock);
 		srcu_read_unlock(&fsnotify_mark_srcu, idx);
 		return NULL;
@@ -599,9 +602,11 @@ int fsnotify_add_mark_locked(struct fsnotify_mark *mark, struct inode *inode,
 
 	return ret;
 err:
+	spin_lock(&mark->lock);
 	mark->flags &= ~(FSNOTIFY_MARK_FLAG_ALIVE |
 			 FSNOTIFY_MARK_FLAG_ATTACHED);
 	list_del_init(&mark->g_list);
+	spin_unlock(&mark->lock);
 	atomic_dec(&group->num_marks);
 
 	fsnotify_put_mark(mark);
@@ -647,16 +652,16 @@ struct fsnotify_mark *fsnotify_find_mark(
 	return NULL;
 }
 
-/* Clear any marks in a group with given type */
+/* Clear any marks in a group with given type mask */
 void fsnotify_clear_marks_by_group(struct fsnotify_group *group,
-				   unsigned int type)
+				   unsigned int type_mask)
 {
 	struct fsnotify_mark *lmark, *mark;
 	LIST_HEAD(to_free);
 	struct list_head *head = &to_free;
 
 	/* Skip selection step if we want to clear all marks. */
-	if (type == FSNOTIFY_OBJ_ALL_TYPES) {
+	if (type_mask == FSNOTIFY_OBJ_ALL_TYPES_MASK) {
 		head = &group->marks_list;
 		goto clear;
 	}
@@ -671,7 +676,7 @@ void fsnotify_clear_marks_by_group(struct fsnotify_group *group,
 	 */
 	mutex_lock_nested(&group->mark_mutex, SINGLE_DEPTH_NESTING);
 	list_for_each_entry_safe(mark, lmark, &group->marks_list, g_list) {
-		if (mark->connector->flags & type)
+		if ((1U << mark->connector->type) & type_mask)
 			list_move(&mark->g_list, &to_free);
 	}
 	mutex_unlock(&group->mark_mutex);
@@ -738,7 +743,7 @@ void fsnotify_init_mark(struct fsnotify_mark *mark,
 {
 	memset(mark, 0, sizeof(*mark));
 	spin_lock_init(&mark->lock);
-	atomic_set(&mark->refcnt, 1);
+	refcount_set(&mark->refcnt, 1);
 	fsnotify_get_group(group);
 	mark->group = group;
 }

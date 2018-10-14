@@ -158,7 +158,7 @@ static int read_and_add_raw_conns(struct hda_codec *codec, hda_nid_t nid)
 	len = snd_hda_get_raw_connections(codec, nid, list, ARRAY_SIZE(list));
 	if (len == -ENOSPC) {
 		len = snd_hda_get_num_raw_conns(codec, nid);
-		result = kmalloc(sizeof(hda_nid_t) * len, GFP_KERNEL);
+		result = kmalloc_array(len, sizeof(hda_nid_t), GFP_KERNEL);
 		if (!result)
 			return -ENOMEM;
 		len = snd_hda_get_raw_connections(codec, nid, result, len);
@@ -438,7 +438,7 @@ static int read_widget_caps(struct hda_codec *codec, hda_nid_t fg_node)
 	int i;
 	hda_nid_t nid;
 
-	codec->wcaps = kmalloc(codec->core.num_nodes * 4, GFP_KERNEL);
+	codec->wcaps = kmalloc_array(codec->core.num_nodes, 4, GFP_KERNEL);
 	if (!codec->wcaps)
 		return -ENOMEM;
 	nid = codec->core.start_nid;
@@ -481,9 +481,10 @@ static struct hda_pincfg *look_up_pincfg(struct hda_codec *codec,
 					 struct snd_array *array,
 					 hda_nid_t nid)
 {
+	struct hda_pincfg *pin;
 	int i;
-	for (i = 0; i < array->used; i++) {
-		struct hda_pincfg *pin = snd_array_elem(array, i);
+
+	snd_array_for_each(array, i, pin) {
 		if (pin->nid == nid)
 			return pin;
 	}
@@ -618,14 +619,15 @@ EXPORT_SYMBOL_GPL(snd_hda_codec_get_pin_target);
  */
 void snd_hda_shutup_pins(struct hda_codec *codec)
 {
+	const struct hda_pincfg *pin;
 	int i;
+
 	/* don't shut up pins when unloading the driver; otherwise it breaks
 	 * the default pin setup at the next load of the driver
 	 */
 	if (codec->bus->shutdown)
 		return;
-	for (i = 0; i < codec->init_pins.used; i++) {
-		struct hda_pincfg *pin = snd_array_elem(&codec->init_pins, i);
+	snd_array_for_each(&codec->init_pins, i, pin) {
 		/* use read here for syncing after issuing each verb */
 		snd_hda_codec_read(codec, pin->nid, 0,
 				   AC_VERB_SET_PIN_WIDGET_CONTROL, 0);
@@ -638,13 +640,14 @@ EXPORT_SYMBOL_GPL(snd_hda_shutup_pins);
 /* Restore the pin controls cleared previously via snd_hda_shutup_pins() */
 static void restore_shutup_pins(struct hda_codec *codec)
 {
+	const struct hda_pincfg *pin;
 	int i;
+
 	if (!codec->pins_shutup)
 		return;
 	if (codec->bus->shutdown)
 		return;
-	for (i = 0; i < codec->init_pins.used; i++) {
-		struct hda_pincfg *pin = snd_array_elem(&codec->init_pins, i);
+	snd_array_for_each(&codec->init_pins, i, pin) {
 		snd_hda_codec_write(codec, pin->nid, 0,
 				    AC_VERB_SET_PIN_WIDGET_CONTROL,
 				    pin->ctrl);
@@ -697,8 +700,7 @@ get_hda_cvt_setup(struct hda_codec *codec, hda_nid_t nid)
 	struct hda_cvt_setup *p;
 	int i;
 
-	for (i = 0; i < codec->cvt_setups.used; i++) {
-		p = snd_array_elem(&codec->cvt_setups, i);
+	snd_array_for_each(&codec->cvt_setups, i, p) {
 		if (p->nid == nid)
 			return p;
 	}
@@ -977,7 +979,7 @@ int snd_hda_codec_update_widgets(struct hda_codec *codec)
 	hda_nid_t fg;
 	int err;
 
-	err = snd_hdac_refresh_widget_sysfs(&codec->core);
+	err = snd_hdac_refresh_widgets(&codec->core, true);
 	if (err < 0)
 		return err;
 
@@ -1076,8 +1078,7 @@ void snd_hda_codec_setup_stream(struct hda_codec *codec, hda_nid_t nid,
 	/* make other inactive cvts with the same stream-tag dirty */
 	type = get_wcaps_type(get_wcaps(codec, nid));
 	list_for_each_codec(c, codec->bus) {
-		for (i = 0; i < c->cvt_setups.used; i++) {
-			p = snd_array_elem(&c->cvt_setups, i);
+		snd_array_for_each(&c->cvt_setups, i, p) {
 			if (!p->active && p->stream_tag == stream_tag &&
 			    get_wcaps_type(get_wcaps(c, p->nid)) == type)
 				p->dirty = 1;
@@ -1140,12 +1141,11 @@ static void really_cleanup_stream(struct hda_codec *codec,
 static void purify_inactive_streams(struct hda_codec *codec)
 {
 	struct hda_codec *c;
+	struct hda_cvt_setup *p;
 	int i;
 
 	list_for_each_codec(c, codec->bus) {
-		for (i = 0; i < c->cvt_setups.used; i++) {
-			struct hda_cvt_setup *p;
-			p = snd_array_elem(&c->cvt_setups, i);
+		snd_array_for_each(&c->cvt_setups, i, p) {
 			if (p->dirty)
 				really_cleanup_stream(c, p);
 		}
@@ -1156,10 +1156,10 @@ static void purify_inactive_streams(struct hda_codec *codec)
 /* clean up all streams; called from suspend */
 static void hda_cleanup_all_streams(struct hda_codec *codec)
 {
+	struct hda_cvt_setup *p;
 	int i;
 
-	for (i = 0; i < codec->cvt_setups.used; i++) {
-		struct hda_cvt_setup *p = snd_array_elem(&codec->cvt_setups, i);
+	snd_array_for_each(&codec->cvt_setups, i, p) {
 		if (p->stream_tag)
 			really_cleanup_stream(codec, p);
 	}
@@ -1493,10 +1493,10 @@ static void get_ctl_amp_tlv(struct snd_kcontrol *kcontrol, unsigned int *tlv)
 	val1 = ((int)val1) * ((int)val2);
 	if (min_mute || (caps & AC_AMPCAP_MIN_MUTE))
 		val2 |= TLV_DB_SCALE_MUTE;
-	tlv[0] = SNDRV_CTL_TLVT_DB_SCALE;
-	tlv[1] = 2 * sizeof(unsigned int);
-	tlv[2] = val1;
-	tlv[3] = val2;
+	tlv[SNDRV_CTL_TLVO_TYPE] = SNDRV_CTL_TLVT_DB_SCALE;
+	tlv[SNDRV_CTL_TLVO_LEN] = 2 * sizeof(unsigned int);
+	tlv[SNDRV_CTL_TLVO_DB_SCALE_MIN] = val1;
+	tlv[SNDRV_CTL_TLVO_DB_SCALE_MUTE_AND_STEP] = val2;
 }
 
 /**
@@ -1544,10 +1544,10 @@ void snd_hda_set_vmaster_tlv(struct hda_codec *codec, hda_nid_t nid, int dir,
 	nums = (caps & AC_AMPCAP_NUM_STEPS) >> AC_AMPCAP_NUM_STEPS_SHIFT;
 	step = (caps & AC_AMPCAP_STEP_SIZE) >> AC_AMPCAP_STEP_SIZE_SHIFT;
 	step = (step + 1) * 25;
-	tlv[0] = SNDRV_CTL_TLVT_DB_SCALE;
-	tlv[1] = 2 * sizeof(unsigned int);
-	tlv[2] = -nums * step;
-	tlv[3] = step;
+	tlv[SNDRV_CTL_TLVO_TYPE] = SNDRV_CTL_TLVT_DB_SCALE;
+	tlv[SNDRV_CTL_TLVO_LEN] = 2 * sizeof(unsigned int);
+	tlv[SNDRV_CTL_TLVO_DB_SCALE_MIN] = -nums * step;
+	tlv[SNDRV_CTL_TLVO_DB_SCALE_MUTE_AND_STEP] = step;
 }
 EXPORT_SYMBOL_GPL(snd_hda_set_vmaster_tlv);
 
@@ -1803,36 +1803,6 @@ static int check_slave_present(struct hda_codec *codec,
 	return 1;
 }
 
-/* guess the value corresponding to 0dB */
-static int get_kctl_0dB_offset(struct hda_codec *codec,
-			       struct snd_kcontrol *kctl, int *step_to_check)
-{
-	int _tlv[4];
-	const int *tlv = NULL;
-	int val = -1;
-
-	if ((kctl->vd[0].access & SNDRV_CTL_ELEM_ACCESS_TLV_CALLBACK) &&
-	    kctl->tlv.c == snd_hda_mixer_amp_tlv) {
-		get_ctl_amp_tlv(kctl, _tlv);
-		tlv = _tlv;
-	} else if (kctl->vd[0].access & SNDRV_CTL_ELEM_ACCESS_TLV_READ)
-		tlv = kctl->tlv.p;
-	if (tlv && tlv[0] == SNDRV_CTL_TLVT_DB_SCALE) {
-		int step = tlv[3];
-		step &= ~TLV_DB_SCALE_MUTE;
-		if (!step)
-			return -1;
-		if (*step_to_check && *step_to_check != step) {
-			codec_err(codec, "Mismatching dB step for vmaster slave (%d!=%d)\n",
--				   *step_to_check, step);
-			return -1;
-		}
-		*step_to_check = step;
-		val = -tlv[2] / step;
-	}
-	return val;
-}
-
 /* call kctl->put with the given value(s) */
 static int put_kctl_with_value(struct snd_kcontrol *kctl, int val)
 {
@@ -1847,19 +1817,62 @@ static int put_kctl_with_value(struct snd_kcontrol *kctl, int val)
 	return 0;
 }
 
-/* initialize the slave volume with 0dB */
-static int init_slave_0dB(struct hda_codec *codec,
-			  void *data, struct snd_kcontrol *slave)
+struct slave_init_arg {
+	struct hda_codec *codec;
+	int step;
+};
+
+/* initialize the slave volume with 0dB via snd_ctl_apply_vmaster_slaves() */
+static int init_slave_0dB(struct snd_kcontrol *slave,
+			  struct snd_kcontrol *kctl,
+			  void *_arg)
 {
-	int offset = get_kctl_0dB_offset(codec, slave, data);
-	if (offset > 0)
-		put_kctl_with_value(slave, offset);
+	struct slave_init_arg *arg = _arg;
+	int _tlv[4];
+	const int *tlv = NULL;
+	int step;
+	int val;
+
+	if (kctl->vd[0].access & SNDRV_CTL_ELEM_ACCESS_TLV_CALLBACK) {
+		if (kctl->tlv.c != snd_hda_mixer_amp_tlv) {
+			codec_err(arg->codec,
+				  "Unexpected TLV callback for slave %s:%d\n",
+				  kctl->id.name, kctl->id.index);
+			return 0; /* ignore */
+		}
+		get_ctl_amp_tlv(kctl, _tlv);
+		tlv = _tlv;
+	} else if (kctl->vd[0].access & SNDRV_CTL_ELEM_ACCESS_TLV_READ)
+		tlv = kctl->tlv.p;
+
+	if (!tlv || tlv[SNDRV_CTL_TLVO_TYPE] != SNDRV_CTL_TLVT_DB_SCALE)
+		return 0;
+
+	step = tlv[SNDRV_CTL_TLVO_DB_SCALE_MUTE_AND_STEP];
+	step &= ~TLV_DB_SCALE_MUTE;
+	if (!step)
+		return 0;
+	if (arg->step && arg->step != step) {
+		codec_err(arg->codec,
+			  "Mismatching dB step for vmaster slave (%d!=%d)\n",
+			  arg->step, step);
+		return 0;
+	}
+
+	arg->step = step;
+	val = -tlv[SNDRV_CTL_TLVO_DB_SCALE_MIN] / step;
+	if (val > 0) {
+		put_kctl_with_value(slave, val);
+		return val;
+	}
+
 	return 0;
 }
 
-/* unmute the slave */
-static int init_slave_unmute(struct hda_codec *codec,
-			     void *data, struct snd_kcontrol *slave)
+/* unmute the slave via snd_ctl_apply_vmaster_slaves() */
+static int init_slave_unmute(struct snd_kcontrol *slave,
+			     struct snd_kcontrol *kctl,
+			     void *_arg)
 {
 	return put_kctl_with_value(slave, 1);
 }
@@ -1919,9 +1932,13 @@ int __snd_hda_add_vmaster(struct hda_codec *codec, char *name,
 	/* init with master mute & zero volume */
 	put_kctl_with_value(kctl, 0);
 	if (init_slave_vol) {
-		int step = 0;
-		map_slaves(codec, slaves, suffix,
-			   tlv ? init_slave_0dB : init_slave_unmute, &step);
+		struct slave_init_arg arg = {
+			.codec = codec,
+			.step = 0,
+		};
+		snd_ctl_apply_vmaster_slaves(kctl,
+					     tlv ? init_slave_0dB : init_slave_unmute,
+					     &arg);
 	}
 
 	if (ctl_ret)
@@ -2158,6 +2175,8 @@ static int snd_hda_spdif_default_get(struct snd_kcontrol *kcontrol,
 	int idx = kcontrol->private_value;
 	struct hda_spdif_out *spdif;
 
+	if (WARN_ON(codec->spdif_out.used <= idx))
+		return -EINVAL;
 	mutex_lock(&codec->spdif_mutex);
 	spdif = snd_array_elem(&codec->spdif_out, idx);
 	ucontrol->value.iec958.status[0] = spdif->status & 0xff;
@@ -2265,6 +2284,8 @@ static int snd_hda_spdif_default_put(struct snd_kcontrol *kcontrol,
 	unsigned short val;
 	int change;
 
+	if (WARN_ON(codec->spdif_out.used <= idx))
+		return -EINVAL;
 	mutex_lock(&codec->spdif_mutex);
 	spdif = snd_array_elem(&codec->spdif_out, idx);
 	nid = spdif->nid;
@@ -2291,6 +2312,8 @@ static int snd_hda_spdif_out_switch_get(struct snd_kcontrol *kcontrol,
 	int idx = kcontrol->private_value;
 	struct hda_spdif_out *spdif;
 
+	if (WARN_ON(codec->spdif_out.used <= idx))
+		return -EINVAL;
 	mutex_lock(&codec->spdif_mutex);
 	spdif = snd_array_elem(&codec->spdif_out, idx);
 	ucontrol->value.integer.value[0] = spdif->ctls & AC_DIG1_ENABLE;
@@ -2319,6 +2342,8 @@ static int snd_hda_spdif_out_switch_put(struct snd_kcontrol *kcontrol,
 	unsigned short val;
 	int change;
 
+	if (WARN_ON(codec->spdif_out.used <= idx))
+		return -EINVAL;
 	mutex_lock(&codec->spdif_mutex);
 	spdif = snd_array_elem(&codec->spdif_out, idx);
 	nid = spdif->nid;
@@ -2444,10 +2469,10 @@ EXPORT_SYMBOL_GPL(snd_hda_create_dig_out_ctls);
 struct hda_spdif_out *snd_hda_spdif_out_of_nid(struct hda_codec *codec,
 					       hda_nid_t nid)
 {
+	struct hda_spdif_out *spdif;
 	int i;
-	for (i = 0; i < codec->spdif_out.used; i++) {
-		struct hda_spdif_out *spdif =
-				snd_array_elem(&codec->spdif_out, i);
+
+	snd_array_for_each(&codec->spdif_out, i, spdif) {
 		if (spdif->nid == nid)
 			return spdif;
 	}
@@ -2466,6 +2491,8 @@ void snd_hda_spdif_ctls_unassign(struct hda_codec *codec, int idx)
 {
 	struct hda_spdif_out *spdif;
 
+	if (WARN_ON(codec->spdif_out.used <= idx))
+		return;
 	mutex_lock(&codec->spdif_mutex);
 	spdif = snd_array_elem(&codec->spdif_out, idx);
 	spdif->nid = (u16)-1;
@@ -2486,6 +2513,8 @@ void snd_hda_spdif_ctls_assign(struct hda_codec *codec, int idx, hda_nid_t nid)
 	struct hda_spdif_out *spdif;
 	unsigned short val;
 
+	if (WARN_ON(codec->spdif_out.used <= idx))
+		return;
 	mutex_lock(&codec->spdif_mutex);
 	spdif = snd_array_elem(&codec->spdif_out, idx);
 	if (spdif->nid != nid) {
@@ -2685,32 +2714,6 @@ void snd_hda_codec_set_power_to_all(struct hda_codec *codec, hda_nid_t fg,
 }
 EXPORT_SYMBOL_GPL(snd_hda_codec_set_power_to_all);
 
-/*
- * wait until the state is reached, returns the current state
- */
-static unsigned int hda_sync_power_state(struct hda_codec *codec,
-					 hda_nid_t fg,
-					 unsigned int power_state)
-{
-	unsigned long end_time = jiffies + msecs_to_jiffies(500);
-	unsigned int state, actual_state;
-
-	for (;;) {
-		state = snd_hda_codec_read(codec, fg, 0,
-					   AC_VERB_GET_POWER_STATE, 0);
-		if (state & AC_PWRST_ERROR)
-			break;
-		actual_state = (state >> 4) & 0x0f;
-		if (actual_state == power_state)
-			break;
-		if (time_after_eq(jiffies, end_time))
-			break;
-		/* wait until the codec reachs to the target state */
-		msleep(1);
-	}
-	return state;
-}
-
 /**
  * snd_hda_codec_eapd_power_filter - A power filter callback for EAPD
  * @codec: the HDA codec
@@ -2773,7 +2776,7 @@ static unsigned int hda_set_power_state(struct hda_codec *codec,
 						   state);
 			snd_hda_codec_set_power_to_all(codec, fg, power_state);
 		}
-		state = hda_sync_power_state(codec, fg, power_state);
+		state = snd_hda_sync_power_state(codec, fg, power_state);
 		if (!(state & AC_PWRST_ERROR))
 			break;
 	}
@@ -2896,8 +2899,9 @@ static int hda_codec_runtime_suspend(struct device *dev)
 	list_for_each_entry(pcm, &codec->pcm_list_head, list)
 		snd_pcm_suspend_all(pcm->pcm);
 	state = hda_call_codec_suspend(codec);
-	if (codec_has_clkstop(codec) && codec_has_epss(codec) &&
-	    (state & AC_PWRST_CLK_STOP_OK))
+	if (codec->link_down_at_suspend ||
+	    (codec_has_clkstop(codec) && codec_has_epss(codec) &&
+	     (state & AC_PWRST_CLK_STOP_OK)))
 		snd_hdac_codec_link_down(&codec->core);
 	snd_hdac_link_power(&codec->core, false);
 	return 0;
@@ -3213,8 +3217,10 @@ int snd_hda_codec_build_pcms(struct hda_codec *codec)
 			continue; /* no substreams assigned */
 
 		dev = get_empty_pcm_device(bus, cpcm->pcm_type);
-		if (dev < 0)
+		if (dev < 0) {
+			cpcm->device = SNDRV_PCM_INVALID_DEVICE;
 			continue; /* no fatal error */
+		}
 		cpcm->device = dev;
 		err =  snd_hda_attach_pcm_stream(bus, codec, cpcm);
 		if (err < 0) {

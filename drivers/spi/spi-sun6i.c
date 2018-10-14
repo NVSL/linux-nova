@@ -502,7 +502,7 @@ static int sun6i_spi_probe(struct platform_device *pdev)
 
 	init_completion(&sspi->done);
 
-	sspi->rstc = devm_reset_control_get(&pdev->dev, NULL);
+	sspi->rstc = devm_reset_control_get_exclusive(&pdev->dev, NULL);
 	if (IS_ERR(sspi->rstc)) {
 		dev_err(&pdev->dev, "Couldn't get reset controller\n");
 		ret = PTR_ERR(sspi->rstc);
@@ -541,7 +541,7 @@ err_free_master:
 
 static int sun6i_spi_remove(struct platform_device *pdev)
 {
-	pm_runtime_disable(&pdev->dev);
+	pm_runtime_force_suspend(&pdev->dev);
 
 	return 0;
 }

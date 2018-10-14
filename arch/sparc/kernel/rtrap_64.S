@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * rtrap.S: Preparing for return from trap on Sparc V9.
  *
@@ -24,13 +25,31 @@
 		.align			32
 __handle_preemption:
 		call			SCHEDULE_USER
-		 wrpr			%g0, RTRAP_PSTATE, %pstate
+661:		 wrpr			%g0, RTRAP_PSTATE, %pstate
+		/* If userspace is using ADI, it could potentially pass
+		 * a pointer with version tag embedded in it. To maintain
+		 * the ADI security, we must re-enable PSTATE.mcde before
+		 * we continue execution in the kernel for another thread.
+		 */
+		.section .sun_m7_1insn_patch, "ax"
+		.word	661b
+		 wrpr			%g0, RTRAP_PSTATE|PSTATE_MCDE, %pstate
+		.previous
 		ba,pt			%xcc, __handle_preemption_continue
 		 wrpr			%g0, RTRAP_PSTATE_IRQOFF, %pstate
 
 __handle_user_windows:
 		call			fault_in_user_windows
-		 wrpr			%g0, RTRAP_PSTATE, %pstate
+661:		 wrpr			%g0, RTRAP_PSTATE, %pstate
+		/* If userspace is using ADI, it could potentially pass
+		 * a pointer with version tag embedded in it. To maintain
+		 * the ADI security, we must re-enable PSTATE.mcde before
+		 * we continue execution in the kernel for another thread.
+		 */
+		.section .sun_m7_1insn_patch, "ax"
+		.word	661b
+		 wrpr			%g0, RTRAP_PSTATE|PSTATE_MCDE, %pstate
+		.previous
 		ba,pt			%xcc, __handle_preemption_continue
 		 wrpr			%g0, RTRAP_PSTATE_IRQOFF, %pstate
 
@@ -47,7 +66,16 @@ __handle_signal:
 		add			%sp, PTREGS_OFF, %o0
 		mov			%l0, %o2
 		call			do_notify_resume
-		 wrpr			%g0, RTRAP_PSTATE, %pstate
+661:		 wrpr			%g0, RTRAP_PSTATE, %pstate
+		/* If userspace is using ADI, it could potentially pass
+		 * a pointer with version tag embedded in it. To maintain
+		 * the ADI security, we must re-enable PSTATE.mcde before
+		 * we continue execution in the kernel for another thread.
+		 */
+		.section .sun_m7_1insn_patch, "ax"
+		.word	661b
+		 wrpr			%g0, RTRAP_PSTATE|PSTATE_MCDE, %pstate
+		.previous
 		wrpr			%g0, RTRAP_PSTATE_IRQOFF, %pstate
 
 		/* Signal delivery can modify pt_regs tstate, so we must
@@ -224,10 +252,19 @@ rt_continue:	ldx			[%sp + PTREGS_OFF + PT_V9_G1], %g1
 		rdpr			%otherwin, %l2
 		srl			%l1, 3, %l1
 
-		wrpr			%l2, %g0, %canrestore
+661:		wrpr			%l2, %g0, %canrestore
+		.section		.fast_win_ctrl_1insn_patch, "ax"
+		.word			661b
+		.word			0x89880000	! normalw
+		.previous
+
 		wrpr			%l1, %g0, %wstate
 		brnz,pt			%l2, user_rtt_restore
-		 wrpr			%g0, %g0, %otherwin
+661:		 wrpr			%g0, %g0, %otherwin
+		.section		.fast_win_ctrl_1insn_patch, "ax"
+		.word			661b
+		 nop
+		.previous
 
 		ldx			[%g6 + TI_FLAGS], %g3
 		wr			%g0, ASI_AIUP, %asi

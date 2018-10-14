@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _LINUX_TTY_H
 #define _LINUX_TTY_H
 
@@ -9,6 +10,7 @@
 #include <linux/tty_ldisc.h>
 #include <linux/mutex.h>
 #include <linux/tty_flags.h>
+#include <linux/seq_file.h>
 #include <uapi/linux/tty.h>
 #include <linux/rwsem.h>
 #include <linux/llist.h>
@@ -261,6 +263,8 @@ struct tty_port {
  */
 #define TTY_PORT_CTS_FLOW	3	/* h/w flow control enabled */
 #define TTY_PORT_CHECK_CD	4	/* carrier detect enabled */
+#define TTY_PORT_KOPENED	5	/* device exclusively opened by
+					   kernel */
 
 /*
  * Where all of the state associated with a tty is kept while the tty
@@ -361,6 +365,7 @@ struct tty_file_private {
 #define TTY_PTY_LOCK 		16	/* pty private */
 #define TTY_NO_WRITE_SPLIT 	17	/* Preserve write boundaries to driver */
 #define TTY_HUPPED 		18	/* Post driver->hangup() */
+#define TTY_HUPPING		19	/* Hangup in progress */
 #define TTY_LDISC_HALTED	22	/* Line discipline is halted */
 
 /* Values for tty->flow_change */
@@ -399,9 +404,11 @@ extern struct tty_struct *get_current_tty(void);
 /* tty_io.c */
 extern int __init tty_init(void);
 extern const char *tty_name(const struct tty_struct *tty);
-extern struct tty_struct *tty_open_by_driver(dev_t device, struct inode *inode,
-		struct file *filp);
+extern struct tty_struct *tty_kopen(dev_t device);
+extern void tty_kclose(struct tty_struct *tty);
 extern int tty_dev_name_to_number(const char *name, dev_t *number);
+extern int tty_ldisc_lock(struct tty_struct *tty, unsigned long timeout);
+extern void tty_ldisc_unlock(struct tty_struct *tty);
 #else
 static inline void tty_kref_put(struct tty_struct *tty)
 { }
@@ -422,9 +429,10 @@ static inline int __init tty_init(void)
 { return 0; }
 static inline const char *tty_name(const struct tty_struct *tty)
 { return "(none)"; }
-static inline struct tty_struct *tty_open_by_driver(dev_t device,
-		struct inode *inode, struct file *filp)
-{ return NULL; }
+static inline struct tty_struct *tty_kopen(dev_t device)
+{ return ERR_PTR(-ENODEV); }
+static inline void tty_kclose(struct tty_struct *tty)
+{ }
 static inline int tty_dev_name_to_number(const char *name, dev_t *number)
 { return -ENOTSUPP; }
 #endif
@@ -520,7 +528,7 @@ static inline speed_t tty_get_baud_rate(struct tty_struct *tty)
 }
 
 extern void tty_termios_copy_hw(struct ktermios *new, struct ktermios *old);
-extern int tty_termios_hw_change(struct ktermios *a, struct ktermios *b);
+extern int tty_termios_hw_change(const struct ktermios *a, const struct ktermios *b);
 extern int tty_set_termios(struct tty_struct *tty, struct ktermios *kt);
 
 extern struct tty_ldisc *tty_ldisc_ref(struct tty_struct *);
@@ -528,7 +536,7 @@ extern void tty_ldisc_deref(struct tty_ldisc *);
 extern struct tty_ldisc *tty_ldisc_ref_wait(struct tty_struct *);
 extern void tty_ldisc_hangup(struct tty_struct *tty, bool reset);
 extern int tty_ldisc_reinit(struct tty_struct *tty, int disc);
-extern const struct file_operations tty_ldiscs_proc_fops;
+extern const struct seq_operations tty_ldiscs_seq_ops;
 
 extern void tty_wakeup(struct tty_struct *tty);
 extern void tty_ldisc_flush(struct tty_struct *tty);
@@ -652,6 +660,19 @@ static inline void tty_port_set_initialized(struct tty_port *port, bool val)
 		clear_bit(TTY_PORT_INITIALIZED, &port->iflags);
 }
 
+static inline bool tty_port_kopened(struct tty_port *port)
+{
+	return test_bit(TTY_PORT_KOPENED, &port->iflags);
+}
+
+static inline void tty_port_set_kopened(struct tty_port *port, bool val)
+{
+	if (val)
+		set_bit(TTY_PORT_KOPENED, &port->iflags);
+	else
+		clear_bit(TTY_PORT_KOPENED, &port->iflags);
+}
+
 extern struct tty_struct *tty_port_tty_get(struct tty_port *port);
 extern void tty_port_tty_set(struct tty_port *port, struct tty_struct *tty);
 extern int tty_port_carrier_raised(struct tty_port *port);
@@ -681,7 +702,7 @@ extern int tty_unregister_ldisc(int disc);
 extern int tty_set_ldisc(struct tty_struct *tty, int disc);
 extern int tty_ldisc_setup(struct tty_struct *tty, struct tty_struct *o_tty);
 extern void tty_ldisc_release(struct tty_struct *tty);
-extern void tty_ldisc_init(struct tty_struct *tty);
+extern int __must_check tty_ldisc_init(struct tty_struct *tty);
 extern void tty_ldisc_deinit(struct tty_struct *tty);
 extern int tty_ldisc_receive_buf(struct tty_ldisc *ld, const unsigned char *p,
 				 char *f, int count);

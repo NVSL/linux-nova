@@ -81,7 +81,7 @@ checked_vma_instance(struct drm_i915_gem_object *obj,
 	}
 
 	if (i915_vma_compare(vma, vm, view)) {
-		pr_err("i915_vma_compare failed with create parmaters!\n");
+		pr_err("i915_vma_compare failed with create parameters!\n");
 		return ERR_PTR(-EINVAL);
 	}
 
@@ -150,7 +150,7 @@ static int igt_vma_create(void *arg)
 	IGT_TIMEOUT(end_time);
 	LIST_HEAD(contexts);
 	LIST_HEAD(objects);
-	int err;
+	int err = -ENOMEM;
 
 	/* Exercise creating many vma amonst many objections, checking the
 	 * vma creation and lookup routines.
@@ -186,16 +186,20 @@ static int igt_vma_create(void *arg)
 				goto end;
 		}
 
-		list_for_each_entry_safe(ctx, cn, &contexts, link)
+		list_for_each_entry_safe(ctx, cn, &contexts, link) {
+			list_del_init(&ctx->link);
 			mock_context_close(ctx);
+		}
 	}
 
 end:
 	/* Final pass to lookup all created contexts */
 	err = create_vmas(i915, &objects, &contexts);
 out:
-	list_for_each_entry_safe(ctx, cn, &contexts, link)
+	list_for_each_entry_safe(ctx, cn, &contexts, link) {
+		list_del_init(&ctx->link);
 		mock_context_close(ctx);
+	}
 
 	list_for_each_entry_safe(obj, on, &objects, st_link)
 		i915_gem_object_put(obj);

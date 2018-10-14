@@ -534,7 +534,7 @@ static struct attribute *dcdbas_dev_attrs[] = {
 	NULL
 };
 
-static struct attribute_group dcdbas_attr_group = {
+static const struct attribute_group dcdbas_attr_group = {
 	.attrs = dcdbas_dev_attrs,
 	.bin_attrs = dcdbas_bin_attrs,
 };
@@ -639,7 +639,7 @@ static void __exit dcdbas_exit(void)
 	platform_driver_unregister(&dcdbas_driver);
 }
 
-module_init(dcdbas_init);
+subsys_initcall_sync(dcdbas_init);
 module_exit(dcdbas_exit);
 
 MODULE_DESCRIPTION(DRIVER_DESCRIPTION " (version " DRIVER_VERSION ")");

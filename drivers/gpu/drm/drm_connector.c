@@ -24,6 +24,7 @@
 #include <drm/drm_connector.h>
 #include <drm/drm_edid.h>
 #include <drm/drm_encoder.h>
+#include <drm/drm_utils.h>
 
 #include "drm_crtc_internal.h"
 #include "drm_internal.h"
@@ -152,6 +153,25 @@ static void drm_connector_free(struct kref *kref)
 	connector->funcs->destroy(connector);
 }
 
+void drm_connector_free_work_fn(struct work_struct *work)
+{
+	struct drm_connector *connector, *n;
+	struct drm_device *dev =
+		container_of(work, struct drm_device, mode_config.connector_free_work);
+	struct drm_mode_config *config = &dev->mode_config;
+	unsigned long flags;
+	struct llist_node *freed;
+
+	spin_lock_irqsave(&config->connector_list_lock, flags);
+	freed = llist_del_all(&config->connector_free_list);
+	spin_unlock_irqrestore(&config->connector_list_lock, flags);
+
+	llist_for_each_entry_safe(connector, n, freed, free_node) {
+		drm_mode_object_unregister(dev, &connector->base);
+		connector->funcs->destroy(connector);
+	}
+}
+
 /**
  * drm_connector_init - Init a preallocated connector
  * @dev: DRM device
@@ -185,9 +205,14 @@ int drm_connector_init(struct drm_device *dev,
 	connector->dev = dev;
 	connector->funcs = funcs;
 
-	ret = ida_simple_get(&config->connector_ida, 0, 0, GFP_KERNEL);
-	if (ret < 0)
+	/* connector index is used with 32bit bitmasks */
+	ret = ida_simple_get(&config->connector_ida, 0, 32, GFP_KERNEL);
+	if (ret < 0) {
+		DRM_DEBUG_KMS("Failed to allocate %s connector index: %d\n",
+			      drm_connector_enum_list[connector_type].name,
+			      ret);
 		goto out_put;
+	}
 	connector->index = ret;
 	ret = 0;
 
@@ -212,6 +237,8 @@ int drm_connector_init(struct drm_device *dev,
 	mutex_init(&connector->mutex);
 	connector->edid_blob_ptr = NULL;
 	connector->status = connector_status_unknown;
+	connector->display_info.panel_orientation =
+		DRM_MODE_PANEL_ORIENTATION_UNKNOWN;
 
 	drm_connector_get_cmdline_mode(connector);
 
@@ -232,6 +259,10 @@ int drm_connector_init(struct drm_device *dev,
 
 	drm_object_attach_property(&connector->base,
 				   config->link_status_property,
+				   0);
+
+	drm_object_attach_property(&connector->base,
+				   config->non_desktop_property,
 				   0);
 
 	if (drm_core_check_feature(dev, DRIVER_ATOMIC)) {
@@ -525,6 +556,25 @@ void drm_connector_list_iter_begin(struct drm_device *dev,
 }
 EXPORT_SYMBOL(drm_connector_list_iter_begin);
 
+/*
+ * Extra-safe connector put function that works in any context. Should only be
+ * used from the connector_iter functions, where we never really expect to
+ * actually release the connector when dropping our final reference.
+ */
+static void
+__drm_connector_put_safe(struct drm_connector *conn)
+{
+	struct drm_mode_config *config = &conn->dev->mode_config;
+
+	lockdep_assert_held(&config->connector_list_lock);
+
+	if (!refcount_dec_and_test(&conn->base.refcount.refcount))
+		return;
+
+	llist_add(&conn->free_node, &config->connector_free_list);
+	schedule_work(&config->connector_free_work);
+}
+
 /**
  * drm_connector_list_iter_next - return next connector
  * @iter: connectr_list iterator
@@ -554,10 +604,10 @@ drm_connector_list_iter_next(struct drm_connector_list_iter *iter)
 
 		/* loop until it's not a zombie connector */
 	} while (!kref_get_unless_zero(&iter->conn->base.refcount));
-	spin_unlock_irqrestore(&config->connector_list_lock, flags);
 
 	if (old_conn)
-		drm_connector_put(old_conn);
+		__drm_connector_put_safe(old_conn);
+	spin_unlock_irqrestore(&config->connector_list_lock, flags);
 
 	return iter->conn;
 }
@@ -574,9 +624,15 @@ EXPORT_SYMBOL(drm_connector_list_iter_next);
  */
 void drm_connector_list_iter_end(struct drm_connector_list_iter *iter)
 {
+	struct drm_mode_config *config = &iter->dev->mode_config;
+	unsigned long flags;
+
 	iter->dev = NULL;
-	if (iter->conn)
-		drm_connector_put(iter->conn);
+	if (iter->conn) {
+		spin_lock_irqsave(&config->connector_list_lock, flags);
+		__drm_connector_put_safe(iter->conn);
+		spin_unlock_irqrestore(&config->connector_list_lock, flags);
+	}
 	lock_release(&connector_list_iter_dep_map, 0, _RET_IP_);
 }
 EXPORT_SYMBOL(drm_connector_list_iter_end);
@@ -615,7 +671,6 @@ static const struct drm_prop_enum_list drm_link_status_enum_list[] = {
 	{ DRM_MODE_LINK_STATUS_GOOD, "Good" },
 	{ DRM_MODE_LINK_STATUS_BAD, "Bad" },
 };
-DRM_ENUM_NAME_FN(drm_get_link_status_name, drm_link_status_enum_list)
 
 /**
  * drm_display_info_set_bus_formats - set the supported bus formats
@@ -665,6 +720,13 @@ static const struct drm_prop_enum_list drm_aspect_ratio_enum_list[] = {
 	{ DRM_MODE_PICTURE_ASPECT_16_9, "16:9" },
 };
 
+static const struct drm_prop_enum_list drm_panel_orientation_enum_list[] = {
+	{ DRM_MODE_PANEL_ORIENTATION_NORMAL,	"Normal"	},
+	{ DRM_MODE_PANEL_ORIENTATION_BOTTOM_UP,	"Upside Down"	},
+	{ DRM_MODE_PANEL_ORIENTATION_LEFT_UP,	"Left Side Up"	},
+	{ DRM_MODE_PANEL_ORIENTATION_RIGHT_UP,	"Right Side Up"	},
+};
+
 static const struct drm_prop_enum_list drm_dvi_i_select_enum_list[] = {
 	{ DRM_MODE_SUBCONNECTOR_Automatic, "Automatic" }, /* DVI-I and TV-out */
 	{ DRM_MODE_SUBCONNECTOR_DVID,      "DVI-D"     }, /* DVI-I  */
@@ -699,6 +761,13 @@ static const struct drm_prop_enum_list drm_tv_subconnector_enum_list[] = {
 DRM_ENUM_NAME_FN(drm_get_tv_subconnector_name,
 		 drm_tv_subconnector_enum_list)
 
+static struct drm_prop_enum_list drm_cp_enum_list[] = {
+	{ DRM_MODE_CONTENT_PROTECTION_UNDESIRED, "Undesired" },
+	{ DRM_MODE_CONTENT_PROTECTION_DESIRED, "Desired" },
+	{ DRM_MODE_CONTENT_PROTECTION_ENABLED, "Enabled" },
+};
+DRM_ENUM_NAME_FN(drm_get_content_protection_name, drm_cp_enum_list)
+
 /**
  * DOC: standard connector properties
  *
@@ -717,9 +786,32 @@ DRM_ENUM_NAME_FN(drm_get_tv_subconnector_name,
  * 	drivers, it remaps to controlling the "ACTIVE" property on the CRTC the
  * 	connector is linked to. Drivers should never set this property directly,
  * 	it is handled by the DRM core by calling the &drm_connector_funcs.dpms
- * 	callback. Atomic drivers should implement this hook using
- * 	drm_atomic_helper_connector_dpms(). This is the only property standard
- * 	connector property that userspace can change.
+ * 	callback. For atomic drivers the remapping to the "ACTIVE" property is
+ * 	implemented in the DRM core.  This is the only standard connector
+ * 	property that userspace can change.
+ *
+ * 	Note that this property cannot be set through the MODE_ATOMIC ioctl,
+ * 	userspace must use "ACTIVE" on the CRTC instead.
+ *
+ * 	WARNING:
+ *
+ * 	For userspace also running on legacy drivers the "DPMS" semantics are a
+ * 	lot more complicated. First, userspace cannot rely on the "DPMS" value
+ * 	returned by the GETCONNECTOR actually reflecting reality, because many
+ * 	drivers fail to update it. For atomic drivers this is taken care of in
+ * 	drm_atomic_helper_update_legacy_modeset_state().
+ *
+ * 	The second issue is that the DPMS state is only well-defined when the
+ * 	connector is connected to a CRTC. In atomic the DRM core enforces that
+ * 	"ACTIVE" is off in such a case, no such checks exists for "DPMS".
+ *
+ * 	Finally, when enabling an output using the legacy SETCONFIG ioctl then
+ * 	"DPMS" is forced to ON. But see above, that might not be reflected in
+ * 	the software value on legacy drivers.
+ *
+ * 	Summarizing: Only set "DPMS" when the connector is known to be enabled,
+ * 	assume that a successful SETCONFIG call also sets "DPMS" to on, and
+ * 	never read back the value of "DPMS" because it can be incorrect.
  * PATH:
  * 	Connector path property to identify how this sink is physically
  * 	connected. Used by DP MST. This should be set by calling
@@ -737,15 +829,91 @@ DRM_ENUM_NAME_FN(drm_get_tv_subconnector_name,
  * 	should update this value using drm_mode_connector_set_tile_property().
  * 	Userspace cannot change this property.
  * link-status:
- *      Connector link-status property to indicate the status of link. The default
- *      value of link-status is "GOOD". If something fails during or after modeset,
- *      the kernel driver may set this to "BAD" and issue a hotplug uevent. Drivers
- *      should update this value using drm_mode_connector_set_link_status_property().
+ *      Connector link-status property to indicate the status of link. The
+ *      default value of link-status is "GOOD". If something fails during or
+ *      after modeset, the kernel driver may set this to "BAD" and issue a
+ *      hotplug uevent. Drivers should update this value using
+ *      drm_mode_connector_set_link_status_property().
+ * non_desktop:
+ * 	Indicates the output should be ignored for purposes of displaying a
+ * 	standard desktop environment or console. This is most likely because
+ * 	the output device is not rectilinear.
+ * Content Protection:
+ *	This property is used by userspace to request the kernel protect future
+ *	content communicated over the link. When requested, kernel will apply
+ *	the appropriate means of protection (most often HDCP), and use the
+ *	property to tell userspace the protection is active.
+ *
+ *	Drivers can set this up by calling
+ *	drm_connector_attach_content_protection_property() on initialization.
+ *
+ *	The value of this property can be one of the following:
+ *
+ *	DRM_MODE_CONTENT_PROTECTION_UNDESIRED = 0
+ *		The link is not protected, content is transmitted in the clear.
+ *	DRM_MODE_CONTENT_PROTECTION_DESIRED = 1
+ *		Userspace has requested content protection, but the link is not
+ *		currently protected. When in this state, kernel should enable
+ *		Content Protection as soon as possible.
+ *	DRM_MODE_CONTENT_PROTECTION_ENABLED = 2
+ *		Userspace has requested content protection, and the link is
+ *		protected. Only the driver can set the property to this value.
+ *		If userspace attempts to set to ENABLED, kernel will return
+ *		-EINVAL.
+ *
+ *	A few guidelines:
+ *
+ *	- DESIRED state should be preserved until userspace de-asserts it by
+ *	  setting the property to UNDESIRED. This means ENABLED should only
+ *	  transition to UNDESIRED when the user explicitly requests it.
+ *	- If the state is DESIRED, kernel should attempt to re-authenticate the
+ *	  link whenever possible. This includes across disable/enable, dpms,
+ *	  hotplug, downstream device changes, link status failures, etc..
+ *	- Userspace is responsible for polling the property to determine when
+ *	  the value transitions from ENABLED to DESIRED. This signifies the link
+ *	  is no longer protected and userspace should take appropriate action
+ *	  (whatever that might be).
  *
  * Connectors also have one standardized atomic property:
  *
  * CRTC_ID:
  * 	Mode object ID of the &drm_crtc this connector should be connected to.
+ *
+ * Connectors for LCD panels may also have one standardized property:
+ *
+ * panel orientation:
+ *	On some devices the LCD panel is mounted in the casing in such a way
+ *	that the up/top side of the panel does not match with the top side of
+ *	the device. Userspace can use this property to check for this.
+ *	Note that input coordinates from touchscreens (input devices with
+ *	INPUT_PROP_DIRECT) will still map 1:1 to the actual LCD panel
+ *	coordinates, so if userspace rotates the picture to adjust for
+ *	the orientation it must also apply the same transformation to the
+ *	touchscreen input coordinates. This property is initialized by calling
+ *	drm_connector_init_panel_orientation_property().
+ *
+ * scaling mode:
+ *	This property defines how a non-native mode is upscaled to the native
+ *	mode of an LCD panel:
+ *
+ *	None:
+ *		No upscaling happens, scaling is left to the panel. Not all
+ *		drivers expose this mode.
+ *	Full:
+ *		The output is upscaled to the full resolution of the panel,
+ *		ignoring the aspect ratio.
+ *	Center:
+ *		No upscaling happens, the output is centered within the native
+ *		resolution the panel.
+ *	Full aspect:
+ *		The output is upscaled to maximize either the width or height
+ *		while retaining the aspect ratio.
+ *
+ *	This property should be set up by calling
+ *	drm_connector_attach_scaling_mode_property(). Note that drivers
+ *	can also expose this property to external outputs, in which case they
+ *	must support "None", which should be the default (since external screens
+ *	have a built-in scaler).
  */
 
 int drm_connector_create_standard_properties(struct drm_device *dev)
@@ -788,6 +956,11 @@ int drm_connector_create_standard_properties(struct drm_device *dev)
 	if (!prop)
 		return -ENOMEM;
 	dev->mode_config.link_status_property = prop;
+
+	prop = drm_property_create_bool(dev, DRM_MODE_PROP_IMMUTABLE, "non-desktop");
+	if (!prop)
+		return -ENOMEM;
+	dev->mode_config.non_desktop_property = prop;
 
 	return 0;
 }
@@ -896,7 +1069,7 @@ int drm_mode_create_tv_properties(struct drm_device *dev,
 		goto nomem;
 
 	for (i = 0; i < num_modes; i++)
-		drm_property_add_enum(dev->mode_config.tv_mode_property, i,
+		drm_property_add_enum(dev->mode_config.tv_mode_property,
 				      i, modes[i]);
 
 	dev->mode_config.tv_brightness_property =
@@ -983,7 +1156,7 @@ int drm_connector_attach_scaling_mode_property(struct drm_connector *connector,
 {
 	struct drm_device *dev = connector->dev;
 	struct drm_property *scaling_mode_property;
-	int i, j = 0;
+	int i;
 	const unsigned valid_scaling_mode_mask =
 		(1U << ARRAY_SIZE(drm_scaling_mode_enum_list)) - 1;
 
@@ -1004,7 +1177,7 @@ int drm_connector_attach_scaling_mode_property(struct drm_connector *connector,
 		if (!(BIT(i) & scaling_mode_mask))
 			continue;
 
-		ret = drm_property_add_enum(scaling_mode_property, j++,
+		ret = drm_property_add_enum(scaling_mode_property,
 					    drm_scaling_mode_enum_list[i].type,
 					    drm_scaling_mode_enum_list[i].name);
 
@@ -1023,6 +1196,42 @@ int drm_connector_attach_scaling_mode_property(struct drm_connector *connector,
 	return 0;
 }
 EXPORT_SYMBOL(drm_connector_attach_scaling_mode_property);
+
+/**
+ * drm_connector_attach_content_protection_property - attach content protection
+ * property
+ *
+ * @connector: connector to attach CP property on.
+ *
+ * This is used to add support for content protection on select connectors.
+ * Content Protection is intentionally vague to allow for different underlying
+ * technologies, however it is most implemented by HDCP.
+ *
+ * The content protection will be set to &drm_connector_state.content_protection
+ *
+ * Returns:
+ * Zero on success, negative errno on failure.
+ */
+int drm_connector_attach_content_protection_property(
+		struct drm_connector *connector)
+{
+	struct drm_device *dev = connector->dev;
+	struct drm_property *prop;
+
+	prop = drm_property_create_enum(dev, 0, "Content Protection",
+					drm_cp_enum_list,
+					ARRAY_SIZE(drm_cp_enum_list));
+	if (!prop)
+		return -ENOMEM;
+
+	drm_object_attach_property(&connector->base, prop,
+				   DRM_MODE_CONTENT_PROTECTION_UNDESIRED);
+
+	connector->content_protection_property = prop;
+
+	return 0;
+}
+EXPORT_SYMBOL(drm_connector_attach_content_protection_property);
 
 /**
  * drm_mode_create_aspect_ratio_property - create aspect ratio property
@@ -1172,6 +1381,23 @@ int drm_mode_connector_update_edid_property(struct drm_connector *connector,
 	if (edid)
 		size = EDID_LENGTH * (1 + edid->extensions);
 
+	/* Set the display info, using edid if available, otherwise
+	 * reseting the values to defaults. This duplicates the work
+	 * done in drm_add_edid_modes, but that function is not
+	 * consistently called before this one in all drivers and the
+	 * computation is cheap enough that it seems better to
+	 * duplicate it rather than attempt to ensure some arbitrary
+	 * ordering of calls.
+	 */
+	if (edid)
+		drm_add_display_info(connector, edid);
+	else
+		drm_reset_display_info(connector);
+
+	drm_object_property_set_value(&connector->base,
+				      dev->mode_config.non_desktop_property,
+				      connector->display_info.non_desktop);
+
 	ret = drm_property_replace_global_blob(dev,
 					       &connector->edid_blob_ptr,
 	                                       size,
@@ -1212,6 +1438,57 @@ void drm_mode_connector_set_link_status_property(struct drm_connector *connector
 }
 EXPORT_SYMBOL(drm_mode_connector_set_link_status_property);
 
+/**
+ * drm_connector_init_panel_orientation_property -
+ *	initialize the connecters panel_orientation property
+ * @connector: connector for which to init the panel-orientation property.
+ * @width: width in pixels of the panel, used for panel quirk detection
+ * @height: height in pixels of the panel, used for panel quirk detection
+ *
+ * This function should only be called for built-in panels, after setting
+ * connector->display_info.panel_orientation first (if known).
+ *
+ * This function will check for platform specific (e.g. DMI based) quirks
+ * overriding display_info.panel_orientation first, then if panel_orientation
+ * is not DRM_MODE_PANEL_ORIENTATION_UNKNOWN it will attach the
+ * "panel orientation" property to the connector.
+ *
+ * Returns:
+ * Zero on success, negative errno on failure.
+ */
+int drm_connector_init_panel_orientation_property(
+	struct drm_connector *connector, int width, int height)
+{
+	struct drm_device *dev = connector->dev;
+	struct drm_display_info *info = &connector->display_info;
+	struct drm_property *prop;
+	int orientation_quirk;
+
+	orientation_quirk = drm_get_panel_orientation_quirk(width, height);
+	if (orientation_quirk != DRM_MODE_PANEL_ORIENTATION_UNKNOWN)
+		info->panel_orientation = orientation_quirk;
+
+	if (info->panel_orientation == DRM_MODE_PANEL_ORIENTATION_UNKNOWN)
+		return 0;
+
+	prop = dev->mode_config.panel_orientation_property;
+	if (!prop) {
+		prop = drm_property_create_enum(dev, DRM_MODE_PROP_IMMUTABLE,
+				"panel orientation",
+				drm_panel_orientation_enum_list,
+				ARRAY_SIZE(drm_panel_orientation_enum_list));
+		if (!prop)
+			return -ENOMEM;
+
+		dev->mode_config.panel_orientation_property = prop;
+	}
+
+	drm_object_attach_property(&connector->base, prop,
+				   info->panel_orientation);
+	return 0;
+}
+EXPORT_SYMBOL(drm_connector_init_panel_orientation_property);
+
 int drm_mode_connector_set_obj_prop(struct drm_mode_object *obj,
 				    struct drm_property *property,
 				    uint64_t value)
@@ -1225,7 +1502,6 @@ int drm_mode_connector_set_obj_prop(struct drm_mode_object *obj,
 	} else if (connector->funcs->set_property)
 		ret = connector->funcs->set_property(connector, property, value);
 
-	/* store the property value if successful */
 	if (!ret)
 		drm_object_property_set_value(&connector->base, property, value);
 	return ret;
@@ -1255,8 +1531,10 @@ static struct drm_encoder *drm_connector_get_encoder(struct drm_connector *conne
 	return connector->encoder;
 }
 
-static bool drm_mode_expose_to_userspace(const struct drm_display_mode *mode,
-					 const struct drm_file *file_priv)
+static bool
+drm_mode_expose_to_userspace(const struct drm_display_mode *mode,
+			     const struct list_head *export_list,
+			     const struct drm_file *file_priv)
 {
 	/*
 	 * If user-space hasn't configured the driver to expose the stereo 3D
@@ -1264,6 +1542,23 @@ static bool drm_mode_expose_to_userspace(const struct drm_display_mode *mode,
 	 */
 	if (!file_priv->stereo_allowed && drm_mode_is_stereo(mode))
 		return false;
+	/*
+	 * If user-space hasn't configured the driver to expose the modes
+	 * with aspect-ratio, don't expose them. However if such a mode
+	 * is unique, let it be exposed, but reset the aspect-ratio flags
+	 * while preparing the list of user-modes.
+	 */
+	if (!file_priv->aspect_ratio_allowed) {
+		struct drm_display_mode *mode_itr;
+
+		list_for_each_entry(mode_itr, export_list, export_head)
+			if (drm_mode_match(mode_itr, mode,
+					   DRM_MODE_MATCH_TIMINGS |
+					   DRM_MODE_MATCH_CLOCK |
+					   DRM_MODE_MATCH_FLAGS |
+					   DRM_MODE_MATCH_3D_FLAGS))
+				return false;
+	}
 
 	return true;
 }
@@ -1283,13 +1578,14 @@ int drm_mode_getconnector(struct drm_device *dev, void *data,
 	struct drm_mode_modeinfo u_mode;
 	struct drm_mode_modeinfo __user *mode_ptr;
 	uint32_t __user *encoder_ptr;
+	LIST_HEAD(export_list);
 
 	if (!drm_core_check_feature(dev, DRIVER_MODESET))
 		return -EINVAL;
 
 	memset(&u_mode, 0, sizeof(struct drm_mode_modeinfo));
 
-	connector = drm_connector_lookup(dev, out_resp->connector_id);
+	connector = drm_connector_lookup(dev, file_priv, out_resp->connector_id);
 	if (!connector)
 		return -ENOENT;
 
@@ -1331,21 +1627,31 @@ int drm_mode_getconnector(struct drm_device *dev, void *data,
 
 	/* delayed so we get modes regardless of pre-fill_modes state */
 	list_for_each_entry(mode, &connector->modes, head)
-		if (drm_mode_expose_to_userspace(mode, file_priv))
+		if (drm_mode_expose_to_userspace(mode, &export_list,
+						 file_priv)) {
+			list_add_tail(&mode->export_head, &export_list);
 			mode_count++;
+		}
 
 	/*
 	 * This ioctl is called twice, once to determine how much space is
 	 * needed, and the 2nd time to fill it.
+	 * The modes that need to be exposed to the user are maintained in the
+	 * 'export_list'. When the ioctl is called first time to determine the,
+	 * space, the export_list gets filled, to find the no.of modes. In the
+	 * 2nd time, the user modes are filled, one by one from the export_list.
 	 */
 	if ((out_resp->count_modes >= mode_count) && mode_count) {
 		copied = 0;
 		mode_ptr = (struct drm_mode_modeinfo __user *)(unsigned long)out_resp->modes_ptr;
-		list_for_each_entry(mode, &connector->modes, head) {
-			if (!drm_mode_expose_to_userspace(mode, file_priv))
-				continue;
-
+		list_for_each_entry(mode, &export_list, export_head) {
 			drm_mode_convert_to_umode(&u_mode, mode);
+			/*
+			 * Reset aspect ratio flags of user-mode, if modes with
+			 * aspect-ratio are not supported.
+			 */
+			if (!file_priv->aspect_ratio_allowed)
+				u_mode.flags &= ~DRM_MODE_FLAG_PIC_AR_MASK;
 			if (copy_to_user(mode_ptr + copied,
 					 &u_mode, sizeof(u_mode))) {
 				ret = -EFAULT;

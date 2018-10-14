@@ -75,7 +75,7 @@ struct quark_security_header {
 	u32 rsvd[2];
 };
 
-static efi_char16_t efi_dummy_name[6] = { 'D', 'U', 'M', 'M', 'Y', 0 };
+static const efi_char16_t efi_dummy_name[] = L"DUMMY";
 
 static bool efi_no_storage_paranoia;
 
@@ -105,7 +105,8 @@ early_param("efi_no_storage_paranoia", setup_storage_paranoia);
 */
 void efi_delete_dummy_variable(void)
 {
-	efi.set_variable(efi_dummy_name, &EFI_DUMMY_GUID,
+	efi.set_variable((efi_char16_t *)efi_dummy_name,
+			 &EFI_DUMMY_GUID,
 			 EFI_VARIABLE_NON_VOLATILE |
 			 EFI_VARIABLE_BOOTSERVICE_ACCESS |
 			 EFI_VARIABLE_RUNTIME_ACCESS,
@@ -177,12 +178,13 @@ efi_status_t efi_query_variable_store(u32 attributes, unsigned long size,
 		 * that by attempting to use more space than is available.
 		 */
 		unsigned long dummy_size = remaining_size + 1024;
-		void *dummy = kzalloc(dummy_size, GFP_ATOMIC);
+		void *dummy = kzalloc(dummy_size, GFP_KERNEL);
 
 		if (!dummy)
 			return EFI_OUT_OF_RESOURCES;
 
-		status = efi.set_variable(efi_dummy_name, &EFI_DUMMY_GUID,
+		status = efi.set_variable((efi_char16_t *)efi_dummy_name,
+					  &EFI_DUMMY_GUID,
 					  EFI_VARIABLE_NON_VOLATILE |
 					  EFI_VARIABLE_BOOTSERVICE_ACCESS |
 					  EFI_VARIABLE_RUNTIME_ACCESS,
@@ -592,7 +594,18 @@ static int qrk_capsule_setup_info(struct capsule_info *cap_info, void **pkbuff,
 	/*
 	 * Update the first page pointer to skip over the CSH header.
 	 */
-	cap_info->pages[0] += csh->headersize;
+	cap_info->phys[0] += csh->headersize;
+
+	/*
+	 * cap_info->capsule should point at a virtual mapping of the entire
+	 * capsule, starting at the capsule header. Our image has the Quark
+	 * security header prepended, so we cannot rely on the default vmap()
+	 * mapping created by the generic capsule code.
+	 * Given that the Quark firmware does not appear to care about the
+	 * virtual mapping, let's just point cap_info->capsule at our copy
+	 * of the capsule header.
+	 */
+	cap_info->capsule = &cap_info->header;
 
 	return 1;
 }

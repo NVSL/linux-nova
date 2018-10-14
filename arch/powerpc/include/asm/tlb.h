@@ -69,13 +69,35 @@ static inline int mm_is_core_local(struct mm_struct *mm)
 			      topology_sibling_cpumask(smp_processor_id()));
 }
 
+#ifdef CONFIG_PPC_BOOK3S_64
+static inline int mm_is_thread_local(struct mm_struct *mm)
+{
+	if (atomic_read(&mm->context.active_cpus) > 1)
+		return false;
+	return cpumask_test_cpu(smp_processor_id(), mm_cpumask(mm));
+}
+static inline void mm_reset_thread_local(struct mm_struct *mm)
+{
+	WARN_ON(atomic_read(&mm->context.copros) > 0);
+	/*
+	 * It's possible for mm_access to take a reference on mm_users to
+	 * access the remote mm from another thread, but it's not allowed
+	 * to set mm_cpumask, so mm_users may be > 1 here.
+	 */
+	WARN_ON(current->mm != mm);
+	atomic_set(&mm->context.active_cpus, 1);
+	cpumask_clear(mm_cpumask(mm));
+	cpumask_set_cpu(smp_processor_id(), mm_cpumask(mm));
+}
+#else /* CONFIG_PPC_BOOK3S_64 */
 static inline int mm_is_thread_local(struct mm_struct *mm)
 {
 	return cpumask_equal(mm_cpumask(mm),
 			      cpumask_of(smp_processor_id()));
 }
+#endif /* !CONFIG_PPC_BOOK3S_64 */
 
-#else
+#else /* CONFIG_SMP */
 static inline int mm_is_core_local(struct mm_struct *mm)
 {
 	return 1;

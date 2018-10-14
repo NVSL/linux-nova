@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #include <linux/pci.h>
 #include <linux/printk.h>
 #include <linux/slab.h>
@@ -253,7 +254,7 @@ static int nitrox_enable_msix(struct nitrox_device *ndev)
 	 * Entry 192: NPS_CORE_INT_ACTIVE
 	 */
 	nr_entries = (ndev->nr_queues * NR_RING_VECTORS) + 1;
-	entries = kzalloc_node(nr_entries * sizeof(struct msix_entry),
+	entries = kcalloc_node(nr_entries, sizeof(struct msix_entry),
 			       GFP_KERNEL, ndev->node);
 	if (!entries)
 		return -ENOMEM;

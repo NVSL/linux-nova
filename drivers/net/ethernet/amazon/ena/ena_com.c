@@ -63,6 +63,8 @@
 
 #define ENA_REGS_ADMIN_INTR_MASK 1
 
+#define ENA_POLL_MS	5
+
 /*****************************************************************************/
 /*****************************************************************************/
 /*****************************************************************************/
@@ -315,7 +317,7 @@ static struct ena_comp_ctx *ena_com_submit_admin_cmd(struct ena_com_admin_queue 
 					      cmd_size_in_bytes,
 					      comp,
 					      comp_size_in_bytes);
-	if (unlikely(IS_ERR(comp_ctx)))
+	if (IS_ERR(comp_ctx))
 		admin_queue->running_state = false;
 	spin_unlock_irqrestore(&admin_queue->q_lock, flags);
 
@@ -331,6 +333,7 @@ static int ena_com_init_io_sq(struct ena_com_dev *ena_dev,
 
 	memset(&io_sq->desc_addr, 0x0, sizeof(io_sq->desc_addr));
 
+	io_sq->dma_addr_bits = ena_dev->dma_addr_bits;
 	io_sq->desc_entry_size =
 		(io_sq->direction == ENA_COM_IO_QUEUE_DIRECTION_TX) ?
 		sizeof(struct ena_eth_io_tx_desc) :
@@ -533,7 +536,7 @@ static int ena_com_wait_and_process_admin_cq_polling(struct ena_comp_ctx *comp_c
 			goto err;
 		}
 
-		msleep(100);
+		msleep(ENA_POLL_MS);
 	}
 
 	if (unlikely(comp_ctx->status == ENA_CMD_ABORTED)) {
@@ -629,8 +632,10 @@ static u32 ena_com_reg_bar_read32(struct ena_com_dev *ena_dev, u16 offset)
 	 */
 	wmb();
 
-	writel(mmio_read_reg, ena_dev->reg_bar + ENA_REGS_MMIO_REG_READ_OFF);
+	writel_relaxed(mmio_read_reg,
+		       ena_dev->reg_bar + ENA_REGS_MMIO_REG_READ_OFF);
 
+	mmiowb();
 	for (i = 0; i < timeout; i++) {
 		if (read_resp->req_id == mmio_read->seq_num)
 			break;
@@ -746,6 +751,9 @@ static int wait_for_reset_state(struct ena_com_dev *ena_dev, u32 timeout,
 {
 	u32 val, i;
 
+	/* Convert timeout from resolution of 100ms to ENA_POLL_MS */
+	timeout = (timeout * 100) / ENA_POLL_MS;
+
 	for (i = 0; i < timeout; i++) {
 		val = ena_com_reg_bar_read32(ena_dev, ENA_REGS_DEV_STS_OFF);
 
@@ -758,8 +766,7 @@ static int wait_for_reset_state(struct ena_com_dev *ena_dev, u32 timeout,
 			exp_state)
 			return 0;
 
-		/* The resolution of the timeout is 100ms */
-		msleep(100);
+		msleep(ENA_POLL_MS);
 	}
 
 	return -ETIME;
@@ -1130,7 +1137,7 @@ int ena_com_execute_admin_command(struct ena_com_admin_queue *admin_queue,
 
 	comp_ctx = ena_com_submit_admin_cmd(admin_queue, cmd, cmd_size,
 					    comp, comp_size);
-	if (unlikely(IS_ERR(comp_ctx))) {
+	if (IS_ERR(comp_ctx)) {
 		if (comp_ctx == ERR_PTR(-ENODEV))
 			pr_debug("Failed to submit command [%ld]\n",
 				 PTR_ERR(comp_ctx));
@@ -1253,7 +1260,7 @@ void ena_com_wait_for_abort_completion(struct ena_com_dev *ena_dev)
 	spin_lock_irqsave(&admin_queue->q_lock, flags);
 	while (atomic_read(&admin_queue->outstanding_cmds) != 0) {
 		spin_unlock_irqrestore(&admin_queue->q_lock, flags);
-		msleep(20);
+		msleep(ENA_POLL_MS);
 		spin_lock_irqsave(&admin_queue->q_lock, flags);
 	}
 	spin_unlock_irqrestore(&admin_queue->q_lock, flags);
@@ -1822,7 +1829,9 @@ void ena_com_aenq_intr_handler(struct ena_com_dev *dev, void *data)
 
 	/* write the aenq doorbell after all AENQ descriptors were read */
 	mb();
-	writel((u32)aenq->head, dev->reg_bar + ENA_REGS_AENQ_HEAD_DB_OFF);
+	writel_relaxed((u32)aenq->head,
+		       dev->reg_bar + ENA_REGS_AENQ_HEAD_DB_OFF);
+	mmiowb();
 }
 
 int ena_com_dev_reset(struct ena_com_dev *ena_dev,

@@ -28,6 +28,7 @@
 #include <linux/workqueue.h>
 #include <linux/freezer.h>
 #include <linux/compat.h>
+#include <linux/module.h>
 
 #include "posix-timers.h"
 
@@ -56,9 +57,9 @@ static ktime_t freezer_delta;
 static DEFINE_SPINLOCK(freezer_delta_lock);
 #endif
 
+#ifdef CONFIG_RTC_CLASS
 static struct wakeup_source *ws;
 
-#ifdef CONFIG_RTC_CLASS
 /* rtc timer and device for setting alarm wakeups at suspend */
 static struct rtc_timer		rtctimer;
 static struct rtc_device	*rtcdev;
@@ -89,6 +90,7 @@ static int alarmtimer_rtc_add_device(struct device *dev,
 {
 	unsigned long flags;
 	struct rtc_device *rtc = to_rtc_device(dev);
+	struct wakeup_source *__ws;
 
 	if (rtcdev)
 		return -EBUSY;
@@ -98,13 +100,25 @@ static int alarmtimer_rtc_add_device(struct device *dev,
 	if (!device_may_wakeup(rtc->dev.parent))
 		return -1;
 
+	__ws = wakeup_source_register("alarmtimer");
+
 	spin_lock_irqsave(&rtcdev_lock, flags);
 	if (!rtcdev) {
+		if (!try_module_get(rtc->owner)) {
+			spin_unlock_irqrestore(&rtcdev_lock, flags);
+			return -1;
+		}
+
 		rtcdev = rtc;
 		/* hold a reference so it doesn't go away */
 		get_device(dev);
+		ws = __ws;
+		__ws = NULL;
 	}
 	spin_unlock_irqrestore(&rtcdev_lock, flags);
+
+	wakeup_source_unregister(__ws);
+
 	return 0;
 }
 
@@ -312,6 +326,17 @@ static int alarmtimer_resume(struct device *dev)
 }
 #endif
 
+static void
+__alarm_init(struct alarm *alarm, enum alarmtimer_type type,
+	     enum alarmtimer_restart (*function)(struct alarm *, ktime_t))
+{
+	timerqueue_init(&alarm->node);
+	alarm->timer.function = alarmtimer_fired;
+	alarm->function = function;
+	alarm->type = type;
+	alarm->state = ALARMTIMER_STATE_INACTIVE;
+}
+
 /**
  * alarm_init - Initialize an alarm structure
  * @alarm: ptr to alarm to be initialized
@@ -321,13 +346,9 @@ static int alarmtimer_resume(struct device *dev)
 void alarm_init(struct alarm *alarm, enum alarmtimer_type type,
 		enum alarmtimer_restart (*function)(struct alarm *, ktime_t))
 {
-	timerqueue_init(&alarm->node);
 	hrtimer_init(&alarm->timer, alarm_bases[type].base_clockid,
-			HRTIMER_MODE_ABS);
-	alarm->timer.function = alarmtimer_fired;
-	alarm->function = function;
-	alarm->type = type;
-	alarm->state = ALARMTIMER_STATE_INACTIVE;
+		     HRTIMER_MODE_ABS);
+	__alarm_init(alarm, type, function);
 }
 EXPORT_SYMBOL_GPL(alarm_init);
 
@@ -705,6 +726,8 @@ static int alarmtimer_do_nsleep(struct alarm *alarm, ktime_t absexp,
 
 	__set_current_state(TASK_RUNNING);
 
+	destroy_hrtimer_on_stack(&alarm->timer);
+
 	if (!alarm->data)
 		return 0;
 
@@ -726,6 +749,15 @@ static int alarmtimer_do_nsleep(struct alarm *alarm, ktime_t absexp,
 	return -ERESTART_RESTARTBLOCK;
 }
 
+static void
+alarm_init_on_stack(struct alarm *alarm, enum alarmtimer_type type,
+		    enum alarmtimer_restart (*function)(struct alarm *, ktime_t))
+{
+	hrtimer_init_on_stack(&alarm->timer, alarm_bases[type].base_clockid,
+			      HRTIMER_MODE_ABS);
+	__alarm_init(alarm, type, function);
+}
+
 /**
  * alarm_timer_nsleep_restart - restartblock alarmtimer nsleep
  * @restart: ptr to restart block
@@ -738,7 +770,7 @@ static long __sched alarm_timer_nsleep_restart(struct restart_block *restart)
 	ktime_t exp = restart->nanosleep.expires;
 	struct alarm alarm;
 
-	alarm_init(&alarm, type, alarmtimer_nsleep_wakeup);
+	alarm_init_on_stack(&alarm, type, alarmtimer_nsleep_wakeup);
 
 	return alarmtimer_do_nsleep(&alarm, exp, type);
 }
@@ -770,7 +802,7 @@ static int alarm_timer_nsleep(const clockid_t which_clock, int flags,
 	if (!capable(CAP_WAKE_ALARM))
 		return -EPERM;
 
-	alarm_init(&alarm, type, alarmtimer_nsleep_wakeup);
+	alarm_init_on_stack(&alarm, type, alarmtimer_nsleep_wakeup);
 
 	exp = timespec64_to_ktime(*tsreq);
 	/* Convert (if necessary) to absolute time */
@@ -860,7 +892,6 @@ static int __init alarmtimer_init(void)
 		error = PTR_ERR(pdev);
 		goto out_drv;
 	}
-	ws = wakeup_source_register("alarmtimer");
 	return 0;
 
 out_drv:

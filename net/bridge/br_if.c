@@ -64,7 +64,7 @@ static int port_cost(struct net_device *dev)
 
 
 /* Check for port carrier transitions. */
-void br_port_carrier_check(struct net_bridge_port *p)
+void br_port_carrier_check(struct net_bridge_port *p, bool *notified)
 {
 	struct net_device *dev = p->dev;
 	struct net_bridge *br = p->br;
@@ -73,16 +73,21 @@ void br_port_carrier_check(struct net_bridge_port *p)
 	    netif_running(dev) && netif_oper_up(dev))
 		p->path_cost = port_cost(dev);
 
+	*notified = false;
 	if (!netif_running(br->dev))
 		return;
 
 	spin_lock_bh(&br->lock);
 	if (netif_running(dev) && netif_oper_up(dev)) {
-		if (p->state == BR_STATE_DISABLED)
+		if (p->state == BR_STATE_DISABLED) {
 			br_stp_enable_port(p);
+			*notified = true;
+		}
 	} else {
-		if (p->state != BR_STATE_DISABLED)
+		if (p->state != BR_STATE_DISABLED) {
 			br_stp_disable_port(p);
+			*notified = true;
+		}
 	}
 	spin_unlock_bh(&br->lock);
 }
@@ -271,7 +276,7 @@ static void del_nbp(struct net_bridge_port *p)
 	br_stp_disable_port(p);
 	spin_unlock_bh(&br->lock);
 
-	br_ifinfo_notify(RTM_DELLINK, p);
+	br_ifinfo_notify(RTM_DELLINK, NULL, p);
 
 	list_del_rcu(&p->list);
 	if (netdev_get_fwd_headroom(dev) == br->dev->needed_headroom)
@@ -309,6 +314,8 @@ void br_dev_delete(struct net_device *dev, struct list_head *head)
 	list_for_each_entry_safe(p, n, &br->port_list, list) {
 		del_nbp(p);
 	}
+
+	br_recalculate_neigh_suppress_enabled(br);
 
 	br_fdb_delete_by_port(br, NULL, 0, 1);
 
@@ -423,22 +430,31 @@ int br_del_bridge(struct net *net, const char *name)
 }
 
 /* MTU of the bridge pseudo-device: ETH_DATA_LEN or the minimum of the ports */
-int br_min_mtu(const struct net_bridge *br)
+static int br_mtu_min(const struct net_bridge *br)
 {
 	const struct net_bridge_port *p;
-	int mtu = 0;
+	int ret_mtu = 0;
 
+	list_for_each_entry(p, &br->port_list, list)
+		if (!ret_mtu || ret_mtu > p->dev->mtu)
+			ret_mtu = p->dev->mtu;
+
+	return ret_mtu ? ret_mtu : ETH_DATA_LEN;
+}
+
+void br_mtu_auto_adjust(struct net_bridge *br)
+{
 	ASSERT_RTNL();
 
-	if (list_empty(&br->port_list))
-		mtu = ETH_DATA_LEN;
-	else {
-		list_for_each_entry(p, &br->port_list, list) {
-			if (!mtu  || p->dev->mtu < mtu)
-				mtu = p->dev->mtu;
-		}
-	}
-	return mtu;
+	/* if the bridge MTU was manually configured don't mess with it */
+	if (br->mtu_set_by_user)
+		return;
+
+	/* change to the minimum MTU and clear the flag which was set by
+	 * the bridge ndo_change_mtu callback
+	 */
+	dev_set_mtu(br->dev, br_mtu_min(br));
+	br->mtu_set_by_user = false;
 }
 
 static void br_set_gso_limits(struct net_bridge *br)
@@ -480,7 +496,8 @@ netdev_features_t br_features_recompute(struct net_bridge *br,
 }
 
 /* called with RTNL */
-int br_add_if(struct net_bridge *br, struct net_device *dev)
+int br_add_if(struct net_bridge *br, struct net_device *dev,
+	      struct netlink_ext_ack *extack)
 {
 	struct net_bridge_port *p;
 	int err = 0;
@@ -500,16 +517,22 @@ int br_add_if(struct net_bridge *br, struct net_device *dev)
 		return -EINVAL;
 
 	/* No bridging of bridges */
-	if (dev->netdev_ops->ndo_start_xmit == br_dev_xmit)
+	if (dev->netdev_ops->ndo_start_xmit == br_dev_xmit) {
+		NL_SET_ERR_MSG(extack,
+			       "Can not enslave a bridge to a bridge");
 		return -ELOOP;
+	}
 
-	/* Device is already being bridged */
-	if (br_port_exists(dev))
+	/* Device has master upper dev */
+	if (netdev_master_upper_dev_get(dev))
 		return -EBUSY;
 
 	/* No bridging devices that dislike that (e.g. wireless) */
-	if (dev->priv_flags & IFF_DONT_BRIDGE)
+	if (dev->priv_flags & IFF_DONT_BRIDGE) {
+		NL_SET_ERR_MSG(extack,
+			       "Device does not allow enslaving to a bridge");
 		return -EOPNOTSUPP;
+	}
 
 	p = new_nbp(br, dev);
 	if (IS_ERR(p))
@@ -540,7 +563,7 @@ int br_add_if(struct net_bridge *br, struct net_device *dev)
 
 	dev->priv_flags |= IFF_BRIDGE_PORT;
 
-	err = netdev_master_upper_dev_link(dev, br->dev, NULL, NULL);
+	err = netdev_master_upper_dev_link(dev, br->dev, NULL, NULL, extack);
 	if (err)
 		goto err5;
 
@@ -580,12 +603,12 @@ int br_add_if(struct net_bridge *br, struct net_device *dev)
 		br_stp_enable_port(p);
 	spin_unlock_bh(&br->lock);
 
-	br_ifinfo_notify(RTM_NEWLINK, p);
+	br_ifinfo_notify(RTM_NEWLINK, NULL, p);
 
 	if (changed_addr)
 		call_netdevice_notifiers(NETDEV_CHANGEADDR, br->dev);
 
-	dev_set_mtu(br->dev, br_min_mtu(br));
+	br_mtu_auto_adjust(br);
 	br_set_gso_limits(br);
 
 	kobject_uevent(&p->kobj, KOBJ_ADD);
@@ -632,7 +655,7 @@ int br_del_if(struct net_bridge *br, struct net_device *dev)
 	 */
 	del_nbp(p);
 
-	dev_set_mtu(br->dev, br_min_mtu(br));
+	br_mtu_auto_adjust(br);
 	br_set_gso_limits(br);
 
 	spin_lock_bh(&br->lock);
@@ -653,4 +676,7 @@ void br_port_flags_change(struct net_bridge_port *p, unsigned long mask)
 
 	if (mask & BR_AUTO_MASK)
 		nbp_update_port_count(br);
+
+	if (mask & BR_NEIGH_SUPPRESS)
+		br_recalculate_neigh_suppress_enabled(br);
 }

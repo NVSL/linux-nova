@@ -40,11 +40,13 @@
 #include <drm/ttm/ttm_execbuf_util.h>
 #include <drm/ttm/ttm_module.h>
 #include "vmwgfx_fence.h"
+#include <linux/sync_file.h>
 
-#define VMWGFX_DRIVER_DATE "20170607"
+#define VMWGFX_DRIVER_NAME "vmwgfx"
+#define VMWGFX_DRIVER_DATE "20180322"
 #define VMWGFX_DRIVER_MAJOR 2
-#define VMWGFX_DRIVER_MINOR 13
-#define VMWGFX_DRIVER_PATCHLEVEL 0
+#define VMWGFX_DRIVER_MINOR 14
+#define VMWGFX_DRIVER_PATCHLEVEL 1
 #define VMWGFX_FILE_PAGE_OFFSET 0x00100000
 #define VMWGFX_FIFO_STATIC_SIZE (1024*1024)
 #define VMWGFX_MAX_RELOCATIONS 2048
@@ -90,6 +92,8 @@ struct vmw_dma_buffer {
 	s32 pin_count;
 	/* Not ref-counted.  Protected by binding_mutex */
 	struct vmw_resource *dx_query_ctx;
+	/* Protected by reservation */
+	struct ttm_bo_kmap_obj map;
 };
 
 /**
@@ -351,6 +355,12 @@ struct vmw_otable_batch {
 	struct ttm_buffer_object *otable_bo;
 };
 
+enum {
+	VMW_IRQTHREAD_FENCE,
+	VMW_IRQTHREAD_CMDBUF,
+	VMW_IRQTHREAD_MAX
+};
+
 struct vmw_private {
 	struct ttm_bo_device bdev;
 	struct ttm_bo_global_ref bo_global_ref;
@@ -415,6 +425,7 @@ struct vmw_private {
 	struct vmw_framebuffer *implicit_fb;
 	struct mutex global_kms_state_mutex;
 	spinlock_t cursor_lock;
+	struct drm_atomic_state *suspend_state;
 
 	/*
 	 * Context and surface management.
@@ -486,8 +497,8 @@ struct vmw_private {
 	struct vmw_master *active_master;
 	struct vmw_master fbdev_master;
 	struct notifier_block pm_nb;
-	bool suspended;
 	bool refuse_hibernation;
+	bool suspend_locked;
 
 	struct mutex release_mutex;
 	atomic_t num_fifo_resources;
@@ -529,6 +540,7 @@ struct vmw_private {
 	struct vmw_otable_batch otable_batch;
 
 	struct vmw_cmdbuf_man *cman;
+	DECLARE_BITMAP(irqthread_pending, VMW_IRQTHREAD_MAX);
 };
 
 static inline struct vmw_surface *vmw_res_to_srf(struct vmw_resource *res)
@@ -561,24 +573,21 @@ static inline struct vmw_master *vmw_master(struct drm_master *master)
 static inline void vmw_write(struct vmw_private *dev_priv,
 			     unsigned int offset, uint32_t value)
 {
-	unsigned long irq_flags;
-
-	spin_lock_irqsave(&dev_priv->hw_lock, irq_flags);
+	spin_lock(&dev_priv->hw_lock);
 	outl(offset, dev_priv->io_start + VMWGFX_INDEX_PORT);
 	outl(value, dev_priv->io_start + VMWGFX_VALUE_PORT);
-	spin_unlock_irqrestore(&dev_priv->hw_lock, irq_flags);
+	spin_unlock(&dev_priv->hw_lock);
 }
 
 static inline uint32_t vmw_read(struct vmw_private *dev_priv,
 				unsigned int offset)
 {
-	unsigned long irq_flags;
 	u32 val;
 
-	spin_lock_irqsave(&dev_priv->hw_lock, irq_flags);
+	spin_lock(&dev_priv->hw_lock);
 	outl(offset, dev_priv->io_start + VMWGFX_INDEX_PORT);
 	val = inl(dev_priv->io_start + VMWGFX_VALUE_PORT);
-	spin_unlock_irqrestore(&dev_priv->hw_lock, irq_flags);
+	spin_unlock(&dev_priv->hw_lock);
 
 	return val;
 }
@@ -667,10 +676,12 @@ extern void vmw_resource_move_notify(struct ttm_buffer_object *bo,
 				     struct ttm_mem_reg *mem);
 extern void vmw_query_move_notify(struct ttm_buffer_object *bo,
 				  struct ttm_mem_reg *mem);
+extern void vmw_resource_swap_notify(struct ttm_buffer_object *bo);
 extern int vmw_query_readback_all(struct vmw_dma_buffer *dx_query_mob);
 extern void vmw_fence_single_bo(struct ttm_buffer_object *bo,
 				struct vmw_fence_obj *fence);
 extern void vmw_resource_evict_all(struct vmw_private *dev_priv);
+
 
 /**
  * DMA buffer helper routines - vmwgfx_dmabuf.c
@@ -694,6 +705,8 @@ extern int vmw_dmabuf_unpin(struct vmw_private *vmw_priv,
 extern void vmw_bo_get_guest_ptr(const struct ttm_buffer_object *buf,
 				 SVGAGuestPtr *ptr);
 extern void vmw_bo_pin_reserved(struct vmw_dma_buffer *bo, bool pin);
+extern void *vmw_dma_buffer_map_and_cache(struct vmw_dma_buffer *vbo);
+extern void vmw_dma_buffer_unmap(struct vmw_dma_buffer *vbo);
 
 /**
  * Misc Ioctl functionality - vmwgfx_ioctl.c
@@ -707,7 +720,7 @@ extern int vmw_present_ioctl(struct drm_device *dev, void *data,
 			     struct drm_file *file_priv);
 extern int vmw_present_readback_ioctl(struct drm_device *dev, void *data,
 				      struct drm_file *file_priv);
-extern unsigned int vmw_fops_poll(struct file *filp,
+extern __poll_t vmw_fops_poll(struct file *filp,
 				  struct poll_table_struct *wait);
 extern ssize_t vmw_fops_read(struct file *filp, char __user *buffer,
 			     size_t count, loff_t *offset);
@@ -760,6 +773,7 @@ extern struct ttm_placement vmw_evictable_placement;
 extern struct ttm_placement vmw_srf_placement;
 extern struct ttm_placement vmw_mob_placement;
 extern struct ttm_placement vmw_mob_ne_placement;
+extern struct ttm_placement vmw_nonfixed_placement;
 extern struct ttm_bo_driver vmw_bo_driver;
 extern int vmw_dma_quiescent(struct drm_device *dev);
 extern int vmw_bo_map_dma(struct ttm_buffer_object *bo);
@@ -821,7 +835,8 @@ extern int vmw_execbuf_process(struct drm_file *file_priv,
 			       uint32_t dx_context_handle,
 			       struct drm_vmw_fence_rep __user
 			       *user_fence_rep,
-			       struct vmw_fence_obj **out_fence);
+			       struct vmw_fence_obj **out_fence,
+			       uint32_t flags);
 extern void __vmw_execbuf_release_pinned_bo(struct vmw_private *dev_priv,
 					    struct vmw_fence_obj *fence);
 extern void vmw_execbuf_release_pinned_bo(struct vmw_private *dev_priv);
@@ -836,23 +851,23 @@ extern void vmw_execbuf_copy_fence_user(struct vmw_private *dev_priv,
 					struct drm_vmw_fence_rep __user
 					*user_fence_rep,
 					struct vmw_fence_obj *fence,
-					uint32_t fence_handle);
+					uint32_t fence_handle,
+					int32_t out_fence_fd,
+					struct sync_file *sync_file);
 extern int vmw_validate_single_buffer(struct vmw_private *dev_priv,
 				      struct ttm_buffer_object *bo,
 				      bool interruptible,
 				      bool validate_as_mob);
-
+bool vmw_cmd_describe(const void *buf, u32 *size, char const **cmd);
 
 /**
  * IRQs and wating - vmwgfx_irq.c
  */
 
-extern irqreturn_t vmw_irq_handler(int irq, void *arg);
 extern int vmw_wait_seqno(struct vmw_private *dev_priv, bool lazy,
 			  uint32_t seqno, bool interruptible,
 			  unsigned long timeout);
-extern void vmw_irq_preinstall(struct drm_device *dev);
-extern int vmw_irq_postinstall(struct drm_device *dev);
+extern int vmw_irq_install(struct drm_device *dev, int irq);
 extern void vmw_irq_uninstall(struct drm_device *dev);
 extern bool vmw_seqno_passed(struct vmw_private *dev_priv,
 				uint32_t seqno);
@@ -931,6 +946,9 @@ int vmw_kms_present(struct vmw_private *dev_priv,
 int vmw_kms_update_layout_ioctl(struct drm_device *dev, void *data,
 				struct drm_file *file_priv);
 void vmw_kms_legacy_hotspot_clear(struct vmw_private *dev_priv);
+int vmw_kms_suspend(struct drm_device *dev);
+int vmw_kms_resume(struct drm_device *dev);
+void vmw_kms_lost_device(struct drm_device *dev);
 
 int vmw_dumb_create(struct drm_file *file_priv,
 		    struct drm_device *dev,
@@ -1150,14 +1168,61 @@ extern void *vmw_cmdbuf_reserve(struct vmw_cmdbuf_man *man, size_t size,
 extern void vmw_cmdbuf_commit(struct vmw_cmdbuf_man *man, size_t size,
 			      struct vmw_cmdbuf_header *header,
 			      bool flush);
-extern void vmw_cmdbuf_tasklet_schedule(struct vmw_cmdbuf_man *man);
 extern void *vmw_cmdbuf_alloc(struct vmw_cmdbuf_man *man,
 			      size_t size, bool interruptible,
 			      struct vmw_cmdbuf_header **p_header);
 extern void vmw_cmdbuf_header_free(struct vmw_cmdbuf_header *header);
 extern int vmw_cmdbuf_cur_flush(struct vmw_cmdbuf_man *man,
 				bool interruptible);
+extern void vmw_cmdbuf_irqthread(struct vmw_cmdbuf_man *man);
 
+/* CPU blit utilities - vmwgfx_blit.c */
+
+/**
+ * struct vmw_diff_cpy - CPU blit information structure
+ *
+ * @rect: The output bounding box rectangle.
+ * @line: The current line of the blit.
+ * @line_offset: Offset of the current line segment.
+ * @cpp: Bytes per pixel (granularity information).
+ * @memcpy: Which memcpy function to use.
+ */
+struct vmw_diff_cpy {
+	struct drm_rect rect;
+	size_t line;
+	size_t line_offset;
+	int cpp;
+	void (*do_cpy)(struct vmw_diff_cpy *diff, u8 *dest, const u8 *src,
+		       size_t n);
+};
+
+#define VMW_CPU_BLIT_INITIALIZER {	\
+	.do_cpy = vmw_memcpy,		\
+}
+
+#define VMW_CPU_BLIT_DIFF_INITIALIZER(_cpp) {	  \
+	.line = 0,				  \
+	.line_offset = 0,			  \
+	.rect = { .x1 = INT_MAX/2,		  \
+		  .y1 = INT_MAX/2,		  \
+		  .x2 = INT_MIN/2,		  \
+		  .y2 = INT_MIN/2		  \
+	},					  \
+	.cpp = _cpp,				  \
+	.do_cpy = vmw_diff_memcpy,		  \
+}
+
+void vmw_diff_memcpy(struct vmw_diff_cpy *diff, u8 *dest, const u8 *src,
+		     size_t n);
+
+void vmw_memcpy(struct vmw_diff_cpy *diff, u8 *dest, const u8 *src, size_t n);
+
+int vmw_bo_cpu_blit(struct ttm_buffer_object *dst,
+		    u32 dst_offset, u32 dst_stride,
+		    struct ttm_buffer_object *src,
+		    u32 src_offset, u32 src_stride,
+		    u32 w, u32 h,
+		    struct vmw_diff_cpy *diff);
 
 /**
  * Inline helper functions

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #include <linux/fs.h>
 #include <linux/random.h>
 #include <linux/buffer_head.h>
@@ -185,11 +186,8 @@ static int kmmpd(void *data)
 			goto exit_thread;
 		}
 
-		if (sb->s_flags & MS_RDONLY) {
-			ext4_warning(sb, "kmmpd being stopped since filesystem "
-				     "has been remounted as readonly.");
-			goto exit_thread;
-		}
+		if (sb_rdonly(sb))
+			break;
 
 		diff = jiffies - last_update_time;
 		if (diff < mmp_update_interval * HZ)
@@ -367,7 +365,7 @@ skip:
 		goto failed;
 	}
 
-	mmpd_data = kmalloc(sizeof(struct mmpd_data), GFP_KERNEL);
+	mmpd_data = kmalloc(sizeof(*mmpd_data), GFP_KERNEL);
 	if (!mmpd_data) {
 		ext4_warning(sb, "not enough memory for mmpd_data");
 		goto failed;

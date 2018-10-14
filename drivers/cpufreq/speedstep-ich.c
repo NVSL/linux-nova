@@ -207,7 +207,7 @@ static unsigned int speedstep_detect_chipset(void)
 		 * 8100 which use a pretty old revision of the 82815
 		 * host bridge. Abort on these systems.
 		 */
-		static struct pci_dev *hostbridge;
+		struct pci_dev *hostbridge;
 
 		hostbridge  = pci_get_subsys(PCI_VENDOR_ID_INTEL,
 			      PCI_DEVICE_ID_INTEL_82815_MC,
@@ -304,7 +304,9 @@ static int speedstep_cpu_init(struct cpufreq_policy *policy)
 	if (gf.ret)
 		return gf.ret;
 
-	return cpufreq_table_validate_and_show(policy, speedstep_freqs);
+	policy->freq_table = speedstep_freqs;
+
+	return 0;
 }
 
 

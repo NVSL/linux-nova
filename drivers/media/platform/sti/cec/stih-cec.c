@@ -1,11 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * STIH4xx CEC driver
  * Copyright (C) STMicroelectronics SA 2016
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
  */
 #include <linux/clk.h>
 #include <linux/interrupt.h>
@@ -351,9 +348,7 @@ static int stih_cec_probe(struct platform_device *pdev)
 	}
 
 	cec->adap = cec_allocate_adapter(&sti_cec_adap_ops, cec,
-			CEC_NAME,
-			CEC_CAP_LOG_ADDRS | CEC_CAP_PASSTHROUGH |
-			CEC_CAP_TRANSMIT, CEC_MAX_LOG_ADDRS);
+			CEC_NAME, CEC_CAP_DEFAULTS, CEC_MAX_LOG_ADDRS);
 	ret = PTR_ERR_OR_ZERO(cec->adap);
 	if (ret)
 		return ret;

@@ -267,7 +267,7 @@ static void sh_veu_process(struct sh_veu_dev *veu,
 	sh_veu_reg_write(veu, VEU_EIER, 1); /* enable interrupt in VEU */
 }
 
-/**
+/*
  * sh_veu_device_run() - prepares and starts the device
  *
  * This will be called by the framework when it decides to schedule a particular
@@ -520,8 +520,8 @@ static void sh_veu_colour_offset(struct sh_veu_dev *veu, struct sh_veu_vfmt *vfm
 	/* dst_left and dst_top validity will be verified in CROP / COMPOSE */
 	unsigned int left = vfmt->frame.left & ~0x03;
 	unsigned int top = vfmt->frame.top;
-	dma_addr_t offset = ((left * veu->vfmt_out.fmt->depth) >> 3) +
-		top * veu->vfmt_out.bytesperline;
+	dma_addr_t offset = (dma_addr_t)top * veu->vfmt_out.bytesperline +
+			(((dma_addr_t)left * veu->vfmt_out.fmt->depth) >> 3);
 	unsigned int y_line;
 
 	vfmt->offset_y = offset;
@@ -1016,7 +1016,7 @@ static int sh_veu_release(struct file *file)
 	return 0;
 }
 
-static unsigned int sh_veu_poll(struct file *file,
+static __poll_t sh_veu_poll(struct file *file,
 				struct poll_table_struct *wait)
 {
 	struct sh_veu_file *veu_file = file->private_data;

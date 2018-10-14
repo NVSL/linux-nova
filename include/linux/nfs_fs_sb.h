@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _NFS_FS_SB
 #define _NFS_FS_SB
 
@@ -9,6 +10,7 @@
 #include <linux/sunrpc/xprt.h>
 
 #include <linux/atomic.h>
+#include <linux/refcount.h>
 
 struct nfs4_session;
 struct nfs_iostats;
@@ -24,8 +26,9 @@ struct nfs41_impl_id;
  * The nfs_client identifies our client state to the server.
  */
 struct nfs_client {
-	atomic_t		cl_count;
+	refcount_t		cl_count;
 	atomic_t		cl_mds_count;
+	seqcount_t		cl_callback_count;
 	int			cl_cons_state;	/* current construction state (-ve: init error) */
 #define NFS_CS_READY		0		/* ready to be used */
 #define NFS_CS_INITING		1		/* busy initialising */
@@ -233,6 +236,7 @@ struct nfs_server {
 #define NFS_CAP_ACLS		(1U << 3)
 #define NFS_CAP_ATOMIC_OPEN	(1U << 4)
 /* #define NFS_CAP_CHANGE_ATTR	(1U << 5) */
+#define NFS_CAP_LGOPEN		(1U << 5)
 #define NFS_CAP_FILEID		(1U << 6)
 #define NFS_CAP_MODE		(1U << 7)
 #define NFS_CAP_NLINK		(1U << 8)

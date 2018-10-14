@@ -8,6 +8,7 @@
  * Copyright(c) 2012 - 2014 Intel Corporation. All rights reserved.
  * Copyright(c) 2013 - 2014 Intel Mobile Communications GmbH
  * Copyright(c) 2015 - 2016 Intel Deutschland GmbH
+ * Copyright(c) 2018 Intel Corporation
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of version 2 of the GNU General Public License as
@@ -17,11 +18,6 @@
  * WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110,
- * USA
  *
  * The full GNU General Public License is included in this distribution
  * in the file called COPYING.
@@ -35,6 +31,7 @@
  * Copyright(c) 2012 - 2014 Intel Corporation. All rights reserved.
  * Copyright(c) 2013 - 2014 Intel Mobile Communications GmbH
  * Copyright(c) 2015 - 2016 Intel Deutschland GmbH
+ * Copyright(c) 2018 Intel Corporation
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -222,16 +219,7 @@ struct iwl_mvm_vif;
  * we remove the STA of the AP. The flush can be done synchronously against the
  * fw.
  * Drain means that the fw will drop all the frames sent to a specific station.
- * This is useful when a client (if we are IBSS / GO or AP) disassociates. In
- * that case, we need to drain all the frames for that client from the AC queues
- * that are shared with the other clients. Only then, we can remove the STA in
- * the fw. In order to do so, we track the non-AMPDU packets for each station.
- * If mac80211 removes a STA and if it still has non-AMPDU packets pending in
- * the queues, we mark this station as %EBUSY in %fw_id_to_mac_id, and drop all
- * the frames for this STA (%iwl_mvm_rm_sta). When the last frame is dropped
- * (we know about it with its Tx response), we remove the station in fw and set
- * it as %NULL in %fw_id_to_mac_id: this is the purpose of
- * %iwl_mvm_sta_drained_wk.
+ * This is useful when a client (if we are IBSS / GO or AP) disassociates.
  */
 
 /**
@@ -290,6 +278,7 @@ struct iwl_mvm_vif;
  * These states relate to a specific RA / TID.
  *
  * @IWL_AGG_OFF: aggregation is not used
+ * @IWL_AGG_QUEUED: aggregation start work has been queued
  * @IWL_AGG_STARTING: aggregation are starting (between start and oper)
  * @IWL_AGG_ON: aggregation session is up
  * @IWL_EMPTYING_HW_QUEUE_ADDBA: establishing a BA session - waiting for the
@@ -299,6 +288,7 @@ struct iwl_mvm_vif;
  */
 enum iwl_mvm_agg_state {
 	IWL_AGG_OFF = 0,
+	IWL_AGG_QUEUED,
 	IWL_AGG_STARTING,
 	IWL_AGG_ON,
 	IWL_EMPTYING_HW_QUEUE_ADDBA,
@@ -325,6 +315,10 @@ enum iwl_mvm_agg_state {
  * @is_tid_active: has this TID sent traffic in the last
  *	%IWL_MVM_DQA_QUEUE_TIMEOUT time period. If %txq_id is invalid, this
  *	field should be ignored.
+ * @tpt_meas_start: time of the throughput measurements start, is reset every HZ
+ * @tx_count_last: number of frames transmitted during the last second
+ * @tx_count: counts the number of frames transmitted since the last reset of
+ *	 tpt_meas_start
  */
 struct iwl_mvm_tid_data {
 	struct sk_buff_head deferred_tx_frames;
@@ -339,6 +333,9 @@ struct iwl_mvm_tid_data {
 	u16 ssn;
 	u16 tx_time;
 	bool is_tid_active;
+	unsigned long tpt_meas_start;
+	u32 tx_count_last;
+	u32 tx_count;
 };
 
 struct iwl_mvm_key_pn {
@@ -371,12 +368,12 @@ struct iwl_mvm_rxq_dup_data {
  * struct iwl_mvm_sta - representation of a station in the driver
  * @sta_id: the index of the station in the fw (will be replaced by id_n_color)
  * @tfd_queue_msk: the tfd queues used by the station
- * @hw_queue: per-AC mapping of the TFD queues used by station
  * @mac_id_n_color: the MAC context this station is linked to
  * @tid_disable_agg: bitmap: if bit(tid) is set, the fw won't send ampdus for
  *	tid.
  * @max_agg_bufsize: the maximal size of the AGG buffer for this station
  * @sta_type: station type
+ * @sta_state: station state according to enum %ieee80211_sta_state
  * @bt_reduced_txpower: is reduced tx power enabled for this station
  * @next_status_eosp: the next reclaimed packet is a PS-Poll response and
  *	we need to signal the EOSP
@@ -384,13 +381,17 @@ struct iwl_mvm_rxq_dup_data {
  * and from Tx response flow, it needs a spinlock.
  * @tid_data: per tid data + mgmt. Look at %iwl_mvm_tid_data.
  * @tid_to_baid: a simple map of TID to baid
+ * @lq_sta: holds rate scaling data, either for the case when RS is done in
+ *	the driver - %rs_drv or in the FW - %rs_fw.
  * @reserved_queue: the queue reserved for this STA for DQA purposes
  *	Every STA has is given one reserved queue to allow it to operate. If no
  *	such queue can be guaranteed, the STA addition will fail.
  * @tx_protection: reference counter for controlling the Tx protection.
  * @tt_tx_protection: is thermal throttling enable Tx protection?
  * @disable_tx: is tx to this STA disabled?
- * @tlc_amsdu: true if A-MSDU is allowed
+ * @amsdu_enabled: bitmap of TX AMSDU allowed TIDs.
+ *	In case TLC offload is not active it is either 0xFFFF or 0.
+ * @max_amsdu_len: max AMSDU length
  * @agg_tids: bitmap of tids whose status is operational aggregated (IWL_AGG_ON)
  * @sleep_tx_count: the number of frames that we told the firmware to let out
  *	even when that station is asleep. This is useful in case the queue
@@ -409,17 +410,20 @@ struct iwl_mvm_rxq_dup_data {
 struct iwl_mvm_sta {
 	u32 sta_id;
 	u32 tfd_queue_msk;
-	u8 hw_queue[IEEE80211_NUM_ACS];
 	u32 mac_id_n_color;
 	u16 tid_disable_agg;
 	u8 max_agg_bufsize;
 	enum iwl_sta_type sta_type;
+	enum ieee80211_sta_state sta_state;
 	bool bt_reduced_txpower;
 	bool next_status_eosp;
 	spinlock_t lock;
 	struct iwl_mvm_tid_data tid_data[IWL_MAX_TID_COUNT + 1];
 	u8 tid_to_baid[IWL_MAX_TID_COUNT];
-	struct iwl_lq_sta lq_sta;
+	union {
+		struct iwl_lq_sta_rs_fw rs_fw;
+		struct iwl_lq_sta rs_drv;
+	} lq_sta;
 	struct ieee80211_vif *vif;
 	struct iwl_mvm_key_pn __rcu *ptk_pn[4];
 	struct iwl_mvm_rxq_dup_data *dup_data;
@@ -433,9 +437,9 @@ struct iwl_mvm_sta {
 	bool tt_tx_protection;
 
 	bool disable_tx;
-	bool tlc_amsdu;
+	u16 amsdu_enabled;
+	u16 max_amsdu_len;
 	bool sleeping;
-	bool associated;
 	u8 agg_tids;
 	u8 sleep_tx_count;
 	u8 avg_energy;
@@ -533,9 +537,9 @@ void iwl_mvm_del_aux_sta(struct iwl_mvm *mvm);
 
 int iwl_mvm_alloc_bcast_sta(struct iwl_mvm *mvm, struct ieee80211_vif *vif);
 int iwl_mvm_send_add_bcast_sta(struct iwl_mvm *mvm, struct ieee80211_vif *vif);
-int iwl_mvm_add_bcast_sta(struct iwl_mvm *mvm, struct ieee80211_vif *vif);
+int iwl_mvm_add_p2p_bcast_sta(struct iwl_mvm *mvm, struct ieee80211_vif *vif);
 int iwl_mvm_send_rm_bcast_sta(struct iwl_mvm *mvm, struct ieee80211_vif *vif);
-int iwl_mvm_rm_bcast_sta(struct iwl_mvm *mvm, struct ieee80211_vif *vif);
+int iwl_mvm_rm_p2p_bcast_sta(struct iwl_mvm *mvm, struct ieee80211_vif *vif);
 int iwl_mvm_add_mcast_sta(struct iwl_mvm *mvm, struct ieee80211_vif *vif);
 int iwl_mvm_rm_mcast_sta(struct iwl_mvm *mvm, struct ieee80211_vif *vif);
 int iwl_mvm_allocate_int_sta(struct iwl_mvm *mvm,
@@ -548,7 +552,6 @@ int iwl_mvm_add_snif_sta(struct iwl_mvm *mvm, struct ieee80211_vif *vif);
 int iwl_mvm_rm_snif_sta(struct iwl_mvm *mvm, struct ieee80211_vif *vif);
 void iwl_mvm_dealloc_snif_sta(struct iwl_mvm *mvm);
 
-void iwl_mvm_sta_drained_wk(struct work_struct *wk);
 void iwl_mvm_sta_modify_ps_wake(struct iwl_mvm *mvm,
 				struct ieee80211_sta *sta);
 void iwl_mvm_sta_modify_sleep_tx_count(struct iwl_mvm *mvm,

@@ -1,19 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2007 Oracle.  All rights reserved.
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public
- * License v2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public
- * License along with this program; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 021110-1307, USA.
  */
 
 #include <linux/blkdev.h>
@@ -41,6 +28,7 @@
 #include <linux/slab.h>
 #include <linux/cleancache.h>
 #include <linux/ratelimit.h>
+#include <linux/crc32c.h>
 #include <linux/btrfs.h>
 #include "delayed-inode.h"
 #include "ctree.h"
@@ -48,7 +36,6 @@
 #include "transaction.h"
 #include "btrfs_inode.h"
 #include "print-tree.h"
-#include "hash.h"
 #include "props.h"
 #include "xattr.h"
 #include "volumes.h"
@@ -65,7 +52,17 @@
 #include <trace/events/btrfs.h>
 
 static const struct super_operations btrfs_super_ops;
+
+/*
+ * Types for mounting the default subvolume and a subvolume explicitly
+ * requested by subvol=/path. That way the callchain is straightforward and we
+ * don't have to play tricks with the mount options and recursive calls to
+ * btrfs_mount.
+ *
+ * The new btrfs_root_fs_type also servers as a tag for the bdev_holder.
+ */
 static struct file_system_type btrfs_fs_type;
+static struct file_system_type btrfs_root_fs_type;
 
 static int btrfs_remount(struct super_block *sb, int *flags, char *data);
 
@@ -97,30 +94,6 @@ const char *btrfs_decode_error(int errno)
 	return errstr;
 }
 
-/* btrfs handle error by forcing the filesystem readonly */
-static void btrfs_handle_error(struct btrfs_fs_info *fs_info)
-{
-	struct super_block *sb = fs_info->sb;
-
-	if (sb->s_flags & MS_RDONLY)
-		return;
-
-	if (test_bit(BTRFS_FS_STATE_ERROR, &fs_info->fs_state)) {
-		sb->s_flags |= MS_RDONLY;
-		btrfs_info(fs_info, "forced readonly");
-		/*
-		 * Note that a running device replace operation is not
-		 * canceled here although there is no way to update
-		 * the progress. It would add the risk of a deadlock,
-		 * therefore the canceling is omitted. The only penalty
-		 * is that some I/O remains active until the procedure
-		 * completes. The next time when the filesystem is
-		 * mounted writeable again, the device replace
-		 * operation continues.
-		 */
-	}
-}
-
 /*
  * __btrfs_handle_fs_error decodes expected errors from the caller and
  * invokes the approciate error response.
@@ -136,9 +109,9 @@ void __btrfs_handle_fs_error(struct btrfs_fs_info *fs_info, const char *function
 
 	/*
 	 * Special case: if the error is EROFS, and we're already
-	 * under MS_RDONLY, then it is safe here.
+	 * under SB_RDONLY, then it is safe here.
 	 */
-	if (errno == -EROFS && (sb->s_flags & MS_RDONLY))
+	if (errno == -EROFS && sb_rdonly(sb))
   		return;
 
 #ifdef CONFIG_PRINTK
@@ -167,8 +140,23 @@ void __btrfs_handle_fs_error(struct btrfs_fs_info *fs_info, const char *function
 	set_bit(BTRFS_FS_STATE_ERROR, &fs_info->fs_state);
 
 	/* Don't go through full error handling during mount */
-	if (sb->s_flags & MS_BORN)
-		btrfs_handle_error(fs_info);
+	if (!(sb->s_flags & SB_BORN))
+		return;
+
+	if (sb_rdonly(sb))
+		return;
+
+	/* btrfs handle error by forcing the filesystem readonly */
+	sb->s_flags |= SB_RDONLY;
+	btrfs_info(fs_info, "forced readonly");
+	/*
+	 * Note that a running device replace operation is not canceled here
+	 * although there is no way to update the progress. It would add the
+	 * risk of a deadlock, therefore the canceling is omitted. The only
+	 * penalty is that some I/O remains active until the procedure
+	 * completes. The next time when the filesystem is mounted writeable
+	 * again, the device replace operation continues.
+	 */
 }
 
 #ifdef CONFIG_PRINTK
@@ -201,7 +189,6 @@ static struct ratelimit_state printk_limits[] = {
 
 void btrfs_printk(const struct btrfs_fs_info *fs_info, const char *fmt, ...)
 {
-	struct super_block *sb = fs_info->sb;
 	char lvl[PRINTK_MAX_SINGLE_HEADER_LEN + 1] = "\0";
 	struct va_format vaf;
 	va_list args;
@@ -227,7 +214,8 @@ void btrfs_printk(const struct btrfs_fs_info *fs_info, const char *fmt, ...)
 	vaf.va = &args;
 
 	if (__ratelimit(ratelimit))
-		printk("%sBTRFS %s (device %s): %pV\n", lvl, type, sb->s_id, &vaf);
+		printk("%sBTRFS %s (device %s): %pV\n", lvl, type,
+			fs_info ? fs_info->sb->s_id : "<unknown>", &vaf);
 
 	va_end(args);
 }
@@ -291,7 +279,7 @@ void __btrfs_panic(struct btrfs_fs_info *fs_info, const char *function,
 	vaf.va = &args;
 
 	errstr = btrfs_decode_error(errno);
-	if (fs_info && (fs_info->mount_opt & BTRFS_MOUNT_PANIC_ON_FATAL_ERROR))
+	if (fs_info && (btrfs_test_opt(fs_info, PANIC_ON_FATAL_ERROR)))
 		panic(KERN_CRIT "BTRFS panic (device %s) in %s:%d: %pV (errno=%d %s)\n",
 			s_id, function, line, &vaf, errno, errstr);
 
@@ -307,84 +295,126 @@ static void btrfs_put_super(struct super_block *sb)
 }
 
 enum {
-	Opt_degraded, Opt_subvol, Opt_subvolid, Opt_device, Opt_nodatasum,
-	Opt_nodatacow, Opt_max_inline, Opt_alloc_start, Opt_nobarrier, Opt_ssd,
-	Opt_nossd, Opt_ssd_spread, Opt_thread_pool, Opt_noacl, Opt_compress,
-	Opt_compress_type, Opt_compress_force, Opt_compress_force_type,
-	Opt_notreelog, Opt_ratio, Opt_flushoncommit, Opt_discard,
-	Opt_space_cache, Opt_space_cache_version, Opt_clear_cache,
-	Opt_user_subvol_rm_allowed, Opt_enospc_debug, Opt_subvolrootid,
-	Opt_defrag, Opt_inode_cache, Opt_no_space_cache, Opt_recovery,
-	Opt_skip_balance, Opt_check_integrity,
+	Opt_acl, Opt_noacl,
+	Opt_clear_cache,
+	Opt_commit_interval,
+	Opt_compress,
+	Opt_compress_force,
+	Opt_compress_force_type,
+	Opt_compress_type,
+	Opt_degraded,
+	Opt_device,
+	Opt_fatal_errors,
+	Opt_flushoncommit, Opt_noflushoncommit,
+	Opt_inode_cache, Opt_noinode_cache,
+	Opt_max_inline,
+	Opt_barrier, Opt_nobarrier,
+	Opt_datacow, Opt_nodatacow,
+	Opt_datasum, Opt_nodatasum,
+	Opt_defrag, Opt_nodefrag,
+	Opt_discard, Opt_nodiscard,
+	Opt_nologreplay,
+	Opt_norecovery,
+	Opt_ratio,
+	Opt_rescan_uuid_tree,
+	Opt_skip_balance,
+	Opt_space_cache, Opt_no_space_cache,
+	Opt_space_cache_version,
+	Opt_ssd, Opt_nossd,
+	Opt_ssd_spread, Opt_nossd_spread,
+	Opt_subvol,
+	Opt_subvol_empty,
+	Opt_subvolid,
+	Opt_thread_pool,
+	Opt_treelog, Opt_notreelog,
+	Opt_usebackuproot,
+	Opt_user_subvol_rm_allowed,
+
+	/* Deprecated options */
+	Opt_alloc_start,
+	Opt_recovery,
+	Opt_subvolrootid,
+
+	/* Debugging options */
+	Opt_check_integrity,
 	Opt_check_integrity_including_extent_data,
-	Opt_check_integrity_print_mask, Opt_fatal_errors, Opt_rescan_uuid_tree,
-	Opt_commit_interval, Opt_barrier, Opt_nodefrag, Opt_nodiscard,
-	Opt_noenospc_debug, Opt_noflushoncommit, Opt_acl, Opt_datacow,
-	Opt_datasum, Opt_treelog, Opt_noinode_cache, Opt_usebackuproot,
-	Opt_nologreplay, Opt_norecovery,
+	Opt_check_integrity_print_mask,
+	Opt_enospc_debug, Opt_noenospc_debug,
 #ifdef CONFIG_BTRFS_DEBUG
 	Opt_fragment_data, Opt_fragment_metadata, Opt_fragment_all,
+#endif
+#ifdef CONFIG_BTRFS_FS_REF_VERIFY
+	Opt_ref_verify,
 #endif
 	Opt_err,
 };
 
 static const match_table_t tokens = {
-	{Opt_degraded, "degraded"},
-	{Opt_subvol, "subvol=%s"},
-	{Opt_subvolid, "subvolid=%s"},
-	{Opt_device, "device=%s"},
-	{Opt_nodatasum, "nodatasum"},
-	{Opt_datasum, "datasum"},
-	{Opt_nodatacow, "nodatacow"},
-	{Opt_datacow, "datacow"},
-	{Opt_nobarrier, "nobarrier"},
-	{Opt_barrier, "barrier"},
-	{Opt_max_inline, "max_inline=%s"},
-	{Opt_alloc_start, "alloc_start=%s"},
-	{Opt_thread_pool, "thread_pool=%d"},
+	{Opt_acl, "acl"},
+	{Opt_noacl, "noacl"},
+	{Opt_clear_cache, "clear_cache"},
+	{Opt_commit_interval, "commit=%u"},
 	{Opt_compress, "compress"},
 	{Opt_compress_type, "compress=%s"},
 	{Opt_compress_force, "compress-force"},
 	{Opt_compress_force_type, "compress-force=%s"},
-	{Opt_ssd, "ssd"},
-	{Opt_ssd_spread, "ssd_spread"},
-	{Opt_nossd, "nossd"},
-	{Opt_acl, "acl"},
-	{Opt_noacl, "noacl"},
-	{Opt_notreelog, "notreelog"},
-	{Opt_treelog, "treelog"},
-	{Opt_nologreplay, "nologreplay"},
-	{Opt_norecovery, "norecovery"},
+	{Opt_degraded, "degraded"},
+	{Opt_device, "device=%s"},
+	{Opt_fatal_errors, "fatal_errors=%s"},
 	{Opt_flushoncommit, "flushoncommit"},
 	{Opt_noflushoncommit, "noflushoncommit"},
-	{Opt_ratio, "metadata_ratio=%d"},
-	{Opt_discard, "discard"},
-	{Opt_nodiscard, "nodiscard"},
-	{Opt_space_cache, "space_cache"},
-	{Opt_space_cache_version, "space_cache=%s"},
-	{Opt_clear_cache, "clear_cache"},
-	{Opt_user_subvol_rm_allowed, "user_subvol_rm_allowed"},
-	{Opt_enospc_debug, "enospc_debug"},
-	{Opt_noenospc_debug, "noenospc_debug"},
-	{Opt_subvolrootid, "subvolrootid=%d"},
-	{Opt_defrag, "autodefrag"},
-	{Opt_nodefrag, "noautodefrag"},
 	{Opt_inode_cache, "inode_cache"},
 	{Opt_noinode_cache, "noinode_cache"},
-	{Opt_no_space_cache, "nospace_cache"},
-	{Opt_recovery, "recovery"}, /* deprecated */
-	{Opt_usebackuproot, "usebackuproot"},
+	{Opt_max_inline, "max_inline=%s"},
+	{Opt_barrier, "barrier"},
+	{Opt_nobarrier, "nobarrier"},
+	{Opt_datacow, "datacow"},
+	{Opt_nodatacow, "nodatacow"},
+	{Opt_datasum, "datasum"},
+	{Opt_nodatasum, "nodatasum"},
+	{Opt_defrag, "autodefrag"},
+	{Opt_nodefrag, "noautodefrag"},
+	{Opt_discard, "discard"},
+	{Opt_nodiscard, "nodiscard"},
+	{Opt_nologreplay, "nologreplay"},
+	{Opt_norecovery, "norecovery"},
+	{Opt_ratio, "metadata_ratio=%u"},
+	{Opt_rescan_uuid_tree, "rescan_uuid_tree"},
 	{Opt_skip_balance, "skip_balance"},
+	{Opt_space_cache, "space_cache"},
+	{Opt_no_space_cache, "nospace_cache"},
+	{Opt_space_cache_version, "space_cache=%s"},
+	{Opt_ssd, "ssd"},
+	{Opt_nossd, "nossd"},
+	{Opt_ssd_spread, "ssd_spread"},
+	{Opt_nossd_spread, "nossd_spread"},
+	{Opt_subvol, "subvol=%s"},
+	{Opt_subvol_empty, "subvol="},
+	{Opt_subvolid, "subvolid=%s"},
+	{Opt_thread_pool, "thread_pool=%u"},
+	{Opt_treelog, "treelog"},
+	{Opt_notreelog, "notreelog"},
+	{Opt_usebackuproot, "usebackuproot"},
+	{Opt_user_subvol_rm_allowed, "user_subvol_rm_allowed"},
+
+	/* Deprecated options */
+	{Opt_alloc_start, "alloc_start=%s"},
+	{Opt_recovery, "recovery"},
+	{Opt_subvolrootid, "subvolrootid=%d"},
+
+	/* Debugging options */
 	{Opt_check_integrity, "check_int"},
 	{Opt_check_integrity_including_extent_data, "check_int_data"},
-	{Opt_check_integrity_print_mask, "check_int_print_mask=%d"},
-	{Opt_rescan_uuid_tree, "rescan_uuid_tree"},
-	{Opt_fatal_errors, "fatal_errors=%s"},
-	{Opt_commit_interval, "commit=%d"},
+	{Opt_check_integrity_print_mask, "check_int_print_mask=%u"},
+	{Opt_enospc_debug, "enospc_debug"},
+	{Opt_noenospc_debug, "noenospc_debug"},
 #ifdef CONFIG_BTRFS_DEBUG
 	{Opt_fragment_data, "fragment=data"},
 	{Opt_fragment_metadata, "fragment=metadata"},
 	{Opt_fragment_all, "fragment=all"},
+#endif
+#ifdef CONFIG_BTRFS_FS_REF_VERIFY
+	{Opt_ref_verify, "ref_verify"},
 #endif
 	{Opt_err, NULL},
 };
@@ -398,7 +428,7 @@ int btrfs_parse_options(struct btrfs_fs_info *info, char *options,
 			unsigned long new_flags)
 {
 	substring_t args[MAX_OPT_ARGS];
-	char *p, *num, *orig = NULL;
+	char *p, *num;
 	u64 cache_gen;
 	int intarg;
 	int ret = 0;
@@ -421,16 +451,6 @@ int btrfs_parse_options(struct btrfs_fs_info *info, char *options,
 	if (!options)
 		goto check;
 
-	/*
-	 * strsep changes the string, duplicate it because parse_options
-	 * gets called twice
-	 */
-	options = kstrdup(options, GFP_NOFS);
-	if (!options)
-		return -ENOMEM;
-
-	orig = options;
-
 	while ((p = strsep(&options, ",")) != NULL) {
 		int token;
 		if (!*p)
@@ -443,11 +463,13 @@ int btrfs_parse_options(struct btrfs_fs_info *info, char *options,
 			btrfs_set_opt(info->mount_opt, DEGRADED);
 			break;
 		case Opt_subvol:
+		case Opt_subvol_empty:
 		case Opt_subvolid:
 		case Opt_subvolrootid:
 		case Opt_device:
 			/*
-			 * These are parsed by btrfs_parse_early_options
+			 * These are parsed by btrfs_parse_subvol_options
+			 * and btrfs_parse_early_options
 			 * and can be happily ignored here.
 			 */
 			break;
@@ -498,20 +520,39 @@ int btrfs_parse_options(struct btrfs_fs_info *info, char *options,
 				btrfs_test_opt(info, FORCE_COMPRESS);
 			if (token == Opt_compress ||
 			    token == Opt_compress_force ||
-			    strcmp(args[0].from, "zlib") == 0) {
+			    strncmp(args[0].from, "zlib", 4) == 0) {
 				compress_type = "zlib";
+
 				info->compress_type = BTRFS_COMPRESS_ZLIB;
+				info->compress_level = BTRFS_ZLIB_DEFAULT_LEVEL;
+				/*
+				 * args[0] contains uninitialized data since
+				 * for these tokens we don't expect any
+				 * parameter.
+				 */
+				if (token != Opt_compress &&
+				    token != Opt_compress_force)
+					info->compress_level =
+					  btrfs_compress_str2level(args[0].from);
 				btrfs_set_opt(info->mount_opt, COMPRESS);
 				btrfs_clear_opt(info->mount_opt, NODATACOW);
 				btrfs_clear_opt(info->mount_opt, NODATASUM);
 				no_compress = 0;
-			} else if (strcmp(args[0].from, "lzo") == 0) {
+			} else if (strncmp(args[0].from, "lzo", 3) == 0) {
 				compress_type = "lzo";
 				info->compress_type = BTRFS_COMPRESS_LZO;
 				btrfs_set_opt(info->mount_opt, COMPRESS);
 				btrfs_clear_opt(info->mount_opt, NODATACOW);
 				btrfs_clear_opt(info->mount_opt, NODATASUM);
 				btrfs_set_fs_incompat(info, COMPRESS_LZO);
+				no_compress = 0;
+			} else if (strcmp(args[0].from, "zstd") == 0) {
+				compress_type = "zstd";
+				info->compress_type = BTRFS_COMPRESS_ZSTD;
+				btrfs_set_opt(info->mount_opt, COMPRESS);
+				btrfs_clear_opt(info->mount_opt, NODATACOW);
+				btrfs_clear_opt(info->mount_opt, NODATASUM);
+				btrfs_set_fs_incompat(info, COMPRESS_ZSTD);
 				no_compress = 0;
 			} else if (strncmp(args[0].from, "no", 2) == 0) {
 				compress_type = "no";
@@ -540,28 +581,32 @@ int btrfs_parse_options(struct btrfs_fs_info *info, char *options,
 			      compress_force != saved_compress_force)) ||
 			    (!btrfs_test_opt(info, COMPRESS) &&
 			     no_compress == 1)) {
-				btrfs_info(info, "%s %s compression",
+				btrfs_info(info, "%s %s compression, level %d",
 					   (compress_force) ? "force" : "use",
-					   compress_type);
+					   compress_type, info->compress_level);
 			}
 			compress_force = false;
 			break;
 		case Opt_ssd:
 			btrfs_set_and_info(info, SSD,
-					   "use ssd allocation scheme");
+					   "enabling ssd optimizations");
 			btrfs_clear_opt(info->mount_opt, NOSSD);
 			break;
 		case Opt_ssd_spread:
+			btrfs_set_and_info(info, SSD,
+					   "enabling ssd optimizations");
 			btrfs_set_and_info(info, SSD_SPREAD,
-					   "use spread ssd allocation scheme");
-			btrfs_set_opt(info->mount_opt, SSD);
+					   "using spread ssd allocation scheme");
 			btrfs_clear_opt(info->mount_opt, NOSSD);
 			break;
 		case Opt_nossd:
-			btrfs_set_and_info(info, NOSSD,
-					     "not using ssd allocation scheme");
-			btrfs_clear_opt(info->mount_opt, SSD);
-			btrfs_clear_opt(info->mount_opt, SSD_SPREAD);
+			btrfs_set_opt(info->mount_opt, NOSSD);
+			btrfs_clear_and_info(info, SSD,
+					     "not using ssd optimizations");
+			/* Fallthrough */
+		case Opt_nossd_spread:
+			btrfs_clear_and_info(info, SSD_SPREAD,
+					     "not using spread ssd allocation scheme");
 			break;
 		case Opt_barrier:
 			btrfs_clear_and_info(info, NOBARRIER,
@@ -575,12 +620,11 @@ int btrfs_parse_options(struct btrfs_fs_info *info, char *options,
 			ret = match_int(&args[0], &intarg);
 			if (ret) {
 				goto out;
-			} else if (intarg > 0) {
-				info->thread_pool_size = intarg;
-			} else {
+			} else if (intarg == 0) {
 				ret = -EINVAL;
 				goto out;
 			}
+			info->thread_pool_size = intarg;
 			break;
 		case Opt_max_inline:
 			num = match_strdup(&args[0]);
@@ -606,7 +650,7 @@ int btrfs_parse_options(struct btrfs_fs_info *info, char *options,
 			break;
 		case Opt_acl:
 #ifdef CONFIG_BTRFS_FS_POSIX_ACL
-			info->sb->s_flags |= MS_POSIXACL;
+			info->sb->s_flags |= SB_POSIXACL;
 			break;
 #else
 			btrfs_err(info, "support for ACL not compiled in!");
@@ -614,7 +658,7 @@ int btrfs_parse_options(struct btrfs_fs_info *info, char *options,
 			goto out;
 #endif
 		case Opt_noacl:
-			info->sb->s_flags &= ~MS_POSIXACL;
+			info->sb->s_flags &= ~SB_POSIXACL;
 			break;
 		case Opt_notreelog:
 			btrfs_set_and_info(info, NOTREELOG,
@@ -639,16 +683,11 @@ int btrfs_parse_options(struct btrfs_fs_info *info, char *options,
 			break;
 		case Opt_ratio:
 			ret = match_int(&args[0], &intarg);
-			if (ret) {
+			if (ret)
 				goto out;
-			} else if (intarg >= 0) {
-				info->metadata_ratio = intarg;
-				btrfs_info(info, "metadata ratio %d",
-					   info->metadata_ratio);
-			} else {
-				ret = -EINVAL;
-				goto out;
-			}
+			info->metadata_ratio = intarg;
+			btrfs_info(info, "metadata ratio %u",
+				   info->metadata_ratio);
 			break;
 		case Opt_discard:
 			btrfs_set_and_info(info, DISCARD,
@@ -743,17 +782,11 @@ int btrfs_parse_options(struct btrfs_fs_info *info, char *options,
 			break;
 		case Opt_check_integrity_print_mask:
 			ret = match_int(&args[0], &intarg);
-			if (ret) {
+			if (ret)
 				goto out;
-			} else if (intarg >= 0) {
-				info->check_integrity_print_mask = intarg;
-				btrfs_info(info,
-					   "check_integrity_print_mask 0x%x",
-					   info->check_integrity_print_mask);
-			} else {
-				ret = -EINVAL;
-				goto out;
-			}
+			info->check_integrity_print_mask = intarg;
+			btrfs_info(info, "check_integrity_print_mask 0x%x",
+				   info->check_integrity_print_mask);
 			break;
 #else
 		case Opt_check_integrity_including_extent_data:
@@ -779,24 +812,18 @@ int btrfs_parse_options(struct btrfs_fs_info *info, char *options,
 		case Opt_commit_interval:
 			intarg = 0;
 			ret = match_int(&args[0], &intarg);
-			if (ret < 0) {
-				btrfs_err(info, "invalid commit interval");
-				ret = -EINVAL;
+			if (ret)
 				goto out;
-			}
-			if (intarg > 0) {
-				if (intarg > 300) {
-					btrfs_warn(info,
-						"excessive commit interval %d",
-						intarg);
-				}
-				info->commit_interval = intarg;
-			} else {
+			if (intarg == 0) {
 				btrfs_info(info,
-					   "using default commit interval %ds",
+					   "using default commit interval %us",
 					   BTRFS_DEFAULT_COMMIT_INTERVAL);
-				info->commit_interval = BTRFS_DEFAULT_COMMIT_INTERVAL;
+				intarg = BTRFS_DEFAULT_COMMIT_INTERVAL;
+			} else if (intarg > 300) {
+				btrfs_warn(info, "excessive commit interval %d",
+					   intarg);
 			}
+			info->commit_interval = intarg;
 			break;
 #ifdef CONFIG_BTRFS_DEBUG
 		case Opt_fragment_all:
@@ -814,6 +841,12 @@ int btrfs_parse_options(struct btrfs_fs_info *info, char *options,
 			btrfs_set_opt(info->mount_opt, FRAGMENT_DATA);
 			break;
 #endif
+#ifdef CONFIG_BTRFS_FS_REF_VERIFY
+		case Opt_ref_verify:
+			btrfs_info(info, "doing ref verification");
+			btrfs_set_opt(info->mount_opt, REF_VERIFY);
+			break;
+#endif
 		case Opt_err:
 			btrfs_info(info, "unrecognized mount option '%s'", p);
 			ret = -EINVAL;
@@ -826,7 +859,7 @@ check:
 	/*
 	 * Extra check for current option against current flag
 	 */
-	if (btrfs_test_opt(info, NOLOGREPLAY) && !(new_flags & MS_RDONLY)) {
+	if (btrfs_test_opt(info, NOLOGREPLAY) && !(new_flags & SB_RDONLY)) {
 		btrfs_err(info,
 			  "nologreplay must be used with ro mount option");
 		ret = -EINVAL;
@@ -843,7 +876,6 @@ out:
 		btrfs_info(info, "disk space caching is enabled");
 	if (!ret && btrfs_test_opt(info, FREE_SPACE_TREE))
 		btrfs_info(info, "using free space tree");
-	kfree(orig);
 	return ret;
 }
 
@@ -854,20 +886,69 @@ out:
  * only when we need to allocate a new super block.
  */
 static int btrfs_parse_early_options(const char *options, fmode_t flags,
-		void *holder, char **subvol_name, u64 *subvol_objectid,
-		struct btrfs_fs_devices **fs_devices)
+		void *holder, struct btrfs_fs_devices **fs_devices)
 {
 	substring_t args[MAX_OPT_ARGS];
 	char *device_name, *opts, *orig, *p;
-	char *num = NULL;
 	int error = 0;
 
 	if (!options)
 		return 0;
 
 	/*
-	 * strsep changes the string, duplicate it because parse_options
-	 * gets called twice
+	 * strsep changes the string, duplicate it because btrfs_parse_options
+	 * gets called later
+	 */
+	opts = kstrdup(options, GFP_KERNEL);
+	if (!opts)
+		return -ENOMEM;
+	orig = opts;
+
+	while ((p = strsep(&opts, ",")) != NULL) {
+		int token;
+
+		if (!*p)
+			continue;
+
+		token = match_token(p, tokens, args);
+		if (token == Opt_device) {
+			device_name = match_strdup(&args[0]);
+			if (!device_name) {
+				error = -ENOMEM;
+				goto out;
+			}
+			error = btrfs_scan_one_device(device_name,
+					flags, holder, fs_devices);
+			kfree(device_name);
+			if (error)
+				goto out;
+		}
+	}
+
+out:
+	kfree(orig);
+	return error;
+}
+
+/*
+ * Parse mount options that are related to subvolume id
+ *
+ * The value is later passed to mount_subvol()
+ */
+static int btrfs_parse_subvol_options(const char *options, fmode_t flags,
+		char **subvol_name, u64 *subvol_objectid)
+{
+	substring_t args[MAX_OPT_ARGS];
+	char *opts, *orig, *p;
+	int error = 0;
+	u64 subvolid;
+
+	if (!options)
+		return 0;
+
+	/*
+	 * strsep changes the string, duplicate it because
+	 * btrfs_parse_early_options gets called later
 	 */
 	opts = kstrdup(options, GFP_KERNEL);
 	if (!opts)
@@ -890,33 +971,18 @@ static int btrfs_parse_early_options(const char *options, fmode_t flags,
 			}
 			break;
 		case Opt_subvolid:
-			num = match_strdup(&args[0]);
-			if (num) {
-				*subvol_objectid = memparse(num, NULL);
-				kfree(num);
-				/* we want the original fs_tree */
-				if (!*subvol_objectid)
-					*subvol_objectid =
-						BTRFS_FS_TREE_OBJECTID;
-			} else {
-				error = -EINVAL;
+			error = match_u64(&args[0], &subvolid);
+			if (error)
 				goto out;
-			}
+
+			/* we want the original fs_tree */
+			if (subvolid == 0)
+				subvolid = BTRFS_FS_TREE_OBJECTID;
+
+			*subvol_objectid = subvolid;
 			break;
 		case Opt_subvolrootid:
 			pr_warn("BTRFS: 'subvolrootid' mount option is deprecated and has no effect\n");
-			break;
-		case Opt_device:
-			device_name = match_strdup(&args[0]);
-			if (!device_name) {
-				error = -ENOMEM;
-				goto out;
-			}
-			error = btrfs_scan_one_device(device_name,
-					flags, holder, fs_devices);
-			kfree(device_name);
-			if (error)
-				goto out;
 			break;
 		default:
 			break;
@@ -949,7 +1015,7 @@ static char *get_subvol_name_from_objectid(struct btrfs_fs_info *fs_info,
 	}
 	path->leave_spinning = 1;
 
-	name = kmalloc(PATH_MAX, GFP_NOFS);
+	name = kmalloc(PATH_MAX, GFP_KERNEL);
 	if (!name) {
 		ret = -ENOMEM;
 		goto err;
@@ -1122,9 +1188,9 @@ static int btrfs_fill_super(struct super_block *sb,
 	sb->s_xattr = btrfs_xattr_handlers;
 	sb->s_time_gran = 1;
 #ifdef CONFIG_BTRFS_FS_POSIX_ACL
-	sb->s_flags |= MS_POSIXACL;
+	sb->s_flags |= SB_POSIXACL;
 #endif
-	sb->s_flags |= MS_I_VERSION;
+	sb->s_flags |= SB_I_VERSION;
 	sb->s_iflags |= SB_I_CGROUPWB;
 
 	err = super_setup_bdi(sb);
@@ -1155,7 +1221,7 @@ static int btrfs_fill_super(struct super_block *sb,
 	}
 
 	cleancache_init_fs(sb);
-	sb->s_flags |= MS_ACTIVE;
+	sb->s_flags |= SB_ACTIVE;
 	return 0;
 
 fail_close:
@@ -1194,8 +1260,8 @@ int btrfs_sync_fs(struct super_block *sb, int wait)
 			 * happens. The pending operations are delayed to the
 			 * next commit after thawing.
 			 */
-			if (__sb_start_write(sb, SB_FREEZE_WRITE, false))
-				__sb_end_write(sb, SB_FREEZE_WRITE);
+			if (sb_start_write_trylock(sb))
+				sb_end_write(sb);
 			else
 				return 0;
 			trans = btrfs_start_transaction(root, 0);
@@ -1209,7 +1275,7 @@ int btrfs_sync_fs(struct super_block *sb, int wait)
 static int btrfs_show_options(struct seq_file *seq, struct dentry *dentry)
 {
 	struct btrfs_fs_info *info = btrfs_sb(dentry->d_sb);
-	char *compress_type;
+	const char *compress_type;
 
 	if (btrfs_test_opt(info, DEGRADED))
 		seq_puts(seq, ",degraded");
@@ -1223,16 +1289,15 @@ static int btrfs_show_options(struct seq_file *seq, struct dentry *dentry)
 		seq_printf(seq, ",max_inline=%llu", info->max_inline);
 	if (info->thread_pool_size !=  min_t(unsigned long,
 					     num_online_cpus() + 2, 8))
-		seq_printf(seq, ",thread_pool=%d", info->thread_pool_size);
+		seq_printf(seq, ",thread_pool=%u", info->thread_pool_size);
 	if (btrfs_test_opt(info, COMPRESS)) {
-		if (info->compress_type == BTRFS_COMPRESS_ZLIB)
-			compress_type = "zlib";
-		else
-			compress_type = "lzo";
+		compress_type = btrfs_compress_type2str(info->compress_type);
 		if (btrfs_test_opt(info, FORCE_COMPRESS))
 			seq_printf(seq, ",compress-force=%s", compress_type);
 		else
 			seq_printf(seq, ",compress=%s", compress_type);
+		if (info->compress_level)
+			seq_printf(seq, ":%d", info->compress_level);
 	}
 	if (btrfs_test_opt(info, NOSSD))
 		seq_puts(seq, ",nossd");
@@ -1248,7 +1313,7 @@ static int btrfs_show_options(struct seq_file *seq, struct dentry *dentry)
 		seq_puts(seq, ",flushoncommit");
 	if (btrfs_test_opt(info, DISCARD))
 		seq_puts(seq, ",discard");
-	if (!(info->sb->s_flags & MS_POSIXACL))
+	if (!(info->sb->s_flags & SB_POSIXACL))
 		seq_puts(seq, ",noacl");
 	if (btrfs_test_opt(info, SPACE_CACHE))
 		seq_puts(seq, ",space_cache");
@@ -1280,18 +1345,19 @@ static int btrfs_show_options(struct seq_file *seq, struct dentry *dentry)
 				info->check_integrity_print_mask);
 #endif
 	if (info->metadata_ratio)
-		seq_printf(seq, ",metadata_ratio=%d",
-				info->metadata_ratio);
+		seq_printf(seq, ",metadata_ratio=%u", info->metadata_ratio);
 	if (btrfs_test_opt(info, PANIC_ON_FATAL_ERROR))
 		seq_puts(seq, ",fatal_errors=panic");
 	if (info->commit_interval != BTRFS_DEFAULT_COMMIT_INTERVAL)
-		seq_printf(seq, ",commit=%d", info->commit_interval);
+		seq_printf(seq, ",commit=%u", info->commit_interval);
 #ifdef CONFIG_BTRFS_DEBUG
 	if (btrfs_test_opt(info, FRAGMENT_DATA))
 		seq_puts(seq, ",fragment=data");
 	if (btrfs_test_opt(info, FRAGMENT_METADATA))
 		seq_puts(seq, ",fragment=metadata");
 #endif
+	if (btrfs_test_opt(info, REF_VERIFY))
+		seq_puts(seq, ",ref_verify");
 	seq_printf(seq, ",subvolid=%llu",
 		  BTRFS_I(d_inode(dentry))->root->root_key.objectid);
 	seq_puts(seq, ",subvol=");
@@ -1325,84 +1391,11 @@ static inline int is_subvolume_inode(struct inode *inode)
 	return 0;
 }
 
-/*
- * This will add subvolid=0 to the argument string while removing any subvol=
- * and subvolid= arguments to make sure we get the top-level root for path
- * walking to the subvol we want.
- */
-static char *setup_root_args(char *args)
-{
-	char *buf, *dst, *sep;
-
-	if (!args)
-		return kstrdup("subvolid=0", GFP_NOFS);
-
-	/* The worst case is that we add ",subvolid=0" to the end. */
-	buf = dst = kmalloc(strlen(args) + strlen(",subvolid=0") + 1, GFP_NOFS);
-	if (!buf)
-		return NULL;
-
-	while (1) {
-		sep = strchrnul(args, ',');
-		if (!strstarts(args, "subvol=") &&
-		    !strstarts(args, "subvolid=")) {
-			memcpy(dst, args, sep - args);
-			dst += sep - args;
-			*dst++ = ',';
-		}
-		if (*sep)
-			args = sep + 1;
-		else
-			break;
-	}
-	strcpy(dst, "subvolid=0");
-
-	return buf;
-}
-
 static struct dentry *mount_subvol(const char *subvol_name, u64 subvol_objectid,
-				   int flags, const char *device_name,
-				   char *data)
+				   const char *device_name, struct vfsmount *mnt)
 {
 	struct dentry *root;
-	struct vfsmount *mnt = NULL;
-	char *newargs;
 	int ret;
-
-	newargs = setup_root_args(data);
-	if (!newargs) {
-		root = ERR_PTR(-ENOMEM);
-		goto out;
-	}
-
-	mnt = vfs_kern_mount(&btrfs_fs_type, flags, device_name, newargs);
-	if (PTR_ERR_OR_ZERO(mnt) == -EBUSY) {
-		if (flags & MS_RDONLY) {
-			mnt = vfs_kern_mount(&btrfs_fs_type, flags & ~MS_RDONLY,
-					     device_name, newargs);
-		} else {
-			mnt = vfs_kern_mount(&btrfs_fs_type, flags | MS_RDONLY,
-					     device_name, newargs);
-			if (IS_ERR(mnt)) {
-				root = ERR_CAST(mnt);
-				mnt = NULL;
-				goto out;
-			}
-
-			down_write(&mnt->mnt_sb->s_umount);
-			ret = btrfs_remount(mnt->mnt_sb, &flags, NULL);
-			up_write(&mnt->mnt_sb->s_umount);
-			if (ret < 0) {
-				root = ERR_PTR(ret);
-				goto out;
-			}
-		}
-	}
-	if (IS_ERR(mnt)) {
-		root = ERR_CAST(mnt);
-		mnt = NULL;
-		goto out;
-	}
 
 	if (!subvol_name) {
 		if (!subvol_objectid) {
@@ -1459,7 +1452,6 @@ static struct dentry *mount_subvol(const char *subvol_name, u64 subvol_objectid,
 
 out:
 	mntput(mnt);
-	kfree(newargs);
 	kfree(subvol_name);
 	return root;
 }
@@ -1517,11 +1509,11 @@ static int setup_security_options(struct btrfs_fs_info *fs_info,
 /*
  * Find a superblock for the given device / mount point.
  *
- * Note:  This is based on get_sb_bdev from fs/super.c with a few additions
- *	  for multiple device setup.  Make sure to keep it in sync.
+ * Note: This is based on mount_bdev from fs/super.c with a few additions
+ *       for multiple device setup.  Make sure to keep it in sync.
  */
-static struct dentry *btrfs_mount(struct file_system_type *fs_type, int flags,
-		const char *device_name, void *data)
+static struct dentry *btrfs_mount_root(struct file_system_type *fs_type,
+		int flags, const char *device_name, void *data)
 {
 	struct block_device *bdev = NULL;
 	struct super_block *s;
@@ -1529,25 +1521,15 @@ static struct dentry *btrfs_mount(struct file_system_type *fs_type, int flags,
 	struct btrfs_fs_info *fs_info = NULL;
 	struct security_mnt_opts new_sec_opts;
 	fmode_t mode = FMODE_READ;
-	char *subvol_name = NULL;
-	u64 subvol_objectid = 0;
 	int error = 0;
 
-	if (!(flags & MS_RDONLY))
+	if (!(flags & SB_RDONLY))
 		mode |= FMODE_WRITE;
 
 	error = btrfs_parse_early_options(data, mode, fs_type,
-					  &subvol_name, &subvol_objectid,
 					  &fs_devices);
 	if (error) {
-		kfree(subvol_name);
 		return ERR_PTR(error);
-	}
-
-	if (subvol_name || subvol_objectid != BTRFS_FS_TREE_OBJECTID) {
-		/* mount_subvol() will free subvol_name. */
-		return mount_subvol(subvol_name, subvol_objectid, flags,
-				    device_name, data);
 	}
 
 	security_init_mnt_opts(&new_sec_opts);
@@ -1567,7 +1549,7 @@ static struct dentry *btrfs_mount(struct file_system_type *fs_type, int flags,
 	 * it for searching for existing supers, so this lets us do that and
 	 * then open_ctree will properly initialize everything later.
 	 */
-	fs_info = kzalloc(sizeof(struct btrfs_fs_info), GFP_NOFS);
+	fs_info = kvzalloc(sizeof(struct btrfs_fs_info), GFP_KERNEL);
 	if (!fs_info) {
 		error = -ENOMEM;
 		goto error_sec_opts;
@@ -1575,8 +1557,8 @@ static struct dentry *btrfs_mount(struct file_system_type *fs_type, int flags,
 
 	fs_info->fs_devices = fs_devices;
 
-	fs_info->super_copy = kzalloc(BTRFS_SUPER_INFO_SIZE, GFP_NOFS);
-	fs_info->super_for_commit = kzalloc(BTRFS_SUPER_INFO_SIZE, GFP_NOFS);
+	fs_info->super_copy = kzalloc(BTRFS_SUPER_INFO_SIZE, GFP_KERNEL);
+	fs_info->super_for_commit = kzalloc(BTRFS_SUPER_INFO_SIZE, GFP_KERNEL);
 	security_init_mnt_opts(&fs_info->security_opts);
 	if (!fs_info->super_copy || !fs_info->super_for_commit) {
 		error = -ENOMEM;
@@ -1587,13 +1569,13 @@ static struct dentry *btrfs_mount(struct file_system_type *fs_type, int flags,
 	if (error)
 		goto error_fs_info;
 
-	if (!(flags & MS_RDONLY) && fs_devices->rw_devices == 0) {
+	if (!(flags & SB_RDONLY) && fs_devices->rw_devices == 0) {
 		error = -EACCES;
 		goto error_close_devices;
 	}
 
 	bdev = fs_devices->latest_bdev;
-	s = sget(fs_type, btrfs_test_super, btrfs_set_super, flags | MS_NOSEC,
+	s = sget(fs_type, btrfs_test_super, btrfs_set_super, flags | SB_NOSEC,
 		 fs_info);
 	if (IS_ERR(s)) {
 		error = PTR_ERR(s);
@@ -1603,7 +1585,7 @@ static struct dentry *btrfs_mount(struct file_system_type *fs_type, int flags,
 	if (s->s_root) {
 		btrfs_close_devices(fs_devices);
 		free_fs_info(fs_info);
-		if ((flags ^ s->s_flags) & MS_RDONLY)
+		if ((flags ^ s->s_flags) & SB_RDONLY)
 			error = -EBUSY;
 	} else {
 		snprintf(s->s_id, sizeof(s->s_id), "%pg", bdev);
@@ -1633,8 +1615,86 @@ error_sec_opts:
 	return ERR_PTR(error);
 }
 
+/*
+ * Mount function which is called by VFS layer.
+ *
+ * In order to allow mounting a subvolume directly, btrfs uses mount_subtree()
+ * which needs vfsmount* of device's root (/).  This means device's root has to
+ * be mounted internally in any case.
+ *
+ * Operation flow:
+ *   1. Parse subvol id related options for later use in mount_subvol().
+ *
+ *   2. Mount device's root (/) by calling vfs_kern_mount().
+ *
+ *      NOTE: vfs_kern_mount() is used by VFS to call btrfs_mount() in the
+ *      first place. In order to avoid calling btrfs_mount() again, we use
+ *      different file_system_type which is not registered to VFS by
+ *      register_filesystem() (btrfs_root_fs_type). As a result,
+ *      btrfs_mount_root() is called. The return value will be used by
+ *      mount_subtree() in mount_subvol().
+ *
+ *   3. Call mount_subvol() to get the dentry of subvolume. Since there is
+ *      "btrfs subvolume set-default", mount_subvol() is called always.
+ */
+static struct dentry *btrfs_mount(struct file_system_type *fs_type, int flags,
+		const char *device_name, void *data)
+{
+	struct vfsmount *mnt_root;
+	struct dentry *root;
+	fmode_t mode = FMODE_READ;
+	char *subvol_name = NULL;
+	u64 subvol_objectid = 0;
+	int error = 0;
+
+	if (!(flags & SB_RDONLY))
+		mode |= FMODE_WRITE;
+
+	error = btrfs_parse_subvol_options(data, mode,
+					  &subvol_name, &subvol_objectid);
+	if (error) {
+		kfree(subvol_name);
+		return ERR_PTR(error);
+	}
+
+	/* mount device's root (/) */
+	mnt_root = vfs_kern_mount(&btrfs_root_fs_type, flags, device_name, data);
+	if (PTR_ERR_OR_ZERO(mnt_root) == -EBUSY) {
+		if (flags & SB_RDONLY) {
+			mnt_root = vfs_kern_mount(&btrfs_root_fs_type,
+				flags & ~SB_RDONLY, device_name, data);
+		} else {
+			mnt_root = vfs_kern_mount(&btrfs_root_fs_type,
+				flags | SB_RDONLY, device_name, data);
+			if (IS_ERR(mnt_root)) {
+				root = ERR_CAST(mnt_root);
+				goto out;
+			}
+
+			down_write(&mnt_root->mnt_sb->s_umount);
+			error = btrfs_remount(mnt_root->mnt_sb, &flags, NULL);
+			up_write(&mnt_root->mnt_sb->s_umount);
+			if (error < 0) {
+				root = ERR_PTR(error);
+				mntput(mnt_root);
+				goto out;
+			}
+		}
+	}
+	if (IS_ERR(mnt_root)) {
+		root = ERR_CAST(mnt_root);
+		goto out;
+	}
+
+	/* mount_subvol() will free subvol_name and mnt_root */
+	root = mount_subvol(subvol_name, subvol_objectid, device_name, mnt_root);
+
+out:
+	return root;
+}
+
 static void btrfs_resize_thread_pool(struct btrfs_fs_info *fs_info,
-				     int new_pool_size, int old_pool_size)
+				     u32 new_pool_size, u32 old_pool_size)
 {
 	if (new_pool_size == old_pool_size)
 		return;
@@ -1670,11 +1730,11 @@ static inline void btrfs_remount_begin(struct btrfs_fs_info *fs_info,
 {
 	if (btrfs_raw_test_opt(old_opts, AUTO_DEFRAG) &&
 	    (!btrfs_raw_test_opt(fs_info->mount_opt, AUTO_DEFRAG) ||
-	     (flags & MS_RDONLY))) {
+	     (flags & SB_RDONLY))) {
 		/* wait for any defraggers to finish */
 		wait_event(fs_info->transaction_wait,
 			   (atomic_read(&fs_info->defrag_running) == 0));
-		if (flags & MS_RDONLY)
+		if (flags & SB_RDONLY)
 			sync_filesystem(fs_info->sb);
 	}
 }
@@ -1687,8 +1747,7 @@ static inline void btrfs_remount_cleanup(struct btrfs_fs_info *fs_info,
 	 * close or the filesystem is read only.
 	 */
 	if (btrfs_raw_test_opt(old_opts, AUTO_DEFRAG) &&
-	    (!btrfs_raw_test_opt(fs_info->mount_opt, AUTO_DEFRAG) ||
-	     (fs_info->sb->s_flags & MS_RDONLY))) {
+	    (!btrfs_raw_test_opt(fs_info->mount_opt, AUTO_DEFRAG) || sb_rdonly(fs_info->sb))) {
 		btrfs_cleanup_defrag_inodes(fs_info);
 	}
 
@@ -1703,8 +1762,8 @@ static int btrfs_remount(struct super_block *sb, int *flags, char *data)
 	unsigned long old_opts = fs_info->mount_opt;
 	unsigned long old_compress_type = fs_info->compress_type;
 	u64 old_max_inline = fs_info->max_inline;
-	int old_thread_pool_size = fs_info->thread_pool_size;
-	unsigned int old_metadata_ratio = fs_info->metadata_ratio;
+	u32 old_thread_pool_size = fs_info->thread_pool_size;
+	u32 old_metadata_ratio = fs_info->metadata_ratio;
 	int ret;
 
 	sync_filesystem(sb);
@@ -1726,19 +1785,17 @@ static int btrfs_remount(struct super_block *sb, int *flags, char *data)
 	}
 
 	ret = btrfs_parse_options(fs_info, data, *flags);
-	if (ret) {
-		ret = -EINVAL;
+	if (ret)
 		goto restore;
-	}
 
 	btrfs_remount_begin(fs_info, old_opts, *flags);
 	btrfs_resize_thread_pool(fs_info,
 		fs_info->thread_pool_size, old_thread_pool_size);
 
-	if ((*flags & MS_RDONLY) == (sb->s_flags & MS_RDONLY))
+	if ((bool)(*flags & SB_RDONLY) == sb_rdonly(sb))
 		goto out;
 
-	if (*flags & MS_RDONLY) {
+	if (*flags & SB_RDONLY) {
 		/*
 		 * this also happens on 'umount -rf' or on shutdown, when
 		 * the filesystem is busy.
@@ -1750,10 +1807,10 @@ static int btrfs_remount(struct super_block *sb, int *flags, char *data)
 		/* avoid complains from lockdep et al. */
 		up(&fs_info->uuid_tree_rescan_sem);
 
-		sb->s_flags |= MS_RDONLY;
+		sb->s_flags |= SB_RDONLY;
 
 		/*
-		 * Setting MS_RDONLY will put the cleaner thread to
+		 * Setting SB_RDONLY will put the cleaner thread to
 		 * sleep at the next loop if it's already active.
 		 * If it's already asleep, we'll leave unused block
 		 * groups on disk until we're mounted read-write again
@@ -1780,8 +1837,7 @@ static int btrfs_remount(struct super_block *sb, int *flags, char *data)
 			goto restore;
 		}
 
-		if (fs_info->fs_devices->missing_devices >
-		     fs_info->num_tolerated_disk_barrier_failures) {
+		if (!btrfs_check_rw_degradable(fs_info, NULL)) {
 			btrfs_warn(fs_info,
 				"too many missing devices, writeable remount is not allowed");
 			ret = -EACCES;
@@ -1814,6 +1870,8 @@ static int btrfs_remount(struct super_block *sb, int *flags, char *data)
 			goto restore;
 		}
 
+		btrfs_qgroup_rescan_resume(fs_info);
+
 		if (!fs_info->uuid_root) {
 			btrfs_info(fs_info, "creating UUID tree");
 			ret = btrfs_create_uuid_tree(fs_info);
@@ -1824,7 +1882,7 @@ static int btrfs_remount(struct super_block *sb, int *flags, char *data)
 				goto restore;
 			}
 		}
-		sb->s_flags &= ~MS_RDONLY;
+		sb->s_flags &= ~SB_RDONLY;
 
 		set_bit(BTRFS_FS_OPEN, &fs_info->flags);
 	}
@@ -1834,9 +1892,9 @@ out:
 	return 0;
 
 restore:
-	/* We've hit an error - don't reset MS_RDONLY */
-	if (sb->s_flags & MS_RDONLY)
-		old_flags |= MS_RDONLY;
+	/* We've hit an error - don't reset SB_RDONLY */
+	if (sb_rdonly(sb))
+		old_flags |= SB_RDONLY;
 	sb->s_flags = old_flags;
 	fs_info->mount_opt = old_opts;
 	fs_info->compress_type = old_compress_type;
@@ -1931,8 +1989,10 @@ static int btrfs_calc_avail_data_space(struct btrfs_fs_info *fs_info,
 
 	rcu_read_lock();
 	list_for_each_entry_rcu(device, &fs_devices->devices, dev_list) {
-		if (!device->in_fs_metadata || !device->bdev ||
-		    device->is_tgtdev_for_dev_replace)
+		if (!test_bit(BTRFS_DEV_STATE_IN_FS_METADATA,
+						&device->dev_state) ||
+		    !device->bdev ||
+		    test_bit(BTRFS_DEV_STATE_REPLACE_TGT, &device->dev_state))
 			continue;
 
 		if (i >= nr_devices)
@@ -2098,7 +2158,7 @@ static int btrfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 	 * succeed even if the Avail is zero. But this is better than the other
 	 * way around.
 	 */
-	thresh = 4 * 1024 * 1024;
+	thresh = SZ_4M;
 
 	if (!mixed && total_free_meta - thresh < block_rsv->size)
 		buf->f_bavail = 0;
@@ -2133,6 +2193,15 @@ static struct file_system_type btrfs_fs_type = {
 	.kill_sb	= btrfs_kill_super,
 	.fs_flags	= FS_REQUIRES_DEV | FS_BINARY_MOUNTDATA,
 };
+
+static struct file_system_type btrfs_root_fs_type = {
+	.owner		= THIS_MODULE,
+	.name		= "btrfs",
+	.mount		= btrfs_mount_root,
+	.kill_sb	= btrfs_kill_super,
+	.fs_flags	= FS_REQUIRES_DEV | FS_BINARY_MOUNTDATA,
+};
+
 MODULE_ALIAS_FS("btrfs");
 
 static int btrfs_control_open(struct inode *inode, struct file *file)
@@ -2166,11 +2235,11 @@ static long btrfs_control_ioctl(struct file *file, unsigned int cmd,
 	switch (cmd) {
 	case BTRFS_IOC_SCAN_DEV:
 		ret = btrfs_scan_one_device(vol->name, FMODE_READ,
-					    &btrfs_fs_type, &fs_devices);
+					    &btrfs_root_fs_type, &fs_devices);
 		break;
 	case BTRFS_IOC_DEVICES_READY:
 		ret = btrfs_scan_one_device(vol->name, FMODE_READ,
-					    &btrfs_fs_type, &fs_devices);
+					    &btrfs_root_fs_type, &fs_devices);
 		if (ret)
 			break;
 		ret = !(fs_devices->num_devices == fs_devices->total_devices);
@@ -2223,12 +2292,19 @@ static int btrfs_show_devname(struct seq_file *m, struct dentry *root)
 	struct list_head *head;
 	struct rcu_string *name;
 
-	mutex_lock(&fs_info->fs_devices->device_list_mutex);
+	/*
+	 * Lightweight locking of the devices. We should not need
+	 * device_list_mutex here as we only read the device data and the list
+	 * is protected by RCU.  Even if a device is deleted during the list
+	 * traversals, we'll get valid data, the freeing callback will wait at
+	 * least until until the rcu_read_unlock.
+	 */
+	rcu_read_lock();
 	cur_devices = fs_info->fs_devices;
 	while (cur_devices) {
 		head = &cur_devices->devices;
-		list_for_each_entry(dev, head, dev_list) {
-			if (dev->missing)
+		list_for_each_entry_rcu(dev, head, dev_list) {
+			if (test_bit(BTRFS_DEV_STATE_MISSING, &dev->dev_state))
 				continue;
 			if (!dev->name)
 				continue;
@@ -2239,14 +2315,12 @@ static int btrfs_show_devname(struct seq_file *m, struct dentry *root)
 	}
 
 	if (first_dev) {
-		rcu_read_lock();
 		name = rcu_dereference(first_dev->name);
 		seq_escape(m, name->str, " \t\n\\");
-		rcu_read_unlock();
 	} else {
 		WARN_ON(1);
 	}
-	mutex_unlock(&fs_info->fs_devices->device_list_mutex);
+	rcu_read_unlock();
 	return 0;
 }
 
@@ -2283,17 +2357,17 @@ static struct miscdevice btrfs_misc = {
 MODULE_ALIAS_MISCDEV(BTRFS_MINOR);
 MODULE_ALIAS("devname:btrfs-control");
 
-static int btrfs_interface_init(void)
+static int __init btrfs_interface_init(void)
 {
 	return misc_register(&btrfs_misc);
 }
 
-static void btrfs_interface_exit(void)
+static __cold void btrfs_interface_exit(void)
 {
 	misc_deregister(&btrfs_misc);
 }
 
-static void btrfs_print_mod_info(void)
+static void __init btrfs_print_mod_info(void)
 {
 	pr_info("Btrfs loaded, crc32c=%s"
 #ifdef CONFIG_BTRFS_DEBUG
@@ -2305,23 +2379,22 @@ static void btrfs_print_mod_info(void)
 #ifdef CONFIG_BTRFS_FS_CHECK_INTEGRITY
 			", integrity-checker=on"
 #endif
+#ifdef CONFIG_BTRFS_FS_REF_VERIFY
+			", ref-verify=on"
+#endif
 			"\n",
-			btrfs_crc32c_impl());
+			crc32c_impl());
 }
 
 static int __init init_btrfs_fs(void)
 {
 	int err;
 
-	err = btrfs_hash_init();
-	if (err)
-		return err;
-
 	btrfs_props_init();
 
 	err = btrfs_init_sysfs();
 	if (err)
-		goto free_hash;
+		return err;
 
 	btrfs_init_compress();
 
@@ -2402,8 +2475,7 @@ free_cachep:
 free_compress:
 	btrfs_exit_compress();
 	btrfs_exit_sysfs();
-free_hash:
-	btrfs_hash_exit();
+
 	return err;
 }
 
@@ -2423,7 +2495,6 @@ static void __exit exit_btrfs_fs(void)
 	btrfs_exit_sysfs();
 	btrfs_cleanup_fs_uuids();
 	btrfs_exit_compress();
-	btrfs_hash_exit();
 }
 
 late_initcall(init_btrfs_fs);

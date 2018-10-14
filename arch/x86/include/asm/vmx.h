@@ -70,10 +70,11 @@
 #define SECONDARY_EXEC_APIC_REGISTER_VIRT       0x00000100
 #define SECONDARY_EXEC_VIRTUAL_INTR_DELIVERY    0x00000200
 #define SECONDARY_EXEC_PAUSE_LOOP_EXITING	0x00000400
-#define SECONDARY_EXEC_RDRAND			0x00000800
+#define SECONDARY_EXEC_RDRAND_EXITING		0x00000800
 #define SECONDARY_EXEC_ENABLE_INVPCID		0x00001000
+#define SECONDARY_EXEC_ENABLE_VMFUNC            0x00002000
 #define SECONDARY_EXEC_SHADOW_VMCS              0x00004000
-#define SECONDARY_EXEC_RDSEED			0x00010000
+#define SECONDARY_EXEC_RDSEED_EXITING		0x00010000
 #define SECONDARY_EXEC_ENABLE_PML               0x00020000
 #define SECONDARY_EXEC_XSAVES			0x00100000
 #define SECONDARY_EXEC_TSC_SCALING              0x02000000
@@ -113,6 +114,11 @@
 #define VMX_MISC_PREEMPTION_TIMER_RATE_MASK	0x0000001f
 #define VMX_MISC_SAVE_EFER_LMA			0x00000020
 #define VMX_MISC_ACTIVITY_HLT			0x00000040
+#define VMX_MISC_ZERO_LEN_INS			0x40000000
+
+/* VMFUNC functions */
+#define VMX_VMFUNC_EPTP_SWITCHING               0x00000001
+#define VMFUNC_EPTP_ENTRIES  512
 
 static inline u32 vmx_basic_vmcs_revision_id(u64 vmx_basic)
 {
@@ -187,6 +193,8 @@ enum vmcs_field {
 	APIC_ACCESS_ADDR_HIGH		= 0x00002015,
 	POSTED_INTR_DESC_ADDR           = 0x00002016,
 	POSTED_INTR_DESC_ADDR_HIGH      = 0x00002017,
+	VM_FUNCTION_CONTROL             = 0x00002018,
+	VM_FUNCTION_CONTROL_HIGH        = 0x00002019,
 	EPT_POINTER                     = 0x0000201a,
 	EPT_POINTER_HIGH                = 0x0000201b,
 	EOI_EXIT_BITMAP0                = 0x0000201c,
@@ -197,8 +205,12 @@ enum vmcs_field {
 	EOI_EXIT_BITMAP2_HIGH           = 0x00002021,
 	EOI_EXIT_BITMAP3                = 0x00002022,
 	EOI_EXIT_BITMAP3_HIGH           = 0x00002023,
+	EPTP_LIST_ADDRESS               = 0x00002024,
+	EPTP_LIST_ADDRESS_HIGH          = 0x00002025,
 	VMREAD_BITMAP                   = 0x00002026,
+	VMREAD_BITMAP_HIGH              = 0x00002027,
 	VMWRITE_BITMAP                  = 0x00002028,
+	VMWRITE_BITMAP_HIGH             = 0x00002029,
 	XSS_EXIT_BITMAP                 = 0x0000202C,
 	XSS_EXIT_BITMAP_HIGH            = 0x0000202D,
 	TSC_MULTIPLIER                  = 0x00002032,
@@ -340,10 +352,13 @@ enum vmcs_field {
 #define VECTORING_INFO_VALID_MASK       	INTR_INFO_VALID_MASK
 
 #define INTR_TYPE_EXT_INTR              (0 << 8) /* external interrupt */
+#define INTR_TYPE_RESERVED              (1 << 8) /* reserved */
 #define INTR_TYPE_NMI_INTR		(2 << 8) /* NMI */
 #define INTR_TYPE_HARD_EXCEPTION	(3 << 8) /* processor exception */
 #define INTR_TYPE_SOFT_INTR             (4 << 8) /* software interrupt */
+#define INTR_TYPE_PRIV_SW_EXCEPTION	(5 << 8) /* ICE breakpoint - undocumented */
 #define INTR_TYPE_SOFT_EXCEPTION	(6 << 8) /* software exception */
+#define INTR_TYPE_OTHER_EVENT           (7 << 8) /* other event */
 
 /* GUEST_INTERRUPTIBILITY_INFO flags. */
 #define GUEST_INTR_STATE_STI		0x00000001
@@ -444,6 +459,7 @@ enum vmcs_field {
 
 #define VMX_EPT_EXECUTE_ONLY_BIT		(1ull)
 #define VMX_EPT_PAGE_WALK_4_BIT			(1ull << 6)
+#define VMX_EPT_PAGE_WALK_5_BIT			(1ull << 7)
 #define VMX_EPTP_UC_BIT				(1ull << 8)
 #define VMX_EPTP_WB_BIT				(1ull << 14)
 #define VMX_EPT_2MB_PAGE_BIT			(1ull << 16)
@@ -459,12 +475,14 @@ enum vmcs_field {
 #define VMX_VPID_EXTENT_GLOBAL_CONTEXT_BIT      (1ull << 10) /* (42 - 32) */
 #define VMX_VPID_EXTENT_SINGLE_NON_GLOBAL_BIT   (1ull << 11) /* (43 - 32) */
 
-#define VMX_EPT_DEFAULT_GAW			3
-#define VMX_EPT_MAX_GAW				0x4
 #define VMX_EPT_MT_EPTE_SHIFT			3
-#define VMX_EPT_GAW_EPTP_SHIFT			3
-#define VMX_EPT_AD_ENABLE_BIT			(1ull << 6)
-#define VMX_EPT_DEFAULT_MT			0x6ull
+#define VMX_EPTP_PWL_MASK			0x38ull
+#define VMX_EPTP_PWL_4				0x18ull
+#define VMX_EPTP_PWL_5				0x20ull
+#define VMX_EPTP_AD_ENABLE_BIT			(1ull << 6)
+#define VMX_EPTP_MT_MASK			0x7ull
+#define VMX_EPTP_MT_WB				0x6ull
+#define VMX_EPTP_MT_UC				0x0ull
 #define VMX_EPT_READABLE_MASK			0x1ull
 #define VMX_EPT_WRITABLE_MASK			0x2ull
 #define VMX_EPT_EXECUTABLE_MASK			0x4ull

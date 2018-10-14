@@ -24,7 +24,7 @@
 #include <linux/slab.h>
 #include <linux/interrupt.h>
 #include <linux/init.h>
-#include <linux/gpio.h>
+#include <linux/gpio/driver.h>
 #include <linux/platform_device.h>
 #include <linux/mfd/intel_msic.h>
 
@@ -265,8 +265,8 @@ static int platform_msic_gpio_probe(struct platform_device *pdev)
 	int i;
 
 	if (irq < 0) {
-		dev_err(dev, "no IRQ line\n");
-		return -EINVAL;
+		dev_err(dev, "no IRQ line: %d\n", irq);
+		return irq;
 	}
 
 	if (!pdata || !pdata->gpio_base) {

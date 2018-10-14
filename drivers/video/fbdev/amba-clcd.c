@@ -967,9 +967,8 @@ static int clcdfb_probe(struct amba_device *dev, const struct amba_id *id)
 		goto out;
 	}
 
-	fb = kzalloc(sizeof(struct clcd_fb), GFP_KERNEL);
+	fb = kzalloc(sizeof(*fb), GFP_KERNEL);
 	if (!fb) {
-		printk(KERN_INFO "CLCD: could not allocate new clcd_fb struct\n");
 		ret = -ENOMEM;
 		goto free_region;
 	}
@@ -1035,7 +1034,7 @@ static struct clcd_vendor_data vendor_nomadik = {
 	.init_panel = nomadik_clcd_init_panel,
 };
 
-static struct amba_id clcdfb_id_table[] = {
+static const struct amba_id clcdfb_id_table[] = {
 	{
 		.id	= 0x00041110,
 		.mask	= 0x000ffffe,

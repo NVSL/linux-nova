@@ -30,17 +30,9 @@
 #include <linux/module.h>
 #include <linux/usb/input.h>
 
-/*
- * Version Information
- */
-#define DRIVER_VERSION "v3.2"
-#define DRIVER_DESC    "USB Acecad Flair tablet driver"
-#define DRIVER_LICENSE "GPL"
-#define DRIVER_AUTHOR  "Edouard TISSERANT <edouard.tisserant@wanadoo.fr>"
-
-MODULE_AUTHOR(DRIVER_AUTHOR);
-MODULE_DESCRIPTION(DRIVER_DESC);
-MODULE_LICENSE(DRIVER_LICENSE);
+MODULE_AUTHOR("Edouard TISSERANT <edouard.tisserant@wanadoo.fr>");
+MODULE_DESCRIPTION("USB Acecad Flair tablet driver");
+MODULE_LICENSE("GPL");
 
 #define USB_VENDOR_ID_ACECAD	0x0460
 #define USB_DEVICE_ID_FLAIR	0x0004
@@ -260,7 +252,7 @@ static void usb_acecad_disconnect(struct usb_interface *intf)
 	kfree(acecad);
 }
 
-static struct usb_device_id usb_acecad_id_table [] = {
+static const struct usb_device_id usb_acecad_id_table[] = {
 	{ USB_DEVICE(USB_VENDOR_ID_ACECAD, USB_DEVICE_ID_FLAIR), .driver_info = 0 },
 	{ USB_DEVICE(USB_VENDOR_ID_ACECAD, USB_DEVICE_ID_302),	 .driver_info = 1 },
 	{ }

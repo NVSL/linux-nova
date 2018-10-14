@@ -9,6 +9,7 @@
  *      2 of the License, or (at your option) any later version.
  */
 #include <linux/kernel.h>
+#include <linux/kmemleak.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/rcupdate.h>
@@ -47,7 +48,7 @@ void *nf_ct_ext_add(struct nf_conn *ct, enum nf_ct_ext_id id, gfp_t gfp)
 	struct nf_ct_ext_type *t;
 
 	/* Conntrack must not be confirmed to avoid races on reallocation. */
-	NF_CT_ASSERT(!nf_ct_is_confirmed(ct));
+	WARN_ON(nf_ct_is_confirmed(ct));
 
 	old = ct->ext;
 
@@ -71,6 +72,7 @@ void *nf_ct_ext_add(struct nf_conn *ct, enum nf_ct_ext_id id, gfp_t gfp)
 	rcu_read_unlock();
 
 	alloc = max(newlen, NF_CT_EXT_PREALLOC);
+	kmemleak_not_leak(old);
 	new = __krealloc(old, alloc, gfp);
 	if (!new)
 		return NULL;

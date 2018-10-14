@@ -140,9 +140,6 @@ int msm_debugfs_late_init(struct drm_device *dev)
 	if (ret)
 		return ret;
 	ret = late_init_minor(dev->render);
-	if (ret)
-		return ret;
-	ret = late_init_minor(dev->control);
 	return ret;
 }
 
@@ -161,8 +158,11 @@ int msm_debugfs_init(struct drm_minor *minor)
 		return ret;
 	}
 
-	if (priv->kms->funcs->debugfs_init)
+	if (priv->kms->funcs->debugfs_init) {
 		ret = priv->kms->funcs->debugfs_init(priv->kms, minor);
+		if (ret)
+			return ret;
+	}
 
 	return ret;
 }

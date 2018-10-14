@@ -36,10 +36,12 @@
 #include <asm/assembly.h>
 #include <asm/pgtable.h>
 #include <asm/cache.h>
+#include <asm/ldcw.h>
 #include <linux/linkage.h>
+#include <linux/init.h>
 
-	.text
-	.align	128
+	.section .text.hot
+	.align	16
 
 ENTRY_CFI(flush_tlb_all_local)
 	.proc
@@ -327,14 +329,16 @@ fdsync:
 	.procend
 ENDPROC_CFI(flush_data_cache_local)
 
-	.align	16
-
 /* Macros to serialize TLB purge operations on SMP.  */
 
 	.macro	tlb_lock	la,flags,tmp
 #ifdef CONFIG_SMP
-	ldil		L%pa_tlb_lock,%r1
-	ldo		R%pa_tlb_lock(%r1),\la
+#if __PA_LDCW_ALIGNMENT > 4
+	load32		pa_tlb_lock + __PA_LDCW_ALIGNMENT-1, \la
+	depi		0,31,__PA_LDCW_ALIGN_ORDER, \la
+#else
+	load32		pa_tlb_lock, \la
+#endif
 	rsm		PSW_SM_I,\flags
 1:	LDCW		0(\la),\tmp
 	cmpib,<>,n	0,\tmp,3f
@@ -349,6 +353,7 @@ ENDPROC_CFI(flush_data_cache_local)
 	.macro	tlb_unlock	la,flags,tmp
 #ifdef CONFIG_SMP
 	ldi		1,\tmp
+	sync
 	stw		\tmp,0(\la)
 	mtsm		\flags
 #endif
@@ -1105,6 +1110,28 @@ ENTRY_CFI(flush_kernel_dcache_range_asm)
 	.procend
 ENDPROC_CFI(flush_kernel_dcache_range_asm)
 
+ENTRY_CFI(purge_kernel_dcache_range_asm)
+	.proc
+	.callinfo NO_CALLS
+	.entry
+
+	ldil		L%dcache_stride, %r1
+	ldw		R%dcache_stride(%r1), %r23
+	ldo		-1(%r23), %r21
+	ANDCM		%r26, %r21, %r26
+
+1:      cmpb,COND(<<),n	%r26, %r25,1b
+	pdc,m		%r23(%r26)
+
+	sync
+	syncdma
+	bv		%r0(%r2)
+	nop
+	.exit
+
+	.procend
+ENDPROC_CFI(purge_kernel_dcache_range_asm)
+
 ENTRY_CFI(flush_user_icache_range_asm)
 	.proc
 	.callinfo NO_CALLS
@@ -1188,6 +1215,8 @@ ENTRY_CFI(flush_kernel_icache_range_asm)
 	.exit
 	.procend
 ENDPROC_CFI(flush_kernel_icache_range_asm)
+
+	__INIT
 
 	/* align should cover use of rfi in disable_sr_hashing_asm and
 	 * srdis_done.

@@ -263,6 +263,9 @@ static void ieee80211_restart_work(struct work_struct *work)
 	flush_delayed_work(&local->roc_work);
 	flush_work(&local->hw_roc_done);
 
+	/* wait for all packet processing to be done */
+	synchronize_net();
+
 	ieee80211_reconfig(local);
 	rtnl_unlock();
 }
@@ -551,6 +554,8 @@ struct ieee80211_hw *ieee80211_alloc_hw_nm(size_t priv_data_len,
 			   NL80211_FEATURE_USERSPACE_MPM |
 			   NL80211_FEATURE_FULL_AP_CLIENT_STATE;
 	wiphy_ext_feature_set(wiphy, NL80211_EXT_FEATURE_FILS_STA);
+	wiphy_ext_feature_set(wiphy,
+			      NL80211_EXT_FEATURE_CONTROL_PORT_OVER_NL80211);
 
 	if (!ops->hw_scan)
 		wiphy->features |= NL80211_FEATURE_LOW_PRIORITY_SCAN |
@@ -559,6 +564,9 @@ struct ieee80211_hw *ieee80211_alloc_hw_nm(size_t priv_data_len,
 
 	if (!ops->set_key)
 		wiphy->flags |= WIPHY_FLAG_IBSS_RSN;
+
+	if (ops->wake_tx_queue)
+		wiphy_ext_feature_set(wiphy, NL80211_EXT_FEATURE_TXQS);
 
 	wiphy_ext_feature_set(wiphy, NL80211_EXT_FEATURE_RRM);
 
@@ -633,8 +641,7 @@ struct ieee80211_hw *ieee80211_alloc_hw_nm(size_t priv_data_len,
 		  ieee80211_dynamic_ps_enable_work);
 	INIT_WORK(&local->dynamic_ps_disable_work,
 		  ieee80211_dynamic_ps_disable_work);
-	setup_timer(&local->dynamic_ps_timer,
-		    ieee80211_dynamic_ps_timer, (unsigned long) local);
+	timer_setup(&local->dynamic_ps_timer, ieee80211_dynamic_ps_timer, 0);
 
 	INIT_WORK(&local->sched_scan_stopped_work,
 		  ieee80211_sched_scan_stopped_work);
@@ -765,7 +772,7 @@ static int ieee80211_init_cipher_suites(struct ieee80211_local *local)
 		if (have_mfp)
 			n_suites += 4;
 
-		suites = kmalloc(sizeof(u32) * n_suites, GFP_KERNEL);
+		suites = kmalloc_array(n_suites, sizeof(u32), GFP_KERNEL);
 		if (!suites)
 			return -ENOMEM;
 
@@ -928,8 +935,12 @@ int ieee80211_register_hw(struct ieee80211_hw *hw)
 			             IEEE80211_HT_CAP_SM_PS_SHIFT;
 	}
 
-	/* if low-level driver supports AP, we also support VLAN */
-	if (local->hw.wiphy->interface_modes & BIT(NL80211_IFTYPE_AP)) {
+	/* if low-level driver supports AP, we also support VLAN.
+	 * drivers advertising SW_CRYPTO_CONTROL should enable AP_VLAN
+	 * based on their support to transmit SW encrypted packets.
+	 */
+	if (local->hw.wiphy->interface_modes & BIT(NL80211_IFTYPE_AP) &&
+	    !ieee80211_hw_check(&local->hw, SW_CRYPTO_CONTROL)) {
 		hw->wiphy->interface_modes |= BIT(NL80211_IFTYPE_AP_VLAN);
 		hw->wiphy->software_iftypes |= BIT(NL80211_IFTYPE_AP_VLAN);
 	}
@@ -1087,6 +1098,10 @@ int ieee80211_register_hw(struct ieee80211_hw *hw)
 
 	ieee80211_led_init(local);
 
+	result = ieee80211_txq_setup_flows(local);
+	if (result)
+		goto fail_flows;
+
 	rtnl_lock();
 
 	result = ieee80211_init_rate_ctrl_alg(local,
@@ -1108,10 +1123,6 @@ int ieee80211_register_hw(struct ieee80211_hw *hw)
 	}
 
 	rtnl_unlock();
-
-	result = ieee80211_txq_setup_flows(local);
-	if (result)
-		goto fail_flows;
 
 #ifdef CONFIG_INET
 	local->ifa_notifier.notifier_call = ieee80211_ifa_changed;
@@ -1138,8 +1149,6 @@ int ieee80211_register_hw(struct ieee80211_hw *hw)
 #if defined(CONFIG_INET) || defined(CONFIG_IPV6)
  fail_ifa:
 #endif
-	ieee80211_txq_teardown_flows(local);
- fail_flows:
 	rtnl_lock();
 	rate_control_deinitialize(local);
 	ieee80211_remove_interfaces(local);
@@ -1147,6 +1156,8 @@ int ieee80211_register_hw(struct ieee80211_hw *hw)
 	rtnl_unlock();
 	ieee80211_led_exit(local);
 	ieee80211_wep_free(local);
+	ieee80211_txq_teardown_flows(local);
+ fail_flows:
 	destroy_workqueue(local->workqueue);
  fail_workqueue:
 	wiphy_unregister(local->hw.wiphy);

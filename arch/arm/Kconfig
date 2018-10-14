@@ -1,10 +1,16 @@
+# SPDX-License-Identifier: GPL-2.0
 config ARM
 	bool
 	default y
 	select ARCH_CLOCKSOURCE_DATA
-	select ARCH_HAS_DEBUG_VIRTUAL
+	select ARCH_DISCARD_MEMBLOCK if !HAVE_ARCH_PFN_VALID && !KEXEC
+	select ARCH_HAS_DEBUG_VIRTUAL if MMU
 	select ARCH_HAS_DEVMEM_IS_ALLOWED
 	select ARCH_HAS_ELF_RANDOMIZE
+	select ARCH_HAS_FORTIFY_SOURCE
+	select ARCH_HAS_KCOV
+	select ARCH_HAS_PTE_SPECIAL if ARM_LPAE
+	select ARCH_HAS_PHYS_TO_DMA
 	select ARCH_HAS_SET_MEMORY
 	select ARCH_HAS_STRICT_KERNEL_RWX if MMU && !XIP_KERNEL
 	select ARCH_HAS_STRICT_MODULE_RWX if MMU
@@ -22,7 +28,7 @@ config ARM
 	select CLONE_BACKWARDS
 	select CPU_PM if (SUSPEND || CPU_IDLE)
 	select DCACHE_WORD_ACCESS if HAVE_EFFICIENT_UNALIGNED_ACCESS
-	select DMA_NOOP_OPS if !MMU
+	select DMA_DIRECT_OPS if !MMU
 	select EDAC_SUPPORT
 	select EDAC_ATOMIC_SCRUB
 	select GENERIC_ALLOCATOR
@@ -48,14 +54,13 @@ config ARM
 	select HAVE_ARCH_KGDB if !CPU_ENDIAN_BE32 && MMU
 	select HAVE_ARCH_MMAP_RND_BITS if MMU
 	select HAVE_ARCH_SECCOMP_FILTER if (AEABI && !OABI_COMPAT)
+	select HAVE_ARCH_THREAD_STRUCT_WHITELIST
 	select HAVE_ARCH_TRACEHOOK
 	select HAVE_ARM_SMCCC if CPU_V7
-	select HAVE_CBPF_JIT
-	select HAVE_CC_STACKPROTECTOR
+	select HAVE_EBPF_JIT if !CPU_ENDIAN_BE32
 	select HAVE_CONTEXT_TRACKING
 	select HAVE_C_RECORDMCOUNT
 	select HAVE_DEBUG_KMEMLEAK
-	select HAVE_DMA_API_DEBUG
 	select HAVE_DMA_CONTIGUOUS if MMU
 	select HAVE_DYNAMIC_FTRACE if (!XIP_KERNEL) && !CPU_ENDIAN_BE32 && MMU
 	select HAVE_DYNAMIC_FTRACE_WITH_REGS if HAVE_DYNAMIC_FTRACE
@@ -86,17 +91,21 @@ config ARM
 	select HAVE_PERF_USER_STACK_DUMP
 	select HAVE_RCU_TABLE_FREE if (SMP && ARM_LPAE)
 	select HAVE_REGS_AND_STACK_ACCESS_API
+	select HAVE_RSEQ
+	select HAVE_STACKPROTECTOR
 	select HAVE_SYSCALL_TRACEPOINTS
 	select HAVE_UID16
 	select HAVE_VIRT_CPU_ACCOUNTING_GEN
 	select IRQ_FORCED_THREADING
 	select MODULES_USE_ELF_REL
+	select NEED_DMA_MAP_STATE
 	select NO_BOOTMEM
 	select OF_EARLY_FLATTREE if OF
 	select OF_RESERVED_MEM if OF
 	select OLD_SIGACTION
 	select OLD_SIGSUSPEND3
 	select PERF_USE_VMALLOC
+	select REFCOUNT_FULL
 	select RTC_LIB
 	select SYS_SUPPORTS_APM_EMULATION
 	# Above selects are sorted alphabetically; please add new ones
@@ -111,9 +120,6 @@ config ARM
 
 config ARM_HAS_SG_CHAIN
 	select ARCH_HAS_SG_CHAIN
-	bool
-
-config NEED_SG_DMA_LENGTH
 	bool
 
 config ARM_DMA_USE_IOMMU
@@ -218,9 +224,6 @@ config ARCH_MAY_HAVE_PC_FDC
 config ZONE_DMA
 	bool
 
-config NEED_DMA_MAP_STATE
-       def_bool y
-
 config ARCH_SUPPORTS_UPROBES
 	def_bool y
 
@@ -238,15 +241,6 @@ config NEED_RET_TO_USER
 
 config ARCH_MTD_XIP
 	bool
-
-config VECTORS_BASE
-	hex
-	default 0xffff0000 if MMU || CPU_HIGH_VECTOR
-	default DRAM_BASE if REMAP_VECTORS_TO_RAM
-	default 0x00000000
-	help
-	  The base address of exception vectors.  This must be two pages
-	  in size.
 
 config ARM_PATCH_PHYS_VIRT
 	bool "Patch physical to virtual translations at runtime" if EMBEDDED
@@ -378,7 +372,7 @@ config ARCH_EBSA110
 
 config ARCH_EP93XX
 	bool "EP93xx-based"
-	select ARCH_HAS_HOLES_MEMORYMODEL
+	select ARCH_SPARSEMEM_ENABLE
 	select ARM_AMBA
 	imply ARM_PATCH_PHYS_VIRT
 	select ARM_VIC
@@ -602,6 +596,7 @@ config ARCH_S3C24XX
 	select MULTI_IRQ_HANDLER
 	select NEED_MACH_IO_H
 	select SAMSUNG_ATAGS
+	select USE_OF
 	help
 	  Samsung S3C2410, S3C2412, S3C2413, S3C2416, S3C2440, S3C2442, S3C2443
 	  and S3C2450 SoCs based systems, such as the Simtec Electronics BAST
@@ -712,8 +707,6 @@ config ARCH_VIRT
 # Kconfigs may be included either alphabetically (according to the
 # plat- suffix) or along side the corresponding mach-* source.
 #
-source "arch/arm/mach-mvebu/Kconfig"
-
 source "arch/arm/mach-actions/Kconfig"
 
 source "arch/arm/mach-alpine/Kconfig"
@@ -721,6 +714,8 @@ source "arch/arm/mach-alpine/Kconfig"
 source "arch/arm/mach-artpec/Kconfig"
 
 source "arch/arm/mach-asm9260/Kconfig"
+
+source "arch/arm/mach-aspeed/Kconfig"
 
 source "arch/arm/mach-at91/Kconfig"
 
@@ -742,6 +737,9 @@ source "arch/arm/mach-dove/Kconfig"
 
 source "arch/arm/mach-ep93xx/Kconfig"
 
+source "arch/arm/mach-exynos/Kconfig"
+source "arch/arm/plat-samsung/Kconfig"
+
 source "arch/arm/mach-footbridge/Kconfig"
 
 source "arch/arm/mach-gemini/Kconfig"
@@ -750,13 +748,15 @@ source "arch/arm/mach-highbank/Kconfig"
 
 source "arch/arm/mach-hisi/Kconfig"
 
+source "arch/arm/mach-imx/Kconfig"
+
 source "arch/arm/mach-integrator/Kconfig"
+
+source "arch/arm/mach-iop13xx/Kconfig"
 
 source "arch/arm/mach-iop32x/Kconfig"
 
 source "arch/arm/mach-iop33x/Kconfig"
-
-source "arch/arm/mach-iop13xx/Kconfig"
 
 source "arch/arm/mach-ixp4xx/Kconfig"
 
@@ -764,23 +764,25 @@ source "arch/arm/mach-keystone/Kconfig"
 
 source "arch/arm/mach-ks8695/Kconfig"
 
+source "arch/arm/mach-mediatek/Kconfig"
+
 source "arch/arm/mach-meson/Kconfig"
+
+source "arch/arm/mach-mmp/Kconfig"
 
 source "arch/arm/mach-moxart/Kconfig"
 
-source "arch/arm/mach-aspeed/Kconfig"
-
 source "arch/arm/mach-mv78xx0/Kconfig"
 
-source "arch/arm/mach-imx/Kconfig"
-
-source "arch/arm/mach-mediatek/Kconfig"
+source "arch/arm/mach-mvebu/Kconfig"
 
 source "arch/arm/mach-mxs/Kconfig"
 
 source "arch/arm/mach-netx/Kconfig"
 
 source "arch/arm/mach-nomadik/Kconfig"
+
+source "arch/arm/mach-npcm/Kconfig"
 
 source "arch/arm/mach-nspire/Kconfig"
 
@@ -792,14 +794,14 @@ source "arch/arm/mach-omap2/Kconfig"
 
 source "arch/arm/mach-orion5x/Kconfig"
 
+source "arch/arm/mach-oxnas/Kconfig"
+
 source "arch/arm/mach-picoxcell/Kconfig"
+
+source "arch/arm/mach-prima2/Kconfig"
 
 source "arch/arm/mach-pxa/Kconfig"
 source "arch/arm/plat-pxa/Kconfig"
-
-source "arch/arm/mach-mmp/Kconfig"
-
-source "arch/arm/mach-oxnas/Kconfig"
 
 source "arch/arm/mach-qcom/Kconfig"
 
@@ -807,7 +809,15 @@ source "arch/arm/mach-realview/Kconfig"
 
 source "arch/arm/mach-rockchip/Kconfig"
 
+source "arch/arm/mach-s3c24xx/Kconfig"
+
+source "arch/arm/mach-s3c64xx/Kconfig"
+
+source "arch/arm/mach-s5pv210/Kconfig"
+
 source "arch/arm/mach-sa1100/Kconfig"
+
+source "arch/arm/mach-shmobile/Kconfig"
 
 source "arch/arm/mach-socfpga/Kconfig"
 
@@ -817,20 +827,7 @@ source "arch/arm/mach-sti/Kconfig"
 
 source "arch/arm/mach-stm32/Kconfig"
 
-source "arch/arm/mach-s3c24xx/Kconfig"
-
-source "arch/arm/mach-s3c64xx/Kconfig"
-
-source "arch/arm/mach-s5pv210/Kconfig"
-
-source "arch/arm/mach-exynos/Kconfig"
-source "arch/arm/plat-samsung/Kconfig"
-
-source "arch/arm/mach-shmobile/Kconfig"
-
 source "arch/arm/mach-sunxi/Kconfig"
-
-source "arch/arm/mach-prima2/Kconfig"
 
 source "arch/arm/mach-tango/Kconfig"
 
@@ -1248,8 +1245,14 @@ config PCI
 	  VESA. If you have PCI, say Y, otherwise N.
 
 config PCI_DOMAINS
-	bool
+	bool "Support for multiple PCI domains"
 	depends on PCI
+	help
+	  Enable PCI domains kernel management. Say Y if your machine
+	  has a PCI bus hierarchy that requires more than one PCI
+	  domain (aka segment) to be correctly managed. Say N otherwise.
+
+	  If you don't know what to do here, say N.
 
 config PCI_DOMAINS_GENERIC
 	def_bool PCI_DOMAINS
@@ -1305,7 +1308,7 @@ config SMP
 	  will run faster if you say N here.
 
 	  See also <file:Documentation/x86/i386/IO-APIC.txt>,
-	  <file:Documentation/nmi_watchdog.txt> and the SMP-HOWTO available at
+	  <file:Documentation/lockup-watchdogs.txt> and the SMP-HOWTO available at
 	  <http://tldp.org/HOWTO/SMP-HOWTO.html>.
 
 	  If you don't know what to do here, say N.
@@ -1467,7 +1470,7 @@ config ARM_PSCI
 config ARCH_NR_GPIO
 	int
 	default 2048 if ARCH_SOCFPGA
-	default 1024 if ARCH_BRCMSTB || ARCH_SHMOBILE || ARCH_TEGRA || \
+	default 1024 if ARCH_BRCMSTB || ARCH_RENESAS || ARCH_TEGRA || \
 		ARCH_ZYNQ
 	default 512 if ARCH_EXYNOS || ARCH_KEYSTONE || SOC_OMAP5 || \
 		SOC_DRA7XX || ARCH_S3C24XX || ARCH_S3C64XX || ARCH_S5PV210
@@ -1531,13 +1534,10 @@ config THUMB2_KERNEL
 	bool "Compile the kernel in Thumb-2 mode" if !CPU_THUMBONLY
 	depends on (CPU_V7 || CPU_V7M) && !CPU_V6 && !CPU_V6K
 	default y if CPU_THUMBONLY
-	select AEABI
-	select ARM_ASM_UNIFIED
 	select ARM_UNWIND
 	help
 	  By enabling this option, the kernel will be compiled in
-	  Thumb-2 mode. A compiler/assembler that understand the unified
-	  ARM-Thumb syntax is needed.
+	  Thumb-2 mode.
 
 	  If unsure, say N.
 
@@ -1572,9 +1572,6 @@ config THUMB2_AVOID_R_ARM_THM_JUMP11
 
 	  Unless you are sure your tools don't have this problem, say Y.
 
-config ARM_ASM_UNIFIED
-	bool
-
 config ARM_PATCH_IDIV
 	bool "Runtime patch udiv/sdiv instructions into __aeabi_{u}idiv()"
 	depends on CPU_32v7 && !XIP_KERNEL
@@ -1594,7 +1591,8 @@ config ARM_PATCH_IDIV
 	  code to do integer division.
 
 config AEABI
-	bool "Use the ARM EABI to compile the kernel"
+	bool "Use the ARM EABI to compile the kernel" if !CPU_V7 && !CPU_V7M && !CPU_V6 && !CPU_V6K
+	default CPU_V7 || CPU_V7M || CPU_V6 || CPU_V6K
 	help
 	  This option allows for the kernel to be compiled using the latest
 	  ARM ABI (aka EABI).  This is only useful if you are using a user
@@ -1709,6 +1707,7 @@ config ARCH_WANT_GENERAL_HUGETLB
 config ARM_MODULE_PLTS
 	bool "Use PLTs to allow module memory to spill over into vmalloc area"
 	depends on MODULES
+	default y
 	help
 	  Allocate PLTs when loading modules so that jumps and calls whose
 	  targets are too far away for their relative offsets to be encoded
@@ -1719,7 +1718,8 @@ config ARM_MODULE_PLTS
 	  rounding up to page size, the actual memory footprint is usually
 	  the same.
 
-	  Say y if you are getting out of memory errors while loading modules
+	  Disabling this is usually safe for small single-platform
+	  configurations. If unsure, say y.
 
 source "mm/Kconfig"
 
@@ -1783,12 +1783,6 @@ config SECCOMP
 	  and the task is only allowed to execute a few safe syscalls
 	  defined by each seccomp mode.
 
-config SWIOTLB
-	def_bool y
-
-config IOMMU_HELPER
-	def_bool SWIOTLB
-
 config PARAVIRT
 	bool "Enable paravirtualization code"
 	help
@@ -1820,6 +1814,7 @@ config XEN
 	depends on MMU
 	select ARCH_DMA_ADDR_T_64BIT
 	select ARM_PSCI
+	select SWIOTLB
 	select SWIOTLB_XEN
 	select PARAVIRT
 	help
@@ -2004,6 +1999,17 @@ config XIP_PHYS_ADDR
 	  This is the physical address in your flash memory the kernel will
 	  be linked for and stored to.  This address is dependent on your
 	  own flash usage.
+
+config XIP_DEFLATED_DATA
+	bool "Store kernel .data section compressed in ROM"
+	depends on XIP_KERNEL
+	select ZLIB_INFLATE
+	help
+	  Before the kernel is actually executed, its .data section has to be
+	  copied to RAM from ROM. This option allows for storing that data
+	  in compressed form and decompressed to RAM rather than merely being
+	  copied, saving some precious ROM space. A possible drawback is a
+	  slightly longer boot delay.
 
 config KEXEC
 	bool "Kexec system call (EXPERIMENTAL)"

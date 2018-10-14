@@ -628,8 +628,6 @@ static void __unbind_from_irq(unsigned int irq)
 		xen_irq_info_cleanup(info);
 	}
 
-	BUG_ON(info_for_irq(irq)->type == IRQT_UNBOUND);
-
 	xen_free_irq(irq);
 }
 
@@ -755,8 +753,8 @@ out:
 	mutex_unlock(&irq_mapping_update_lock);
 	return irq;
 error_irq:
-	for (; i >= 0; i--)
-		__unbind_from_irq(irq + i);
+	while (nvec--)
+		__unbind_from_irq(irq + nvec);
 	mutex_unlock(&irq_mapping_update_lock);
 	return ret;
 }
@@ -1653,10 +1651,8 @@ void xen_callback_vector(void)
 			return;
 		}
 		pr_info("Xen HVM callback vector for event delivery is enabled\n");
-		/* in the restore case the vector has already been allocated */
-		if (!test_bit(HYPERVISOR_CALLBACK_VECTOR, used_vectors))
-			alloc_intr_gate(HYPERVISOR_CALLBACK_VECTOR,
-					xen_hvm_callback_vector);
+		alloc_intr_gate(HYPERVISOR_CALLBACK_VECTOR,
+				xen_hvm_callback_vector);
 	}
 }
 #else

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  *
  * Function graph tracer.
@@ -830,6 +831,7 @@ print_graph_entry_leaf(struct trace_iterator *iter,
 	struct ftrace_graph_ret *graph_ret;
 	struct ftrace_graph_ent *call;
 	unsigned long long duration;
+	int cpu = iter->cpu;
 	int i;
 
 	graph_ret = &ret_entry->ret;
@@ -838,7 +840,6 @@ print_graph_entry_leaf(struct trace_iterator *iter,
 
 	if (data) {
 		struct fgraph_cpu_data *cpu_data;
-		int cpu = iter->cpu;
 
 		cpu_data = per_cpu_ptr(data->cpu_data, cpu);
 
@@ -867,6 +868,9 @@ print_graph_entry_leaf(struct trace_iterator *iter,
 		trace_seq_putc(s, ' ');
 
 	trace_seq_printf(s, "%ps();\n", (void *)call->func);
+
+	print_graph_irq(iter, graph_ret->func, TRACE_GRAPH_RET,
+			cpu, iter->ent->pid, flags);
 
 	return trace_handle_return(s);
 }
@@ -1543,7 +1547,7 @@ fs_initcall(init_graph_tracefs);
 
 static __init int init_graph_trace(void)
 {
-	max_bytes_for_cpu = snprintf(NULL, 0, "%d", nr_cpu_ids - 1);
+	max_bytes_for_cpu = snprintf(NULL, 0, "%u", nr_cpu_ids - 1);
 
 	if (!register_trace_event(&graph_trace_entry_event)) {
 		pr_warn("Warning: could not register graph trace events\n");

@@ -98,7 +98,7 @@ static u32 nova_calc_entry_csum(void *entry)
 	u32 csum = 0;
 	size_t entry_len, check_len;
 	void *csum_addr, *remain;
-	timing_t calc_time;
+	INIT_TIMING(calc_time);
 
 	NOVA_START_TIMING(calc_entry_csum_t, calc_time);
 
@@ -302,7 +302,7 @@ bool nova_verify_entry_csum(struct super_block *sb, void *entry, void *entryc)
 	u32 entry_csum_calc, alter_csum_calc;
 	char entry_copy[NOVA_MAX_ENTRY_LEN];
 	char alter_copy[NOVA_MAX_ENTRY_LEN];
-	timing_t verify_time;
+	INIT_TIMING(verify_time);
 
 	if (metadata_csum == 0)
 		return true;
@@ -643,7 +643,7 @@ int nova_update_block_csum(struct super_block *sb,
 	unsigned int strp_shift = NOVA_STRIPE_SHIFT;
 	unsigned int strp_index, strp_offset;
 	unsigned long strps, strp_nr;
-	timing_t block_csum_time;
+	INIT_TIMING(block_csum_time);
 
 	NOVA_START_TIMING(block_csum_t, block_csum_time);
 	blockoff = nova_get_block_off(sb, blocknr, sih->i_blk_type);
@@ -722,7 +722,7 @@ bool nova_verify_data_csum(struct super_block *sb,
 	u32 *csum_addr0, *csum_addr1;
 	int error;
 	bool match;
-	timing_t verify_time;
+	INIT_TIMING(verify_time);
 
 	NOVA_START_TIMING(verify_data_csum_t, verify_time);
 

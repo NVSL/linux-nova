@@ -54,6 +54,7 @@ static int virtio_gpu_probe(struct virtio_device *vdev)
 static void virtio_gpu_remove(struct virtio_device *vdev)
 {
 	struct drm_device *dev = vdev->priv;
+
 	drm_put_dev(dev);
 }
 
@@ -112,7 +113,6 @@ static const struct file_operations virtio_gpu_driver_fops = {
 	.llseek = noop_llseek,
 };
 
-
 static struct drm_driver driver = {
 	.driver_features = DRIVER_MODESET | DRIVER_GEM | DRIVER_PRIME | DRIVER_RENDER | DRIVER_ATOMIC,
 	.load = virtio_gpu_driver_load,
@@ -122,7 +122,6 @@ static struct drm_driver driver = {
 
 	.dumb_create = virtio_gpu_mode_dumb_create,
 	.dumb_map_offset = virtio_gpu_mode_dumb_mmap,
-	.dumb_destroy = virtio_gpu_mode_dumb_destroy,
 
 #if defined(CONFIG_DEBUG_FS)
 	.debugfs_init = virtio_gpu_debugfs_init,

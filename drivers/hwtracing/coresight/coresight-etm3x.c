@@ -1,15 +1,8 @@
-/* Copyright (c) 2011-2012, The Linux Foundation. All rights reserved.
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Copyright (c) 2011-2012, The Linux Foundation. All rights reserved.
  *
  * Description: CoreSight Program Flow Trace driver
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
  */
 
 #include <linux/kernel.h>
@@ -243,6 +236,8 @@ void etm_set_default(struct etm_config *config)
 	}
 
 	config->ctxid_mask = 0x0;
+	/* Setting default to 1024 as per TRM recommendation */
+	config->sync_freq = 0x400;
 }
 
 void etm_config_trace_mode(struct etm_config *config)
@@ -308,7 +303,9 @@ void etm_config_trace_mode(struct etm_config *config)
 	config->addr_type[1] = ETM_ADDR_TYPE_RANGE;
 }
 
-#define ETM3X_SUPPORTED_OPTIONS (ETMCR_CYC_ACC | ETMCR_TIMESTAMP_EN)
+#define ETM3X_SUPPORTED_OPTIONS (ETMCR_CYC_ACC | \
+				 ETMCR_TIMESTAMP_EN | \
+				 ETMCR_RETURN_STACK)
 
 static int etm_parse_event_config(struct etm_drvdata *drvdata,
 				  struct perf_event *event)
@@ -339,13 +336,23 @@ static int etm_parse_event_config(struct etm_drvdata *drvdata,
 		etm_config_trace_mode(config);
 
 	/*
-	 * At this time only cycle accurate and timestamp options are
-	 * available.
+	 * At this time only cycle accurate, return stack  and timestamp
+	 * options are available.
 	 */
 	if (attr->config & ~ETM3X_SUPPORTED_OPTIONS)
 		return -EINVAL;
 
 	config->ctrl = attr->config;
+
+	/*
+	 * Possible to have cores with PTM (supports ret stack) and ETM
+	 * (never has ret stack) on the same SoC. So if we have a request
+	 * for return stack that can't be honoured on this core then
+	 * clear the bit - trace will still continue normally
+	 */
+	if ((config->ctrl & ETMCR_RETURN_STACK) &&
+	    !(drvdata->etmccer & ETMCCER_RETSTACK))
+		config->ctrl &= ~ETMCR_RETURN_STACK;
 
 	return 0;
 }
@@ -885,35 +892,35 @@ static const struct dev_pm_ops etm_dev_pm_ops = {
 	SET_RUNTIME_PM_OPS(etm_runtime_suspend, etm_runtime_resume, NULL)
 };
 
-static struct amba_id etm_ids[] = {
+static const struct amba_id etm_ids[] = {
 	{	/* ETM 3.3 */
-		.id	= 0x0003b921,
-		.mask	= 0x0003ffff,
+		.id	= 0x000bb921,
+		.mask	= 0x000fffff,
 		.data	= "ETM 3.3",
 	},
 	{	/* ETM 3.5 - Cortex-A5 */
-		.id	= 0x0003b955,
-		.mask	= 0x0003ffff,
+		.id	= 0x000bb955,
+		.mask	= 0x000fffff,
 		.data	= "ETM 3.5",
 	},
 	{	/* ETM 3.5 */
-		.id	= 0x0003b956,
-		.mask	= 0x0003ffff,
+		.id	= 0x000bb956,
+		.mask	= 0x000fffff,
 		.data	= "ETM 3.5",
 	},
 	{	/* PTM 1.0 */
-		.id	= 0x0003b950,
-		.mask	= 0x0003ffff,
+		.id	= 0x000bb950,
+		.mask	= 0x000fffff,
 		.data	= "PTM 1.0",
 	},
 	{	/* PTM 1.1 */
-		.id	= 0x0003b95f,
-		.mask	= 0x0003ffff,
+		.id	= 0x000bb95f,
+		.mask	= 0x000fffff,
 		.data	= "PTM 1.1",
 	},
 	{	/* PTM 1.1 Qualcomm */
-		.id	= 0x0003006f,
-		.mask	= 0x0003ffff,
+		.id	= 0x000b006f,
+		.mask	= 0x000fffff,
 		.data	= "PTM 1.1",
 	},
 	{ 0, 0},

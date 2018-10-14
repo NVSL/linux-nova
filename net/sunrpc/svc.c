@@ -50,7 +50,7 @@ EXPORT_SYMBOL_GPL(svc_pool_map);
 static DEFINE_MUTEX(svc_pool_map_mutex);/* protects svc_pool_map.count only */
 
 static int
-param_set_pool_mode(const char *val, struct kernel_param *kp)
+param_set_pool_mode(const char *val, const struct kernel_param *kp)
 {
 	int *ip = (int *)kp->arg;
 	struct svc_pool_map *m = &svc_pool_map;
@@ -80,7 +80,7 @@ out:
 }
 
 static int
-param_get_pool_mode(char *buf, struct kernel_param *kp)
+param_get_pool_mode(char *buf, const struct kernel_param *kp)
 {
 	int *ip = (int *)kp->arg;
 
@@ -421,7 +421,7 @@ __svc_init_bc(struct svc_serv *serv)
  */
 static struct svc_serv *
 __svc_create(struct svc_program *prog, unsigned int bufsize, int npools,
-	     struct svc_serv_ops *ops)
+	     const struct svc_serv_ops *ops)
 {
 	struct svc_serv	*serv;
 	unsigned int vers;
@@ -455,7 +455,7 @@ __svc_create(struct svc_program *prog, unsigned int bufsize, int npools,
 	serv->sv_xdrsize   = xdrsize;
 	INIT_LIST_HEAD(&serv->sv_tempsocks);
 	INIT_LIST_HEAD(&serv->sv_permsocks);
-	init_timer(&serv->sv_temptimer);
+	timer_setup(&serv->sv_temptimer, NULL, 0);
 	spin_lock_init(&serv->sv_lock);
 
 	__svc_init_bc(serv);
@@ -486,7 +486,7 @@ __svc_create(struct svc_program *prog, unsigned int bufsize, int npools,
 
 struct svc_serv *
 svc_create(struct svc_program *prog, unsigned int bufsize,
-	   struct svc_serv_ops *ops)
+	   const struct svc_serv_ops *ops)
 {
 	return __svc_create(prog, bufsize, /*npools*/1, ops);
 }
@@ -494,7 +494,7 @@ EXPORT_SYMBOL_GPL(svc_create);
 
 struct svc_serv *
 svc_create_pooled(struct svc_program *prog, unsigned int bufsize,
-		  struct svc_serv_ops *ops)
+		  const struct svc_serv_ops *ops)
 {
 	struct svc_serv *serv;
 	unsigned int npools = svc_pool_map_get();
@@ -1255,6 +1255,7 @@ svc_process_common(struct svc_rqst *rqstp, struct kvec *argv, struct kvec *resv)
 
 	/* Syntactic check complete */
 	serv->sv_stats->rpccnt++;
+	trace_svc_process(rqstp, progp->pg_name);
 
 	/* Build the reply header. */
 	statp = resv->iov_base +resv->iov_len;
@@ -1431,14 +1432,10 @@ svc_process(struct svc_rqst *rqstp)
 	}
 
 	/* Returns 1 for send, 0 for drop */
-	if (likely(svc_process_common(rqstp, argv, resv))) {
-		int ret = svc_send(rqstp);
+	if (likely(svc_process_common(rqstp, argv, resv)))
+		return svc_send(rqstp);
 
-		trace_svc_process(rqstp, ret);
-		return ret;
-	}
 out_drop:
-	trace_svc_process(rqstp, 0);
 	svc_drop(rqstp);
 	return 0;
 }
@@ -1536,3 +1533,112 @@ u32 svc_max_payload(const struct svc_rqst *rqstp)
 	return max;
 }
 EXPORT_SYMBOL_GPL(svc_max_payload);
+
+/**
+ * svc_fill_write_vector - Construct data argument for VFS write call
+ * @rqstp: svc_rqst to operate on
+ * @first: buffer containing first section of write payload
+ * @total: total number of bytes of write payload
+ *
+ * Returns the number of elements populated in the data argument array.
+ */
+unsigned int svc_fill_write_vector(struct svc_rqst *rqstp, struct kvec *first,
+				   size_t total)
+{
+	struct kvec *vec = rqstp->rq_vec;
+	struct page **pages;
+	unsigned int i;
+
+	/* Some types of transport can present the write payload
+	 * entirely in rq_arg.pages. In this case, @first is empty.
+	 */
+	i = 0;
+	if (first->iov_len) {
+		vec[i].iov_base = first->iov_base;
+		vec[i].iov_len = min_t(size_t, total, first->iov_len);
+		total -= vec[i].iov_len;
+		++i;
+	}
+
+	WARN_ON_ONCE(rqstp->rq_arg.page_base != 0);
+	pages = rqstp->rq_arg.pages;
+	while (total) {
+		vec[i].iov_base = page_address(*pages);
+		vec[i].iov_len = min_t(size_t, total, PAGE_SIZE);
+		total -= vec[i].iov_len;
+		++i;
+
+		++pages;
+	}
+
+	WARN_ON_ONCE(i > ARRAY_SIZE(rqstp->rq_vec));
+	return i;
+}
+EXPORT_SYMBOL_GPL(svc_fill_write_vector);
+
+/**
+ * svc_fill_symlink_pathname - Construct pathname argument for VFS symlink call
+ * @rqstp: svc_rqst to operate on
+ * @first: buffer containing first section of pathname
+ * @total: total length of the pathname argument
+ *
+ * Returns pointer to a NUL-terminated string, or an ERR_PTR. The buffer is
+ * released automatically when @rqstp is recycled.
+ */
+char *svc_fill_symlink_pathname(struct svc_rqst *rqstp, struct kvec *first,
+				size_t total)
+{
+	struct xdr_buf *arg = &rqstp->rq_arg;
+	struct page **pages;
+	char *result;
+
+	/* VFS API demands a NUL-terminated pathname. This function
+	 * uses a page from @rqstp as the pathname buffer, to enable
+	 * direct placement. Thus the total buffer size is PAGE_SIZE.
+	 * Space in this buffer for NUL-termination requires that we
+	 * cap the size of the returned symlink pathname just a
+	 * little early.
+	 */
+	if (total > PAGE_SIZE - 1)
+		return ERR_PTR(-ENAMETOOLONG);
+
+	/* Some types of transport can present the pathname entirely
+	 * in rq_arg.pages. If not, then copy the pathname into one
+	 * page.
+	 */
+	pages = arg->pages;
+	WARN_ON_ONCE(arg->page_base != 0);
+	if (first->iov_base == 0) {
+		result = page_address(*pages);
+		result[total] = '\0';
+	} else {
+		size_t len, remaining;
+		char *dst;
+
+		result = page_address(*(rqstp->rq_next_page++));
+		dst = result;
+		remaining = total;
+
+		len = min_t(size_t, total, first->iov_len);
+		memcpy(dst, first->iov_base, len);
+		dst += len;
+		remaining -= len;
+
+		/* No more than one page left */
+		if (remaining) {
+			len = min_t(size_t, remaining, PAGE_SIZE);
+			memcpy(dst, page_address(*pages), len);
+			dst += len;
+		}
+
+		*dst = '\0';
+	}
+
+	/* Sanity check: we don't allow the pathname argument to
+	 * contain a NUL byte.
+	 */
+	if (strlen(result) != total)
+		return ERR_PTR(-EINVAL);
+	return result;
+}
+EXPORT_SYMBOL_GPL(svc_fill_symlink_pathname);

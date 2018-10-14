@@ -1,15 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0
 /******************************************************************************
  *
  * Copyright(c) 2007 - 2012 Realtek Corporation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
- * more details.
  *
  *******************************************************************************/
 #define _SDIO_OPS_LINUX_C_
@@ -431,7 +423,7 @@ s32 _sd_read(struct intf_hdl *pintfhdl, u32 addr, u32 cnt, void *pdata)
 	if (unlikely((cnt == 1) || (cnt == 2)))
 	{
 		int i;
-		u8 *pbuf = (u8 *)pdata;
+		u8 *pbuf = pdata;
 
 		for (i = 0; i < cnt; i++)
 		{
@@ -534,7 +526,7 @@ s32 _sd_write(struct intf_hdl *pintfhdl, u32 addr, u32 cnt, void *pdata)
 	if (unlikely((cnt == 1) || (cnt == 2)))
 	{
 		int i;
-		u8 *pbuf = (u8 *)pdata;
+		u8 *pbuf = pdata;
 
 		for (i = 0; i < cnt; i++)
 		{

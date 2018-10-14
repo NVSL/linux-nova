@@ -23,11 +23,13 @@
 #include <asm/mach/arch.h>
 #include <asm/thread_info.h>
 #include <asm/memory.h>
+#include <asm/mpu.h>
 #include <asm/procinfo.h>
 #include <asm/suspend.h>
 #include <asm/vdso_datapage.h>
 #include <asm/hardware/cache-l2x0.h>
 #include <linux/kbuild.h>
+#include "signal.h"
 
 /*
  * Make sure that the compiler and target are compatible.
@@ -59,7 +61,7 @@
 int main(void)
 {
   DEFINE(TSK_ACTIVE_MM,		offsetof(struct task_struct, active_mm));
-#ifdef CONFIG_CC_STACKPROTECTOR
+#ifdef CONFIG_STACKPROTECTOR
   DEFINE(TSK_STACK_CANARY,	offsetof(struct task_struct, stack_canary));
 #endif
   BLANK();
@@ -111,6 +113,9 @@ int main(void)
   DEFINE(SVC_DACR,		offsetof(struct svc_pt_regs, dacr));
   DEFINE(SVC_ADDR_LIMIT,	offsetof(struct svc_pt_regs, addr_limit));
   DEFINE(SVC_REGS_SIZE,		sizeof(struct svc_pt_regs));
+  BLANK();
+  DEFINE(SIGFRAME_RC3_OFFSET,	offsetof(struct sigframe, retcode[3]));
+  DEFINE(RT_SIGFRAME_RC3_OFFSET, offsetof(struct rt_sigframe, sig.retcode[3]));
   BLANK();
 #ifdef CONFIG_CACHE_L2X0
   DEFINE(L2X0_R_PHY_BASE,	offsetof(struct l2x0_regs, phy_base));
@@ -182,6 +187,18 @@ int main(void)
   BLANK();
 #ifdef CONFIG_VDSO
   DEFINE(VDSO_DATA_SIZE,	sizeof(union vdso_data_store));
+#endif
+  BLANK();
+#ifdef CONFIG_ARM_MPU
+  DEFINE(MPU_RNG_INFO_RNGS,	offsetof(struct mpu_rgn_info, rgns));
+  DEFINE(MPU_RNG_INFO_USED,	offsetof(struct mpu_rgn_info, used));
+
+  DEFINE(MPU_RNG_SIZE,		sizeof(struct mpu_rgn));
+  DEFINE(MPU_RGN_DRBAR,	offsetof(struct mpu_rgn, drbar));
+  DEFINE(MPU_RGN_DRSR,	offsetof(struct mpu_rgn, drsr));
+  DEFINE(MPU_RGN_DRACR,	offsetof(struct mpu_rgn, dracr));
+  DEFINE(MPU_RGN_PRBAR,	offsetof(struct mpu_rgn, prbar));
+  DEFINE(MPU_RGN_PRLAR,	offsetof(struct mpu_rgn, prlar));
 #endif
   return 0; 
 }

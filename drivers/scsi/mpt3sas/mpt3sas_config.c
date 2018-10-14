@@ -150,6 +150,24 @@ _config_display_some_debug(struct MPT3SAS_ADAPTER *ioc, u16 smid,
 		case MPI2_CONFIG_EXTPAGETYPE_DRIVER_MAPPING:
 			desc = "driver_mapping";
 			break;
+		case MPI2_CONFIG_EXTPAGETYPE_SAS_PORT:
+			desc = "sas_port";
+			break;
+		case MPI2_CONFIG_EXTPAGETYPE_EXT_MANUFACTURING:
+			desc = "ext_manufacturing";
+			break;
+		case MPI2_CONFIG_EXTPAGETYPE_PCIE_IO_UNIT:
+			desc = "pcie_io_unit";
+			break;
+		case MPI2_CONFIG_EXTPAGETYPE_PCIE_SWITCH:
+			desc = "pcie_switch";
+			break;
+		case MPI2_CONFIG_EXTPAGETYPE_PCIE_DEVICE:
+			desc = "pcie_device";
+			break;
+		case MPI2_CONFIG_EXTPAGETYPE_PCIE_LINK:
+			desc = "pcie_link";
+			break;
 		}
 		break;
 	}
@@ -201,6 +219,7 @@ _config_alloc_config_dma_memory(struct MPT3SAS_ADAPTER *ioc,
 		mem->page = ioc->config_page;
 		mem->page_dma = ioc->config_page_dma;
 	}
+	ioc->config_vaddr = mem->page;
 	return r;
 }
 
@@ -384,7 +403,7 @@ _config_request(struct MPT3SAS_ADAPTER *ioc, Mpi2ConfigRequest_t
 	memcpy(config_request, mpi_request, sizeof(Mpi2ConfigRequest_t));
 	_config_display_some_debug(ioc, smid, "config_request", NULL);
 	init_completion(&ioc->config_cmds.done);
-	ioc->put_smid_default(ioc, smid);
+	mpt3sas_base_put_smid_default(ioc, smid);
 	wait_for_completion_timeout(&ioc->config_cmds.done, timeout*HZ);
 	if (!(ioc->config_cmds.status & MPT3_CMD_COMPLETE)) {
 		pr_err(MPT3SAS_FMT "%s: timeout\n",
@@ -1049,6 +1068,88 @@ mpt3sas_config_get_sas_device_pg1(struct MPT3SAS_ADAPTER *ioc,
 	    MPT3_CONFIG_PAGE_DEFAULT_TIMEOUT, config_page,
 	    sizeof(*config_page));
  out:
+	return r;
+}
+
+/**
+ * mpt3sas_config_get_pcie_device_pg0 - obtain pcie device page 0
+ * @ioc: per adapter object
+ * @mpi_reply: reply mf payload returned from firmware
+ * @config_page: contents of the config page
+ * @form: GET_NEXT_HANDLE or HANDLE
+ * @handle: device handle
+ * Context: sleep.
+ *
+ * Returns 0 for success, non-zero for failure.
+ */
+int
+mpt3sas_config_get_pcie_device_pg0(struct MPT3SAS_ADAPTER *ioc,
+	Mpi2ConfigReply_t *mpi_reply, Mpi26PCIeDevicePage0_t *config_page,
+	u32 form, u32 handle)
+{
+	Mpi2ConfigRequest_t mpi_request;
+	int r;
+
+	memset(&mpi_request, 0, sizeof(Mpi2ConfigRequest_t));
+	mpi_request.Function = MPI2_FUNCTION_CONFIG;
+	mpi_request.Action = MPI2_CONFIG_ACTION_PAGE_HEADER;
+	mpi_request.Header.PageType = MPI2_CONFIG_PAGETYPE_EXTENDED;
+	mpi_request.ExtPageType = MPI2_CONFIG_EXTPAGETYPE_PCIE_DEVICE;
+	mpi_request.Header.PageVersion = MPI26_PCIEDEVICE0_PAGEVERSION;
+	mpi_request.Header.PageNumber = 0;
+	ioc->build_zero_len_sge_mpi(ioc, &mpi_request.PageBufferSGE);
+	r = _config_request(ioc, &mpi_request, mpi_reply,
+			MPT3_CONFIG_PAGE_DEFAULT_TIMEOUT, NULL, 0);
+	if (r)
+		goto out;
+
+	mpi_request.PageAddress = cpu_to_le32(form | handle);
+	mpi_request.Action = MPI2_CONFIG_ACTION_PAGE_READ_CURRENT;
+	r = _config_request(ioc, &mpi_request, mpi_reply,
+			MPT3_CONFIG_PAGE_DEFAULT_TIMEOUT, config_page,
+			sizeof(*config_page));
+out:
+	return r;
+}
+
+/**
+ * mpt3sas_config_get_pcie_device_pg2 - obtain pcie device page 2
+ * @ioc: per adapter object
+ * @mpi_reply: reply mf payload returned from firmware
+ * @config_page: contents of the config page
+ * @form: GET_NEXT_HANDLE or HANDLE
+ * @handle: device handle
+ * Context: sleep.
+ *
+ * Returns 0 for success, non-zero for failure.
+ */
+int
+mpt3sas_config_get_pcie_device_pg2(struct MPT3SAS_ADAPTER *ioc,
+	Mpi2ConfigReply_t *mpi_reply, Mpi26PCIeDevicePage2_t *config_page,
+	u32 form, u32 handle)
+{
+	Mpi2ConfigRequest_t mpi_request;
+	int r;
+
+	memset(&mpi_request, 0, sizeof(Mpi2ConfigRequest_t));
+	mpi_request.Function = MPI2_FUNCTION_CONFIG;
+	mpi_request.Action = MPI2_CONFIG_ACTION_PAGE_HEADER;
+	mpi_request.Header.PageType = MPI2_CONFIG_PAGETYPE_EXTENDED;
+	mpi_request.ExtPageType = MPI2_CONFIG_EXTPAGETYPE_PCIE_DEVICE;
+	mpi_request.Header.PageVersion = MPI26_PCIEDEVICE2_PAGEVERSION;
+	mpi_request.Header.PageNumber = 2;
+	ioc->build_zero_len_sge_mpi(ioc, &mpi_request.PageBufferSGE);
+	r = _config_request(ioc, &mpi_request, mpi_reply,
+			MPT3_CONFIG_PAGE_DEFAULT_TIMEOUT, NULL, 0);
+	if (r)
+		goto out;
+
+	mpi_request.PageAddress = cpu_to_le32(form | handle);
+	mpi_request.Action = MPI2_CONFIG_ACTION_PAGE_READ_CURRENT;
+	r = _config_request(ioc, &mpi_request, mpi_reply,
+			MPT3_CONFIG_PAGE_DEFAULT_TIMEOUT, config_page,
+			sizeof(*config_page));
+out:
 	return r;
 }
 

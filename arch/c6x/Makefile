@@ -12,7 +12,7 @@ cflags-y += -mno-dsbt -msdata=none -D__linux__
 
 cflags-$(CONFIG_C6X_BIG_KERNEL) += -mlong-calls
 
-CFLAGS_MODULE   += -mlong-calls -mno-dsbt -msdata=none
+KBUILD_CFLAGS_MODULE   += -mlong-calls -mno-dsbt -msdata=none
 
 CHECKFLAGS      +=
 
@@ -25,6 +25,7 @@ KBUILD_AFLAGS   += -mbig-endian
 LINKFLAGS       += -mbig-endian
 KBUILD_LDFLAGS  += -mbig-endian
 LDFLAGS += -EB
+CHECKFLAGS	+= -D_BIG_ENDIAN
 endif
 
 head-y          := arch/c6x/kernel/head.o

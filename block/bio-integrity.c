@@ -56,12 +56,12 @@ struct bio_integrity_payload *bio_integrity_alloc(struct bio *bio,
 	struct bio_set *bs = bio->bi_pool;
 	unsigned inline_vecs;
 
-	if (!bs || !bs->bio_integrity_pool) {
+	if (!bs || !mempool_initialized(&bs->bio_integrity_pool)) {
 		bip = kmalloc(sizeof(struct bio_integrity_payload) +
 			      sizeof(struct bio_vec) * nr_vecs, gfp_mask);
 		inline_vecs = nr_vecs;
 	} else {
-		bip = mempool_alloc(bs->bio_integrity_pool, gfp_mask);
+		bip = mempool_alloc(&bs->bio_integrity_pool, gfp_mask);
 		inline_vecs = BIP_INLINE_VECS;
 	}
 
@@ -74,7 +74,7 @@ struct bio_integrity_payload *bio_integrity_alloc(struct bio *bio,
 		unsigned long idx = 0;
 
 		bip->bip_vec = bvec_alloc(gfp_mask, nr_vecs, &idx,
-					  bs->bvec_integrity_pool);
+					  &bs->bvec_integrity_pool);
 		if (!bip->bip_vec)
 			goto err;
 		bip->bip_max_vcnt = bvec_nr_vecs(idx);
@@ -90,7 +90,7 @@ struct bio_integrity_payload *bio_integrity_alloc(struct bio *bio,
 
 	return bip;
 err:
-	mempool_free(bip, bs->bio_integrity_pool);
+	mempool_free(bip, &bs->bio_integrity_pool);
 	return ERR_PTR(-ENOMEM);
 }
 EXPORT_SYMBOL(bio_integrity_alloc);
@@ -111,10 +111,10 @@ static void bio_integrity_free(struct bio *bio)
 		kfree(page_address(bip->bip_vec->bv_page) +
 		      bip->bip_vec->bv_offset);
 
-	if (bs && bs->bio_integrity_pool) {
-		bvec_free(bs->bvec_integrity_pool, bip->bip_vec, bip->bip_slab);
+	if (bs && mempool_initialized(&bs->bio_integrity_pool)) {
+		bvec_free(&bs->bvec_integrity_pool, bip->bip_vec, bip->bip_slab);
 
-		mempool_free(bip, bs->bio_integrity_pool);
+		mempool_free(bip, &bs->bio_integrity_pool);
 	} else {
 		kfree(bip);
 	}
@@ -146,7 +146,7 @@ int bio_integrity_add_page(struct bio *bio, struct page *page,
 	iv = bip->bip_vec + bip->bip_vcnt;
 
 	if (bip->bip_vcnt &&
-	    bvec_gap_to_prev(bdev_get_queue(bio->bi_bdev),
+	    bvec_gap_to_prev(bio->bi_disk->queue,
 			     &bip->bip_vec[bip->bip_vcnt - 1], offset))
 		return 0;
 
@@ -190,7 +190,7 @@ static inline unsigned int bio_integrity_bytes(struct blk_integrity *bi,
 static blk_status_t bio_integrity_process(struct bio *bio,
 		struct bvec_iter *proc_iter, integrity_processing_fn *proc_fn)
 {
-	struct blk_integrity *bi = bdev_get_integrity(bio->bi_bdev);
+	struct blk_integrity *bi = blk_get_integrity(bio->bi_disk);
 	struct blk_integrity_iter iter;
 	struct bvec_iter bviter;
 	struct bio_vec bv;
@@ -199,7 +199,7 @@ static blk_status_t bio_integrity_process(struct bio *bio,
 	void *prot_buf = page_address(bip->bip_vec->bv_page) +
 		bip->bip_vec->bv_offset;
 
-	iter.disk_name = bio->bi_bdev->bd_disk->disk_name;
+	iter.disk_name = bio->bi_disk->disk_name;
 	iter.interval = 1 << bi->interval_exp;
 	iter.seed = proc_iter->bi_sector;
 	iter.prot_buf = prot_buf;
@@ -236,8 +236,8 @@ static blk_status_t bio_integrity_process(struct bio *bio,
 bool bio_integrity_prep(struct bio *bio)
 {
 	struct bio_integrity_payload *bip;
-	struct blk_integrity *bi;
-	struct request_queue *q;
+	struct blk_integrity *bi = blk_get_integrity(bio->bi_disk);
+	struct request_queue *q = bio->bi_disk->queue;
 	void *buf;
 	unsigned long start, end;
 	unsigned int len, nr_pages;
@@ -245,8 +245,9 @@ bool bio_integrity_prep(struct bio *bio)
 	unsigned int intervals;
 	blk_status_t status;
 
-	bi = bdev_get_integrity(bio->bi_bdev);
-	q = bdev_get_queue(bio->bi_bdev);
+	if (!bi)
+		return true;
+
 	if (bio_op(bio) != REQ_OP_READ && bio_op(bio) != REQ_OP_WRITE)
 		return true;
 
@@ -255,9 +256,6 @@ bool bio_integrity_prep(struct bio *bio)
 
 	/* Already protected? */
 	if (bio_integrity(bio))
-		return true;
-
-	if (bi == NULL)
 		return true;
 
 	if (bio_data_dir(bio) == READ) {
@@ -354,7 +352,7 @@ static void bio_integrity_verify_fn(struct work_struct *work)
 	struct bio_integrity_payload *bip =
 		container_of(work, struct bio_integrity_payload, bip_work);
 	struct bio *bio = bip->bip_bio;
-	struct blk_integrity *bi = bdev_get_integrity(bio->bi_bdev);
+	struct blk_integrity *bi = blk_get_integrity(bio->bi_disk);
 	struct bvec_iter iter = bio->bi_iter;
 
 	/*
@@ -376,7 +374,6 @@ static void bio_integrity_verify_fn(struct work_struct *work)
 /**
  * __bio_integrity_endio - Integrity I/O completion function
  * @bio:	Protected bio
- * @error:	Pointer to errno
  *
  * Description: Completion for integrity I/O
  *
@@ -387,7 +384,7 @@ static void bio_integrity_verify_fn(struct work_struct *work)
  */
 bool __bio_integrity_endio(struct bio *bio)
 {
-	struct blk_integrity *bi = bdev_get_integrity(bio->bi_bdev);
+	struct blk_integrity *bi = blk_get_integrity(bio->bi_disk);
 	struct bio_integrity_payload *bip = bio_integrity(bio);
 
 	if (bio_op(bio) == REQ_OP_READ && !bio->bi_status &&
@@ -413,7 +410,7 @@ bool __bio_integrity_endio(struct bio *bio)
 void bio_integrity_advance(struct bio *bio, unsigned int bytes_done)
 {
 	struct bio_integrity_payload *bip = bio_integrity(bio);
-	struct blk_integrity *bi = bdev_get_integrity(bio->bi_bdev);
+	struct blk_integrity *bi = blk_get_integrity(bio->bi_disk);
 	unsigned bytes = bio_integrity_bytes(bi, bytes_done >> 9);
 
 	bip->bip_iter.bi_sector += bytes_done >> 9;
@@ -430,7 +427,7 @@ EXPORT_SYMBOL(bio_integrity_advance);
 void bio_integrity_trim(struct bio *bio)
 {
 	struct bio_integrity_payload *bip = bio_integrity(bio);
-	struct blk_integrity *bi = bdev_get_integrity(bio->bi_bdev);
+	struct blk_integrity *bi = blk_get_integrity(bio->bi_disk);
 
 	bip->bip_iter.bi_size = bio_integrity_bytes(bi, bio_sectors(bio));
 }
@@ -468,16 +465,15 @@ EXPORT_SYMBOL(bio_integrity_clone);
 
 int bioset_integrity_create(struct bio_set *bs, int pool_size)
 {
-	if (bs->bio_integrity_pool)
+	if (mempool_initialized(&bs->bio_integrity_pool))
 		return 0;
 
-	bs->bio_integrity_pool = mempool_create_slab_pool(pool_size, bip_slab);
-	if (!bs->bio_integrity_pool)
+	if (mempool_init_slab_pool(&bs->bio_integrity_pool,
+				   pool_size, bip_slab))
 		return -1;
 
-	bs->bvec_integrity_pool = biovec_create_pool(pool_size);
-	if (!bs->bvec_integrity_pool) {
-		mempool_destroy(bs->bio_integrity_pool);
+	if (biovec_init_pool(&bs->bvec_integrity_pool, pool_size)) {
+		mempool_exit(&bs->bio_integrity_pool);
 		return -1;
 	}
 
@@ -487,11 +483,8 @@ EXPORT_SYMBOL(bioset_integrity_create);
 
 void bioset_integrity_free(struct bio_set *bs)
 {
-	if (bs->bio_integrity_pool)
-		mempool_destroy(bs->bio_integrity_pool);
-
-	if (bs->bvec_integrity_pool)
-		mempool_destroy(bs->bvec_integrity_pool);
+	mempool_exit(&bs->bio_integrity_pool);
+	mempool_exit(&bs->bvec_integrity_pool);
 }
 EXPORT_SYMBOL(bioset_integrity_free);
 

@@ -729,7 +729,7 @@ static int omap_mbox_probe(struct platform_device *pdev)
 		return -ENODEV;
 	}
 
-	finfoblk = devm_kzalloc(&pdev->dev, info_count * sizeof(*finfoblk),
+	finfoblk = devm_kcalloc(&pdev->dev, info_count, sizeof(*finfoblk),
 				GFP_KERNEL);
 	if (!finfoblk)
 		return -ENOMEM;
@@ -773,23 +773,23 @@ static int omap_mbox_probe(struct platform_device *pdev)
 	if (IS_ERR(mdev->mbox_base))
 		return PTR_ERR(mdev->mbox_base);
 
-	mdev->irq_ctx = devm_kzalloc(&pdev->dev, num_users * sizeof(u32),
+	mdev->irq_ctx = devm_kcalloc(&pdev->dev, num_users, sizeof(u32),
 				     GFP_KERNEL);
 	if (!mdev->irq_ctx)
 		return -ENOMEM;
 
 	/* allocate one extra for marking end of list */
-	list = devm_kzalloc(&pdev->dev, (info_count + 1) * sizeof(*list),
+	list = devm_kcalloc(&pdev->dev, info_count + 1, sizeof(*list),
 			    GFP_KERNEL);
 	if (!list)
 		return -ENOMEM;
 
-	chnls = devm_kzalloc(&pdev->dev, (info_count + 1) * sizeof(*chnls),
+	chnls = devm_kcalloc(&pdev->dev, info_count + 1, sizeof(*chnls),
 			     GFP_KERNEL);
 	if (!chnls)
 		return -ENOMEM;
 
-	mboxblk = devm_kzalloc(&pdev->dev, info_count * sizeof(*mbox),
+	mboxblk = devm_kcalloc(&pdev->dev, info_count, sizeof(*mbox),
 			       GFP_KERNEL);
 	if (!mboxblk)
 		return -ENOMEM;
@@ -906,7 +906,11 @@ static int __init omap_mbox_init(void)
 	mbox_kfifo_size = max_t(unsigned int, mbox_kfifo_size,
 							sizeof(mbox_msg_t));
 
-	return platform_driver_register(&omap_mbox_driver);
+	err = platform_driver_register(&omap_mbox_driver);
+	if (err)
+		class_unregister(&omap_mbox_class);
+
+	return err;
 }
 subsys_initcall(omap_mbox_init);
 

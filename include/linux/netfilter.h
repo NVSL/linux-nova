@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __LINUX_NETFILTER_H
 #define __LINUX_NETFILTER_H
 
@@ -72,25 +73,43 @@ struct nf_hook_ops {
 };
 
 struct nf_hook_entry {
-	struct nf_hook_entry __rcu	*next;
 	nf_hookfn			*hook;
 	void				*priv;
-	const struct nf_hook_ops	*orig_ops;
 };
 
-static inline void
-nf_hook_entry_init(struct nf_hook_entry *entry,	const struct nf_hook_ops *ops)
-{
-	entry->next = NULL;
-	entry->hook = ops->hook;
-	entry->priv = ops->priv;
-	entry->orig_ops = ops;
-}
+struct nf_hook_entries_rcu_head {
+	struct rcu_head head;
+	void	*allocation;
+};
 
-static inline int
-nf_hook_entry_priority(const struct nf_hook_entry *entry)
+struct nf_hook_entries {
+	u16				num_hook_entries;
+	/* padding */
+	struct nf_hook_entry		hooks[];
+
+	/* trailer: pointers to original orig_ops of each hook,
+	 * followed by rcu_head and scratch space used for freeing
+	 * the structure via call_rcu.
+	 *
+	 *   This is not part of struct nf_hook_entry since its only
+	 *   needed in slow path (hook register/unregister):
+	 * const struct nf_hook_ops     *orig_ops[]
+	 *
+	 *   For the same reason, we store this at end -- its
+	 *   only needed when a hook is deleted, not during
+	 *   packet path processing:
+	 * struct nf_hook_entries_rcu_head     head
+	 */
+};
+
+static inline struct nf_hook_ops **nf_hook_entries_get_hook_ops(const struct nf_hook_entries *e)
 {
-	return entry->orig_ops->priority;
+	unsigned int n = e->num_hook_entries;
+	const void *hook_end;
+
+	hook_end = &e->hooks[n]; /* this is *past* ->hooks[]! */
+
+	return (struct nf_hook_ops **)hook_end;
 }
 
 static inline int
@@ -98,12 +117,6 @@ nf_hook_entry_hookfn(const struct nf_hook_entry *entry, struct sk_buff *skb,
 		     struct nf_hook_state *state)
 {
 	return entry->hook(entry->priv, skb, state);
-}
-
-static inline const struct nf_hook_ops *
-nf_hook_entry_ops(const struct nf_hook_entry *entry)
-{
-	return entry->orig_ops;
 }
 
 static inline void nf_hook_state_init(struct nf_hook_state *p,
@@ -168,7 +181,7 @@ extern struct static_key nf_hooks_needed[NFPROTO_NUMPROTO][NF_MAX_HOOKS];
 #endif
 
 int nf_hook_slow(struct sk_buff *skb, struct nf_hook_state *state,
-		 struct nf_hook_entry *entry);
+		 const struct nf_hook_entries *e, unsigned int i);
 
 /**
  *	nf_hook - call a netfilter hook
@@ -182,7 +195,7 @@ static inline int nf_hook(u_int8_t pf, unsigned int hook, struct net *net,
 			  struct net_device *indev, struct net_device *outdev,
 			  int (*okfn)(struct net *, struct sock *, struct sk_buff *))
 {
-	struct nf_hook_entry *hook_head;
+	struct nf_hook_entries *hook_head = NULL;
 	int ret = 1;
 
 #ifdef HAVE_JUMP_LABEL
@@ -193,14 +206,40 @@ static inline int nf_hook(u_int8_t pf, unsigned int hook, struct net *net,
 #endif
 
 	rcu_read_lock();
-	hook_head = rcu_dereference(net->nf.hooks[pf][hook]);
+	switch (pf) {
+	case NFPROTO_IPV4:
+		hook_head = rcu_dereference(net->nf.hooks_ipv4[hook]);
+		break;
+	case NFPROTO_IPV6:
+		hook_head = rcu_dereference(net->nf.hooks_ipv6[hook]);
+		break;
+	case NFPROTO_ARP:
+#ifdef CONFIG_NETFILTER_FAMILY_ARP
+		hook_head = rcu_dereference(net->nf.hooks_arp[hook]);
+#endif
+		break;
+	case NFPROTO_BRIDGE:
+#ifdef CONFIG_NETFILTER_FAMILY_BRIDGE
+		hook_head = rcu_dereference(net->nf.hooks_bridge[hook]);
+#endif
+		break;
+#if IS_ENABLED(CONFIG_DECNET)
+	case NFPROTO_DECNET:
+		hook_head = rcu_dereference(net->nf.hooks_decnet[hook]);
+		break;
+#endif
+	default:
+		WARN_ON_ONCE(1);
+		break;
+	}
+
 	if (hook_head) {
 		struct nf_hook_state state;
 
 		nf_hook_state_init(&state, hook, pf, indev, outdev,
 				   sk, net, okfn);
 
-		ret = nf_hook_slow(skb, &state, hook_head);
+		ret = nf_hook_slow(skb, &state, hook_head, 0);
 	}
 	rcu_read_unlock();
 
@@ -269,78 +308,45 @@ int skb_make_writable(struct sk_buff *skb, unsigned int writable_len);
 struct flowi;
 struct nf_queue_entry;
 
-struct nf_afinfo {
-	unsigned short	family;
-	__sum16		(*checksum)(struct sk_buff *skb, unsigned int hook,
-				    unsigned int dataoff, u_int8_t protocol);
-	__sum16		(*checksum_partial)(struct sk_buff *skb,
-					    unsigned int hook,
-					    unsigned int dataoff,
-					    unsigned int len,
-					    u_int8_t protocol);
-	int		(*route)(struct net *net, struct dst_entry **dst,
-				 struct flowi *fl, bool strict);
-	void		(*saveroute)(const struct sk_buff *skb,
-				     struct nf_queue_entry *entry);
-	int		(*reroute)(struct net *net, struct sk_buff *skb,
-				   const struct nf_queue_entry *entry);
-	int		route_key_size;
-};
+__sum16 nf_checksum(struct sk_buff *skb, unsigned int hook,
+		    unsigned int dataoff, u_int8_t protocol,
+		    unsigned short family);
 
-extern const struct nf_afinfo __rcu *nf_afinfo[NFPROTO_NUMPROTO];
-static inline const struct nf_afinfo *nf_get_afinfo(unsigned short family)
-{
-	return rcu_dereference(nf_afinfo[family]);
-}
-
-static inline __sum16
-nf_checksum(struct sk_buff *skb, unsigned int hook, unsigned int dataoff,
-	    u_int8_t protocol, unsigned short family)
-{
-	const struct nf_afinfo *afinfo;
-	__sum16 csum = 0;
-
-	rcu_read_lock();
-	afinfo = nf_get_afinfo(family);
-	if (afinfo)
-		csum = afinfo->checksum(skb, hook, dataoff, protocol);
-	rcu_read_unlock();
-	return csum;
-}
-
-static inline __sum16
-nf_checksum_partial(struct sk_buff *skb, unsigned int hook,
-		    unsigned int dataoff, unsigned int len,
-		    u_int8_t protocol, unsigned short family)
-{
-	const struct nf_afinfo *afinfo;
-	__sum16 csum = 0;
-
-	rcu_read_lock();
-	afinfo = nf_get_afinfo(family);
-	if (afinfo)
-		csum = afinfo->checksum_partial(skb, hook, dataoff, len,
-						protocol);
-	rcu_read_unlock();
-	return csum;
-}
-
-int nf_register_afinfo(const struct nf_afinfo *afinfo);
-void nf_unregister_afinfo(const struct nf_afinfo *afinfo);
+__sum16 nf_checksum_partial(struct sk_buff *skb, unsigned int hook,
+			    unsigned int dataoff, unsigned int len,
+			    u_int8_t protocol, unsigned short family);
+int nf_route(struct net *net, struct dst_entry **dst, struct flowi *fl,
+	     bool strict, unsigned short family);
+int nf_reroute(struct sk_buff *skb, struct nf_queue_entry *entry);
 
 #include <net/flow.h>
-extern void (*nf_nat_decode_session_hook)(struct sk_buff *, struct flowi *);
+
+struct nf_conn;
+enum nf_nat_manip_type;
+struct nlattr;
+enum ip_conntrack_dir;
+
+struct nf_nat_hook {
+	int (*parse_nat_setup)(struct nf_conn *ct, enum nf_nat_manip_type manip,
+			       const struct nlattr *attr);
+	void (*decode_session)(struct sk_buff *skb, struct flowi *fl);
+	unsigned int (*manip_pkt)(struct sk_buff *skb, struct nf_conn *ct,
+				  enum nf_nat_manip_type mtype,
+				  enum ip_conntrack_dir dir);
+};
+
+extern struct nf_nat_hook __rcu *nf_nat_hook;
 
 static inline void
 nf_nat_decode_session(struct sk_buff *skb, struct flowi *fl, u_int8_t family)
 {
 #ifdef CONFIG_NF_NAT_NEEDED
-	void (*decodefn)(struct sk_buff *, struct flowi *);
+	struct nf_nat_hook *nat_hook;
 
 	rcu_read_lock();
-	decodefn = rcu_dereference(nf_nat_decode_session_hook);
-	if (decodefn)
-		decodefn(skb, fl);
+	nat_hook = rcu_dereference(nf_nat_hook);
+	if (nat_hook && nat_hook->decode_session)
+		nat_hook->decode_session(skb, fl);
 	rcu_read_unlock();
 #endif
 }
@@ -382,13 +388,19 @@ nf_nat_decode_session(struct sk_buff *skb, struct flowi *fl, u_int8_t family)
 
 extern void (*ip_ct_attach)(struct sk_buff *, const struct sk_buff *) __rcu;
 void nf_ct_attach(struct sk_buff *, const struct sk_buff *);
-extern void (*nf_ct_destroy)(struct nf_conntrack *) __rcu;
 #else
 static inline void nf_ct_attach(struct sk_buff *new, struct sk_buff *skb) {}
 #endif
 
 struct nf_conn;
 enum ip_conntrack_info;
+
+struct nf_ct_hook {
+	int (*update)(struct net *net, struct sk_buff *skb);
+	void (*destroy)(struct nf_conntrack *);
+};
+extern struct nf_ct_hook __rcu *nf_ct_hook;
+
 struct nlattr;
 
 struct nfnl_ct_hook {

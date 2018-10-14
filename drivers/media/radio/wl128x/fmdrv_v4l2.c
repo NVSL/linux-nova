@@ -102,7 +102,7 @@ static ssize_t fm_v4l2_fops_write(struct file *file, const char __user * buf,
 	return sizeof(rds);
 }
 
-static u32 fm_v4l2_fops_poll(struct file *file, struct poll_table_struct *pts)
+static __poll_t fm_v4l2_fops_poll(struct file *file, struct poll_table_struct *pts)
 {
 	int ret;
 	struct fmdev *fmdev;
@@ -112,7 +112,7 @@ static u32 fm_v4l2_fops_poll(struct file *file, struct poll_table_struct *pts)
 	ret = fmc_is_rds_data_available(fmdev, file, pts);
 	mutex_unlock(&fmdev->mutex);
 	if (ret < 0)
-		return POLLIN | POLLRDNORM;
+		return EPOLLIN | EPOLLRDNORM;
 
 	return 0;
 }
@@ -509,7 +509,7 @@ static const struct v4l2_ioctl_ops fm_drv_ioctl_ops = {
 };
 
 /* V4L2 RADIO device parent structure */
-static struct video_device fm_viddev_template = {
+static const struct video_device fm_viddev_template = {
 	.fops = &fm_drv_fops,
 	.ioctl_ops = &fm_drv_ioctl_ops,
 	.name = FM_DRV_NAME,

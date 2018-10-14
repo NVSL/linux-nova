@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #undef TRACE_SYSTEM
 #define TRACE_SYSTEM rcu
 
@@ -83,20 +84,21 @@ TRACE_EVENT(rcu_grace_period,
 );
 
 /*
- * Tracepoint for future grace-period events, including those for no-callbacks
- * CPUs.  The caller should pull the data from the rcu_node structure,
- * other than rcuname, which comes from the rcu_state structure, and event,
- * which is one of the following:
+ * Tracepoint for future grace-period events.  The caller should pull
+ * the data from the rcu_node structure, other than rcuname, which comes
+ * from the rcu_state structure, and event, which is one of the following:
  *
- * "Startleaf": Request a nocb grace period based on leaf-node data.
+ * "Startleaf": Request a grace period based on leaf-node data.
+ * "Prestarted": Someone beat us to the request
  * "Startedleaf": Leaf-node start proved sufficient.
  * "Startedleafroot": Leaf-node start proved sufficient after checking root.
  * "Startedroot": Requested a nocb grace period based on root-node data.
+ * "NoGPkthread": The RCU grace-period kthread has not yet started.
  * "StartWait": Start waiting for the requested grace period.
  * "ResumeWait": Resume waiting after signal.
  * "EndWait": Complete wait.
  * "Cleanup": Clean up rcu_node structure after previous GP.
- * "CleanupMore": Clean up, and another no-CB GP is needed.
+ * "CleanupMore": Clean up, and another GP is needed.
  */
 TRACE_EVENT(rcu_future_grace_period,
 
@@ -178,6 +180,10 @@ TRACE_EVENT(rcu_grace_period_init,
  *
  *	"snap": Captured snapshot of expedited grace period sequence number.
  *	"start": Started a real expedited grace period.
+ *	"reset": Started resetting the tree
+ *	"select": Started selecting the CPUs to wait on.
+ *	"selectofl": Selected CPU partially offline.
+ *	"startwait": Started waiting on selected CPUs.
  *	"end": Ended a real expedited grace period.
  *	"endwake": Woke piggybackers up.
  *	"done": Someone else did the expedited grace period for us.
@@ -242,6 +248,7 @@ TRACE_EVENT(rcu_exp_funnel_lock,
 		  __entry->grphi, __entry->gpevent)
 );
 
+#ifdef CONFIG_RCU_NOCB_CPU
 /*
  * Tracepoint for RCU no-CBs CPU callback handoffs.  This event is intended
  * to assist debugging of these handoffs.
@@ -284,6 +291,7 @@ TRACE_EVENT(rcu_nocb_wake,
 
 	TP_printk("%s %d %s", __entry->rcuname, __entry->cpu, __entry->reason)
 );
+#endif
 
 /*
  * Tracepoint for tasks blocking within preemptible-RCU read-side
@@ -420,76 +428,40 @@ TRACE_EVENT(rcu_fqs,
 
 /*
  * Tracepoint for dyntick-idle entry/exit events.  These take a string
- * as argument: "Start" for entering dyntick-idle mode, "End" for
- * leaving it, "--=" for events moving towards idle, and "++=" for events
- * moving away from idle.  "Error on entry: not idle task" and "Error on
- * exit: not idle task" indicate that a non-idle task is erroneously
- * toying with the idle loop.
+ * as argument: "Start" for entering dyntick-idle mode, "Startirq" for
+ * entering it from irq/NMI, "End" for leaving it, "Endirq" for leaving it
+ * to irq/NMI, "--=" for events moving towards idle, and "++=" for events
+ * moving away from idle.
  *
  * These events also take a pair of numbers, which indicate the nesting
- * depth before and after the event of interest.  Note that task-related
- * events use the upper bits of each number, while interrupt-related
- * events use the lower bits.
+ * depth before and after the event of interest, and a third number that is
+ * the ->dynticks counter.  Note that task-related and interrupt-related
+ * events use two separate counters, and that the "++=" and "--=" events
+ * for irq/NMI will change the counter by two, otherwise by one.
  */
 TRACE_EVENT(rcu_dyntick,
 
-	TP_PROTO(const char *polarity, long long oldnesting, long long newnesting),
+	TP_PROTO(const char *polarity, long oldnesting, long newnesting, atomic_t dynticks),
 
-	TP_ARGS(polarity, oldnesting, newnesting),
+	TP_ARGS(polarity, oldnesting, newnesting, dynticks),
 
 	TP_STRUCT__entry(
 		__field(const char *, polarity)
-		__field(long long, oldnesting)
-		__field(long long, newnesting)
+		__field(long, oldnesting)
+		__field(long, newnesting)
+		__field(int, dynticks)
 	),
 
 	TP_fast_assign(
 		__entry->polarity = polarity;
 		__entry->oldnesting = oldnesting;
 		__entry->newnesting = newnesting;
+		__entry->dynticks = atomic_read(&dynticks);
 	),
 
-	TP_printk("%s %llx %llx", __entry->polarity,
-		  __entry->oldnesting, __entry->newnesting)
-);
-
-/*
- * Tracepoint for RCU preparation for idle, the goal being to get RCU
- * processing done so that the current CPU can shut off its scheduling
- * clock and enter dyntick-idle mode.  One way to accomplish this is
- * to drain all RCU callbacks from this CPU, and the other is to have
- * done everything RCU requires for the current grace period.  In this
- * latter case, the CPU will be awakened at the end of the current grace
- * period in order to process the remainder of its callbacks.
- *
- * These tracepoints take a string as argument:
- *
- *	"No callbacks": Nothing to do, no callbacks on this CPU.
- *	"In holdoff": Nothing to do, holding off after unsuccessful attempt.
- *	"Begin holdoff": Attempt failed, don't retry until next jiffy.
- *	"Dyntick with callbacks": Entering dyntick-idle despite callbacks.
- *	"Dyntick with lazy callbacks": Entering dyntick-idle w/lazy callbacks.
- *	"More callbacks": Still more callbacks, try again to clear them out.
- *	"Callbacks drained": All callbacks processed, off to dyntick idle!
- *	"Timer": Timer fired to cause CPU to continue processing callbacks.
- *	"Demigrate": Timer fired on wrong CPU, woke up correct CPU.
- *	"Cleanup after idle": Idle exited, timer canceled.
- */
-TRACE_EVENT(rcu_prep_idle,
-
-	TP_PROTO(const char *reason),
-
-	TP_ARGS(reason),
-
-	TP_STRUCT__entry(
-		__field(const char *, reason)
-	),
-
-	TP_fast_assign(
-		__entry->reason = reason;
-	),
-
-	TP_printk("%s", __entry->reason)
+	TP_printk("%s %lx %lx %#3x", __entry->polarity,
+		  __entry->oldnesting, __entry->newnesting,
+		  __entry->dynticks & 0xfff)
 );
 
 /*
@@ -703,6 +675,7 @@ TRACE_EVENT(rcu_batch_end,
  * at the beginning and end of the read, respectively.  Note that the
  * callback address can be NULL.
  */
+#define RCUTORTURENAME_LEN 8
 TRACE_EVENT(rcu_torture_read,
 
 	TP_PROTO(const char *rcutorturename, struct rcu_head *rhp,
@@ -711,7 +684,7 @@ TRACE_EVENT(rcu_torture_read,
 	TP_ARGS(rcutorturename, rhp, secs, c_old, c),
 
 	TP_STRUCT__entry(
-		__field(const char *, rcutorturename)
+		__field(char, rcutorturename[RCUTORTURENAME_LEN])
 		__field(struct rcu_head *, rhp)
 		__field(unsigned long, secs)
 		__field(unsigned long, c_old)
@@ -719,7 +692,9 @@ TRACE_EVENT(rcu_torture_read,
 	),
 
 	TP_fast_assign(
-		__entry->rcutorturename = rcutorturename;
+		strncpy(__entry->rcutorturename, rcutorturename,
+			RCUTORTURENAME_LEN);
+		__entry->rcutorturename[RCUTORTURENAME_LEN - 1] = 0;
 		__entry->rhp = rhp;
 		__entry->secs = secs;
 		__entry->c_old = c_old;
@@ -795,8 +770,7 @@ TRACE_EVENT(rcu_barrier,
 					 grplo, grphi, gp_tasks) do { } \
 	while (0)
 #define trace_rcu_fqs(rcuname, gpnum, cpu, qsevent) do { } while (0)
-#define trace_rcu_dyntick(polarity, oldnesting, newnesting) do { } while (0)
-#define trace_rcu_prep_idle(reason) do { } while (0)
+#define trace_rcu_dyntick(polarity, oldnesting, newnesting, dyntick) do { } while (0)
 #define trace_rcu_callback(rcuname, rhp, qlen_lazy, qlen) do { } while (0)
 #define trace_rcu_kfree_callback(rcuname, rhp, offset, qlen_lazy, qlen) \
 	do { } while (0)

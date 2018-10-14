@@ -1,4 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0
 #include "juno-clocks.dtsi"
+#include "juno-motherboard.dtsi"
 
 / {
 	/*
@@ -67,10 +69,29 @@
 		interrupt-controller;
 		interrupts = <GIC_PPI 9 (GIC_CPU_MASK_SIMPLE(6) | IRQ_TYPE_LEVEL_HIGH)>;
 		ranges = <0 0 0 0x2c1c0000 0 0x40000>;
+
 		v2m_0: v2m@0 {
 			compatible = "arm,gic-v2m-frame";
 			msi-controller;
-			reg = <0 0 0 0x1000>;
+			reg = <0 0 0 0x10000>;
+		};
+
+		v2m@10000 {
+			compatible = "arm,gic-v2m-frame";
+			msi-controller;
+			reg = <0 0x10000 0 0x10000>;
+		};
+
+		v2m@20000 {
+			compatible = "arm,gic-v2m-frame";
+			msi-controller;
+			reg = <0 0x20000 0 0x10000>;
+		};
+
+		v2m@30000 {
+			compatible = "arm,gic-v2m-frame";
+			msi-controller;
+			reg = <0 0x30000 0 0x10000>;
 		};
 	};
 
@@ -201,7 +222,7 @@
 		};
 	};
 
-	cpu_debug0: cpu_debug@22010000 {
+	cpu_debug0: cpu-debug@22010000 {
 		compatible = "arm,coresight-cpu-debug", "arm,primecell";
 		reg = <0x0 0x22010000 0x0 0x1000>;
 
@@ -260,7 +281,7 @@
 		};
 	};
 
-	cpu_debug1: cpu_debug@22110000 {
+	cpu_debug1: cpu-debug@22110000 {
 		compatible = "arm,coresight-cpu-debug", "arm,primecell";
 		reg = <0x0 0x22110000 0x0 0x1000>;
 
@@ -283,7 +304,7 @@
 		};
 	};
 
-	cpu_debug2: cpu_debug@23010000 {
+	cpu_debug2: cpu-debug@23010000 {
 		compatible = "arm,coresight-cpu-debug", "arm,primecell";
 		reg = <0x0 0x23010000 0x0 0x1000>;
 
@@ -356,7 +377,7 @@
 		};
 	};
 
-	cpu_debug3: cpu_debug@23110000 {
+	cpu_debug3: cpu-debug@23110000 {
 		compatible = "arm,coresight-cpu-debug", "arm,primecell";
 		reg = <0x0 0x23110000 0x0 0x1000>;
 
@@ -379,7 +400,7 @@
 		};
 	};
 
-	cpu_debug4: cpu_debug@23210000 {
+	cpu_debug4: cpu-debug@23210000 {
 		compatible = "arm,coresight-cpu-debug", "arm,primecell";
 		reg = <0x0 0x23210000 0x0 0x1000>;
 
@@ -402,7 +423,7 @@
 		};
 	};
 
-	cpu_debug5: cpu_debug@23310000 {
+	cpu_debug5: cpu-debug@23310000 {
 		compatible = "arm,coresight-cpu-debug", "arm,primecell";
 		reg = <0x0 0x23310000 0x0 0x1000>;
 
@@ -426,7 +447,7 @@
 	};
 
 	replicator@20120000 {
-		compatible = "qcom,coresight-replicator1x", "arm,primecell";
+		compatible = "arm,coresight-dynamic-replicator", "arm,primecell";
 		reg = <0 0x20120000 0 0x1000>;
 
 		clocks = <&soc_smc50mhz>;
@@ -552,14 +573,14 @@
 			thermal-sensors = <&scpi_sensors0 3>;
 		};
 
-		big_cluster_thermal_zone: big_cluster {
+		big_cluster_thermal_zone: big-cluster {
 			polling-delay = <1000>;
 			polling-delay-passive = <100>;
 			thermal-sensors = <&scpi_sensors0 21>;
 			status = "disabled";
 		};
 
-		little_cluster_thermal_zone: little_cluster {
+		little_cluster_thermal_zone: little-cluster {
 			polling-delay = <1000>;
 			polling-delay-passive = <100>;
 			thermal-sensors = <&scpi_sensors0 22>;
@@ -657,7 +678,7 @@
 		clock-names = "pxlclk";
 
 		port {
-			hdlcd1_output: hdlcd1-endpoint {
+			hdlcd1_output: endpoint {
 				remote-endpoint = <&tda998x_1_input>;
 			};
 		};
@@ -672,7 +693,7 @@
 		clock-names = "pxlclk";
 
 		port {
-			hdlcd0_output: hdlcd0-endpoint {
+			hdlcd0_output: endpoint {
 				remote-endpoint = <&tda998x_0_input>;
 			};
 		};
@@ -700,7 +721,7 @@
 			compatible = "nxp,tda998x";
 			reg = <0x70>;
 			port {
-				tda998x_0_input: tda998x-0-endpoint {
+				tda998x_0_input: endpoint {
 					remote-endpoint = <&hdlcd0_output>;
 				};
 			};
@@ -710,7 +731,7 @@
 			compatible = "nxp,tda998x";
 			reg = <0x71>;
 			port {
-				tda998x_1_input: tda998x-1-endpoint {
+				tda998x_1_input: endpoint {
 					remote-endpoint = <&hdlcd1_output>;
 				};
 			};
@@ -775,8 +796,6 @@
 				<0 0 10 &gic 0 0 0 167 IRQ_TYPE_LEVEL_HIGH>,
 				<0 0 11 &gic 0 0 0 168 IRQ_TYPE_LEVEL_HIGH>,
 				<0 0 12 &gic 0 0 0 169 IRQ_TYPE_LEVEL_HIGH>;
-
-		/include/ "juno-motherboard.dtsi"
 	};
 
 	site2: tlx@60000000 {

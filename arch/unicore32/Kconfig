@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0
 config UNICORE32
 	def_bool y
 	select ARCH_HAS_DEVMEM_IS_ALLOWED
@@ -18,6 +19,8 @@ config UNICORE32
 	select ARCH_WANT_FRAME_POINTERS
 	select GENERIC_IOMAP
 	select MODULES_USE_ELF_REL
+	select NEED_DMA_MAP_STATE
+	select SWIOTLB
 	help
 	  UniCore-32 is 32-bit Instruction Set Architecture,
 	  including a series of low-power-consumption RISC chip
@@ -59,9 +62,6 @@ config ARCH_MAY_HAVE_PC_FDC
 
 config ZONE_DMA
 	def_bool y
-
-config NEED_DMA_MAP_STATE
-       def_bool y
 
 source "init/Kconfig"
 
@@ -114,7 +114,7 @@ endif
 
 source "arch/unicore32/mm/Kconfig"
 
-comment "Floating poing support"
+comment "Floating point support"
 
 config UNICORE_FPU_F64
 	def_bool y if !ARCH_FPGA

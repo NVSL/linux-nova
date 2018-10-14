@@ -12,8 +12,8 @@
 #include <linux/init.h>
 #include <linux/mutex.h>
 #include <linux/spi/spi.h>
-#include <linux/gpio.h>
-#include <linux/of_gpio.h>
+#include <linux/gpio/driver.h>
+#include <linux/gpio/consumer.h>
 #include <linux/slab.h>
 #include <linux/module.h>
 
@@ -22,6 +22,7 @@
 struct gen_74x164_chip {
 	struct gpio_chip	gpio_chip;
 	struct mutex		lock;
+	struct gpio_desc	*gpiod_oe;
 	u32			registers;
 	/*
 	 * Since the registers are chained, every byte sent will make
@@ -30,7 +31,7 @@ struct gen_74x164_chip {
 	 * register at the end of the transfer. So, to have a logical
 	 * numbering, store the bytes in reverse order.
 	 */
-	u8			buffer[0];
+	u8			buffer[];
 };
 
 static int __gen_74x164_write_config(struct gen_74x164_chip *chip)
@@ -126,6 +127,13 @@ static int gen_74x164_probe(struct spi_device *spi)
 	if (!chip)
 		return -ENOMEM;
 
+	chip->gpiod_oe = devm_gpiod_get_optional(&spi->dev, "enable",
+						 GPIOD_OUT_LOW);
+	if (IS_ERR(chip->gpiod_oe))
+		return PTR_ERR(chip->gpiod_oe);
+
+	gpiod_set_value_cansleep(chip->gpiod_oe, 1);
+
 	spi_set_drvdata(spi, chip);
 
 	chip->gpio_chip.label = spi->modalias;
@@ -164,6 +172,7 @@ static int gen_74x164_remove(struct spi_device *spi)
 {
 	struct gen_74x164_chip *chip = spi_get_drvdata(spi);
 
+	gpiod_set_value_cansleep(chip->gpiod_oe, 0);
 	gpiochip_remove(&chip->gpio_chip);
 	mutex_destroy(&chip->lock);
 

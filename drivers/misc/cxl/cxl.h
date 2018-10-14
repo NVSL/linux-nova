@@ -100,9 +100,12 @@ static const cxl_p1_reg_t CXL_XSL_FEC       = {0x0158};
 static const cxl_p1_reg_t CXL_XSL_DSNCTL    = {0x0168};
 /* PSL registers - CAIA 2 */
 static const cxl_p1_reg_t CXL_PSL9_CONTROL  = {0x0020};
+static const cxl_p1_reg_t CXL_XSL9_INV      = {0x0110};
+static const cxl_p1_reg_t CXL_XSL9_DBG      = {0x0130};
+static const cxl_p1_reg_t CXL_XSL9_DEF      = {0x0140};
 static const cxl_p1_reg_t CXL_XSL9_DSNCTL   = {0x0168};
 static const cxl_p1_reg_t CXL_PSL9_FIR1     = {0x0300};
-static const cxl_p1_reg_t CXL_PSL9_FIR2     = {0x0308};
+static const cxl_p1_reg_t CXL_PSL9_FIR_MASK = {0x0308};
 static const cxl_p1_reg_t CXL_PSL9_Timebase = {0x0310};
 static const cxl_p1_reg_t CXL_PSL9_DEBUG    = {0x0320};
 static const cxl_p1_reg_t CXL_PSL9_FIR_CNTL = {0x0348};
@@ -112,6 +115,7 @@ static const cxl_p1_reg_t CXL_PSL9_TRACECFG = {0x0368};
 static const cxl_p1_reg_t CXL_PSL9_APCDEDALLOC = {0x0378};
 static const cxl_p1_reg_t CXL_PSL9_APCDEDTYPE = {0x0380};
 static const cxl_p1_reg_t CXL_PSL9_TNR_ADDR = {0x0388};
+static const cxl_p1_reg_t CXL_PSL9_CTCCFG = {0x0390};
 static const cxl_p1_reg_t CXL_PSL9_GP_CT = {0x0398};
 static const cxl_p1_reg_t CXL_XSL9_IERAT = {0x0588};
 static const cxl_p1_reg_t CXL_XSL9_ILPP  = {0x0590};
@@ -365,6 +369,9 @@ static const cxl_p2n_reg_t CXL_PSL_WED_An     = {0x0A0};
 #define CXL_PSL_TFC_An_AE (1ull << (63-30)) /* Restart PSL with address error */
 #define CXL_PSL_TFC_An_R  (1ull << (63-31)) /* Restart PSL transaction */
 
+/****** CXL_PSL_DEBUG *****************************************************/
+#define CXL_PSL_DEBUG_CDC  (1ull << (63-27)) /* Coherent Data cache support */
+
 /****** CXL_XSL9_IERAT_ERAT - CAIA 2 **********************************/
 #define CXL_XSL9_IERAT_MLPID    (1ull << (63-0))  /* Match LPID */
 #define CXL_XSL9_IERAT_MPID     (1ull << (63-1))  /* Match PID */
@@ -413,6 +420,9 @@ static const cxl_p2n_reg_t CXL_PSL_WED_An     = {0x0A0};
 #define CXL_DEV_MINORS 13   /* 1 control + 4 AFUs * 3 (dedicated/master/shared) */
 #define CXL_CARD_MINOR(adapter) (adapter->adapter_num * CXL_DEV_MINORS)
 #define CXL_DEVT_ADAPTER(dev) (MINOR(dev) / CXL_DEV_MINORS)
+
+#define CXL_PSL9_TRACEID_MAX 0xAU
+#define CXL_PSL9_TRACESTATE_FIN 0x3U
 
 enum cxl_context_status {
 	CLOSED,
@@ -623,6 +633,9 @@ struct cxl_context {
 	struct list_head extra_irq_contexts;
 
 	struct mm_struct *mm;
+
+	u16 tidr;
+	bool assign_tidr;
 };
 
 struct cxl_irq_info;
@@ -659,6 +672,7 @@ struct cxl_native {
 	irq_hw_number_t err_hwirq;
 	unsigned int err_virq;
 	u64 ps_off;
+	bool no_data_cache; /* set if no data cache on the card */
 	const struct cxl_service_layer_ops *sl_ops;
 };
 
@@ -703,6 +717,7 @@ struct cxl {
 	bool perst_select_user;
 	bool perst_same_image;
 	bool psl_timebase_synced;
+	bool tunneled_ops_supported;
 
 	/*
 	 * number of contexts mapped on to this card. Possible values are:
@@ -938,8 +953,6 @@ int cxl_debugfs_adapter_add(struct cxl *adapter);
 void cxl_debugfs_adapter_remove(struct cxl *adapter);
 int cxl_debugfs_afu_add(struct cxl_afu *afu);
 void cxl_debugfs_afu_remove(struct cxl_afu *afu);
-void cxl_stop_trace_psl9(struct cxl *cxl);
-void cxl_stop_trace_psl8(struct cxl *cxl);
 void cxl_debugfs_add_adapter_regs_psl9(struct cxl *adapter, struct dentry *dir);
 void cxl_debugfs_add_adapter_regs_psl8(struct cxl *adapter, struct dentry *dir);
 void cxl_debugfs_add_adapter_regs_xsl(struct cxl *adapter, struct dentry *dir);
@@ -972,14 +985,6 @@ static inline int cxl_debugfs_afu_add(struct cxl_afu *afu)
 }
 
 static inline void cxl_debugfs_afu_remove(struct cxl_afu *afu)
-{
-}
-
-static inline void cxl_stop_trace_psl9(struct cxl *cxl)
-{
-}
-
-static inline void cxl_stop_trace_psl8(struct cxl *cxl)
 {
 }
 
@@ -1065,12 +1070,13 @@ int cxl_psl_purge(struct cxl_afu *afu);
 int cxl_calc_capp_routing(struct pci_dev *dev, u64 *chipid,
 			  u32 *phb_index, u64 *capp_unit_id);
 int cxl_slot_is_switched(struct pci_dev *dev);
-int cxl_get_xsl9_dsnctl(u64 capp_unit_id, u64 *reg);
+int cxl_get_xsl9_dsnctl(struct pci_dev *dev, u64 capp_unit_id, u64 *reg);
 u64 cxl_calculate_sr(bool master, bool kernel, bool real_mode, bool p9);
 
 void cxl_native_irq_dump_regs_psl9(struct cxl_context *ctx);
 void cxl_native_irq_dump_regs_psl8(struct cxl_context *ctx);
-void cxl_native_err_irq_dump_regs(struct cxl *adapter);
+void cxl_native_err_irq_dump_regs_psl8(struct cxl *adapter);
+void cxl_native_err_irq_dump_regs_psl9(struct cxl *adapter);
 int cxl_pci_vphb_add(struct cxl_afu *afu);
 void cxl_pci_vphb_remove(struct cxl_afu *afu);
 void cxl_release_mapping(struct cxl_context *ctx);
@@ -1083,7 +1089,7 @@ int afu_open(struct inode *inode, struct file *file);
 int afu_release(struct inode *inode, struct file *file);
 long afu_ioctl(struct file *file, unsigned int cmd, unsigned long arg);
 int afu_mmap(struct file *file, struct vm_area_struct *vm);
-unsigned int afu_poll(struct file *file, struct poll_table_struct *poll);
+__poll_t afu_poll(struct file *file, struct poll_table_struct *poll);
 ssize_t afu_read(struct file *file, char __user *buf, size_t count, loff_t *off);
 extern const struct file_operations afu_fops;
 

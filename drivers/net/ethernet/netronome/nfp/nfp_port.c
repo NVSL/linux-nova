@@ -32,6 +32,7 @@
  */
 
 #include <linux/lockdep.h>
+#include <linux/netdevice.h>
 #include <net/switchdev.h>
 
 #include "nfpcore/nfp_cpp.h"
@@ -88,19 +89,33 @@ const struct switchdev_ops nfp_port_switchdev_ops = {
 	.switchdev_port_attr_get	= nfp_port_attr_get,
 };
 
-int nfp_port_setup_tc(struct net_device *netdev, u32 handle, u32 chain_index,
-		      __be16 proto, struct tc_to_netdev *tc)
+int nfp_port_setup_tc(struct net_device *netdev, enum tc_setup_type type,
+		      void *type_data)
 {
 	struct nfp_port *port;
-
-	if (chain_index)
-		return -EOPNOTSUPP;
 
 	port = nfp_port_from_netdev(netdev);
 	if (!port)
 		return -EOPNOTSUPP;
 
-	return nfp_app_setup_tc(port->app, netdev, handle, proto, tc);
+	return nfp_app_setup_tc(port->app, netdev, type, type_data);
+}
+
+int nfp_port_set_features(struct net_device *netdev, netdev_features_t features)
+{
+	struct nfp_port *port;
+
+	port = nfp_port_from_netdev(netdev);
+	if (!port)
+		return 0;
+
+	if ((netdev->features & NETIF_F_HW_TC) > (features & NETIF_F_HW_TC) &&
+	    port->tc_offload_cnt) {
+		netdev_err(netdev, "Cannot disable HW TC offload while offloads active\n");
+		return -EBUSY;
+	}
+
+	return 0;
 }
 
 struct nfp_port *
@@ -166,7 +181,11 @@ nfp_port_get_phys_port_name(struct net_device *netdev, char *name, size_t len)
 				     eth_port->label_subport);
 		break;
 	case NFP_PORT_PF_PORT:
-		n = snprintf(name, len, "pf%d", port->pf_id);
+		if (!port->pf_split)
+			n = snprintf(name, len, "pf%d", port->pf_id);
+		else
+			n = snprintf(name, len, "pf%ds%d", port->pf_id,
+				     port->pf_split_id);
 		break;
 	case NFP_PORT_VF_PORT:
 		n = snprintf(name, len, "pf%dvf%d", port->pf_id, port->vf_id);
@@ -179,6 +198,35 @@ nfp_port_get_phys_port_name(struct net_device *netdev, char *name, size_t len)
 		return -EINVAL;
 
 	return 0;
+}
+
+/**
+ * nfp_port_configure() - helper to set the interface configured bit
+ * @netdev:	net_device instance
+ * @configed:	Desired state
+ *
+ * Helper to set the ifup/ifdown state on the PHY only if there is a physical
+ * interface associated with the netdev.
+ *
+ * Return:
+ * 0 - configuration successful (or no change);
+ * -ERRNO - configuration failed.
+ */
+int nfp_port_configure(struct net_device *netdev, bool configed)
+{
+	struct nfp_eth_table_port *eth_port;
+	struct nfp_port *port;
+	int err;
+
+	port = nfp_port_from_netdev(netdev);
+	eth_port = __nfp_port_get_eth_port(port);
+	if (!eth_port)
+		return 0;
+	if (port->eth_forced)
+		return 0;
+
+	err = nfp_eth_set_configured(port->app->cpp, eth_port->index, configed);
+	return err < 0 && err != -EOPNOTSUPP ? err : 0;
 }
 
 int nfp_port_init_phy_port(struct nfp_pf *pf, struct nfp_app *app,
@@ -201,6 +249,9 @@ int nfp_port_init_phy_port(struct nfp_pf *pf, struct nfp_app *app,
 
 	port->eth_port = &pf->eth_tbl->ports[id];
 	port->eth_id = pf->eth_tbl->ports[id].index;
+	if (pf->mac_stats_mem)
+		port->eth_stats =
+			pf->mac_stats_mem + port->eth_id * NFP_MAC_STATS_SIZE;
 
 	return 0;
 }

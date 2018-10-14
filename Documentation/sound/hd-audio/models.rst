@@ -82,6 +82,8 @@ tpt460
     Lenovo Thinkpad T460/560 setup
 dual-codecs
     Lenovo laptops with dual codecs
+alc700-ref
+    Intel reference board with ALC700 codec
 
 ALC66x/67x/892
 ==============
@@ -261,6 +263,8 @@ hp-dock
     HP dock support
 mute-led-gpio
     Mute LED control via GPIO
+hp-mic-fix
+    Fix for headset mic pin on HP boxes
 
 STAC9200
 ========

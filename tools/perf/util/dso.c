@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #include <asm/bug.h>
 #include <linux/kernel.h>
 #include <sys/time.h>
@@ -6,9 +7,11 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <errno.h>
+#include <fcntl.h>
 #include "compress.h"
 #include "path.h"
 #include "symbol.h"
+#include "srcline.h"
 #include "dso.h"
 #include "machine.h"
 #include "auxtrace.h"
@@ -32,6 +35,7 @@ char dso__symtab_origin(const struct dso *dso)
 		[DSO_BINARY_TYPE__JAVA_JIT]			= 'j',
 		[DSO_BINARY_TYPE__DEBUGLINK]			= 'l',
 		[DSO_BINARY_TYPE__BUILD_ID_CACHE]		= 'B',
+		[DSO_BINARY_TYPE__BUILD_ID_CACHE_DEBUGINFO]	= 'D',
 		[DSO_BINARY_TYPE__FEDORA_DEBUGINFO]		= 'f',
 		[DSO_BINARY_TYPE__UBUNTU_DEBUGINFO]		= 'u',
 		[DSO_BINARY_TYPE__OPENEMBEDDED_DEBUGINFO]	= 'o',
@@ -97,7 +101,12 @@ int dso__read_binary_type_filename(const struct dso *dso,
 		break;
 	}
 	case DSO_BINARY_TYPE__BUILD_ID_CACHE:
-		if (dso__build_id_filename(dso, filename, size) == NULL)
+		if (dso__build_id_filename(dso, filename, size, false) == NULL)
+			ret = -1;
+		break;
+
+	case DSO_BINARY_TYPE__BUILD_ID_CACHE_DEBUGINFO:
+		if (dso__build_id_filename(dso, filename, size, true) == NULL)
 			ret = -1;
 		break;
 
@@ -345,6 +354,8 @@ int __kmod_path__parse(struct kmod_path *m, const char *path,
 		if ((strncmp(name, "[kernel.kallsyms]", 17) == 0) ||
 		    (strncmp(name, "[guest.kernel.kallsyms", 22) == 0) ||
 		    (strncmp(name, "[vdso]", 6) == 0) ||
+		    (strncmp(name, "[vdso32]", 8) == 0) ||
+		    (strncmp(name, "[vdsox32]", 9) == 0) ||
 		    (strncmp(name, "[vsyscall]", 10) == 0)) {
 			m->kmod = false;
 
@@ -437,7 +448,7 @@ static int do_open(char *name)
 	char sbuf[STRERR_BUFSIZE];
 
 	do {
-		fd = open(name, O_RDONLY);
+		fd = open(name, O_RDONLY|O_CLOEXEC);
 		if (fd >= 0)
 			return fd;
 
@@ -504,7 +515,14 @@ static void check_data_close(void);
  */
 static int open_dso(struct dso *dso, struct machine *machine)
 {
-	int fd = __open_dso(dso, machine);
+	int fd;
+	struct nscookie nsc;
+
+	if (dso->binary_type != DSO_BINARY_TYPE__BUILD_ID_CACHE)
+		nsinfo__mountns_enter(dso->nsinfo, &nsc);
+	fd = __open_dso(dso, machine);
+	if (dso->binary_type != DSO_BINARY_TYPE__BUILD_ID_CACHE)
+		nsinfo__mountns_exit(&nsc);
 
 	if (fd >= 0) {
 		dso__list_add(dso);
@@ -998,7 +1016,7 @@ struct map *dso__new_map(const char *name)
 	struct dso *dso = dso__new(name);
 
 	if (dso)
-		map = map__new2(0, dso, MAP__FUNCTION);
+		map = map__new2(0, dso);
 
 	return map;
 }
@@ -1160,19 +1178,19 @@ int dso__name_len(const struct dso *dso)
 	return dso->short_name_len;
 }
 
-bool dso__loaded(const struct dso *dso, enum map_type type)
+bool dso__loaded(const struct dso *dso)
 {
-	return dso->loaded & (1 << type);
+	return dso->loaded;
 }
 
-bool dso__sorted_by_name(const struct dso *dso, enum map_type type)
+bool dso__sorted_by_name(const struct dso *dso)
 {
-	return dso->sorted_by_name & (1 << type);
+	return dso->sorted_by_name;
 }
 
-void dso__set_sorted_by_name(struct dso *dso, enum map_type type)
+void dso__set_sorted_by_name(struct dso *dso)
 {
-	dso->sorted_by_name |= (1 << type);
+	dso->sorted_by_name = true;
 }
 
 struct dso *dso__new(const char *name)
@@ -1180,13 +1198,13 @@ struct dso *dso__new(const char *name)
 	struct dso *dso = calloc(1, sizeof(*dso) + strlen(name) + 1);
 
 	if (dso != NULL) {
-		int i;
 		strcpy(dso->name, name);
 		dso__set_long_name(dso, dso->name, false);
 		dso__set_short_name(dso, dso->name, false);
-		for (i = 0; i < MAP__NR_TYPES; ++i)
-			dso->symbols[i] = dso->symbol_names[i] = RB_ROOT;
+		dso->symbols = dso->symbol_names = RB_ROOT;
 		dso->data.cache = RB_ROOT;
+		dso->inlined_nodes = RB_ROOT;
+		dso->srclines = RB_ROOT;
 		dso->data.fd = -1;
 		dso->data.status = DSO_DATA_STATUS_UNKNOWN;
 		dso->symtab_type = DSO_BINARY_TYPE__NOT_FOUND;
@@ -1213,13 +1231,14 @@ struct dso *dso__new(const char *name)
 
 void dso__delete(struct dso *dso)
 {
-	int i;
-
 	if (!RB_EMPTY_NODE(&dso->rb_node))
 		pr_err("DSO %s is still in rbtree when being deleted!\n",
 		       dso->long_name);
-	for (i = 0; i < MAP__NR_TYPES; ++i)
-		symbols__delete(&dso->symbols[i]);
+
+	/* free inlines first, as they reference symbols */
+	inlines__tree_delete(&dso->inlined_nodes);
+	srcline__tree_delete(&dso->srclines);
+	symbols__delete(&dso->symbols);
 
 	if (dso->short_name_allocated) {
 		zfree((char **)&dso->short_name);
@@ -1236,6 +1255,7 @@ void dso__delete(struct dso *dso)
 	dso_cache__free(dso);
 	dso__free_a2l(dso);
 	zfree(&dso->symsrc_filename);
+	nsinfo__zput(dso->nsinfo);
 	pthread_mutex_destroy(&dso->lock);
 	free(dso);
 }
@@ -1301,6 +1321,7 @@ bool __dsos__read_build_ids(struct list_head *head, bool with_hits)
 {
 	bool have_build_id = false;
 	struct dso *pos;
+	struct nscookie nsc;
 
 	list_for_each_entry(pos, head, node) {
 		if (with_hits && !pos->hit && !dso__is_vdso(pos))
@@ -1309,11 +1330,13 @@ bool __dsos__read_build_ids(struct list_head *head, bool with_hits)
 			have_build_id = true;
 			continue;
 		}
+		nsinfo__mountns_enter(pos->nsinfo, &nsc);
 		if (filename__read_build_id(pos->long_name, pos->build_id,
 					    sizeof(pos->build_id)) > 0) {
 			have_build_id	  = true;
 			pos->has_build_id = true;
 		}
+		nsinfo__mountns_exit(&nsc);
 	}
 
 	return have_build_id;
@@ -1348,9 +1371,9 @@ void __dsos__add(struct dsos *dsos, struct dso *dso)
 
 void dsos__add(struct dsos *dsos, struct dso *dso)
 {
-	pthread_rwlock_wrlock(&dsos->lock);
+	down_write(&dsos->lock);
 	__dsos__add(dsos, dso);
-	pthread_rwlock_unlock(&dsos->lock);
+	up_write(&dsos->lock);
 }
 
 struct dso *__dsos__find(struct dsos *dsos, const char *name, bool cmp_short)
@@ -1369,9 +1392,9 @@ struct dso *__dsos__find(struct dsos *dsos, const char *name, bool cmp_short)
 struct dso *dsos__find(struct dsos *dsos, const char *name, bool cmp_short)
 {
 	struct dso *dso;
-	pthread_rwlock_rdlock(&dsos->lock);
+	down_read(&dsos->lock);
 	dso = __dsos__find(dsos, name, cmp_short);
-	pthread_rwlock_unlock(&dsos->lock);
+	up_read(&dsos->lock);
 	return dso;
 }
 
@@ -1398,9 +1421,9 @@ struct dso *__dsos__findnew(struct dsos *dsos, const char *name)
 struct dso *dsos__findnew(struct dsos *dsos, const char *name)
 {
 	struct dso *dso;
-	pthread_rwlock_wrlock(&dsos->lock);
+	down_write(&dsos->lock);
 	dso = dso__get(__dsos__findnew(dsos, name));
-	pthread_rwlock_unlock(&dsos->lock);
+	up_write(&dsos->lock);
 	return dso;
 }
 
@@ -1425,9 +1448,7 @@ size_t __dsos__fprintf(struct list_head *head, FILE *fp)
 	size_t ret = 0;
 
 	list_for_each_entry(pos, head, node) {
-		int i;
-		for (i = 0; i < MAP__NR_TYPES; ++i)
-			ret += dso__fprintf(pos, i, fp);
+		ret += dso__fprintf(pos, fp);
 	}
 
 	return ret;
@@ -1441,18 +1462,17 @@ size_t dso__fprintf_buildid(struct dso *dso, FILE *fp)
 	return fprintf(fp, "%s", sbuild_id);
 }
 
-size_t dso__fprintf(struct dso *dso, enum map_type type, FILE *fp)
+size_t dso__fprintf(struct dso *dso, FILE *fp)
 {
 	struct rb_node *nd;
 	size_t ret = fprintf(fp, "dso: %s (", dso->short_name);
 
 	if (dso->short_name != dso->long_name)
 		ret += fprintf(fp, "%s, ", dso->long_name);
-	ret += fprintf(fp, "%s, %sloaded, ", map_type__name[type],
-		       dso__loaded(dso, type) ? "" : "NOT ");
+	ret += fprintf(fp, "%sloaded, ", dso__loaded(dso) ? "" : "NOT ");
 	ret += dso__fprintf_buildid(dso, fp);
 	ret += fprintf(fp, ")\n");
-	for (nd = rb_first(&dso->symbols[type]); nd; nd = rb_next(nd)) {
+	for (nd = rb_first(&dso->symbols); nd; nd = rb_next(nd)) {
 		struct symbol *pos = rb_entry(nd, struct symbol, rb_node);
 		ret += symbol__fprintf(pos, fp);
 	}

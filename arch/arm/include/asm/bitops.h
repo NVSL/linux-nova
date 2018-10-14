@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Copyright 1995, Russell King.
  * Various bits and pieces copyrights include:
@@ -337,6 +338,7 @@ static inline int find_next_bit_le(const void *p, int size, int offset)
 
 #endif
 
+#include <asm-generic/bitops/find.h>
 #include <asm-generic/bitops/le.h>
 
 /*

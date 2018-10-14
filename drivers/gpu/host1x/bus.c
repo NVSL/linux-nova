@@ -41,13 +41,15 @@ struct host1x_subdev {
 /**
  * host1x_subdev_add() - add a new subdevice with an associated device node
  * @device: host1x device to add the subdevice to
- * @driver: host1x driver
  * @np: device node
  */
 static int host1x_subdev_add(struct host1x_device *device,
+			     struct host1x_driver *driver,
 			     struct device_node *np)
 {
 	struct host1x_subdev *subdev;
+	struct device_node *child;
+	int err;
 
 	subdev = kzalloc(sizeof(*subdev), GFP_KERNEL);
 	if (!subdev)
@@ -59,6 +61,19 @@ static int host1x_subdev_add(struct host1x_device *device,
 	mutex_lock(&device->subdevs_lock);
 	list_add_tail(&subdev->list, &device->subdevs);
 	mutex_unlock(&device->subdevs_lock);
+
+	/* recursively add children */
+	for_each_child_of_node(np, child) {
+		if (of_match_node(driver->subdevs, child) &&
+		    of_device_is_available(child)) {
+			err = host1x_subdev_add(device, driver, child);
+			if (err < 0) {
+				/* XXX cleanup? */
+				of_node_put(child);
+				return err;
+			}
+		}
+	}
 
 	return 0;
 }
@@ -88,7 +103,7 @@ static int host1x_device_parse_dt(struct host1x_device *device,
 	for_each_child_of_node(device->dev.parent->of_node, np) {
 		if (of_match_node(driver->subdevs, np) &&
 		    of_device_is_available(np)) {
-			err = host1x_subdev_add(device, np);
+			err = host1x_subdev_add(device, driver, np);
 			if (err < 0) {
 				of_node_put(np);
 				return err;
@@ -196,8 +211,7 @@ int host1x_device_init(struct host1x_device *device)
 				dev_err(&device->dev,
 					"failed to initialize %s: %d\n",
 					dev_name(client->dev), err);
-				mutex_unlock(&device->clients_lock);
-				return err;
+				goto teardown;
 			}
 		}
 	}
@@ -205,6 +219,14 @@ int host1x_device_init(struct host1x_device *device)
 	mutex_unlock(&device->clients_lock);
 
 	return 0;
+
+teardown:
+	list_for_each_entry_continue_reverse(client, &device->clients, list)
+		if (client->ops->exit)
+			client->ops->exit(client);
+
+	mutex_unlock(&device->clients_lock);
+	return err;
 }
 EXPORT_SYMBOL(host1x_device_init);
 
@@ -292,6 +314,11 @@ static int host1x_device_match(struct device *dev, struct device_driver *drv)
 	return strcmp(dev_name(dev), drv->name) == 0;
 }
 
+static int host1x_dma_configure(struct device *dev)
+{
+	return of_dma_configure(dev, dev->of_node, true);
+}
+
 static const struct dev_pm_ops host1x_device_pm_ops = {
 	.suspend = pm_generic_suspend,
 	.resume = pm_generic_resume,
@@ -304,6 +331,7 @@ static const struct dev_pm_ops host1x_device_pm_ops = {
 struct bus_type host1x_bus_type = {
 	.name = "host1x",
 	.match = host1x_device_match,
+	.dma_configure	= host1x_dma_configure,
 	.pm = &host1x_device_pm_ops,
 };
 
@@ -388,11 +416,12 @@ static int host1x_device_add(struct host1x *host1x,
 	device->dev.coherent_dma_mask = host1x->dev->coherent_dma_mask;
 	device->dev.dma_mask = &device->dev.coherent_dma_mask;
 	dev_set_name(&device->dev, "%s", driver->driver.name);
-	of_dma_configure(&device->dev, host1x->dev->of_node);
 	device->dev.release = host1x_device_release;
 	device->dev.of_node = host1x->dev->of_node;
 	device->dev.bus = &host1x_bus_type;
 	device->dev.parent = host1x->dev;
+
+	of_dma_configure(&device->dev, host1x->dev->of_node, true);
 
 	err = host1x_device_parse_dt(device, driver);
 	if (err < 0) {

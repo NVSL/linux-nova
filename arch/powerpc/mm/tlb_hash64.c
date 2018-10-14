@@ -29,6 +29,8 @@
 #include <asm/tlbflush.h>
 #include <asm/tlb.h>
 #include <asm/bug.h>
+#include <asm/pte-walk.h>
+
 
 #include <trace/events/thp.h>
 
@@ -49,7 +51,7 @@ void hpte_need_flush(struct mm_struct *mm, unsigned long addr,
 	unsigned int psize;
 	int ssize;
 	real_pte_t rpte;
-	int i;
+	int i, offset;
 
 	i = batch->index;
 
@@ -65,6 +67,10 @@ void hpte_need_flush(struct mm_struct *mm, unsigned long addr,
 		psize = get_slice_psize(mm, addr);
 		/* Mask the address for the correct page size */
 		addr &= ~((1UL << mmu_psize_defs[psize].shift) - 1);
+		if (unlikely(psize == MMU_PAGE_16G))
+			offset = PTRS_PER_PUD;
+		else
+			offset = PTRS_PER_PMD;
 #else
 		BUG();
 		psize = pte_pagesize_index(mm, addr, pte); /* shutup gcc */
@@ -76,20 +82,21 @@ void hpte_need_flush(struct mm_struct *mm, unsigned long addr,
 		 * support 64k pages, this might be different from the
 		 * hardware page size encoded in the slice table. */
 		addr &= PAGE_MASK;
+		offset = PTRS_PER_PTE;
 	}
 
 
 	/* Build full vaddr */
 	if (!is_kernel_addr(addr)) {
 		ssize = user_segment_size(addr);
-		vsid = get_vsid(mm->context.id, addr, ssize);
+		vsid = get_user_vsid(&mm->context, addr, ssize);
 	} else {
 		vsid = get_kernel_vsid(addr, mmu_kernel_ssize);
 		ssize = mmu_kernel_ssize;
 	}
 	WARN_ON(vsid == 0);
 	vpn = hpt_vpn(addr, vsid, ssize);
-	rpte = __real_pte(__pte(pte), ptep);
+	rpte = __real_pte(__pte(pte), ptep, offset);
 
 	/*
 	 * Check if we have an active batch on this CPU. If not, just
@@ -138,13 +145,10 @@ void hpte_need_flush(struct mm_struct *mm, unsigned long addr,
  */
 void __flush_tlb_pending(struct ppc64_tlb_batch *batch)
 {
-	const struct cpumask *tmp;
-	int i, local = 0;
+	int i, local;
 
 	i = batch->index;
-	tmp = cpumask_of(smp_processor_id());
-	if (cpumask_equal(mm_cpumask(batch->mm), tmp))
-		local = 1;
+	local = mm_is_thread_local(batch->mm);
 	if (i == 1)
 		flush_hash_page(batch->vpn[0], batch->pte[0],
 				batch->psize, batch->ssize, local);
@@ -207,8 +211,8 @@ void __flush_hash_table_range(struct mm_struct *mm, unsigned long start,
 	local_irq_save(flags);
 	arch_enter_lazy_mmu_mode();
 	for (; start < end; start += PAGE_SIZE) {
-		pte_t *ptep = find_linux_pte_or_hugepte(mm->pgd, start, &is_thp,
-							&hugepage_shift);
+		pte_t *ptep = find_current_mm_pte(mm->pgd, start, &is_thp,
+						  &hugepage_shift);
 		unsigned long pte;
 
 		if (ptep == NULL)

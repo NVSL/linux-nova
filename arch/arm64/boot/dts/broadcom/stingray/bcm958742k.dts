@@ -39,6 +39,14 @@
 	model = "Stingray Combo SVK (BCM958742K)";
 };
 
+&gphy0 {
+	enet-phy-lane-swap;
+};
+
+&sdio0 {
+	mmc-ddr-1_8v;
+};
+
 &uart2 {
 	status = "okay";
 };

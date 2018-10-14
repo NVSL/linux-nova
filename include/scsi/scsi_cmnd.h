@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _SCSI_SCSI_CMND_H
 #define _SCSI_SCSI_CMND_H
 
@@ -57,7 +58,9 @@ struct scsi_pointer {
 /* for scmd->flags */
 #define SCMD_TAGGED		(1 << 0)
 #define SCMD_UNCHECKED_ISA_DMA	(1 << 1)
-#define SCMD_ZONE_WRITE_LOCK	(1 << 2)
+#define SCMD_INITIALIZED	(1 << 2)
+/* flags preserved across unprep / reprep */
+#define SCMD_PRESERVED_FLAGS	(SCMD_UNCHECKED_ISA_DMA | SCMD_INITIALIZED)
 
 struct scsi_cmnd {
 	struct scsi_request req;
@@ -65,6 +68,9 @@ struct scsi_cmnd {
 	struct list_head list;  /* scsi_cmnd participates in queue lists */
 	struct list_head eh_entry; /* entry for the host eh_cmd_q */
 	struct delayed_work abort_work;
+
+	struct rcu_head rcu;
+
 	int eh_eflags;		/* Used by error handlr */
 
 	/*
@@ -159,7 +165,6 @@ static inline struct scsi_driver *scsi_cmd_to_driver(struct scsi_cmnd *cmd)
 	return *(struct scsi_driver **)cmd->request->rq_disk->private_data;
 }
 
-extern struct scsi_cmnd *scsi_get_command(struct scsi_device *, gfp_t);
 extern void scsi_put_command(struct scsi_cmnd *);
 extern void scsi_finish_command(struct scsi_cmnd *cmd);
 
@@ -168,10 +173,14 @@ extern void *scsi_kmap_atomic_sg(struct scatterlist *sg, int sg_count,
 extern void scsi_kunmap_atomic_sg(void *virt);
 
 extern int scsi_init_io(struct scsi_cmnd *cmd);
-extern void scsi_initialize_rq(struct request *rq);
 
+#ifdef CONFIG_SCSI_DMA
 extern int scsi_dma_map(struct scsi_cmnd *cmd);
 extern void scsi_dma_unmap(struct scsi_cmnd *cmd);
+#else /* !CONFIG_SCSI_DMA */
+static inline int scsi_dma_map(struct scsi_cmnd *cmd) { return -ENOSYS; }
+static inline void scsi_dma_unmap(struct scsi_cmnd *cmd) { }
+#endif /* !CONFIG_SCSI_DMA */
 
 static inline unsigned scsi_sg_count(struct scsi_cmnd *cmd)
 {

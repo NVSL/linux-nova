@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0
 config PARISC
 	def_bool y
 	select ARCH_MIGHT_HAVE_PC_PARPORT
@@ -9,6 +10,8 @@ config PARISC
 	select ARCH_WANT_FRAME_POINTERS
 	select ARCH_HAS_ELF_RANDOMIZE
 	select ARCH_HAS_STRICT_KERNEL_RWX
+	select ARCH_HAS_UBSAN_SANITIZE_ALL
+	select ARCH_SUPPORTS_MEMORY_FAILURE
 	select RTC_CLASS
 	select RTC_DRV_GENERIC
 	select INIT_ALL_POSSIBLE
@@ -17,11 +20,18 @@ config PARISC
 	select BUG
 	select BUILDTIME_EXTABLE_SORT
 	select HAVE_PERF_EVENTS
+	select HAVE_KERNEL_BZIP2
+	select HAVE_KERNEL_GZIP
+	select HAVE_KERNEL_LZ4
+	select HAVE_KERNEL_LZMA
+	select HAVE_KERNEL_LZO
+	select HAVE_KERNEL_XZ
 	select GENERIC_ATOMIC64 if !64BIT
 	select GENERIC_IRQ_PROBE
 	select GENERIC_PCI_IOMAP
 	select ARCH_HAVE_NMI_SAFE_CMPXCHG
 	select GENERIC_SMP_IDLE_THREAD
+	select GENERIC_CPU_DEVICES
 	select GENERIC_STRNCPY_FROM_USER
 	select SYSCTL_ARCH_UNALIGN_ALLOW
 	select SYSCTL_EXCEPTION_TRACE
@@ -40,6 +50,8 @@ config PARISC
 	select GENERIC_CLOCKEVENTS
 	select ARCH_NO_COHERENT_DMA_MMAP
 	select CPU_NO_EFFICIENT_FFS
+	select NEED_DMA_MAP_STATE
+	select NEED_SG_DMA_LENGTH
 
 	help
 	  The PA-RISC microprocessor is designed by Hewlett-Packard and used
@@ -98,12 +110,6 @@ config PM
 	bool
 
 config STACKTRACE_SUPPORT
-	def_bool y
-
-config NEED_DMA_MAP_STATE
-	def_bool y
-
-config NEED_SG_DMA_LENGTH
 	def_bool y
 
 config ISA_DMA_API
@@ -188,7 +194,7 @@ config PREFETCH
 
 config MLONGCALLS
 	bool "Enable the -mlong-calls compiler option for big kernels"
-	def_bool y if (!MODULES)
+	default y
 	depends on PA8X00
 	help
 	  If you configure the kernel to include many drivers built-in instead
@@ -237,13 +243,25 @@ config PARISC_PAGE_SIZE_4KB
 
 config PARISC_PAGE_SIZE_16KB
 	bool "16KB"
-	depends on PA8X00
+	depends on PA8X00 && BROKEN
 
 config PARISC_PAGE_SIZE_64KB
 	bool "64KB"
-	depends on PA8X00
+	depends on PA8X00 && BROKEN
 
 endchoice
+
+config PARISC_SELF_EXTRACT
+	bool "Build kernel as self-extracting executable"
+	default y
+	help
+	  Say Y if you want to build the parisc kernel as a kind of
+	  self-extracting executable.
+
+	  If you say N here, the kernel will be compressed with gzip
+	  which can be loaded by the palo bootloader directly too.
+
+	  If you don't know what to do here, say Y.
 
 config SMP
 	bool "Symmetric multi-processing support"
@@ -253,15 +271,28 @@ config SMP
 	  than one CPU, say Y.
 
 	  If you say N here, the kernel will run on uni- and multiprocessor
-	  machines, but will use only one CPU of a multiprocessor machine. If
-	  you say Y here, the kernel will run on many, but not all,
-	  uniprocessor machines. On a uniprocessor machine, the kernel
-	  will run faster if you say N here.
+	  machines, but will use only one CPU of a multiprocessor machine.
+	  On a uniprocessor machine, the kernel will run faster if you say N.
 
-	  See also <file:Documentation/nmi_watchdog.txt> and the SMP-HOWTO
+	  See also <file:Documentation/lockup-watchdogs.txt> and the SMP-HOWTO
 	  available at <http://www.tldp.org/docs.html#howto>.
 
 	  If you don't know what to do here, say N.
+
+config PARISC_CPU_TOPOLOGY
+	bool "Support cpu topology definition"
+	depends on SMP
+	default y
+	help
+	  Support PARISC cpu topology definition.
+
+config SCHED_MC
+	bool "Multi-core scheduler support"
+	depends on PARISC_CPU_TOPOLOGY && PA8X00
+	help
+	  Multi-core scheduler support improves the CPU scheduler's decision
+	  making when dealing with multi-core CPU chips at a cost of slightly
+	  increased overhead in some places. If unsure say N here.
 
 config IRQSTACKS
 	bool "Use separate kernel stacks when processing interrupts"
@@ -302,6 +333,7 @@ source "mm/Kconfig"
 config COMPAT
 	def_bool y
 	depends on 64BIT
+	select COMPAT_BINFMT_ELF if BINFMT_ELF
 
 config SYSVIPC_COMPAT
 	def_bool y
@@ -314,7 +346,7 @@ config NR_CPUS
 	int "Maximum number of CPUs (2-32)"
 	range 2 32
 	depends on SMP
-	default "32"
+	default "4"
 
 endmenu
 

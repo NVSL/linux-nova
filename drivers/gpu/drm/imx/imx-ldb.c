@@ -389,7 +389,6 @@ static int imx_ldb_encoder_atomic_check(struct drm_encoder *encoder,
 
 
 static const struct drm_connector_funcs imx_ldb_connector_funcs = {
-	.dpms = drm_atomic_helper_connector_dpms,
 	.fill_modes = drm_helper_probe_single_connector_modes,
 	.destroy = imx_drm_connector_destroy,
 	.reset = drm_atomic_helper_connector_reset,
@@ -613,6 +612,9 @@ static int imx_ldb_bind(struct device *dev, struct device *master, void *data)
 		return PTR_ERR(imx_ldb->regmap);
 	}
 
+	/* disable LDB by resetting the control register to POR default */
+	regmap_write(imx_ldb->regmap, IOMUXC_GPR2, 0);
+
 	imx_ldb->dev = dev;
 
 	if (of_id)
@@ -653,13 +655,13 @@ static int imx_ldb_bind(struct device *dev, struct device *master, void *data)
 		if (ret || i < 0 || i > 1)
 			return -EINVAL;
 
+		if (!of_device_is_available(child))
+			continue;
+
 		if (dual && i > 0) {
 			dev_warn(dev, "dual-channel mode, ignoring second output\n");
 			continue;
 		}
-
-		if (!of_device_is_available(child))
-			continue;
 
 		channel = &imx_ldb->channel[i];
 		channel->ldb = imx_ldb;

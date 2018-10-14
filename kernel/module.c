@@ -274,9 +274,17 @@ static void module_assert_mutex_or_preempt(void)
 }
 
 static bool sig_enforce = IS_ENABLED(CONFIG_MODULE_SIG_FORCE);
-#ifndef CONFIG_MODULE_SIG_FORCE
 module_param(sig_enforce, bool_enable_only, 0644);
-#endif /* !CONFIG_MODULE_SIG_FORCE */
+
+/*
+ * Export sig_enforce kernel cmdline parameter to allow other subsystems rely
+ * on that instead of directly to CONFIG_MODULE_SIG_FORCE config.
+ */
+bool is_module_sig_enforced(void)
+{
+	return sig_enforce;
+}
+EXPORT_SYMBOL(is_module_sig_enforced);
 
 /* Block module loading/unloading? */
 int modules_disabled = 0;
@@ -837,10 +845,8 @@ static int add_module_usage(struct module *a, struct module *b)
 
 	pr_debug("Allocating new usage for %s.\n", a->name);
 	use = kmalloc(sizeof(*use), GFP_ATOMIC);
-	if (!use) {
-		pr_warn("%s: out of memory loading\n", a->name);
+	if (!use)
 		return -ENOMEM;
-	}
 
 	use->source = a;
 	use->target = b;
@@ -1464,7 +1470,8 @@ static ssize_t module_sect_show(struct module_attribute *mattr,
 {
 	struct module_sect_attr *sattr =
 		container_of(mattr, struct module_sect_attr, mattr);
-	return sprintf(buf, "0x%pK\n", (void *)sattr->address);
+	return sprintf(buf, "0x%px\n", kptr_restrict < 2 ?
+		       (void *)sattr->address : NULL);
 }
 
 static void free_sect_attrs(struct module_sect_attrs *sect_attrs)
@@ -1516,7 +1523,7 @@ static void add_sect_attrs(struct module *mod, const struct load_info *info)
 		sattr->mattr.show = module_sect_show;
 		sattr->mattr.store = NULL;
 		sattr->mattr.attr.name = sattr->name;
-		sattr->mattr.attr.mode = S_IRUGO;
+		sattr->mattr.attr.mode = S_IRUSR;
 		*(gattr++) = &(sattr++)->mattr.attr;
 	}
 	*gattr = NULL;
@@ -1595,8 +1602,7 @@ static void add_notes_attrs(struct module *mod, const struct load_info *info)
 	if (notes == 0)
 		return;
 
-	notes_attrs = kzalloc(sizeof(*notes_attrs)
-			      + notes * sizeof(notes_attrs->attrs[0]),
+	notes_attrs = kzalloc(struct_size(notes_attrs, attrs, notes),
 			      GFP_KERNEL);
 	if (notes_attrs == NULL)
 		return;
@@ -2173,10 +2179,6 @@ static void free_module(struct module *mod)
 	/* Finally, free the core (containing the module structure) */
 	disable_ro_nx(&mod->core_layout);
 	module_memfree(mod->core_layout.base);
-
-#ifdef CONFIG_MPU
-	update_protections(current->mm);
-#endif
 }
 
 void *__symbol_get(const char *symbol)
@@ -2707,21 +2709,21 @@ static void add_kallsyms(struct module *mod, const struct load_info *info)
 }
 #endif /* CONFIG_KALLSYMS */
 
-static void dynamic_debug_setup(struct _ddebug *debug, unsigned int num)
+static void dynamic_debug_setup(struct module *mod, struct _ddebug *debug, unsigned int num)
 {
 	if (!debug)
 		return;
 #ifdef CONFIG_DYNAMIC_DEBUG
-	if (ddebug_add_module(debug, num, debug->modname))
+	if (ddebug_add_module(debug, num, mod->name))
 		pr_err("dynamic debug error adding module: %s\n",
 			debug->modname);
 #endif
 }
 
-static void dynamic_debug_remove(struct _ddebug *debug)
+static void dynamic_debug_remove(struct module *mod, struct _ddebug *debug)
 {
 	if (debug)
-		ddebug_remove_module(debug->modname);
+		ddebug_remove_module(mod->name);
 }
 
 void * __weak module_alloc(unsigned long size)
@@ -2781,7 +2783,7 @@ static int module_sig_check(struct load_info *info, int flags)
 	}
 
 	/* Not having a signature is only an error if we're strict. */
-	if (err == -ENOKEY && !sig_enforce)
+	if (err == -ENOKEY && !is_module_sig_enforced())
 		err = 0;
 
 	return err;
@@ -2854,6 +2856,15 @@ static int check_modinfo_livepatch(struct module *mod, struct load_info *info)
 	return 0;
 }
 #endif /* CONFIG_LIVEPATCH */
+
+static void check_modinfo_retpoline(struct module *mod, struct load_info *info)
+{
+	if (retpoline_module_ok(get_modinfo(info, "retpoline")))
+		return;
+
+	pr_warn("%s: loading module not compiled with retpoline compiler.\n",
+		mod->name);
+}
 
 /* Sets info->hdr and info->len. */
 static int copy_module_from_user(const void __user *umod, unsigned long len,
@@ -3021,6 +3032,8 @@ static int check_modinfo(struct module *mod, struct load_info *info, int flags)
 		add_taint_module(mod, TAINT_OOT_MODULE, LOCKDEP_STILL_OK);
 	}
 
+	check_modinfo_retpoline(mod, info);
+
 	if (get_modinfo(info, "staging")) {
 		add_taint_module(mod, TAINT_CRAP, LOCKDEP_STILL_OK);
 		pr_warn("%s: module is from the staging directory, the quality "
@@ -3110,7 +3123,11 @@ static int find_module_sections(struct module *mod, struct load_info *info)
 					     sizeof(*mod->ftrace_callsites),
 					     &mod->num_ftrace_callsites);
 #endif
-
+#ifdef CONFIG_FUNCTION_ERROR_INJECTION
+	mod->ei_funcs = section_objs(info, "_error_injection_whitelist",
+					    sizeof(*mod->ei_funcs),
+					    &mod->num_ei_funcs);
+#endif
 	mod->extable = section_objs(info, "__ex_table",
 				    sizeof(*mod->extable), &mod->num_exentries);
 
@@ -3473,6 +3490,8 @@ static noinline int do_init_module(struct module *mod)
 	if (!mod->async_probe_requested && (current->flags & PF_USED_ASYNC))
 		async_synchronize_full();
 
+	ftrace_free_mem(mod, mod->init_layout.base, mod->init_layout.base +
+			mod->init_layout.size);
 	mutex_lock(&module_mutex);
 	/* Drop initial reference. */
 	module_put(mod);
@@ -3495,6 +3514,11 @@ static noinline int do_init_module(struct module *mod)
 	 * walking this with preempt disabled.  In all the failure paths, we
 	 * call synchronize_sched(), but we don't want to slow down the success
 	 * path, so use actual RCU here.
+	 * Note that module_alloc() on most architectures creates W+X page
+	 * mappings which won't be cleaned up until do_free_init() runs.  Any
+	 * code such as mark_rodata_ro() which depends on those mappings to
+	 * be cleaned up needs to sync with the queued work - ie
+	 * rcu_barrier_sched()
 	 */
 	call_rcu_sched(&freeinit->rcu, do_free_init);
 	mutex_unlock(&module_mutex);
@@ -3715,7 +3739,7 @@ static int load_module(struct load_info *info, const char __user *uargs,
 		goto free_arch_cleanup;
 	}
 
-	dynamic_debug_setup(info->debug, info->num_debug);
+	dynamic_debug_setup(mod, info->debug, info->num_debug);
 
 	/* Ftrace init must be called in the MODULE_STATE_UNFORMED state */
 	ftrace_module_init(mod);
@@ -3779,7 +3803,8 @@ static int load_module(struct load_info *info, const char __user *uargs,
 	module_disable_nx(mod);
 
  ddebug_cleanup:
-	dynamic_debug_remove(info->debug);
+	ftrace_release_mod(mod);
+	dynamic_debug_remove(mod, info->debug);
 	synchronize_sched();
 	kfree(mod->args);
  free_arch_cleanup:
@@ -3798,12 +3823,6 @@ static int load_module(struct load_info *info, const char __user *uargs,
 	synchronize_sched();
 	mutex_unlock(&module_mutex);
  free_module:
-	/*
-	 * Ftrace needs to clean up what it initialized.
-	 * This does nothing if ftrace_module_init() wasn't called,
-	 * but it must be called outside of module_mutex.
-	 */
-	ftrace_release_mod(mod);
 	/* Free lock-classes; relies on the preceding sync_rcu() */
 	lockdep_free_key_range(mod->core_layout.base, mod->core_layout.size);
 
@@ -3926,6 +3945,12 @@ static const char *get_ksymbol(struct module *mod,
 	if (offset)
 		*offset = addr - kallsyms->symtab[best].st_value;
 	return symname(kallsyms, best);
+}
+
+void * __weak dereference_module_function_descriptor(struct module *mod,
+						     void *ptr)
+{
+	return ptr;
 }
 
 /* For kallsyms to ask for address resolution.  NULL means not found.  Careful
@@ -4147,6 +4172,7 @@ static int m_show(struct seq_file *m, void *p)
 {
 	struct module *mod = list_entry(p, struct module, list);
 	char buf[MODULE_FLAGS_BUF_SIZE];
+	void *value;
 
 	/* We always ignore unformed modules. */
 	if (mod->state == MODULE_STATE_UNFORMED)
@@ -4162,7 +4188,8 @@ static int m_show(struct seq_file *m, void *p)
 		   mod->state == MODULE_STATE_COMING ? "Loading" :
 		   "Live");
 	/* Used by oprofile and other similar tools. */
-	seq_printf(m, " 0x%pK", mod->core_layout.base);
+	value = m->private ? NULL : mod->core_layout.base;
+	seq_printf(m, " 0x%px", value);
 
 	/* Taints info */
 	if (mod->taints)
@@ -4184,9 +4211,23 @@ static const struct seq_operations modules_op = {
 	.show	= m_show
 };
 
+/*
+ * This also sets the "private" pointer to non-NULL if the
+ * kernel pointers should be hidden (so you can just test
+ * "m->private" to see if you should keep the values private).
+ *
+ * We use the same logic as for /proc/kallsyms.
+ */
 static int modules_open(struct inode *inode, struct file *file)
 {
-	return seq_open(file, &modules_op);
+	int err = seq_open(file, &modules_op);
+
+	if (!err) {
+		struct seq_file *m = file->private_data;
+		m->private = kallsyms_show_value() ? NULL : (void *)8ul;
+	}
+
+	return err;
 }
 
 static const struct file_operations proc_modules_operations = {

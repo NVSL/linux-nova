@@ -161,12 +161,17 @@ static const struct of_device_id dt_match[] = {
 	{}
 };
 
+static const struct dev_pm_ops dsi_pm_ops = {
+	SET_RUNTIME_PM_OPS(msm_dsi_runtime_suspend, msm_dsi_runtime_resume, NULL)
+};
+
 static struct platform_driver dsi_driver = {
 	.probe = dsi_dev_probe,
 	.remove = dsi_dev_remove,
 	.driver = {
 		.name = "msm_dsi",
 		.of_match_table = dt_match,
+		.pm = &dsi_pm_ops,
 	},
 };
 
@@ -187,13 +192,14 @@ void __exit msm_dsi_unregister(void)
 int msm_dsi_modeset_init(struct msm_dsi *msm_dsi, struct drm_device *dev,
 			 struct drm_encoder *encoder)
 {
-	struct msm_drm_private *priv = dev->dev_private;
+	struct msm_drm_private *priv;
 	struct drm_bridge *ext_bridge;
 	int ret;
 
-	if (WARN_ON(!encoder))
+	if (WARN_ON(!encoder) || WARN_ON(!msm_dsi) || WARN_ON(!dev))
 		return -EINVAL;
 
+	priv = dev->dev_private;
 	msm_dsi->dev = dev;
 
 	ret = msm_dsi_host_modeset_init(msm_dsi->host, dev);
@@ -240,19 +246,17 @@ int msm_dsi_modeset_init(struct msm_dsi *msm_dsi, struct drm_device *dev,
 
 	return 0;
 fail:
-	if (msm_dsi) {
-		/* bridge/connector are normally destroyed by drm: */
-		if (msm_dsi->bridge) {
-			msm_dsi_manager_bridge_destroy(msm_dsi->bridge);
-			msm_dsi->bridge = NULL;
-		}
-
-		/* don't destroy connector if we didn't make it */
-		if (msm_dsi->connector && !msm_dsi->external_bridge)
-			msm_dsi->connector->funcs->destroy(msm_dsi->connector);
-
-		msm_dsi->connector = NULL;
+	/* bridge/connector are normally destroyed by drm: */
+	if (msm_dsi->bridge) {
+		msm_dsi_manager_bridge_destroy(msm_dsi->bridge);
+		msm_dsi->bridge = NULL;
 	}
+
+	/* don't destroy connector if we didn't make it */
+	if (msm_dsi->connector && !msm_dsi->external_bridge)
+		msm_dsi->connector->funcs->destroy(msm_dsi->connector);
+
+	msm_dsi->connector = NULL;
 
 	return ret;
 }

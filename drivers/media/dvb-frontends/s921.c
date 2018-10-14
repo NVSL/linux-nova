@@ -25,7 +25,7 @@
 #include <linux/kernel.h>
 #include <asm/div64.h>
 
-#include "dvb_frontend.h"
+#include <media/dvb_frontend.h>
 #include "s921.h"
 
 static int debug = 1;
@@ -464,7 +464,7 @@ static int s921_tune(struct dvb_frontend *fe,
 	return rc;
 }
 
-static int s921_get_algo(struct dvb_frontend *fe)
+static enum dvbfe_algo s921_get_algo(struct dvb_frontend *fe)
 {
 	return DVBFE_ALGO_HW;
 }

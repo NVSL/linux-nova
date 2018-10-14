@@ -51,6 +51,9 @@
 #define __KSELFTEST_HARNESS_H
 
 #define _GNU_SOURCE
+#include <asm/types.h>
+#include <errno.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -84,6 +87,14 @@
  * E.g., #define TH_LOG_ENABLED 1
  *
  * If no definition is provided, logging is enabled by default.
+ *
+ * If there is no way to print an error message for the process running the
+ * test (e.g. not allowed to write to stderr), it is still possible to get the
+ * ASSERT_* number for which the test failed.  This behavior can be enabled by
+ * writing `_metadata->no_print = true;` before the check sequence that is
+ * unable to print.  When an error occur, instead of printing an error message
+ * and calling `abort(3)`, the test process call `_exit(2)` with the assert
+ * number as argument, which is then printed by the parent process.
  */
 #define TH_LOG(fmt, ...) do { \
 	if (TH_LOG_ENABLED) \
@@ -94,6 +105,27 @@
 #define __TH_LOG(fmt, ...) \
 		fprintf(TH_LOG_STREAM, "%s:%d:%s:" fmt "\n", \
 			__FILE__, __LINE__, _metadata->name, ##__VA_ARGS__)
+
+/**
+ * XFAIL(statement, fmt, ...)
+ *
+ * @statement: statement to run after reporting XFAIL
+ * @fmt: format string
+ * @...: optional arguments
+ *
+ * This forces a "pass" after reporting a failure with an XFAIL prefix,
+ * and runs "statement", which is usually "return" or "goto skip".
+ */
+#define XFAIL(statement, fmt, ...) do { \
+	if (TH_LOG_ENABLED) { \
+		fprintf(TH_LOG_STREAM, "[  XFAIL!  ] " fmt "\n", \
+			##__VA_ARGS__); \
+	} \
+	/* TODO: find a way to pass xfail to test runner process. */ \
+	_metadata->passed = 1; \
+	_metadata->trigger = 0; \
+	statement; \
+} while (0)
 
 /**
  * TEST(test_name) - Defines the test function and creates the registration
@@ -187,7 +219,7 @@
 
 /**
  * FIXTURE_SETUP(fixture_name) - Prepares the setup function for the fixture.
- * *_metadata* is included so that ASSERT_* work as a convenience
+ * *_metadata* is included so that EXPECT_* and ASSERT_* work correctly.
  *
  * @fixture_name: fixture name
  *
@@ -210,6 +242,7 @@
 		FIXTURE_DATA(fixture_name) __attribute__((unused)) *self)
 /**
  * FIXTURE_TEARDOWN(fixture_name)
+ * *_metadata* is included so that EXPECT_* and ASSERT_* work correctly.
  *
  * @fixture_name: fixture name
  *
@@ -242,6 +275,8 @@
  * Defines a test that depends on a fixture (e.g., is part of a test case).
  * Very similar to TEST() except that *self* is the setup instance of fixture's
  * datatype exposed for use by the implementation.
+ *
+ * Warning: use of ASSERT_* here will skip TEARDOWN.
  */
 /* TODO(wad) register fixtures on dedicated test lists. */
 #define TEST_F(fixture_name, test_name) \
@@ -555,12 +590,18 @@
  * return while still providing an optional block to the API consumer.
  */
 #define OPTIONAL_HANDLER(_assert) \
-	for (; _metadata->trigger;  _metadata->trigger = __bail(_assert))
+	for (; _metadata->trigger; _metadata->trigger = \
+			__bail(_assert, _metadata->no_print, _metadata->step))
+
+#define __INC_STEP(_metadata) \
+	if (_metadata->passed && _metadata->step < 255) \
+		_metadata->step++;
 
 #define __EXPECT(_expected, _seen, _t, _assert) do { \
 	/* Avoid multiple evaluation of the cases */ \
 	__typeof__(_expected) __exp = (_expected); \
 	__typeof__(_seen) __seen = (_seen); \
+	if (_assert) __INC_STEP(_metadata); \
 	if (!(__exp _t __seen)) { \
 		unsigned long long __exp_print = (uintptr_t)__exp; \
 		unsigned long long __seen_print = (uintptr_t)__seen; \
@@ -576,6 +617,7 @@
 #define __EXPECT_STR(_expected, _seen, _t, _assert) do { \
 	const char *__exp = (_expected); \
 	const char *__seen = (_seen); \
+	if (_assert) __INC_STEP(_metadata); \
 	if (!(strcmp(__exp, __seen) _t 0))  { \
 		__TH_LOG("Expected '%s' %s '%s'.", __exp, #_t, __seen); \
 		_metadata->passed = 0; \
@@ -590,6 +632,8 @@ struct __test_metadata {
 	int termsig;
 	int passed;
 	int trigger; /* extra handler after the evaluation */
+	__u8 step;
+	bool no_print; /* manual trigger when TH_LOG_STREAM is not available */
 	struct __test_metadata *prev, *next;
 };
 
@@ -634,10 +678,13 @@ static inline void __register_test(struct __test_metadata *t)
 	}
 }
 
-static inline int __bail(int for_realz)
+static inline int __bail(int for_realz, bool no_print, __u8 step)
 {
-	if (for_realz)
+	if (for_realz) {
+		if (no_print)
+			_exit(step);
 		abort();
+	}
 	return 0;
 }
 
@@ -655,16 +702,22 @@ void __run_test(struct __test_metadata *t)
 		t->passed = 0;
 	} else if (child_pid == 0) {
 		t->fn(t);
-		_exit(t->passed);
+		/* return the step that failed or 0 */
+		_exit(t->passed ? 0 : t->step);
 	} else {
 		/* TODO(wad) add timeout support. */
 		waitpid(child_pid, &status, 0);
 		if (WIFEXITED(status)) {
-			t->passed = t->termsig == -1 ? WEXITSTATUS(status) : 0;
+			t->passed = t->termsig == -1 ? !WEXITSTATUS(status) : 0;
 			if (t->termsig != -1) {
 				fprintf(TH_LOG_STREAM,
 					"%s: Test exited normally "
 					"instead of by signal (code: %d)\n",
+					t->name,
+					WEXITSTATUS(status));
+			} else if (!t->passed) {
+				fprintf(TH_LOG_STREAM,
+					"%s: Test failed at step #%d\n",
 					t->name,
 					WEXITSTATUS(status));
 			}

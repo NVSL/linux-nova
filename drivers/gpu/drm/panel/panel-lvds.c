@@ -1,5 +1,5 @@
 /*
- * rcar_du_crtc.c  --  R-Car Display Unit CRTCs
+ * Generic LVDS panel driver
  *
  * Copyright (C) 2016 Laurent Pinchart
  * Copyright (C) 2016 Renesas Electronics Corporation
@@ -17,6 +17,7 @@
 #include <linux/module.h>
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
+#include <linux/regulator/consumer.h>
 #include <linux/slab.h>
 
 #include <drm/drmP.h>
@@ -39,6 +40,7 @@ struct panel_lvds {
 	bool data_mirror;
 
 	struct backlight_device *backlight;
+	struct regulator *supply;
 
 	struct gpio_desc *enable_gpio;
 	struct gpio_desc *reset_gpio;
@@ -69,12 +71,26 @@ static int panel_lvds_unprepare(struct drm_panel *panel)
 	if (lvds->enable_gpio)
 		gpiod_set_value_cansleep(lvds->enable_gpio, 0);
 
+	if (lvds->supply)
+		regulator_disable(lvds->supply);
+
 	return 0;
 }
 
 static int panel_lvds_prepare(struct drm_panel *panel)
 {
 	struct panel_lvds *lvds = to_panel_lvds(panel);
+
+	if (lvds->supply) {
+		int err;
+
+		err = regulator_enable(lvds->supply);
+		if (err < 0) {
+			dev_err(lvds->dev, "failed to enable supply: %d\n",
+				err);
+			return err;
+		}
+	}
 
 	if (lvds->enable_gpio)
 		gpiod_set_value_cansleep(lvds->enable_gpio, 1);
@@ -143,14 +159,14 @@ static int panel_lvds_parse_dt(struct panel_lvds *lvds)
 
 	ret = of_property_read_u32(np, "width-mm", &lvds->width);
 	if (ret < 0) {
-		dev_err(lvds->dev, "%s: invalid or missing %s DT property\n",
-			of_node_full_name(np), "width-mm");
+		dev_err(lvds->dev, "%pOF: invalid or missing %s DT property\n",
+			np, "width-mm");
 		return -ENODEV;
 	}
 	ret = of_property_read_u32(np, "height-mm", &lvds->height);
 	if (ret < 0) {
-		dev_err(lvds->dev, "%s: invalid or missing %s DT property\n",
-			of_node_full_name(np), "height-mm");
+		dev_err(lvds->dev, "%pOF: invalid or missing %s DT property\n",
+			np, "height-mm");
 		return -ENODEV;
 	}
 
@@ -158,8 +174,8 @@ static int panel_lvds_parse_dt(struct panel_lvds *lvds)
 
 	ret = of_property_read_string(np, "data-mapping", &mapping);
 	if (ret < 0) {
-		dev_err(lvds->dev, "%s: invalid or missing %s DT property\n",
-			of_node_full_name(np), "data-mapping");
+		dev_err(lvds->dev, "%pOF: invalid or missing %s DT property\n",
+			np, "data-mapping");
 		return -ENODEV;
 	}
 
@@ -170,8 +186,8 @@ static int panel_lvds_parse_dt(struct panel_lvds *lvds)
 	} else if (!strcmp(mapping, "vesa-24")) {
 		lvds->bus_format = MEDIA_BUS_FMT_RGB888_1X7X4_SPWG;
 	} else {
-		dev_err(lvds->dev, "%s: invalid or missing %s DT property\n",
-			of_node_full_name(np), "data-mapping");
+		dev_err(lvds->dev, "%pOF: invalid or missing %s DT property\n",
+			np, "data-mapping");
 		return -EINVAL;
 	}
 
@@ -195,6 +211,20 @@ static int panel_lvds_probe(struct platform_device *pdev)
 	ret = panel_lvds_parse_dt(lvds);
 	if (ret < 0)
 		return ret;
+
+	lvds->supply = devm_regulator_get_optional(lvds->dev, "power");
+	if (IS_ERR(lvds->supply)) {
+		ret = PTR_ERR(lvds->supply);
+
+		if (ret != -ENODEV) {
+			if (ret != -EPROBE_DEFER)
+				dev_err(lvds->dev, "failed to request regulator: %d\n",
+					ret);
+			return ret;
+		}
+
+		lvds->supply = NULL;
+	}
 
 	/* Get GPIOs and backlight controller. */
 	lvds->enable_gpio = devm_gpiod_get_optional(lvds->dev, "enable",

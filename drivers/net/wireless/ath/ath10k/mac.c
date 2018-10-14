@@ -1,6 +1,7 @@
 /*
  * Copyright (c) 2005-2011 Atheros Communications Inc.
- * Copyright (c) 2011-2013 Qualcomm Atheros, Inc.
+ * Copyright (c) 2011-2017 Qualcomm Atheros, Inc.
+ * Copyright (c) 2018, The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -242,6 +243,16 @@ static int ath10k_send_key(struct ath10k_vif *arvif,
 	case WLAN_CIPHER_SUITE_WEP104:
 		arg.key_cipher = WMI_CIPHER_WEP;
 		break;
+	case WLAN_CIPHER_SUITE_CCMP_256:
+		arg.key_cipher = WMI_CIPHER_AES_CCM;
+		break;
+	case WLAN_CIPHER_SUITE_GCMP:
+	case WLAN_CIPHER_SUITE_GCMP_256:
+		arg.key_cipher = WMI_CIPHER_AES_GCM;
+		break;
+	case WLAN_CIPHER_SUITE_BIP_GMAC_128:
+	case WLAN_CIPHER_SUITE_BIP_GMAC_256:
+	case WLAN_CIPHER_SUITE_BIP_CMAC_256:
 	case WLAN_CIPHER_SUITE_AES_CMAC:
 		WARN_ON(1);
 		return -EINVAL;
@@ -2553,7 +2564,7 @@ static void ath10k_peer_assoc_h_qos(struct ath10k *ar,
 		}
 		break;
 	case WMI_VDEV_TYPE_STA:
-		if (vif->bss_conf.qos)
+		if (sta->wme)
 			arg->peer_flags |= arvif->ar->wmi.peer_flags->qos;
 		break;
 	case WMI_VDEV_TYPE_IBSS:
@@ -2966,7 +2977,7 @@ static int ath10k_station_assoc(struct ath10k *ar,
 		}
 
 		/* Plumb cached keys only for static WEP */
-		if (arvif->def_wep_key_idx != -1) {
+		if ((arvif->def_wep_key_idx != -1) && (!sta->tdls)) {
 			ret = ath10k_install_peer_wep_keys(arvif, sta->addr);
 			if (ret) {
 				ath10k_warn(ar, "failed to install peer wep keys for vdev %i: %d\n",
@@ -3204,6 +3215,15 @@ static void ath10k_reg_notifier(struct wiphy *wiphy,
 	if (ar->phy_capability & WHAL_WLAN_11A_CAPABILITY)
 		ath10k_mac_update_channel_list(ar,
 					       ar->hw->wiphy->bands[NL80211_BAND_5GHZ]);
+}
+
+static void ath10k_stop_radar_confirmation(struct ath10k *ar)
+{
+	spin_lock_bh(&ar->data_lock);
+	ar->radar_conf_state = ATH10K_RADAR_CONFIRMATION_STOPPED;
+	spin_unlock_bh(&ar->data_lock);
+
+	cancel_work_sync(&ar->radar_confirmation_work);
 }
 
 /***************/
@@ -3564,7 +3584,9 @@ ath10k_mac_tx_h_get_txpath(struct ath10k *ar,
 		return ATH10K_MAC_TX_HTT;
 	case ATH10K_HW_TXRX_MGMT:
 		if (test_bit(ATH10K_FW_FEATURE_HAS_WMI_MGMT_TX,
-			     ar->running_fw->fw_file.fw_features))
+			     ar->running_fw->fw_file.fw_features) ||
+			     test_bit(WMI_SERVICE_MGMT_TX_WMI,
+				      ar->wmi.svc_map))
 			return ATH10K_MAC_TX_WMI_MGMT;
 		else if (ar->htt.target_version_major >= 3)
 			return ATH10K_MAC_TX_HTT;
@@ -3796,6 +3818,7 @@ void ath10k_mgmt_over_wmi_tx_work(struct work_struct *work)
 {
 	struct ath10k *ar = container_of(work, struct ath10k, wmi_mgmt_tx_work);
 	struct sk_buff *skb;
+	dma_addr_t paddr;
 	int ret;
 
 	for (;;) {
@@ -3803,11 +3826,27 @@ void ath10k_mgmt_over_wmi_tx_work(struct work_struct *work)
 		if (!skb)
 			break;
 
-		ret = ath10k_wmi_mgmt_tx(ar, skb);
-		if (ret) {
-			ath10k_warn(ar, "failed to transmit management frame via WMI: %d\n",
-				    ret);
-			ieee80211_free_txskb(ar->hw, skb);
+		if (test_bit(ATH10K_FW_FEATURE_MGMT_TX_BY_REF,
+			     ar->running_fw->fw_file.fw_features)) {
+			paddr = dma_map_single(ar->dev, skb->data,
+					       skb->len, DMA_TO_DEVICE);
+			if (!paddr)
+				continue;
+			ret = ath10k_wmi_mgmt_tx_send(ar, skb, paddr);
+			if (ret) {
+				ath10k_warn(ar, "failed to transmit management frame by ref via WMI: %d\n",
+					    ret);
+				dma_unmap_single(ar->dev, paddr, skb->len,
+						 DMA_FROM_DEVICE);
+				ieee80211_free_txskb(ar->hw, skb);
+			}
+		} else {
+			ret = ath10k_wmi_mgmt_tx(ar, skb);
+			if (ret) {
+				ath10k_warn(ar, "failed to transmit management frame via WMI: %d\n",
+					    ret);
+				ieee80211_free_txskb(ar->hw, skb);
+			}
 		}
 	}
 }
@@ -4260,7 +4299,7 @@ static void ath10k_mac_op_wake_tx_queue(struct ieee80211_hw *hw,
 
 	while (ath10k_mac_tx_can_push(hw, f_txq) && max--) {
 		ret = ath10k_mac_tx_push_txq(hw, f_txq);
-		if (ret)
+		if (ret < 0)
 			break;
 	}
 	if (ret != -ENOENT)
@@ -4303,6 +4342,7 @@ void ath10k_halt(struct ath10k *ar)
 
 	ath10k_scan_finish(ar);
 	ath10k_peer_cleanup_all(ar);
+	ath10k_stop_radar_confirmation(ar);
 	ath10k_core_stop(ar);
 	ath10k_hif_power_down(ar);
 
@@ -4649,6 +4689,13 @@ static int ath10k_start(struct ieee80211_hw *hw)
 		}
 	}
 
+	param = ar->wmi.pdev_param->idle_ps_config;
+	ret = ath10k_wmi_pdev_set_param(ar, param, 1);
+	if (ret && ret != -EOPNOTSUPP) {
+		ath10k_warn(ar, "failed to enable idle_ps_config: %d\n", ret);
+		goto err_core_stop;
+	}
+
 	__ath10k_set_antenna(ar, ar->cfg_tx_chainmask, ar->cfg_rx_chainmask);
 
 	/*
@@ -4720,6 +4767,8 @@ static int ath10k_start(struct ieee80211_hw *hw)
 
 	ath10k_spectral_start(ar);
 	ath10k_thermal_set_throttling(ar);
+
+	ar->radar_conf_state = ATH10K_RADAR_CONFIRMATION_IDLE;
 
 	mutex_unlock(&ar->conf_mutex);
 	return 0;
@@ -5575,6 +5624,59 @@ static void ath10k_mac_op_set_coverage_class(struct ieee80211_hw *hw, s16 value)
 	ar->hw_params.hw_ops->set_coverage_class(ar, value);
 }
 
+struct ath10k_mac_tdls_iter_data {
+	u32 num_tdls_stations;
+	struct ieee80211_vif *curr_vif;
+};
+
+static void ath10k_mac_tdls_vif_stations_count_iter(void *data,
+						    struct ieee80211_sta *sta)
+{
+	struct ath10k_mac_tdls_iter_data *iter_data = data;
+	struct ath10k_sta *arsta = (struct ath10k_sta *)sta->drv_priv;
+	struct ieee80211_vif *sta_vif = arsta->arvif->vif;
+
+	if (sta->tdls && sta_vif == iter_data->curr_vif)
+		iter_data->num_tdls_stations++;
+}
+
+static int ath10k_mac_tdls_vif_stations_count(struct ieee80211_hw *hw,
+					      struct ieee80211_vif *vif)
+{
+	struct ath10k_mac_tdls_iter_data data = {};
+
+	data.curr_vif = vif;
+
+	ieee80211_iterate_stations_atomic(hw,
+					  ath10k_mac_tdls_vif_stations_count_iter,
+					  &data);
+	return data.num_tdls_stations;
+}
+
+static void ath10k_mac_tdls_vifs_count_iter(void *data, u8 *mac,
+					    struct ieee80211_vif *vif)
+{
+	struct ath10k_vif *arvif = (void *)vif->drv_priv;
+	int *num_tdls_vifs = data;
+
+	if (vif->type != NL80211_IFTYPE_STATION)
+		return;
+
+	if (ath10k_mac_tdls_vif_stations_count(arvif->ar->hw, vif) > 0)
+		(*num_tdls_vifs)++;
+}
+
+static int ath10k_mac_tdls_vifs_count(struct ieee80211_hw *hw)
+{
+	int num_tdls_vifs = 0;
+
+	ieee80211_iterate_active_interfaces_atomic(hw,
+						   IEEE80211_IFACE_ITER_NORMAL,
+						   ath10k_mac_tdls_vifs_count_iter,
+						   &num_tdls_vifs);
+	return num_tdls_vifs;
+}
+
 static int ath10k_hw_scan(struct ieee80211_hw *hw,
 			  struct ieee80211_vif *vif,
 			  struct ieee80211_scan_request *hw_req)
@@ -5585,8 +5687,14 @@ static int ath10k_hw_scan(struct ieee80211_hw *hw,
 	struct wmi_start_scan_arg arg;
 	int ret = 0;
 	int i;
+	u32 scan_timeout;
 
 	mutex_lock(&ar->conf_mutex);
+
+	if (ath10k_mac_tdls_vif_stations_count(hw, vif) > 0) {
+		ret = -EBUSY;
+		goto exit;
+	}
 
 	spin_lock_bh(&ar->data_lock);
 	switch (ar->scan.state) {
@@ -5629,10 +5737,32 @@ static int ath10k_hw_scan(struct ieee80211_hw *hw,
 		arg.scan_ctrl_flags |= WMI_SCAN_FLAG_PASSIVE;
 	}
 
+	if (req->flags & NL80211_SCAN_FLAG_RANDOM_ADDR) {
+		arg.scan_ctrl_flags |=  WMI_SCAN_ADD_SPOOFED_MAC_IN_PROBE_REQ;
+		ether_addr_copy(arg.mac_addr.addr, req->mac_addr);
+		ether_addr_copy(arg.mac_mask.addr, req->mac_addr_mask);
+	}
+
 	if (req->n_channels) {
 		arg.n_channels = req->n_channels;
 		for (i = 0; i < arg.n_channels; i++)
 			arg.channels[i] = req->channels[i]->center_freq;
+	}
+
+	/* if duration is set, default dwell times will be overwritten */
+	if (req->duration) {
+		arg.dwell_time_active = req->duration;
+		arg.dwell_time_passive = req->duration;
+		arg.burst_duration_ms = req->duration;
+
+		scan_timeout = min_t(u32, arg.max_rest_time *
+				(arg.n_channels - 1) + (req->duration +
+				ATH10K_SCAN_CHANNEL_SWITCH_WMI_EVT_OVERHEAD) *
+				arg.n_channels, arg.max_scan_time + 200);
+
+	} else {
+		/* Add a 200ms margin to account for event/command processing */
+		scan_timeout = arg.max_scan_time + 200;
 	}
 
 	ret = ath10k_start_scan(ar, &arg);
@@ -5643,10 +5773,8 @@ static int ath10k_hw_scan(struct ieee80211_hw *hw,
 		spin_unlock_bh(&ar->data_lock);
 	}
 
-	/* Add a 200ms margin to account for event/command processing */
 	ieee80211_queue_delayed_work(ar->hw, &ar->scan.timeout,
-				     msecs_to_jiffies(arg.max_scan_time +
-						      200));
+				     msecs_to_jiffies(scan_timeout));
 
 exit:
 	mutex_unlock(&ar->conf_mutex);
@@ -5723,7 +5851,10 @@ static int ath10k_set_key(struct ieee80211_hw *hw, enum set_key_cmd cmd,
 	u32 flags2;
 
 	/* this one needs to be done in software */
-	if (key->cipher == WLAN_CIPHER_SUITE_AES_CMAC)
+	if (key->cipher == WLAN_CIPHER_SUITE_AES_CMAC ||
+	    key->cipher == WLAN_CIPHER_SUITE_BIP_GMAC_128 ||
+	    key->cipher == WLAN_CIPHER_SUITE_BIP_GMAC_256 ||
+	    key->cipher == WLAN_CIPHER_SUITE_BIP_CMAC_256)
 		return 1;
 
 	if (arvif->nohwcrypt)
@@ -5841,6 +5972,10 @@ static int ath10k_set_key(struct ieee80211_hw *hw, enum set_key_cmd cmd,
 		ath10k_warn(ar, "Peer %pM disappeared!\n", peer_addr);
 	spin_unlock_bh(&ar->data_lock);
 
+	if (sta && sta->tdls)
+		ath10k_wmi_peer_set_param(ar, arvif->vdev_id, sta->addr,
+					  WMI_PEER_AUTHORIZE, 1);
+
 exit:
 	mutex_unlock(&ar->conf_mutex);
 	return ret;
@@ -5923,8 +6058,19 @@ static void ath10k_sta_rc_update_wk(struct work_struct *wk)
 			   ath10k_mac_max_vht_nss(vht_mcs_mask)));
 
 	if (changed & IEEE80211_RC_BW_CHANGED) {
-		ath10k_dbg(ar, ATH10K_DBG_MAC, "mac update sta %pM peer bw %d\n",
-			   sta->addr, bw);
+		enum wmi_phy_mode mode;
+
+		mode = chan_to_phymode(&def);
+		ath10k_dbg(ar, ATH10K_DBG_MAC, "mac update sta %pM peer bw %d phymode %d\n",
+				sta->addr, bw, mode);
+
+		err = ath10k_wmi_peer_set_param(ar, arvif->vdev_id, sta->addr,
+				WMI_PEER_PHYMODE, mode);
+		if (err) {
+			ath10k_warn(ar, "failed to update STA %pM peer phymode %d: %d\n",
+					sta->addr, mode, err);
+			goto exit;
+		}
 
 		err = ath10k_wmi_peer_set_param(ar, arvif->vdev_id, sta->addr,
 						WMI_PEER_CHAN_WIDTH, bw);
@@ -5955,9 +6101,8 @@ static void ath10k_sta_rc_update_wk(struct work_struct *wk)
 				    sta->addr, smps, err);
 	}
 
-	if (changed & IEEE80211_RC_SUPP_RATES_CHANGED ||
-	    changed & IEEE80211_RC_NSS_CHANGED) {
-		ath10k_dbg(ar, ATH10K_DBG_MAC, "mac update sta %pM supp rates/nss\n",
+	if (changed & IEEE80211_RC_SUPP_RATES_CHANGED) {
+		ath10k_dbg(ar, ATH10K_DBG_MAC, "mac update sta %pM supp rates\n",
 			   sta->addr);
 
 		err = ath10k_station_assoc(ar, arvif->vif, sta, true);
@@ -5966,6 +6111,7 @@ static void ath10k_sta_rc_update_wk(struct work_struct *wk)
 				    sta->addr);
 	}
 
+exit:
 	mutex_unlock(&ar->conf_mutex);
 }
 
@@ -5998,59 +6144,6 @@ static void ath10k_mac_dec_num_stations(struct ath10k_vif *arvif,
 		return;
 
 	ar->num_stations--;
-}
-
-struct ath10k_mac_tdls_iter_data {
-	u32 num_tdls_stations;
-	struct ieee80211_vif *curr_vif;
-};
-
-static void ath10k_mac_tdls_vif_stations_count_iter(void *data,
-						    struct ieee80211_sta *sta)
-{
-	struct ath10k_mac_tdls_iter_data *iter_data = data;
-	struct ath10k_sta *arsta = (struct ath10k_sta *)sta->drv_priv;
-	struct ieee80211_vif *sta_vif = arsta->arvif->vif;
-
-	if (sta->tdls && sta_vif == iter_data->curr_vif)
-		iter_data->num_tdls_stations++;
-}
-
-static int ath10k_mac_tdls_vif_stations_count(struct ieee80211_hw *hw,
-					      struct ieee80211_vif *vif)
-{
-	struct ath10k_mac_tdls_iter_data data = {};
-
-	data.curr_vif = vif;
-
-	ieee80211_iterate_stations_atomic(hw,
-					  ath10k_mac_tdls_vif_stations_count_iter,
-					  &data);
-	return data.num_tdls_stations;
-}
-
-static void ath10k_mac_tdls_vifs_count_iter(void *data, u8 *mac,
-					    struct ieee80211_vif *vif)
-{
-	struct ath10k_vif *arvif = (void *)vif->drv_priv;
-	int *num_tdls_vifs = data;
-
-	if (vif->type != NL80211_IFTYPE_STATION)
-		return;
-
-	if (ath10k_mac_tdls_vif_stations_count(arvif->ar->hw, vif) > 0)
-		(*num_tdls_vifs)++;
-}
-
-static int ath10k_mac_tdls_vifs_count(struct ieee80211_hw *hw)
-{
-	int num_tdls_vifs = 0;
-
-	ieee80211_iterate_active_interfaces_atomic(hw,
-						   IEEE80211_IFACE_ITER_NORMAL,
-						   ath10k_mac_tdls_vifs_count_iter,
-						   &num_tdls_vifs);
-	return num_tdls_vifs;
 }
 
 static int ath10k_sta_state(struct ieee80211_hw *hw,
@@ -6182,6 +6275,16 @@ static int ath10k_sta_state(struct ieee80211_hw *hw,
 		ath10k_dbg(ar, ATH10K_DBG_MAC,
 			   "mac vdev %d peer delete %pM sta %pK (sta gone)\n",
 			   arvif->vdev_id, sta->addr, sta);
+
+		if (sta->tdls) {
+			ret = ath10k_mac_tdls_peer_update(ar, arvif->vdev_id,
+							  sta,
+							  WMI_TDLS_PEER_STATE_TEARDOWN);
+			if (ret)
+				ath10k_warn(ar, "failed to update tdls peer state for %pM state %d: %i\n",
+					    sta->addr,
+					    WMI_TDLS_PEER_STATE_TEARDOWN, ret);
+		}
 
 		ret = ath10k_peer_delete(ar, arvif->vdev_id, sta->addr);
 		if (ret)
@@ -6476,6 +6579,11 @@ static int ath10k_remain_on_channel(struct ieee80211_hw *hw,
 	u32 scan_time_msec;
 
 	mutex_lock(&ar->conf_mutex);
+
+	if (ath10k_mac_tdls_vif_stations_count(hw, vif) > 0) {
+		ret = -EBUSY;
+		goto exit;
+	}
 
 	spin_lock_bh(&ar->data_lock);
 	switch (ar->scan.state) {
@@ -7050,9 +7158,19 @@ static void ath10k_sta_rc_update(struct ieee80211_hw *hw,
 {
 	struct ath10k *ar = hw->priv;
 	struct ath10k_sta *arsta = (struct ath10k_sta *)sta->drv_priv;
+	struct ath10k_vif *arvif = (void *)vif->drv_priv;
+	struct ath10k_peer *peer;
 	u32 bw, smps;
 
 	spin_lock_bh(&ar->data_lock);
+
+	peer = ath10k_peer_find(ar, arvif->vdev_id, sta->addr);
+	if (!peer) {
+		spin_unlock_bh(&ar->data_lock);
+		ath10k_warn(ar, "mac sta rc update failed to find peer %pM on vdev %i\n",
+			    sta->addr, arvif->vdev_id);
+		return;
+	}
 
 	ath10k_dbg(ar, ATH10K_DBG_MAC,
 		   "mac sta rc update for %pM changed %08x bw %d nss %d smps %d\n",
@@ -7513,6 +7631,16 @@ ath10k_mac_op_assign_vif_chanctx(struct ieee80211_hw *hw,
 				    arvif->vdev_id, ret);
 	}
 
+	if (ath10k_peer_stats_enabled(ar)) {
+		ar->pktlog_filter |= ATH10K_PKTLOG_PEER_STATS;
+		ret = ath10k_wmi_pdev_pktlog_enable(ar,
+						    ar->pktlog_filter);
+		if (ret) {
+			ath10k_warn(ar, "failed to enable pktlog %d\n", ret);
+			goto err_stop;
+		}
+	}
+
 	mutex_unlock(&ar->conf_mutex);
 	return 0;
 
@@ -7597,6 +7725,34 @@ static void ath10k_mac_op_sta_pre_rcu_remove(struct ieee80211_hw *hw,
 			peer->removed = true;
 }
 
+static void ath10k_sta_statistics(struct ieee80211_hw *hw,
+				  struct ieee80211_vif *vif,
+				  struct ieee80211_sta *sta,
+				  struct station_info *sinfo)
+{
+	struct ath10k_sta *arsta = (struct ath10k_sta *)sta->drv_priv;
+	struct ath10k *ar = arsta->arvif->ar;
+
+	if (!ath10k_peer_stats_enabled(ar))
+		return;
+
+	sinfo->rx_duration = arsta->rx_duration;
+	sinfo->filled |= 1ULL << NL80211_STA_INFO_RX_DURATION;
+
+	if (!arsta->txrate.legacy && !arsta->txrate.nss)
+		return;
+
+	if (arsta->txrate.legacy) {
+		sinfo->txrate.legacy = arsta->txrate.legacy;
+	} else {
+		sinfo->txrate.mcs = arsta->txrate.mcs;
+		sinfo->txrate.nss = arsta->txrate.nss;
+		sinfo->txrate.bw = arsta->txrate.bw;
+	}
+	sinfo->txrate.flags = arsta->txrate.flags;
+	sinfo->filled |= 1ULL << NL80211_STA_INFO_TX_BITRATE;
+}
+
 static const struct ieee80211_ops ath10k_ops = {
 	.tx				= ath10k_mac_op_tx,
 	.wake_tx_queue			= ath10k_mac_op_wake_tx_queue,
@@ -7638,16 +7794,17 @@ static const struct ieee80211_ops ath10k_ops = {
 	.unassign_vif_chanctx		= ath10k_mac_op_unassign_vif_chanctx,
 	.switch_vif_chanctx		= ath10k_mac_op_switch_vif_chanctx,
 	.sta_pre_rcu_remove		= ath10k_mac_op_sta_pre_rcu_remove,
+	.sta_statistics			= ath10k_sta_statistics,
 
 	CFG80211_TESTMODE_CMD(ath10k_tm_cmd)
 
 #ifdef CONFIG_PM
 	.suspend			= ath10k_wow_op_suspend,
 	.resume				= ath10k_wow_op_resume,
+	.set_wakeup			= ath10k_wow_op_set_wakeup,
 #endif
 #ifdef CONFIG_MAC80211_DEBUGFS
 	.sta_add_debugfs		= ath10k_sta_add_debugfs,
-	.sta_statistics			= ath10k_sta_statistics,
 #endif
 };
 
@@ -7800,6 +7957,7 @@ static const struct ieee80211_iface_combination ath10k_10x_if_comb[] = {
 		.max_interfaces = 8,
 		.num_different_channels = 1,
 		.beacon_int_infra_match = true,
+		.beacon_int_min_gcd = 1,
 #ifdef CONFIG_ATH10K_DFS_CERTIFIED
 		.radar_detect_widths =	BIT(NL80211_CHAN_WIDTH_20_NOHT) |
 					BIT(NL80211_CHAN_WIDTH_20) |
@@ -7923,6 +8081,7 @@ static const struct ieee80211_iface_combination ath10k_10_4_if_comb[] = {
 		.max_interfaces = 16,
 		.num_different_channels = 1,
 		.beacon_int_infra_match = true,
+		.beacon_int_min_gcd = 1,
 #ifdef CONFIG_ATH10K_DFS_CERTIFIED
 		.radar_detect_widths =	BIT(NL80211_CHAN_WIDTH_20_NOHT) |
 					BIT(NL80211_CHAN_WIDTH_20) |
@@ -8073,7 +8232,22 @@ int ath10k_mac_register(struct ath10k *ar)
 		WLAN_CIPHER_SUITE_WEP104,
 		WLAN_CIPHER_SUITE_TKIP,
 		WLAN_CIPHER_SUITE_CCMP,
+
+		/* Do not add hardware supported ciphers before this line.
+		 * Allow software encryption for all chips. Don't forget to
+		 * update n_cipher_suites below.
+		 */
 		WLAN_CIPHER_SUITE_AES_CMAC,
+		WLAN_CIPHER_SUITE_BIP_CMAC_256,
+		WLAN_CIPHER_SUITE_BIP_GMAC_128,
+		WLAN_CIPHER_SUITE_BIP_GMAC_256,
+
+		/* Only QCA99x0 and QCA4019 varients support GCMP-128, GCMP-256
+		 * and CCMP-256 in hardware.
+		 */
+		WLAN_CIPHER_SUITE_GCMP,
+		WLAN_CIPHER_SUITE_GCMP_256,
+		WLAN_CIPHER_SUITE_CCMP_256,
 	};
 	struct ieee80211_supported_band *band;
 	void *channels;
@@ -8145,8 +8319,13 @@ int ath10k_mac_register(struct ath10k *ar)
 			BIT(NL80211_IFTYPE_P2P_GO);
 
 	ieee80211_hw_set(ar->hw, SIGNAL_DBM);
-	ieee80211_hw_set(ar->hw, SUPPORTS_PS);
-	ieee80211_hw_set(ar->hw, SUPPORTS_DYNAMIC_PS);
+
+	if (!test_bit(ATH10K_FW_FEATURE_NO_PS,
+		      ar->running_fw->fw_file.fw_features)) {
+		ieee80211_hw_set(ar->hw, SUPPORTS_PS);
+		ieee80211_hw_set(ar->hw, SUPPORTS_DYNAMIC_PS);
+	}
+
 	ieee80211_hw_set(ar->hw, MFP_CAPABLE);
 	ieee80211_hw_set(ar->hw, REPORTS_TX_ACK_STATUS);
 	ieee80211_hw_set(ar->hw, HAS_RATE_CONTROL);
@@ -8197,8 +8376,15 @@ int ath10k_mac_register(struct ath10k *ar)
 			NL80211_PROBE_RESP_OFFLOAD_SUPPORT_P2P;
 	}
 
-	if (test_bit(WMI_SERVICE_TDLS, ar->wmi.svc_map))
+	if (test_bit(WMI_SERVICE_TDLS, ar->wmi.svc_map) ||
+	    test_bit(WMI_SERVICE_TDLS_EXPLICIT_MODE_ONLY, ar->wmi.svc_map)) {
 		ar->hw->wiphy->flags |= WIPHY_FLAG_SUPPORTS_TDLS;
+		if (test_bit(WMI_SERVICE_TDLS_WIDER_BANDWIDTH, ar->wmi.svc_map))
+			ieee80211_hw_set(ar->hw, TDLS_WIDER_BW);
+	}
+
+	if (test_bit(WMI_SERVICE_TDLS_UAPSD_BUFFER_STA, ar->wmi.svc_map))
+		ieee80211_hw_set(ar->hw, SUPPORTS_TDLS_BUFFER_STA);
 
 	ar->hw->wiphy->flags |= WIPHY_FLAG_HAS_REMAIN_ON_CHANNEL;
 	ar->hw->wiphy->flags |= WIPHY_FLAG_HAS_CHANNEL_SWITCH;
@@ -8217,6 +8403,8 @@ int ath10k_mac_register(struct ath10k *ar)
 	}
 
 	wiphy_ext_feature_set(ar->hw->wiphy, NL80211_EXT_FEATURE_VHT_IBSS);
+	wiphy_ext_feature_set(ar->hw->wiphy,
+			      NL80211_EXT_FEATURE_SET_SCAN_DWELL);
 
 	/*
 	 * on LL hardware queues are managed entirely by the FW
@@ -8282,15 +8470,6 @@ int ath10k_mac_register(struct ath10k *ar)
 			ath10k_warn(ar, "failed to initialise DFS pattern detector\n");
 	}
 
-	/* Current wake_tx_queue implementation imposes a significant
-	 * performance penalty in some setups. The tx scheduling code needs
-	 * more work anyway so disable the wake_tx_queue unless firmware
-	 * supports the pull-push mechanism.
-	 */
-	if (!test_bit(ATH10K_FW_FEATURE_PEER_FLOW_CONTROL,
-		      ar->running_fw->fw_file.fw_features))
-		ar->ops->wake_tx_queue = NULL;
-
 	ret = ath10k_mac_init_rd(ar);
 	if (ret) {
 		ath10k_err(ar, "failed to derive regdom: %d\n", ret);
@@ -8308,8 +8487,30 @@ int ath10k_mac_register(struct ath10k *ar)
 		goto err_dfs_detector_exit;
 	}
 
+	if (test_bit(WMI_SERVICE_SPOOF_MAC_SUPPORT, ar->wmi.svc_map)) {
+		ret = ath10k_wmi_scan_prob_req_oui(ar, ar->mac_addr);
+		if (ret) {
+			ath10k_err(ar, "failed to set prob req oui: %i\n", ret);
+			goto err_dfs_detector_exit;
+		}
+
+		ar->hw->wiphy->features |=
+			NL80211_FEATURE_SCAN_RANDOM_MAC_ADDR;
+	}
+
 	ar->hw->wiphy->cipher_suites = cipher_suites;
-	ar->hw->wiphy->n_cipher_suites = ARRAY_SIZE(cipher_suites);
+
+	/* QCA988x and QCA6174 family chips do not support CCMP-256, GCMP-128
+	 * and GCMP-256 ciphers in hardware. Fetch number of ciphers supported
+	 * from chip specific hw_param table.
+	 */
+	if (!ar->hw_params.n_cipher_suites ||
+	    ar->hw_params.n_cipher_suites > ARRAY_SIZE(cipher_suites)) {
+		ath10k_err(ar, "invalid hw_params.n_cipher_suites %d\n",
+			   ar->hw_params.n_cipher_suites);
+		ar->hw_params.n_cipher_suites = 8;
+	}
+	ar->hw->wiphy->n_cipher_suites = ar->hw_params.n_cipher_suites;
 
 	wiphy_ext_feature_set(ar->hw->wiphy, NL80211_EXT_FEATURE_CQM_RSSI_LIST);
 

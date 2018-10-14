@@ -1,5 +1,5 @@
 /*
- * Copyright(c) 2015 - 2017 Intel Corporation.
+ * Copyright(c) 2015 - 2018 Intel Corporation.
  *
  * This file is provided under a dual BSD/GPLv2 license.  When using or
  * redistributing this file, you may do so under either license.
@@ -95,6 +95,7 @@ struct hfi1_packet;
 #define HFI1_VENDOR_IPG		cpu_to_be16(0xFFA0)
 
 #define IB_DEFAULT_GID_PREFIX	cpu_to_be64(0xfe80000000000000ULL)
+#define OPA_BTH_MIG_REQ		BIT(31)
 
 #define RC_OP(x) IB_OPCODE_RC_##x
 #define UC_OP(x) IB_OPCODE_UC_##x
@@ -103,6 +104,37 @@ struct hfi1_packet;
 enum {
 	HFI1_HAS_GRH = (1 << 0),
 };
+
+#define LRH_16B_BYTES (FIELD_SIZEOF(struct hfi1_16b_header, lrh))
+#define LRH_16B_DWORDS (LRH_16B_BYTES / sizeof(u32))
+#define LRH_9B_BYTES (FIELD_SIZEOF(struct ib_header, lrh))
+#define LRH_9B_DWORDS (LRH_9B_BYTES / sizeof(u32))
+
+/* 24Bits for qpn, upper 8Bits reserved */
+struct opa_16b_mgmt {
+	__be32 dest_qpn;
+	__be32 src_qpn;
+};
+
+struct hfi1_16b_header {
+	u32 lrh[4];
+	union {
+		struct {
+			struct ib_grh grh;
+			struct ib_other_headers oth;
+		} l;
+		struct ib_other_headers oth;
+		struct opa_16b_mgmt mgmt;
+	} u;
+} __packed;
+
+struct hfi1_opa_header {
+	union {
+		struct ib_header ibh; /* 9B header */
+		struct hfi1_16b_header opah; /* 16B header */
+	};
+	u8 hdr_type; /* 9B or 16B */
+} __packed;
 
 struct hfi1_ahg_info {
 	u32 ahgdesc[2];
@@ -113,7 +145,7 @@ struct hfi1_ahg_info {
 
 struct hfi1_sdma_header {
 	__le64 pbc;
-	struct ib_header hdr;
+	struct hfi1_opa_header hdr;
 } __packed;
 
 /*
@@ -127,6 +159,7 @@ struct hfi1_qp_priv {
 	u8 s_sc;		                  /* SC[0..4] for next packet */
 	struct iowait s_iowait;
 	struct rvt_qp *owner;
+	u8 hdr_type; /* 9B or 16B */
 };
 
 /*
@@ -142,7 +175,9 @@ struct hfi1_pkt_state {
 	unsigned long timeout;
 	unsigned long timeout_int;
 	int cpu;
+	u8 opcode;
 	bool in_thread;
+	bool pkts_sent;
 };
 
 #define HFI1_PSN_CREDIT  16
@@ -199,9 +234,7 @@ struct hfi1_ibdev {
 	/* per HFI symlinks to above */
 	struct dentry *hfi1_ibdev_link;
 #ifdef CONFIG_FAULT_INJECTION
-	struct fault_opcode *fault_opcode;
-	struct fault_packet *fault_packet;
-	bool fault_suppress_err;
+	struct fault *fault;
 #endif
 #endif
 };
@@ -223,21 +256,10 @@ static inline struct rvt_qp *iowait_to_qp(struct  iowait *s_iowait)
 }
 
 /*
- * Send if not busy or waiting for I/O and either
- * a RC response is pending or we can process send work requests.
- */
-static inline int hfi1_send_ok(struct rvt_qp *qp)
-{
-	return !(qp->s_flags & (RVT_S_BUSY | RVT_S_ANY_WAIT_IO)) &&
-		(qp->s_hdrwords || (qp->s_flags & RVT_S_RESP_PENDING) ||
-		 !(qp->s_flags & RVT_S_ANY_WAIT_SEND));
-}
-
-/*
  * This must be called with s_lock held.
  */
-void hfi1_bad_pqkey(struct hfi1_ibport *ibp, __be16 trap_num, u32 key, u32 sl,
-		    u32 qp1, u32 qp2, u16 lid1, u16 lid2);
+void hfi1_bad_pkey(struct hfi1_ibport *ibp, u32 key, u32 sl,
+		   u32 qp1, u32 qp2, u32 lid1, u32 lid2);
 void hfi1_cap_mask_chg(struct rvt_dev_info *rdi, u8 port_num);
 void hfi1_sys_guid_chg(struct hfi1_ibport *ibp);
 void hfi1_node_desc_chg(struct hfi1_ibport *ibp);
@@ -257,13 +279,8 @@ int hfi1_process_mad(struct ib_device *ibdev, int mad_flags, u8 port,
  * necessarily be at least one bit less than
  * the container holding the PSN.
  */
-#ifndef CONFIG_HFI1_VERBS_31BIT_PSN
-#define PSN_MASK 0xFFFFFF
-#define PSN_SHIFT 8
-#else
 #define PSN_MASK 0x7FFFFFFF
 #define PSN_SHIFT 1
-#endif
 #define PSN_MODIFY_MASK 0xFFFFFF
 
 /*
@@ -307,21 +324,16 @@ void hfi1_rc_rcv(struct hfi1_packet *packet);
 
 void hfi1_rc_hdrerr(
 	struct hfi1_ctxtdata *rcd,
-	struct ib_header *hdr,
-	u32 rcv_flags,
+	struct hfi1_packet *packet,
 	struct rvt_qp *qp);
 
 u8 ah_to_sc(struct ib_device *ibdev, struct rdma_ah_attr *ah_attr);
 
-struct ib_ah *hfi1_create_qp0_ah(struct hfi1_ibport *ibp, u16 dlid);
-
-void hfi1_rc_send_complete(struct rvt_qp *qp, struct ib_header *hdr);
+void hfi1_rc_send_complete(struct rvt_qp *qp, struct hfi1_opa_header *opah);
 
 void hfi1_ud_rcv(struct hfi1_packet *packet);
 
 int hfi1_lookup_pkey_idx(struct hfi1_ibport *ibp, u16 pkey);
-
-int hfi1_rvt_get_rwqe(struct rvt_qp *qp, int wr_id_only);
 
 void hfi1_migrate_qp(struct rvt_qp *qp);
 
@@ -336,18 +348,7 @@ int hfi1_check_send_wqe(struct rvt_qp *qp, struct rvt_swqe *wqe);
 extern const u32 rc_only_opcode;
 extern const u32 uc_only_opcode;
 
-static inline u8 get_opcode(struct ib_header *h)
-{
-	u16 lnh = be16_to_cpu(h->lrh[0]) & 3;
-
-	if (lnh == IB_LNH_IBA_LOCAL)
-		return be32_to_cpu(h->u.oth.bth[0]) >> 24;
-	else
-		return be32_to_cpu(h->u.l.oth.bth[0]) >> 24;
-}
-
-int hfi1_ruc_check_hdr(struct hfi1_ibport *ibp, struct ib_header *hdr,
-		       int has_grh, struct rvt_qp *qp, u32 bth0);
+int hfi1_ruc_check_hdr(struct hfi1_ibport *ibp, struct hfi1_packet *packet);
 
 u32 hfi1_make_grh(struct hfi1_ibport *ibp, struct ib_grh *hdr,
 		  const struct ib_global_route *grh, u32 hwords, u32 nwords);
@@ -365,7 +366,7 @@ void hfi1_do_send(struct rvt_qp *qp, bool in_thread);
 void hfi1_send_complete(struct rvt_qp *qp, struct rvt_swqe *wqe,
 			enum ib_wc_status status);
 
-void hfi1_send_rc_ack(struct hfi1_ctxtdata *, struct rvt_qp *qp, int is_fecn);
+void hfi1_send_rc_ack(struct hfi1_packet *packet, bool is_fecn);
 
 int hfi1_make_rc_req(struct rvt_qp *qp, struct hfi1_pkt_state *ps);
 
@@ -378,6 +379,8 @@ int hfi1_register_ib_device(struct hfi1_devdata *);
 void hfi1_unregister_ib_device(struct hfi1_devdata *);
 
 void hfi1_ib_rcv(struct hfi1_packet *packet);
+
+void hfi1_16B_rcv(struct hfi1_packet *packet);
 
 unsigned hfi1_get_npkeys(struct hfi1_devdata *);
 
@@ -407,6 +410,11 @@ static inline void cacheless_memcpy(void *dst, void *src, size_t n)
 	 * is not invoked.
 	 */
 	__copy_user_nocache(dst, (void __user *)src, n, 0);
+}
+
+static inline bool opa_bth_is_migration(struct ib_other_headers *ohdr)
+{
+	return ohdr->bth[1] & cpu_to_be32(OPA_BTH_MIG_REQ);
 }
 
 extern const enum ib_wc_opcode ib_hfi1_wc_opcode[];

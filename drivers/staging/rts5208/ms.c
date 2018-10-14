@@ -2618,7 +2618,7 @@ static int ms_build_l2p_tbl(struct rtsx_chip *chip, int seg_no)
 	segment = &ms_card->segment[seg_no];
 
 	if (!segment->l2p_table) {
-		segment->l2p_table = vmalloc(table_size * 2);
+		segment->l2p_table = vmalloc(array_size(table_size, 2));
 		if (!segment->l2p_table) {
 			rtsx_trace(chip);
 			goto BUILD_FAIL;
@@ -2821,6 +2821,7 @@ BUILD_FAIL:
 int reset_ms_card(struct rtsx_chip *chip)
 {
 	struct ms_info *ms_card = &chip->ms_card;
+	int seg_no = ms_card->total_block / 512 - 1;
 	int retval;
 
 	memset(ms_card, 0, sizeof(struct ms_info));
@@ -2863,7 +2864,7 @@ int reset_ms_card(struct rtsx_chip *chip)
 		/* Build table for the last segment,
 		 * to check if L2P table block exists, erasing it
 		 */
-		retval = ms_build_l2p_tbl(chip, ms_card->total_block / 512 - 1);
+		retval = ms_build_l2p_tbl(chip, seg_no);
 		if (retval != STATUS_SUCCESS) {
 			rtsx_trace(chip);
 			return STATUS_FAIL;
@@ -3064,7 +3065,8 @@ static int mspro_rw_multi_sector(struct scsi_cmnd *srb,
 
 		if (detect_card_cd(chip, MS_CARD) != STATUS_SUCCESS) {
 			chip->rw_need_retry = 0;
-			dev_dbg(rtsx_dev(chip), "No card exist, exit mspro_rw_multi_sector\n");
+			dev_dbg(rtsx_dev(chip), "No card exist, exit %s\n",
+				__func__);
 			rtsx_trace(chip);
 			return STATUS_FAIL;
 		}
@@ -3101,7 +3103,7 @@ static int mspro_read_format_progress(struct rtsx_chip *chip,
 	u8 cnt, tmp;
 	u8 data[8];
 
-	dev_dbg(rtsx_dev(chip), "mspro_read_format_progress, short_data_len = %d\n",
+	dev_dbg(rtsx_dev(chip), "%s, short_data_len = %d\n", __func__,
 		short_data_len);
 
 	retval = ms_switch_clock(chip);

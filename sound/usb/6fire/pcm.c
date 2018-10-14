@@ -555,7 +555,7 @@ static snd_pcm_uframes_t usb6fire_pcm_pointer(
 	return ret;
 }
 
-static struct snd_pcm_ops pcm_ops = {
+static const struct snd_pcm_ops pcm_ops = {
 	.open = usb6fire_pcm_open,
 	.close = usb6fire_pcm_close,
 	.ioctl = snd_pcm_lib_ioctl,
@@ -591,12 +591,14 @@ static int usb6fire_pcm_buffers_init(struct pcm_runtime *rt)
 	int i;
 
 	for (i = 0; i < PCM_N_URBS; i++) {
-		rt->out_urbs[i].buffer = kzalloc(PCM_N_PACKETS_PER_URB
-				* PCM_MAX_PACKET_SIZE, GFP_KERNEL);
+		rt->out_urbs[i].buffer = kcalloc(PCM_MAX_PACKET_SIZE,
+						 PCM_N_PACKETS_PER_URB,
+						 GFP_KERNEL);
 		if (!rt->out_urbs[i].buffer)
 			return -ENOMEM;
-		rt->in_urbs[i].buffer = kzalloc(PCM_N_PACKETS_PER_URB
-				* PCM_MAX_PACKET_SIZE, GFP_KERNEL);
+		rt->in_urbs[i].buffer = kcalloc(PCM_MAX_PACKET_SIZE,
+						PCM_N_PACKETS_PER_URB,
+						GFP_KERNEL);
 		if (!rt->in_urbs[i].buffer)
 			return -ENOMEM;
 	}

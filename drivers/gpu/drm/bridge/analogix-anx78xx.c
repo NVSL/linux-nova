@@ -977,8 +977,6 @@ static int anx78xx_get_modes(struct drm_connector *connector)
 	}
 
 	num_modes = drm_add_edid_modes(connector, anx78xx->edid);
-	/* Store the ELD */
-	drm_edid_to_eld(connector, anx78xx->edid);
 
 unlock:
 	mutex_unlock(&anx78xx->lock);
@@ -1002,7 +1000,6 @@ static enum drm_connector_status anx78xx_detect(struct drm_connector *connector,
 }
 
 static const struct drm_connector_funcs anx78xx_connector_funcs = {
-	.dpms = drm_atomic_helper_connector_dpms,
 	.fill_modes = drm_helper_probe_single_connector_modes,
 	.detect = anx78xx_detect,
 	.destroy = drm_connector_cleanup,
@@ -1097,7 +1094,8 @@ static void anx78xx_bridge_mode_set(struct drm_bridge *bridge,
 
 	mutex_lock(&anx78xx->lock);
 
-	err = drm_hdmi_avi_infoframe_from_display_mode(&frame, adjusted_mode);
+	err = drm_hdmi_avi_infoframe_from_display_mode(&frame, adjusted_mode,
+						       false);
 	if (err) {
 		DRM_ERROR("Failed to setup AVI infoframe: %d\n", err);
 		goto unlock;
@@ -1303,8 +1301,7 @@ static void unregister_i2c_dummy_clients(struct anx78xx *anx78xx)
 	unsigned int i;
 
 	for (i = 0; i < ARRAY_SIZE(anx78xx->i2c_dummy); i++)
-		if (anx78xx->i2c_dummy[i])
-			i2c_unregister_device(anx78xx->i2c_dummy[i]);
+		i2c_unregister_device(anx78xx->i2c_dummy[i]);
 }
 
 static const struct regmap_config anx78xx_regmap_config = {
@@ -1438,11 +1435,7 @@ static int anx78xx_i2c_probe(struct i2c_client *client,
 
 	anx78xx->bridge.funcs = &anx78xx_bridge_funcs;
 
-	err = drm_bridge_add(&anx78xx->bridge);
-	if (err < 0) {
-		DRM_ERROR("Failed to add drm bridge: %d\n", err);
-		goto err_poweroff;
-	}
+	drm_bridge_add(&anx78xx->bridge);
 
 	/* If cable is pulled out, just poweroff and wait for HPD event */
 	if (!gpiod_get_value(anx78xx->pdata.gpiod_hpd))

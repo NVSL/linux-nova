@@ -5,6 +5,7 @@
  * Copyright 2007	Johannes Berg <johannes@sipsolutions.net>
  * Copyright 2013-2014  Intel Mobile Communications GmbH
  * Copyright (C) 2015-2017	Intel Deutschland GmbH
+ * Copyright (C) 2018 Intel Corporation
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -1113,6 +1114,48 @@ u32 ieee802_11_parse_elems_crc(const u8 *start, size_t len, bool action,
 	return crc;
 }
 
+void ieee80211_regulatory_limit_wmm_params(struct ieee80211_sub_if_data *sdata,
+					   struct ieee80211_tx_queue_params
+					   *qparam, int ac)
+{
+	struct ieee80211_chanctx_conf *chanctx_conf;
+	const struct ieee80211_reg_rule *rrule;
+	struct ieee80211_wmm_ac *wmm_ac;
+	u16 center_freq = 0;
+
+	if (sdata->vif.type != NL80211_IFTYPE_AP &&
+	    sdata->vif.type != NL80211_IFTYPE_STATION)
+		return;
+
+	rcu_read_lock();
+	chanctx_conf = rcu_dereference(sdata->vif.chanctx_conf);
+	if (chanctx_conf)
+		center_freq = chanctx_conf->def.chan->center_freq;
+
+	if (!center_freq) {
+		rcu_read_unlock();
+		return;
+	}
+
+	rrule = freq_reg_info(sdata->wdev.wiphy, MHZ_TO_KHZ(center_freq));
+
+	if (IS_ERR_OR_NULL(rrule) || !rrule->wmm_rule) {
+		rcu_read_unlock();
+		return;
+	}
+
+	if (sdata->vif.type == NL80211_IFTYPE_AP)
+		wmm_ac = &rrule->wmm_rule->ap[ac];
+	else
+		wmm_ac = &rrule->wmm_rule->client[ac];
+	qparam->cw_min = max_t(u16, qparam->cw_min, wmm_ac->cw_min);
+	qparam->cw_max = max_t(u16, qparam->cw_max, wmm_ac->cw_max);
+	qparam->aifs = max_t(u8, qparam->aifs, wmm_ac->aifsn);
+	qparam->txop = !qparam->txop ? wmm_ac->cot / 32 :
+		min_t(u16, qparam->txop, wmm_ac->cot / 32);
+	rcu_read_unlock();
+}
+
 void ieee80211_set_wmm_default(struct ieee80211_sub_if_data *sdata,
 			       bool bss_notify, bool enable_qos)
 {
@@ -1206,6 +1249,7 @@ void ieee80211_set_wmm_default(struct ieee80211_sub_if_data *sdata,
 				break;
 			}
 		}
+		ieee80211_regulatory_limit_wmm_params(sdata, &qparam, ac);
 
 		qparam.uapsd = false;
 
@@ -1392,10 +1436,10 @@ static int ieee80211_build_preq_ies_band(struct ieee80211_local *local,
 	/* insert custom IEs that go before HT */
 	if (ie && ie_len) {
 		static const u8 before_ht[] = {
-			WLAN_EID_SSID,
-			WLAN_EID_SUPP_RATES,
-			WLAN_EID_REQUEST,
-			WLAN_EID_EXT_SUPP_RATES,
+			/*
+			 * no need to list the ones split off already
+			 * (or generated here)
+			 */
 			WLAN_EID_DS_PARAMS,
 			WLAN_EID_SUPPORTED_REGULATORY_CLASSES,
 		};
@@ -1424,20 +1468,17 @@ static int ieee80211_build_preq_ies_band(struct ieee80211_local *local,
 	/* insert custom IEs that go before VHT */
 	if (ie && ie_len) {
 		static const u8 before_vht[] = {
-			WLAN_EID_SSID,
-			WLAN_EID_SUPP_RATES,
-			WLAN_EID_REQUEST,
-			WLAN_EID_EXT_SUPP_RATES,
-			WLAN_EID_DS_PARAMS,
-			WLAN_EID_SUPPORTED_REGULATORY_CLASSES,
-			WLAN_EID_HT_CAPABILITY,
+			/*
+			 * no need to list the ones split off already
+			 * (or generated here)
+			 */
 			WLAN_EID_BSS_COEX_2040,
 			WLAN_EID_EXT_CAPABILITY,
 			WLAN_EID_SSID_LIST,
 			WLAN_EID_CHANNEL_USAGE,
 			WLAN_EID_INTERWORKING,
-			/* mesh ID can't happen here */
-			/* 60 GHz can't happen here right now */
+			WLAN_EID_MESH_ID,
+			/* 60 GHz (Multi-band, DMG, MMS) can't happen */
 		};
 		noffset = ieee80211_ie_split(ie, ie_len,
 					     before_vht, ARRAY_SIZE(before_vht),
@@ -1762,8 +1803,9 @@ static int ieee80211_reconfig_nan(struct ieee80211_sub_if_data *sdata)
 	if (WARN_ON(res))
 		return res;
 
-	funcs = kzalloc((sdata->local->hw.max_nan_de_entries + 1) *
-			sizeof(*funcs), GFP_KERNEL);
+	funcs = kcalloc(sdata->local->hw.max_nan_de_entries + 1,
+			sizeof(*funcs),
+			GFP_KERNEL);
 	if (!funcs)
 		return -ENOMEM;
 
@@ -1971,7 +2013,8 @@ int ieee80211_reconfig(struct ieee80211_local *local)
 			  BSS_CHANGED_CQM |
 			  BSS_CHANGED_QOS |
 			  BSS_CHANGED_IDLE |
-			  BSS_CHANGED_TXPOWER;
+			  BSS_CHANGED_TXPOWER |
+			  BSS_CHANGED_MCAST_RATE;
 
 		if (sdata->vif.mu_mimo_owner)
 			changed |= BSS_CHANGED_MU_GROUPS;
@@ -2068,7 +2111,8 @@ int ieee80211_reconfig(struct ieee80211_local *local)
 		if (!sta->uploaded)
 			continue;
 
-		if (sta->sdata->vif.type != NL80211_IFTYPE_AP)
+		if (sta->sdata->vif.type != NL80211_IFTYPE_AP &&
+		    sta->sdata->vif.type != NL80211_IFTYPE_AP_VLAN)
 			continue;
 
 		for (state = IEEE80211_STA_NOTEXIST;
@@ -2113,15 +2157,6 @@ int ieee80211_reconfig(struct ieee80211_local *local)
 		cfg80211_sched_scan_stopped_rtnl(local->hw.wiphy, 0);
 
  wake_up:
-	if (local->in_reconfig) {
-		local->in_reconfig = false;
-		barrier();
-
-		/* Restart deferred ROCs */
-		mutex_lock(&local->mtx);
-		ieee80211_start_next_roc(local);
-		mutex_unlock(&local->mtx);
-	}
 
 	if (local->monitors == local->open_count && local->monitors > 0)
 		ieee80211_add_virtual_monitor(local);
@@ -2147,6 +2182,16 @@ int ieee80211_reconfig(struct ieee80211_local *local)
 		}
 
 		mutex_unlock(&local->sta_mtx);
+	}
+
+	if (local->in_reconfig) {
+		local->in_reconfig = false;
+		barrier();
+
+		/* Restart deferred ROCs */
+		mutex_lock(&local->mtx);
+		ieee80211_start_next_roc(local);
+		mutex_unlock(&local->mtx);
 	}
 
 	ieee80211_wake_queues_by_reason(hw, IEEE80211_MAX_QUEUE_MAP,
@@ -2750,12 +2795,13 @@ u64 ieee80211_calculate_rx_timestamp(struct ieee80211_local *local,
 
 	memset(&ri, 0, sizeof(ri));
 
+	ri.bw = status->bw;
+
 	/* Fill cfg80211 rate info */
 	switch (status->encoding) {
 	case RX_ENC_HT:
 		ri.mcs = status->rate_idx;
 		ri.flags |= RATE_INFO_FLAGS_MCS;
-		ri.bw = status->bw;
 		if (status->enc_flags & RX_ENC_FLAG_SHORT_GI)
 			ri.flags |= RATE_INFO_FLAGS_SHORT_GI;
 		break;
@@ -2763,7 +2809,6 @@ u64 ieee80211_calculate_rx_timestamp(struct ieee80211_local *local,
 		ri.flags |= RATE_INFO_FLAGS_VHT_MCS;
 		ri.mcs = status->rate_idx;
 		ri.nss = status->nss;
-		ri.bw = status->bw;
 		if (status->enc_flags & RX_ENC_FLAG_SHORT_GI)
 			ri.flags |= RATE_INFO_FLAGS_SHORT_GI;
 		break;
@@ -2774,8 +2819,6 @@ u64 ieee80211_calculate_rx_timestamp(struct ieee80211_local *local,
 		struct ieee80211_supported_band *sband;
 		int shift = 0;
 		int bitrate;
-
-		ri.bw = status->bw;
 
 		switch (status->bw) {
 		case RATE_INFO_BW_10:
@@ -2980,8 +3023,8 @@ int ieee80211_send_action_csa(struct ieee80211_sub_if_data *sdata,
 	struct ieee80211_mgmt *mgmt;
 	struct ieee80211_local *local = sdata->local;
 	int freq;
-	int hdr_len = offsetof(struct ieee80211_mgmt, u.action.u.chan_switch) +
-			       sizeof(mgmt->u.action.u.chan_switch);
+	int hdr_len = offsetofend(struct ieee80211_mgmt,
+				  u.action.u.chan_switch);
 	u8 *pos;
 
 	if (sdata->vif.type != NL80211_IFTYPE_ADHOC &&

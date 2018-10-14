@@ -225,7 +225,9 @@ static int mn88473_set_frontend(struct dvb_frontend *fe)
 
 	/* PLP */
 	if (c->delivery_system == SYS_DVBT2) {
-		ret = regmap_write(dev->regmap[2], 0x36, c->stream_id);
+		ret = regmap_write(dev->regmap[2], 0x36,
+				(c->stream_id == NO_STREAM_ID_FILTER) ? 0 :
+				c->stream_id );
 		if (ret)
 			goto err;
 	}
@@ -762,7 +764,7 @@ MODULE_DEVICE_TABLE(i2c, mn88473_id_table);
 
 static struct i2c_driver mn88473_driver = {
 	.driver = {
-		.name	             = "mn88473",
+		.name		     = "mn88473",
 		.suppress_bind_attrs = true,
 	},
 	.probe		= mn88473_probe,

@@ -181,9 +181,8 @@ static int cbc_init(struct crypto_tfm *tfm)
 	struct aesbs_cbc_ctx *ctx = crypto_tfm_ctx(tfm);
 
 	ctx->enc_tfm = crypto_alloc_cipher("aes", 0, 0);
-	if (IS_ERR(ctx->enc_tfm))
-		return PTR_ERR(ctx->enc_tfm);
-	return 0;
+
+	return PTR_ERR_OR_ZERO(ctx->enc_tfm);
 }
 
 static void cbc_exit(struct crypto_tfm *tfm)
@@ -221,9 +220,8 @@ static int ctr_encrypt(struct skcipher_request *req)
 			u8 *dst = walk.dst.virt.addr + blocks * AES_BLOCK_SIZE;
 			u8 *src = walk.src.virt.addr + blocks * AES_BLOCK_SIZE;
 
-			if (dst != src)
-				memcpy(dst, src, walk.total % AES_BLOCK_SIZE);
-			crypto_xor(dst, final, walk.total % AES_BLOCK_SIZE);
+			crypto_xor_cpy(dst, src, final,
+				       walk.total % AES_BLOCK_SIZE);
 
 			err = skcipher_walk_done(&walk, 0);
 			break;
@@ -259,9 +257,8 @@ static int xts_init(struct crypto_tfm *tfm)
 	struct aesbs_xts_ctx *ctx = crypto_tfm_ctx(tfm);
 
 	ctx->tweak_tfm = crypto_alloc_cipher("aes", 0, 0);
-	if (IS_ERR(ctx->tweak_tfm))
-		return PTR_ERR(ctx->tweak_tfm);
-	return 0;
+
+	return PTR_ERR_OR_ZERO(ctx->tweak_tfm);
 }
 
 static void xts_exit(struct crypto_tfm *tfm)

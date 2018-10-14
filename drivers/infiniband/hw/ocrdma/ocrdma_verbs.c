@@ -62,42 +62,6 @@ int ocrdma_query_pkey(struct ib_device *ibdev, u8 port, u16 index, u16 *pkey)
 	return 0;
 }
 
-int ocrdma_query_gid(struct ib_device *ibdev, u8 port,
-		     int index, union ib_gid *sgid)
-{
-	int ret;
-	struct ocrdma_dev *dev;
-
-	dev = get_ocrdma_dev(ibdev);
-	memset(sgid, 0, sizeof(*sgid));
-	if (index >= OCRDMA_MAX_SGID)
-		return -EINVAL;
-
-	ret = ib_get_cached_gid(ibdev, port, index, sgid, NULL);
-	if (ret == -EAGAIN) {
-		memcpy(sgid, &zgid, sizeof(*sgid));
-		return 0;
-	}
-
-	return ret;
-}
-
-int ocrdma_add_gid(struct ib_device *device,
-		   u8 port_num,
-		   unsigned int index,
-		   const union ib_gid *gid,
-		   const struct ib_gid_attr *attr,
-		   void **context) {
-	return  0;
-}
-
-int  ocrdma_del_gid(struct ib_device *device,
-		    u8 port_num,
-		    unsigned int index,
-		    void **context) {
-	return 0;
-}
-
 int ocrdma_query_device(struct ib_device *ibdev, struct ib_device_attr *attr,
 			struct ib_udata *uhw)
 {
@@ -463,7 +427,7 @@ retry:
 static inline int is_ucontext_pd(struct ocrdma_ucontext *uctx,
 				 struct ocrdma_pd *pd)
 {
-	return (uctx->cntxt_pd == pd ? true : false);
+	return (uctx->cntxt_pd == pd);
 }
 
 static int _ocrdma_dealloc_pd(struct ocrdma_dev *dev,
@@ -552,13 +516,12 @@ struct ib_ucontext *ocrdma_alloc_ucontext(struct ib_device *ibdev,
 	INIT_LIST_HEAD(&ctx->mm_head);
 	mutex_init(&ctx->mm_list_lock);
 
-	ctx->ah_tbl.va = dma_alloc_coherent(&pdev->dev, map_len,
-					    &ctx->ah_tbl.pa, GFP_KERNEL);
+	ctx->ah_tbl.va = dma_zalloc_coherent(&pdev->dev, map_len,
+					     &ctx->ah_tbl.pa, GFP_KERNEL);
 	if (!ctx->ah_tbl.va) {
 		kfree(ctx);
 		return ERR_PTR(-ENOMEM);
 	}
-	memset(ctx->ah_tbl.va, 0, map_len);
 	ctx->ah_tbl.len = map_len;
 
 	memset(&resp, 0, sizeof(resp));
@@ -880,20 +843,19 @@ static int ocrdma_build_pbl_tbl(struct ocrdma_dev *dev, struct ocrdma_hw_mr *mr)
 	void *va;
 	dma_addr_t pa;
 
-	mr->pbl_table = kzalloc(sizeof(struct ocrdma_pbl) *
-				mr->num_pbls, GFP_KERNEL);
+	mr->pbl_table = kcalloc(mr->num_pbls, sizeof(struct ocrdma_pbl),
+				GFP_KERNEL);
 
 	if (!mr->pbl_table)
 		return -ENOMEM;
 
 	for (i = 0; i < mr->num_pbls; i++) {
-		va = dma_alloc_coherent(&pdev->dev, dma_len, &pa, GFP_KERNEL);
+		va = dma_zalloc_coherent(&pdev->dev, dma_len, &pa, GFP_KERNEL);
 		if (!va) {
 			ocrdma_free_mr_pbl_tbl(dev, mr);
 			status = -ENOMEM;
 			break;
 		}
-		memset(va, 0, dma_len);
 		mr->pbl_table[i].va = va;
 		mr->pbl_table[i].pa = pa;
 	}
@@ -1361,12 +1323,12 @@ static void ocrdma_set_qp_db(struct ocrdma_dev *dev, struct ocrdma_qp *qp,
 static int ocrdma_alloc_wr_id_tbl(struct ocrdma_qp *qp)
 {
 	qp->wqe_wr_id_tbl =
-	    kzalloc(sizeof(*(qp->wqe_wr_id_tbl)) * qp->sq.max_cnt,
+	    kcalloc(qp->sq.max_cnt, sizeof(*(qp->wqe_wr_id_tbl)),
 		    GFP_KERNEL);
 	if (qp->wqe_wr_id_tbl == NULL)
 		return -ENOMEM;
 	qp->rqe_wr_id_tbl =
-	    kzalloc(sizeof(u64) * qp->rq.max_cnt, GFP_KERNEL);
+	    kcalloc(qp->rq.max_cnt, sizeof(u64), GFP_KERNEL);
 	if (qp->rqe_wr_id_tbl == NULL)
 		return -ENOMEM;
 
@@ -1903,15 +1865,16 @@ struct ib_srq *ocrdma_create_srq(struct ib_pd *ibpd,
 
 	if (udata == NULL) {
 		status = -ENOMEM;
-		srq->rqe_wr_id_tbl = kzalloc(sizeof(u64) * srq->rq.max_cnt,
-			    GFP_KERNEL);
+		srq->rqe_wr_id_tbl = kcalloc(srq->rq.max_cnt, sizeof(u64),
+					     GFP_KERNEL);
 		if (srq->rqe_wr_id_tbl == NULL)
 			goto arm_err;
 
 		srq->bit_fields_len = (srq->rq.max_cnt / 32) +
 		    (srq->rq.max_cnt % 32 ? 1 : 0);
 		srq->idx_bit_fields =
-		    kmalloc(srq->bit_fields_len * sizeof(u32), GFP_KERNEL);
+		    kmalloc_array(srq->bit_fields_len, sizeof(u32),
+				  GFP_KERNEL);
 		if (srq->idx_bit_fields == NULL)
 			goto arm_err;
 		memset(srq->idx_bit_fields, 0xff,
@@ -2247,6 +2210,7 @@ int ocrdma_post_send(struct ib_qp *ibqp, struct ib_send_wr *wr,
 		case IB_WR_SEND_WITH_IMM:
 			hdr->cw |= (OCRDMA_FLAG_IMM << OCRDMA_WQE_FLAGS_SHIFT);
 			hdr->immdt = ntohl(wr->ex.imm_data);
+			/* fall through */
 		case IB_WR_SEND:
 			hdr->cw |= (OCRDMA_SEND << OCRDMA_WQE_OPCODE_SHIFT);
 			ocrdma_build_send(qp, hdr, wr);
@@ -2260,6 +2224,7 @@ int ocrdma_post_send(struct ib_qp *ibqp, struct ib_send_wr *wr,
 		case IB_WR_RDMA_WRITE_WITH_IMM:
 			hdr->cw |= (OCRDMA_FLAG_IMM << OCRDMA_WQE_FLAGS_SHIFT);
 			hdr->immdt = ntohl(wr->ex.imm_data);
+			/* fall through */
 		case IB_WR_RDMA_WRITE:
 			hdr->cw |= (OCRDMA_WRITE << OCRDMA_WQE_OPCODE_SHIFT);
 			status = ocrdma_build_write(qp, hdr, wr);

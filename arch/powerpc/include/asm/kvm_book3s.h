@@ -96,6 +96,7 @@ struct kvmppc_vcore {
 	struct kvm_vcpu *runner;
 	struct kvm *kvm;
 	u64 tb_offset;		/* guest timebase - host timebase */
+	u64 tb_offset_applied;	/* timebase offset currently in force */
 	ulong lpcr;
 	u32 arch_compat;
 	ulong pcr;
@@ -103,6 +104,7 @@ struct kvmppc_vcore {
 	ulong vtb;		/* virtual timebase */
 	ulong conferring_threads;
 	unsigned int halt_poll_ns;
+	atomic_t online_count;
 };
 
 struct kvmppc_vcpu_book3s {
@@ -208,6 +210,7 @@ extern void kvmppc_book3s_queue_irqprio(struct kvm_vcpu *vcpu, unsigned int vec)
 extern void kvmppc_book3s_dequeue_irqprio(struct kvm_vcpu *vcpu,
 					  unsigned int vec);
 extern void kvmppc_inject_interrupt(struct kvm_vcpu *vcpu, int vec, u64 flags);
+extern void kvmppc_trigger_fac_interrupt(struct kvm_vcpu *vcpu, ulong fac);
 extern void kvmppc_set_bat(struct kvm_vcpu *vcpu, struct kvmppc_bat *bat,
 			   bool upper, u32 val);
 extern void kvmppc_giveup_ext(struct kvm_vcpu *vcpu, ulong msr);
@@ -216,7 +219,8 @@ extern kvm_pfn_t kvmppc_gpa_to_pfn(struct kvm_vcpu *vcpu, gpa_t gpa,
 			bool writing, bool *writable);
 extern void kvmppc_add_revmap_chain(struct kvm *kvm, struct revmap_entry *rev,
 			unsigned long *rmap, long pte_index, int realmode);
-extern void kvmppc_update_rmap_change(unsigned long *rmap, unsigned long psize);
+extern void kvmppc_update_dirty_map(struct kvm_memory_slot *memslot,
+			unsigned long gfn, unsigned long psize);
 extern void kvmppc_invalidate_hpte(struct kvm *kvm, __be64 *hptep,
 			unsigned long pte_index);
 void kvmppc_clear_ref_hpte(struct kvm *kvm, __be64 *hptep,
@@ -240,6 +244,10 @@ extern void kvmppc_update_lpcr(struct kvm *kvm, unsigned long lpcr,
 			unsigned long mask);
 extern void kvmppc_set_fscr(struct kvm_vcpu *vcpu, u64 fscr);
 
+extern int kvmhv_p9_tm_emulation_early(struct kvm_vcpu *vcpu);
+extern int kvmhv_p9_tm_emulation(struct kvm_vcpu *vcpu);
+extern void kvmhv_emulate_tm_rollback(struct kvm_vcpu *vcpu);
+
 extern void kvmppc_entry_trampoline(void);
 extern void kvmppc_hv_entry_trampoline(void);
 extern u32 kvmppc_alignment_dsisr(struct kvm_vcpu *vcpu, unsigned int inst);
@@ -248,10 +256,23 @@ extern int kvmppc_h_pr(struct kvm_vcpu *vcpu, unsigned long cmd);
 extern void kvmppc_pr_init_default_hcalls(struct kvm *kvm);
 extern int kvmppc_hcall_impl_pr(unsigned long cmd);
 extern int kvmppc_hcall_impl_hv_realmode(unsigned long cmd);
-extern void kvmppc_copy_to_svcpu(struct kvmppc_book3s_shadow_vcpu *svcpu,
-				 struct kvm_vcpu *vcpu);
-extern void kvmppc_copy_from_svcpu(struct kvm_vcpu *vcpu,
-				   struct kvmppc_book3s_shadow_vcpu *svcpu);
+extern void kvmppc_copy_to_svcpu(struct kvm_vcpu *vcpu);
+extern void kvmppc_copy_from_svcpu(struct kvm_vcpu *vcpu);
+
+#ifdef CONFIG_PPC_TRANSACTIONAL_MEM
+void kvmppc_save_tm_pr(struct kvm_vcpu *vcpu);
+void kvmppc_restore_tm_pr(struct kvm_vcpu *vcpu);
+void kvmppc_save_tm_sprs(struct kvm_vcpu *vcpu);
+void kvmppc_restore_tm_sprs(struct kvm_vcpu *vcpu);
+#else
+static inline void kvmppc_save_tm_pr(struct kvm_vcpu *vcpu) {}
+static inline void kvmppc_restore_tm_pr(struct kvm_vcpu *vcpu) {}
+static inline void kvmppc_save_tm_sprs(struct kvm_vcpu *vcpu) {}
+static inline void kvmppc_restore_tm_sprs(struct kvm_vcpu *vcpu) {}
+#endif
+
+void kvmppc_giveup_fac(struct kvm_vcpu *vcpu, ulong fac);
+
 extern int kvm_irq_bypass;
 
 static inline struct kvmppc_vcpu_book3s *to_book3s(struct kvm_vcpu *vcpu)
@@ -270,12 +291,12 @@ static inline struct kvmppc_vcpu_book3s *to_book3s(struct kvm_vcpu *vcpu)
 
 static inline void kvmppc_set_gpr(struct kvm_vcpu *vcpu, int num, ulong val)
 {
-	vcpu->arch.gpr[num] = val;
+	vcpu->arch.regs.gpr[num] = val;
 }
 
 static inline ulong kvmppc_get_gpr(struct kvm_vcpu *vcpu, int num)
 {
-	return vcpu->arch.gpr[num];
+	return vcpu->arch.regs.gpr[num];
 }
 
 static inline void kvmppc_set_cr(struct kvm_vcpu *vcpu, u32 val)
@@ -290,42 +311,42 @@ static inline u32 kvmppc_get_cr(struct kvm_vcpu *vcpu)
 
 static inline void kvmppc_set_xer(struct kvm_vcpu *vcpu, ulong val)
 {
-	vcpu->arch.xer = val;
+	vcpu->arch.regs.xer = val;
 }
 
 static inline ulong kvmppc_get_xer(struct kvm_vcpu *vcpu)
 {
-	return vcpu->arch.xer;
+	return vcpu->arch.regs.xer;
 }
 
 static inline void kvmppc_set_ctr(struct kvm_vcpu *vcpu, ulong val)
 {
-	vcpu->arch.ctr = val;
+	vcpu->arch.regs.ctr = val;
 }
 
 static inline ulong kvmppc_get_ctr(struct kvm_vcpu *vcpu)
 {
-	return vcpu->arch.ctr;
+	return vcpu->arch.regs.ctr;
 }
 
 static inline void kvmppc_set_lr(struct kvm_vcpu *vcpu, ulong val)
 {
-	vcpu->arch.lr = val;
+	vcpu->arch.regs.link = val;
 }
 
 static inline ulong kvmppc_get_lr(struct kvm_vcpu *vcpu)
 {
-	return vcpu->arch.lr;
+	return vcpu->arch.regs.link;
 }
 
 static inline void kvmppc_set_pc(struct kvm_vcpu *vcpu, ulong val)
 {
-	vcpu->arch.pc = val;
+	vcpu->arch.regs.nip = val;
 }
 
 static inline ulong kvmppc_get_pc(struct kvm_vcpu *vcpu)
 {
-	return vcpu->arch.pc;
+	return vcpu->arch.regs.nip;
 }
 
 static inline u64 kvmppc_get_msr(struct kvm_vcpu *vcpu);

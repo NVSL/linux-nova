@@ -212,6 +212,8 @@ static int bcm7038_l1_set_affinity(struct irq_data *d,
 		__bcm7038_l1_unmask(d, first_cpu);
 
 	raw_spin_unlock_irqrestore(&intc->lock, flags);
+	irq_data_update_effective_affinity(d, cpumask_of(first_cpu));
+
 	return 0;
 }
 
@@ -299,6 +301,7 @@ static int bcm7038_l1_map(struct irq_domain *d, unsigned int virq,
 {
 	irq_set_chip_and_handler(virq, &bcm7038_l1_irq_chip, handle_level_irq);
 	irq_set_chip_data(virq, d->host_data);
+	irqd_set_single_target(irq_desc_get_irq_data(irq_to_desc(virq)));
 	return 0;
 }
 
@@ -335,9 +338,6 @@ int __init bcm7038_l1_of_init(struct device_node *dn,
 		ret = -ENOMEM;
 		goto out_unmap;
 	}
-
-	pr_info("registered BCM7038 L1 intc (mem: 0x%p, IRQs: %d)\n",
-		intc->cpus[0]->map_base, IRQS_PER_WORD * intc->n_words);
 
 	return 0;
 

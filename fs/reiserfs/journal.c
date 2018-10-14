@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Write ahead logging implementation copyright Chris Mason 2000
  *
@@ -349,7 +350,8 @@ static struct reiserfs_journal_cnode *allocate_cnodes(int num_cnodes)
 	if (num_cnodes <= 0) {
 		return NULL;
 	}
-	head = vzalloc(num_cnodes * sizeof(struct reiserfs_journal_cnode));
+	head = vzalloc(array_size(num_cnodes,
+				  sizeof(struct reiserfs_journal_cnode)));
 	if (!head) {
 		return NULL;
 	}
@@ -1481,7 +1483,7 @@ static int flush_journal_list(struct super_block *s,
 		if ((!was_jwait) && !buffer_locked(saved_bh)) {
 			reiserfs_warning(s, "journal-813",
 					 "BAD! buffer %llu %cdirty %cjwait, "
-					 "not in a newer tranasction",
+					 "not in a newer transaction",
 					 (unsigned long long)saved_bh->
 					 b_blocknr, was_dirty ? ' ' : '!',
 					 was_jwait ? ' ' : '!');
@@ -1918,7 +1920,7 @@ static int do_journal_release(struct reiserfs_transaction_handle *th,
 	 * we only want to flush out transactions if we were
 	 * called with error == 0
 	 */
-	if (!error && !(sb->s_flags & MS_RDONLY)) {
+	if (!error && !sb_rdonly(sb)) {
 		/* end the current trans */
 		BUG_ON(!th->t_trans_id);
 		do_journal_end(th, FLUSH_ALL);
@@ -1959,7 +1961,7 @@ static int do_journal_release(struct reiserfs_transaction_handle *th,
 	/*
 	 * Cancel flushing of old commits. Note that neither of these works
 	 * will be requeued because superblock is being shutdown and doesn't
-	 * have MS_ACTIVE set.
+	 * have SB_ACTIVE set.
 	 */
 	reiserfs_cancel_old_flush(sb);
 	/* wait for all commits to finish */
@@ -2191,10 +2193,12 @@ static int journal_read_transaction(struct super_block *sb,
 	 * now we know we've got a good transaction, and it was
 	 * inside the valid time ranges
 	 */
-	log_blocks = kmalloc(get_desc_trans_len(desc) *
-			     sizeof(struct buffer_head *), GFP_NOFS);
-	real_blocks = kmalloc(get_desc_trans_len(desc) *
-			      sizeof(struct buffer_head *), GFP_NOFS);
+	log_blocks = kmalloc_array(get_desc_trans_len(desc),
+				   sizeof(struct buffer_head *),
+				   GFP_NOFS);
+	real_blocks = kmalloc_array(get_desc_trans_len(desc),
+				    sizeof(struct buffer_head *),
+				    GFP_NOFS);
 	if (!log_blocks || !real_blocks) {
 		brelse(c_bh);
 		brelse(d_bh);
@@ -2642,7 +2646,7 @@ static int journal_init_dev(struct super_block *super,
 	if (IS_ERR(journal->j_dev_bd)) {
 		result = PTR_ERR(journal->j_dev_bd);
 		journal->j_dev_bd = NULL;
-		reiserfs_warning(super,
+		reiserfs_warning(super, "sh-457",
 				 "journal_init_dev: Cannot open '%s': %i",
 				 jdev_name, result);
 		return result;
@@ -4301,7 +4305,7 @@ static int do_journal_end(struct reiserfs_transaction_handle *th, int flags)
 		 * Avoid queueing work when sb is being shut down. Transaction
 		 * will be flushed on journal shutdown.
 		 */
-		if (sb->s_flags & MS_ACTIVE)
+		if (sb->s_flags & SB_ACTIVE)
 			queue_delayed_work(REISERFS_SB(sb)->commit_wq,
 					   &journal->j_work, HZ / 10);
 	}
@@ -4392,7 +4396,7 @@ void reiserfs_abort_journal(struct super_block *sb, int errno)
 	if (!journal->j_errno)
 		journal->j_errno = errno;
 
-	sb->s_flags |= MS_RDONLY;
+	sb->s_flags |= SB_RDONLY;
 	set_bit(J_ABORTED, &journal->j_state);
 
 #ifdef CONFIG_REISERFS_CHECK

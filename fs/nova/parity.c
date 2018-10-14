@@ -78,7 +78,7 @@ static int nova_update_block_parity(struct super_block *sb, u8 *block,
 	size_t strp_size = NOVA_STRIPE_SIZE;
 	void *parity, *nvmmptr;
 	int ret = 0;
-	timing_t block_parity_time;
+	INIT_TIMING(block_parity_time);
 
 	NOVA_START_TIMING(block_parity_t, block_parity_time);
 
@@ -158,7 +158,7 @@ int nova_update_block_csum_parity(struct super_block *sb,
 	u64 acc[8] = {CSUM0, CSUM0, CSUM0, CSUM0, CSUM0, CSUM0, CSUM0, CSUM0};
 	bool unroll_csum = false, unroll_parity = false;
 	int ret = 0;
-	timing_t block_csum_parity_time;
+	INIT_TIMING(block_csum_parity_time);
 
 	NOVA_STATS_ADD(block_csum_parity, 1);
 
@@ -274,7 +274,7 @@ int nova_restore_data(struct super_block *sb, unsigned long blocknr,
 	u8 *blockptr, *stripptr, *block, *parity, *strip;
 	u32 csum_calc;
 	bool success = false;
-	timing_t restore_time;
+	INIT_TIMING(restore_time);
 	int ret = 0;
 
 	NOVA_START_TIMING(restore_data_t, restore_time);

@@ -186,6 +186,11 @@ static ssize_t snapshot_write(struct file *filp, const char __user *buf,
 		res = PAGE_SIZE - pg_offp;
 	}
 
+	if (!data_of(data->handle)) {
+		res = -EINVAL;
+		goto unlock;
+	}
+
 	res = simple_write_to_buffer(data_of(data->handle), res, &pg_offp,
 			buf, count);
 	if (res > 0)
@@ -224,7 +229,7 @@ static long snapshot_ioctl(struct file *filp, unsigned int cmd,
 			break;
 
 		printk("Syncing filesystems ... ");
-		sys_sync();
+		ksys_sync();
 		printk("done.\n");
 
 		error = freeze_processes();

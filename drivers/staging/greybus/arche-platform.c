@@ -1,10 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Arche Platform driver to enable Unipro link.
  *
  * Copyright 2014-2015 Google Inc.
  * Copyright 2014-2015 Linaro Ltd.
- *
- * Released under the GPLv2 only.
  */
 
 #include <linux/clk.h>
@@ -176,7 +175,10 @@ static irqreturn_t arche_platform_wd_irq(int irq, void *devid)
 				arche_platform_set_wake_detect_state(arche_pdata,
 								     WD_STATE_IDLE);
 			} else {
-				/* Check we are not in middle of irq thread already */
+				/*
+				 * Check we are not in middle of irq thread
+				 * already
+				 */
 				if (arche_pdata->wake_detect_state !=
 						WD_STATE_COLDBOOT_START) {
 					arche_platform_set_wake_detect_state(arche_pdata,
@@ -193,7 +195,7 @@ static irqreturn_t arche_platform_wd_irq(int irq, void *devid)
 		if (arche_pdata->wake_detect_state == WD_STATE_IDLE) {
 			arche_pdata->wake_detect_start = jiffies;
 			/*
-			 * In the begining, when wake/detect goes low
+			 * In the beginning, when wake/detect goes low
 			 * (first time), we assume it is meant for coldboot
 			 * and set the flag. If wake/detect line stays low
 			 * beyond 30msec, then it is coldboot else fallback
@@ -231,7 +233,7 @@ arche_platform_coldboot_seq(struct arche_platform_drvdata *arche_pdata)
 	ret = clk_prepare_enable(arche_pdata->svc_ref_clk);
 	if (ret) {
 		dev_err(arche_pdata->dev, "failed to enable svc_ref_clk: %d\n",
-				ret);
+			ret);
 		return ret;
 	}
 
@@ -267,7 +269,7 @@ arche_platform_fw_flashing_seq(struct arche_platform_drvdata *arche_pdata)
 	ret = clk_prepare_enable(arche_pdata->svc_ref_clk);
 	if (ret) {
 		dev_err(arche_pdata->dev, "failed to enable svc_ref_clk: %d\n",
-				ret);
+			ret);
 		return ret;
 	}
 
@@ -310,10 +312,10 @@ arche_platform_poweroff_seq(struct arche_platform_drvdata *arche_pdata)
 }
 
 static ssize_t state_store(struct device *dev,
-		struct device_attribute *attr, const char *buf, size_t count)
+			   struct device_attribute *attr,
+			   const char *buf, size_t count)
 {
-	struct platform_device *pdev = to_platform_device(dev);
-	struct arche_platform_drvdata *arche_pdata = platform_get_drvdata(pdev);
+	struct arche_platform_drvdata *arche_pdata = dev_get_drvdata(dev);
 	int ret = 0;
 
 	mutex_lock(&arche_pdata->platform_state_mutex);
@@ -374,7 +376,7 @@ exit:
 }
 
 static ssize_t state_show(struct device *dev,
-		struct device_attribute *attr, char *buf)
+			  struct device_attribute *attr, char *buf)
 {
 	struct arche_platform_drvdata *arche_pdata = dev_get_drvdata(dev);
 
@@ -441,11 +443,11 @@ static int arche_platform_probe(struct platform_device *pdev)
 
 	/* setup svc reset gpio */
 	arche_pdata->is_reset_act_hi = of_property_read_bool(np,
-					"svc,reset-active-high");
+							     "svc,reset-active-high");
 	arche_pdata->svc_reset_gpio = of_get_named_gpio(np,
 							"svc,reset-gpio",
 							0);
-	if (arche_pdata->svc_reset_gpio < 0) {
+	if (!gpio_is_valid(arche_pdata->svc_reset_gpio)) {
 		dev_err(dev, "failed to get reset-gpio\n");
 		return arche_pdata->svc_reset_gpio;
 	}
@@ -455,7 +457,7 @@ static int arche_platform_probe(struct platform_device *pdev)
 		return ret;
 	}
 	ret = gpio_direction_output(arche_pdata->svc_reset_gpio,
-					arche_pdata->is_reset_act_hi);
+				    arche_pdata->is_reset_act_hi);
 	if (ret) {
 		dev_err(dev, "failed to set svc-reset gpio dir:%d\n", ret);
 		return ret;
@@ -463,8 +465,9 @@ static int arche_platform_probe(struct platform_device *pdev)
 	arche_platform_set_state(arche_pdata, ARCHE_PLATFORM_STATE_OFF);
 
 	arche_pdata->svc_sysboot_gpio = of_get_named_gpio(np,
-					"svc,sysboot-gpio", 0);
-	if (arche_pdata->svc_sysboot_gpio < 0) {
+							  "svc,sysboot-gpio",
+							  0);
+	if (!gpio_is_valid(arche_pdata->svc_sysboot_gpio)) {
 		dev_err(dev, "failed to get sysboot gpio\n");
 		return arche_pdata->svc_sysboot_gpio;
 	}
@@ -481,8 +484,9 @@ static int arche_platform_probe(struct platform_device *pdev)
 
 	/* setup the clock request gpio first */
 	arche_pdata->svc_refclk_req = of_get_named_gpio(np,
-					"svc,refclk-req-gpio", 0);
-	if (arche_pdata->svc_refclk_req < 0) {
+							"svc,refclk-req-gpio",
+							0);
+	if (!gpio_is_valid(arche_pdata->svc_refclk_req)) {
 		dev_err(dev, "failed to get svc clock-req gpio\n");
 		return arche_pdata->svc_refclk_req;
 	}
@@ -523,7 +527,7 @@ static int arche_platform_probe(struct platform_device *pdev)
 				"wake detect");
 	if (ret) {
 		dev_err(dev, "Failed requesting wake_detect gpio %d\n",
-				arche_pdata->wake_detect_gpio);
+			arche_pdata->wake_detect_gpio);
 		return ret;
 	}
 
@@ -607,7 +611,6 @@ static int arche_platform_remove(struct platform_device *pdev)
 	device_remove_file(&pdev->dev, &dev_attr_state);
 	device_for_each_child(&pdev->dev, NULL, arche_remove_child);
 	arche_platform_poweroff_seq(arche_pdata);
-	platform_set_drvdata(pdev, NULL);
 
 	if (usb3613_hub_mode_ctrl(false))
 		dev_warn(arche_pdata->dev, "failed to control hub device\n");
@@ -657,12 +660,14 @@ static SIMPLE_DEV_PM_OPS(arche_platform_pm_ops,
 			arche_platform_resume);
 
 static const struct of_device_id arche_platform_of_match[] = {
-	{ .compatible = "google,arche-platform", }, /* Use PID/VID of SVC device */
+	/* Use PID/VID of SVC device */
+	{ .compatible = "google,arche-platform", },
 	{ },
 };
 
 static const struct of_device_id arche_combined_id[] = {
-	{ .compatible = "google,arche-platform", }, /* Use PID/VID of SVC device */
+	/* Use PID/VID of SVC device */
+	{ .compatible = "google,arche-platform", },
 	{ .compatible = "usbffff,2", },
 	{ },
 };

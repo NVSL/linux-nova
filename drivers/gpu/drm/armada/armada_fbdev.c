@@ -10,7 +10,6 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 
-#include <drm/drmP.h>
 #include <drm/drm_fb_helper.h>
 #include "armada_crtc.h"
 #include "armada_drm.h"
@@ -52,13 +51,13 @@ static int armada_fb_create(struct drm_fb_helper *fbh,
 
 	ret = armada_gem_linear_back(dev, obj);
 	if (ret) {
-		drm_gem_object_unreference_unlocked(&obj->obj);
+		drm_gem_object_put_unlocked(&obj->obj);
 		return ret;
 	}
 
 	ptr = armada_gem_map_object(dev, obj);
 	if (!ptr) {
-		drm_gem_object_unreference_unlocked(&obj->obj);
+		drm_gem_object_put_unlocked(&obj->obj);
 		return -ENOMEM;
 	}
 
@@ -68,7 +67,7 @@ static int armada_fb_create(struct drm_fb_helper *fbh,
 	 * A reference is now held by the framebuffer object if
 	 * successful, otherwise this drops the ref for the error path.
 	 */
-	drm_gem_object_unreference_unlocked(&obj->obj);
+	drm_gem_object_put_unlocked(&obj->obj);
 
 	if (IS_ERR(dfb))
 		return PTR_ERR(dfb);
@@ -81,7 +80,6 @@ static int armada_fb_create(struct drm_fb_helper *fbh,
 
 	strlcpy(info->fix.id, "armada-drmfb", sizeof(info->fix.id));
 	info->par = fbh;
-	info->flags = FBINFO_DEFAULT | FBINFO_CAN_FORCE_OUTPUT;
 	info->fbops = &armada_fb_ops;
 	info->fix.smem_start = obj->phys_addr;
 	info->fix.smem_len = obj->obj.size;
@@ -118,8 +116,6 @@ static int armada_fb_probe(struct drm_fb_helper *fbh,
 }
 
 static const struct drm_fb_helper_funcs armada_fb_helper_funcs = {
-	.gamma_set	= armada_drm_crtc_gamma_set,
-	.gamma_get	= armada_drm_crtc_gamma_get,
 	.fb_probe	= armada_fb_probe,
 };
 
@@ -161,14 +157,6 @@ int armada_fbdev_init(struct drm_device *dev)
  err_fb_helper:
 	priv->fbdev = NULL;
 	return ret;
-}
-
-void armada_fbdev_lastclose(struct drm_device *dev)
-{
-	struct armada_private *priv = dev->dev_private;
-
-	if (priv->fbdev)
-		drm_fb_helper_restore_fbdev_mode_unlocked(priv->fbdev);
 }
 
 void armada_fbdev_fini(struct drm_device *dev)

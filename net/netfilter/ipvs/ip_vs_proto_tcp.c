@@ -63,7 +63,6 @@ tcp_conn_schedule(struct netns_ipvs *ipvs, int af, struct sk_buff *skb,
 	}
 
 	/* No !th->ack check to allow scheduling on SYN+ACK for Active FTP */
-	rcu_read_lock();
 
 	if (likely(!ip_vs_iph_inverse(iph)))
 		svc = ip_vs_service_find(ipvs, af, skb->mark, iph->protocol,
@@ -80,7 +79,6 @@ tcp_conn_schedule(struct netns_ipvs *ipvs, int af, struct sk_buff *skb,
 			 * It seems that we are very loaded.
 			 * We have to drop this packet :(
 			 */
-			rcu_read_unlock();
 			*verdict = NF_DROP;
 			return 0;
 		}
@@ -95,11 +93,9 @@ tcp_conn_schedule(struct netns_ipvs *ipvs, int af, struct sk_buff *skb,
 				*verdict = ip_vs_leave(svc, skb, pd, iph);
 			else
 				*verdict = NF_DROP;
-			rcu_read_unlock();
 			return 0;
 		}
 	}
-	rcu_read_unlock();
 	/* NF_ACCEPT */
 	return 1;
 }
@@ -174,7 +170,7 @@ tcp_snat_handler(struct sk_buff *skb, struct ip_vs_protocol *pp,
 			return 0;
 
 		/* Call application helper if needed */
-		if (!(ret = ip_vs_app_pkt_out(cp, skb)))
+		if (!(ret = ip_vs_app_pkt_out(cp, skb, iph)))
 			return 0;
 		/* ret=2: csum update is needed after payload mangling */
 		if (ret == 1)
@@ -255,7 +251,7 @@ tcp_dnat_handler(struct sk_buff *skb, struct ip_vs_protocol *pp,
 		 *	Attempt ip_vs_app call.
 		 *	It will fix ip_vs_conn and iph ack_seq stuff
 		 */
-		if (!(ret = ip_vs_app_pkt_in(cp, skb)))
+		if (!(ret = ip_vs_app_pkt_in(cp, skb, iph)))
 			return 0;
 		/* ret=2: csum update is needed after payload mangling */
 		if (ret == 1)
@@ -319,6 +315,7 @@ tcp_csum_check(int af, struct sk_buff *skb, struct ip_vs_protocol *pp)
 	switch (skb->ip_summed) {
 	case CHECKSUM_NONE:
 		skb->csum = skb_checksum(skb, tcphoff, skb->len - tcphoff, 0);
+		/* fall through */
 	case CHECKSUM_COMPLETE:
 #ifdef CONFIG_IP_VS_IPV6
 		if (af == AF_INET6) {
@@ -439,7 +436,7 @@ static bool tcp_state_active(int state)
 	return tcp_state_active_table[state];
 }
 
-static struct tcp_states_t tcp_states [] = {
+static struct tcp_states_t tcp_states[] = {
 /*	INPUT */
 /*        sNO, sES, sSS, sSR, sFW, sTW, sCL, sCW, sLA, sLI, sSA	*/
 /*syn*/ {{sSR, sES, sES, sSR, sSR, sSR, sSR, sSR, sSR, sSR, sSR }},
@@ -462,7 +459,7 @@ static struct tcp_states_t tcp_states [] = {
 /*rst*/ {{sCL, sCL, sCL, sSR, sCL, sCL, sCL, sCL, sLA, sLI, sCL }},
 };
 
-static struct tcp_states_t tcp_states_dos [] = {
+static struct tcp_states_t tcp_states_dos[] = {
 /*	INPUT */
 /*        sNO, sES, sSS, sSR, sFW, sTW, sCL, sCW, sLA, sLI, sSA	*/
 /*syn*/ {{sSR, sES, sES, sSR, sSR, sSR, sSR, sSR, sSR, sSR, sSA }},
@@ -661,12 +658,10 @@ tcp_app_conn_bind(struct ip_vs_conn *cp)
 	/* Lookup application incarnations and bind the right one */
 	hash = tcp_app_hashkey(cp->vport);
 
-	rcu_read_lock();
 	list_for_each_entry_rcu(inc, &ipvs->tcp_apps[hash], p_list) {
 		if (inc->port == cp->vport) {
 			if (unlikely(!ip_vs_app_inc_get(inc)))
 				break;
-			rcu_read_unlock();
 
 			IP_VS_DBG_BUF(9, "%s(): Binding conn %s:%u->"
 				      "%s:%u to app %s on port %u\n",
@@ -680,12 +675,10 @@ tcp_app_conn_bind(struct ip_vs_conn *cp)
 			cp->app = inc;
 			if (inc->init_conn)
 				result = inc->init_conn(inc, cp);
-			goto out;
+			break;
 		}
 	}
-	rcu_read_unlock();
 
-  out:
 	return result;
 }
 

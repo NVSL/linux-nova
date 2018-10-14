@@ -14,7 +14,7 @@
  * | Module Init and Probe        |       0x0193       | 0x0146         |
  * |                              |                    | 0x015b-0x0160	|
  * |                              |                    | 0x016e		|
- * | Mailbox commands             |       0x1199       | 0x1193		|
+ * | Mailbox commands             |       0x1206       | 0x11a2-0x11ff	|
  * | Device Discovery             |       0x2134       | 0x210e-0x2116  |
  * |				  | 		       | 0x211a         |
  * |                              |                    | 0x211c-0x2128  |
@@ -41,7 +41,7 @@
  * |                              |                    | 0x70ad-0x70ae  |
  * |                              |                    | 0x70d0-0x70d6	|
  * |                              |                    | 0x70d7-0x70db  |
- * | Task Management              |       0x8042       | 0x8000,0x800b  |
+ * | Task Management              |       0x8042       | 0x8000         |
  * |                              |                    | 0x8019         |
  * |                              |                    | 0x8025,0x8026  |
  * |                              |                    | 0x8031,0x8032  |
@@ -60,7 +60,7 @@
  * |                              |                    | 0xb13c-0xb140  |
  * |                              |                    | 0xb149		|
  * | MultiQ                       |       0xc010       |		|
- * | Misc                         |       0xd302       | 0xd031-0xd0ff	|
+ * | Misc                         |       0xd303       | 0xd031-0xd0ff	|
  * |                              |                    | 0xd101-0xd1fe	|
  * |                              |                    | 0xd214-0xd2fe	|
  * | Target Mode		  |	  0xe081       |		|
@@ -717,7 +717,7 @@ qla2xxx_dump_post_process(scsi_qla_host_t *vha, int rval)
 
 /**
  * qla2300_fw_dump() - Dumps binary data from the 2300 firmware.
- * @ha: HA context
+ * @vha: HA context
  * @hardware_locked: Called with the hardware_lock
  */
 void
@@ -887,7 +887,7 @@ qla2300_fw_dump_failed:
 
 /**
  * qla2100_fw_dump() - Dumps binary data from the 2100/2200 firmware.
- * @ha: HA context
+ * @vha: HA context
  * @hardware_locked: Called with the hardware_lock
  */
 void
@@ -2520,8 +2520,6 @@ qla83xx_fw_dump_failed:
 static inline int
 ql_mask_match(uint32_t level)
 {
-	if (ql2xextended_error_logging == 1)
-		ql2xextended_error_logging = QL_DBG_DEFAULT1_MASK;
 	return (level & ql2xextended_error_logging) == level;
 }
 
@@ -2738,9 +2736,9 @@ ql_dump_regs(uint32_t level, scsi_qla_host_t *vha, int32_t id)
 		mbx_reg = MAILBOX_REG(ha, reg, 0);
 
 	ql_dbg(level, vha, id, "Mailbox registers:\n");
-	for (i = 0; i < 6; i++)
+	for (i = 0; i < 6; i++, mbx_reg++)
 		ql_dbg(level, vha, id,
-		    "mbox[%d] 0x%04x\n", i, RD_REG_WORD(mbx_reg++));
+		    "mbox[%d] 0x%04x\n", i, RD_REG_WORD(mbx_reg));
 }
 
 

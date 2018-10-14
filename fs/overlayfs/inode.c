@@ -15,6 +15,7 @@
 #include <linux/ratelimit.h>
 #include "overlayfs.h"
 
+
 int ovl_setattr(struct dentry *dentry, struct iattr *attr)
 {
 	int err;
@@ -58,6 +59,69 @@ out:
 	return err;
 }
 
+static int ovl_map_dev_ino(struct dentry *dentry, struct kstat *stat,
+			   struct ovl_layer *lower_layer)
+{
+	bool samefs = ovl_same_sb(dentry->d_sb);
+	unsigned int xinobits = ovl_xino_bits(dentry->d_sb);
+
+	if (samefs) {
+		/*
+		 * When all layers are on the same fs, all real inode
+		 * number are unique, so we use the overlay st_dev,
+		 * which is friendly to du -x.
+		 */
+		stat->dev = dentry->d_sb->s_dev;
+		return 0;
+	} else if (xinobits) {
+		unsigned int shift = 64 - xinobits;
+		/*
+		 * All inode numbers of underlying fs should not be using the
+		 * high xinobits, so we use high xinobits to partition the
+		 * overlay st_ino address space. The high bits holds the fsid
+		 * (upper fsid is 0). This way overlay inode numbers are unique
+		 * and all inodes use overlay st_dev. Inode numbers are also
+		 * persistent for a given layer configuration.
+		 */
+		if (stat->ino >> shift) {
+			pr_warn_ratelimited("overlayfs: inode number too big (%pd2, ino=%llu, xinobits=%d)\n",
+					    dentry, stat->ino, xinobits);
+		} else {
+			if (lower_layer)
+				stat->ino |= ((u64)lower_layer->fsid) << shift;
+
+			stat->dev = dentry->d_sb->s_dev;
+			return 0;
+		}
+	}
+
+	/* The inode could not be mapped to a unified st_ino address space */
+	if (S_ISDIR(dentry->d_inode->i_mode)) {
+		/*
+		 * Always use the overlay st_dev for directories, so 'find
+		 * -xdev' will scan the entire overlay mount and won't cross the
+		 * overlay mount boundaries.
+		 *
+		 * If not all layers are on the same fs the pair {real st_ino;
+		 * overlay st_dev} is not unique, so use the non persistent
+		 * overlay st_ino for directories.
+		 */
+		stat->dev = dentry->d_sb->s_dev;
+		stat->ino = dentry->d_inode->i_ino;
+	} else if (lower_layer && lower_layer->fsid) {
+		/*
+		 * For non-samefs setup, if we cannot map all layers st_ino
+		 * to a unified address space, we need to make sure that st_dev
+		 * is unique per lower fs. Upper layer uses real st_dev and
+		 * lower layers use the unique anonymous bdev assigned to the
+		 * lower fs.
+		 */
+		stat->dev = lower_layer->fs->pseudo_dev;
+	}
+
+	return 0;
+}
+
 int ovl_getattr(const struct path *path, struct kstat *stat,
 		u32 request_mask, unsigned int flags)
 {
@@ -66,6 +130,8 @@ int ovl_getattr(const struct path *path, struct kstat *stat,
 	struct path realpath;
 	const struct cred *old_cred;
 	bool is_dir = S_ISDIR(dentry->d_inode->i_mode);
+	bool samefs = ovl_same_sb(dentry->d_sb);
+	struct ovl_layer *lower_layer = NULL;
 	int err;
 
 	type = ovl_path_real(dentry, &realpath);
@@ -75,17 +141,18 @@ int ovl_getattr(const struct path *path, struct kstat *stat,
 		goto out;
 
 	/*
-	 * When all layers are on the same fs, all real inode number are
-	 * unique, so we use the overlay st_dev, which is friendly to du -x.
-	 *
-	 * We also use st_ino of the copy up origin, if we know it.
+	 * For non-dir or same fs, we use st_ino of the copy up origin.
 	 * This guaranties constant st_dev/st_ino across copy up.
+	 * With xino feature and non-samefs, we use st_ino of the copy up
+	 * origin masked with high bits that represent the layer id.
 	 *
-	 * If filesystem supports NFS export ops, this also guaranties
+	 * If lower filesystem supports NFS file handles, this also guaranties
 	 * persistent st_ino across mount cycle.
 	 */
-	if (ovl_same_sb(dentry->d_sb)) {
-		if (OVL_TYPE_ORIGIN(type)) {
+	if (!is_dir || samefs || ovl_xino_bits(dentry->d_sb)) {
+		if (!OVL_TYPE_UPPER(type)) {
+			lower_layer = ovl_layer_lower(dentry);
+		} else if (OVL_TYPE_ORIGIN(type)) {
 			struct kstat lowerstat;
 			u32 lowermask = STATX_INO | (!is_dir ? STATX_NLINK : 0);
 
@@ -95,33 +162,33 @@ int ovl_getattr(const struct path *path, struct kstat *stat,
 			if (err)
 				goto out;
 
-			WARN_ON_ONCE(stat->dev != lowerstat.dev);
 			/*
 			 * Lower hardlinks may be broken on copy up to different
 			 * upper files, so we cannot use the lower origin st_ino
 			 * for those different files, even for the same fs case.
+			 *
+			 * Similarly, several redirected dirs can point to the
+			 * same dir on a lower layer. With the "verify_lower"
+			 * feature, we do not use the lower origin st_ino, if
+			 * we haven't verified that this redirect is unique.
+			 *
 			 * With inodes index enabled, it is safe to use st_ino
-			 * of an indexed hardlinked origin. The index validates
-			 * that the upper hardlink is not broken.
+			 * of an indexed origin. The index validates that the
+			 * upper hardlink is not broken and that a redirected
+			 * dir is the only redirect to that origin.
 			 */
-			if (is_dir || lowerstat.nlink == 1 ||
-			    ovl_test_flag(OVL_INDEX, d_inode(dentry)))
+			if (ovl_test_flag(OVL_INDEX, d_inode(dentry)) ||
+			    (!ovl_verify_lower(dentry->d_sb) &&
+			     (is_dir || lowerstat.nlink == 1))) {
 				stat->ino = lowerstat.ino;
+				lower_layer = ovl_layer_lower(dentry);
+			}
 		}
-		stat->dev = dentry->d_sb->s_dev;
-	} else if (is_dir) {
-		/*
-		 * If not all layers are on the same fs the pair {real st_ino;
-		 * overlay st_dev} is not unique, so use the non persistent
-		 * overlay st_ino.
-		 *
-		 * Always use the overlay st_dev for directories, so 'find
-		 * -xdev' will scan the entire overlay mount and won't cross the
-		 * overlay mount boundaries.
-		 */
-		stat->dev = dentry->d_sb->s_dev;
-		stat->ino = dentry->d_inode->i_ino;
 	}
+
+	err = ovl_map_dev_ino(dentry, stat, lower_layer);
+	if (err)
+		goto out;
 
 	/*
 	 * It's probably not worth it to count subdirs to get the
@@ -319,8 +386,10 @@ struct posix_acl *ovl_get_acl(struct inode *inode, int type)
 
 static bool ovl_open_need_copy_up(struct dentry *dentry, int flags)
 {
+	/* Copy up of disconnected dentry does not set upper alias */
 	if (ovl_dentry_upper(dentry) &&
-	    ovl_dentry_has_upper_alias(dentry))
+	    (ovl_dentry_has_upper_alias(dentry) ||
+	     (dentry->d_flags & DCACHE_DISCONNECTED)))
 		return false;
 
 	if (special_file(d_inode(dentry)->i_mode))
@@ -347,26 +416,20 @@ int ovl_open_maybe_copy_up(struct dentry *dentry, unsigned int file_flags)
 	return err;
 }
 
-int ovl_update_time(struct inode *inode, struct timespec *ts, int flags)
+int ovl_update_time(struct inode *inode, struct timespec64 *ts, int flags)
 {
-	struct dentry *alias;
-	struct path upperpath;
+	if (flags & S_ATIME) {
+		struct ovl_fs *ofs = inode->i_sb->s_fs_info;
+		struct path upperpath = {
+			.mnt = ofs->upper_mnt,
+			.dentry = ovl_upperdentry_dereference(OVL_I(inode)),
+		};
 
-	if (!(flags & S_ATIME))
-		return 0;
-
-	alias = d_find_any_alias(inode);
-	if (!alias)
-		return 0;
-
-	ovl_path_upper(alias, &upperpath);
-	if (upperpath.dentry) {
-		touch_atime(&upperpath);
-		inode->i_atime = d_inode(upperpath.dentry)->i_atime;
+		if (upperpath.dentry) {
+			touch_atime(&upperpath);
+			inode->i_atime = d_inode(upperpath.dentry)->i_atime;
+		}
 	}
-
-	dput(alias);
-
 	return 0;
 }
 
@@ -409,6 +472,7 @@ static inline void ovl_lockdep_annotate_inode_mutex_key(struct inode *inode)
 #ifdef CONFIG_LOCKDEP
 	static struct lock_class_key ovl_i_mutex_key[OVL_MAX_NESTING];
 	static struct lock_class_key ovl_i_mutex_dir_key[OVL_MAX_NESTING];
+	static struct lock_class_key ovl_i_lock_key[OVL_MAX_NESTING];
 
 	int depth = inode->i_sb->s_stack_depth - 1;
 
@@ -419,12 +483,32 @@ static inline void ovl_lockdep_annotate_inode_mutex_key(struct inode *inode)
 		lockdep_set_class(&inode->i_rwsem, &ovl_i_mutex_dir_key[depth]);
 	else
 		lockdep_set_class(&inode->i_rwsem, &ovl_i_mutex_key[depth]);
+
+	lockdep_set_class(&OVL_I(inode)->lock, &ovl_i_lock_key[depth]);
 #endif
 }
 
-static void ovl_fill_inode(struct inode *inode, umode_t mode, dev_t rdev)
+static void ovl_fill_inode(struct inode *inode, umode_t mode, dev_t rdev,
+			   unsigned long ino, int fsid)
 {
-	inode->i_ino = get_next_ino();
+	int xinobits = ovl_xino_bits(inode->i_sb);
+
+	/*
+	 * When NFS export is enabled and d_ino is consistent with st_ino
+	 * (samefs or i_ino has enough bits to encode layer), set the same
+	 * value used for d_ino to i_ino, because nfsd readdirplus compares
+	 * d_ino values to i_ino values of child entries. When called from
+	 * ovl_new_inode(), ino arg is 0, so i_ino will be updated to real
+	 * upper inode i_ino on ovl_inode_init() or ovl_inode_update().
+	 */
+	if (inode->i_sb->s_export_op &&
+	    (ovl_same_sb(inode->i_sb) || xinobits)) {
+		inode->i_ino = ino;
+		if (xinobits && fsid && !(ino >> (64 - xinobits)))
+			inode->i_ino |= (unsigned long)fsid << (64 - xinobits);
+	} else {
+		inode->i_ino = get_next_ino();
+	}
 	inode->i_mode = mode;
 	inode->i_flags |= S_NOCMTIME;
 #ifdef CONFIG_FS_POSIX_ACL
@@ -498,6 +582,9 @@ static int ovl_set_nlink_common(struct dentry *dentry,
 	len = snprintf(buf, sizeof(buf), format,
 		       (int) (inode->i_nlink - realinode->i_nlink));
 
+	if (WARN_ON(len >= sizeof(buf)))
+		return -EIO;
+
 	return ovl_do_setxattr(ovl_dentry_upper(dentry),
 			       OVL_XATTR_NLINK, buf, len, 0);
 }
@@ -557,7 +644,7 @@ struct inode *ovl_new_inode(struct super_block *sb, umode_t mode, dev_t rdev)
 
 	inode = new_inode(sb);
 	if (inode)
-		ovl_fill_inode(inode, mode, rdev);
+		ovl_fill_inode(inode, mode, rdev, 0, 0);
 
 	return inode;
 }
@@ -574,12 +661,31 @@ static int ovl_inode_set(struct inode *inode, void *data)
 }
 
 static bool ovl_verify_inode(struct inode *inode, struct dentry *lowerdentry,
-			     struct dentry *upperdentry)
+			     struct dentry *upperdentry, bool strict)
 {
-	struct inode *lowerinode = lowerdentry ? d_inode(lowerdentry) : NULL;
+	/*
+	 * For directories, @strict verify from lookup path performs consistency
+	 * checks, so NULL lower/upper in dentry must match NULL lower/upper in
+	 * inode. Non @strict verify from NFS handle decode path passes NULL for
+	 * 'unknown' lower/upper.
+	 */
+	if (S_ISDIR(inode->i_mode) && strict) {
+		/* Real lower dir moved to upper layer under us? */
+		if (!lowerdentry && ovl_inode_lower(inode))
+			return false;
 
-	/* Lower (origin) inode must match, even if NULL */
-	if (ovl_inode_lower(inode) != lowerinode)
+		/* Lookup of an uncovered redirect origin? */
+		if (!upperdentry && ovl_inode_upper(inode))
+			return false;
+	}
+
+	/*
+	 * Allow non-NULL lower inode in ovl_inode even if lowerdentry is NULL.
+	 * This happens when finding a copied up overlay inode for a renamed
+	 * or hardlinked overlay dentry and lower dentry cannot be followed
+	 * by origin because lower fs does not support file handles.
+	 */
+	if (lowerdentry && ovl_inode_lower(inode) != d_inode(lowerdentry))
 		return false;
 
 	/*
@@ -592,22 +698,94 @@ static bool ovl_verify_inode(struct inode *inode, struct dentry *lowerdentry,
 	return true;
 }
 
-struct inode *ovl_get_inode(struct dentry *dentry, struct dentry *upperdentry)
+struct inode *ovl_lookup_inode(struct super_block *sb, struct dentry *real,
+			       bool is_upper)
 {
-	struct dentry *lowerdentry = ovl_dentry_lower(dentry);
+	struct inode *inode, *key = d_inode(real);
+
+	inode = ilookup5(sb, (unsigned long) key, ovl_inode_test, key);
+	if (!inode)
+		return NULL;
+
+	if (!ovl_verify_inode(inode, is_upper ? NULL : real,
+			      is_upper ? real : NULL, false)) {
+		iput(inode);
+		return ERR_PTR(-ESTALE);
+	}
+
+	return inode;
+}
+
+/*
+ * Does overlay inode need to be hashed by lower inode?
+ */
+static bool ovl_hash_bylower(struct super_block *sb, struct dentry *upper,
+			     struct dentry *lower, struct dentry *index)
+{
+	struct ovl_fs *ofs = sb->s_fs_info;
+
+	/* No, if pure upper */
+	if (!lower)
+		return false;
+
+	/* Yes, if already indexed */
+	if (index)
+		return true;
+
+	/* Yes, if won't be copied up */
+	if (!ofs->upper_mnt)
+		return true;
+
+	/* No, if lower hardlink is or will be broken on copy up */
+	if ((upper || !ovl_indexdir(sb)) &&
+	    !d_is_dir(lower) && d_inode(lower)->i_nlink > 1)
+		return false;
+
+	/* No, if non-indexed upper with NFS export */
+	if (sb->s_export_op && upper)
+		return false;
+
+	/* Otherwise, hash by lower inode for fsnotify */
+	return true;
+}
+
+static struct inode *ovl_iget5(struct super_block *sb, struct inode *newinode,
+			       struct inode *key)
+{
+	return newinode ? inode_insert5(newinode, (unsigned long) key,
+					 ovl_inode_test, ovl_inode_set, key) :
+			  iget5_locked(sb, (unsigned long) key,
+				       ovl_inode_test, ovl_inode_set, key);
+}
+
+struct inode *ovl_get_inode(struct super_block *sb,
+			    struct ovl_inode_params *oip)
+{
+	struct dentry *upperdentry = oip->upperdentry;
+	struct ovl_path *lowerpath = oip->lowerpath;
 	struct inode *realinode = upperdentry ? d_inode(upperdentry) : NULL;
 	struct inode *inode;
+	struct dentry *lowerdentry = lowerpath ? lowerpath->dentry : NULL;
+	bool bylower = ovl_hash_bylower(sb, upperdentry, lowerdentry,
+					oip->index);
+	int fsid = bylower ? oip->lowerpath->layer->fsid : 0;
+	bool is_dir;
+	unsigned long ino = 0;
 
 	if (!realinode)
 		realinode = d_inode(lowerdentry);
 
-	if (!S_ISDIR(realinode->i_mode) &&
-	    (upperdentry || (lowerdentry && ovl_indexdir(dentry->d_sb)))) {
-		struct inode *key = d_inode(lowerdentry ?: upperdentry);
-		unsigned int nlink;
+	/*
+	 * Copy up origin (lower) may exist for non-indexed upper, but we must
+	 * not use lower as hash key if this is a broken hardlink.
+	 */
+	is_dir = S_ISDIR(realinode->i_mode);
+	if (upperdentry || bylower) {
+		struct inode *key = d_inode(bylower ? lowerdentry :
+						      upperdentry);
+		unsigned int nlink = is_dir ? 1 : realinode->i_nlink;
 
-		inode = iget5_locked(dentry->d_sb, (unsigned long) key,
-				     ovl_inode_test, ovl_inode_set, key);
+		inode = ovl_iget5(sb, oip->newinode, key);
 		if (!inode)
 			goto out_nomem;
 		if (!(inode->i_state & I_NEW)) {
@@ -615,7 +793,8 @@ struct inode *ovl_get_inode(struct dentry *dentry, struct dentry *upperdentry)
 			 * Verify that the underlying files stored in the inode
 			 * match those in the dentry.
 			 */
-			if (!ovl_verify_inode(inode, lowerdentry, upperdentry)) {
+			if (!ovl_verify_inode(inode, lowerdentry, upperdentry,
+					      true)) {
 				iput(inode);
 				inode = ERR_PTR(-ESTALE);
 				goto out;
@@ -625,19 +804,33 @@ struct inode *ovl_get_inode(struct dentry *dentry, struct dentry *upperdentry)
 			goto out;
 		}
 
-		nlink = ovl_get_nlink(lowerdentry, upperdentry,
-				      realinode->i_nlink);
+		/* Recalculate nlink for non-dir due to indexing */
+		if (!is_dir)
+			nlink = ovl_get_nlink(lowerdentry, upperdentry, nlink);
 		set_nlink(inode, nlink);
+		ino = key->i_ino;
 	} else {
-		inode = new_inode(dentry->d_sb);
+		/* Lower hardlink that will be broken on copy up */
+		inode = new_inode(sb);
 		if (!inode)
 			goto out_nomem;
 	}
-	ovl_fill_inode(inode, realinode->i_mode, realinode->i_rdev);
+	ovl_fill_inode(inode, realinode->i_mode, realinode->i_rdev, ino, fsid);
 	ovl_inode_init(inode, upperdentry, lowerdentry);
 
 	if (upperdentry && ovl_is_impuredir(upperdentry))
 		ovl_set_flag(OVL_IMPURE, inode);
+
+	if (oip->index)
+		ovl_set_flag(OVL_INDEX, inode);
+
+	/* Check for non-merge dir that may have whiteouts */
+	if (is_dir) {
+		if (((upperdentry && lowerdentry) || oip->numlower > 1) ||
+		    ovl_check_origin_xattr(upperdentry ?: lowerdentry)) {
+			ovl_set_flag(OVL_WHITEOUTS, inode);
+		}
+	}
 
 	if (inode->i_state & I_NEW)
 		unlock_new_inode(inode);

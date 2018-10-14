@@ -73,7 +73,7 @@
 
 #define ETHERCAT_MASTER_ID	0x14
 
-static struct pci_device_id ids[] = {
+static const struct pci_device_id ids[] = {
 	{ PCI_DEVICE(0x15ec, 0x5000), },
 	{ 0, }
 };
@@ -602,7 +602,7 @@ static struct pci_driver pci_driver = {
 };
 module_pci_driver(pci_driver);
 
-module_param(polling_frequency, long, S_IRUGO);
+module_param(polling_frequency, long, 0444);
 MODULE_PARM_DESC(polling_frequency, "Polling timer frequency in ns");
 
 MODULE_LICENSE("GPL");

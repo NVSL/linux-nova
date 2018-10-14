@@ -1029,7 +1029,6 @@ static int max1363_update_scan_mode(struct iio_dev *indio_dev,
 
 static const struct iio_info max1238_info = {
 	.read_raw = &max1363_read_raw,
-	.driver_module = THIS_MODULE,
 	.update_scan_mode = &max1363_update_scan_mode,
 };
 
@@ -1040,7 +1039,6 @@ static const struct iio_info max1363_info = {
 	.write_event_config = &max1363_write_event_config,
 	.read_raw = &max1363_read_raw,
 	.update_scan_mode = &max1363_update_scan_mode,
-	.driver_module = THIS_MODULE,
 	.event_attrs = &max1363_event_attribute_group,
 };
 
@@ -1455,8 +1453,10 @@ static int max1363_alloc_scan_masks(struct iio_dev *indio_dev)
 	int i;
 
 	masks = devm_kzalloc(&indio_dev->dev,
-			BITS_TO_LONGS(MAX1363_MAX_CHANNELS) * sizeof(long) *
-			(st->chip_info->num_modes + 1), GFP_KERNEL);
+			array3_size(BITS_TO_LONGS(MAX1363_MAX_CHANNELS),
+				    sizeof(long),
+				    st->chip_info->num_modes + 1),
+			GFP_KERNEL);
 	if (!masks)
 		return -ENOMEM;
 

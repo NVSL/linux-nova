@@ -18,9 +18,11 @@
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_fb_cma_helper.h>
 #include <drm/drm_gem_cma_helper.h>
+#include <drm/drm_gem_framebuffer_helper.h>
 #include <drm/drm_plane_helper.h>
 
 #include "video/imx-ipu-v3.h"
+#include "imx-drm.h"
 #include "ipuv3-plane.h"
 
 struct ipu_plane_state {
@@ -74,6 +76,18 @@ static const uint32_t ipu_plane_formats[] = {
 	DRM_FORMAT_BGR888_A8,
 	DRM_FORMAT_RGBX8888_A8,
 	DRM_FORMAT_BGRX8888_A8,
+};
+
+static const uint64_t ipu_format_modifiers[] = {
+	DRM_FORMAT_MOD_LINEAR,
+	DRM_FORMAT_MOD_INVALID
+};
+
+static const uint64_t pre_format_modifiers[] = {
+	DRM_FORMAT_MOD_LINEAR,
+	DRM_FORMAT_MOD_VIVANTE_TILED,
+	DRM_FORMAT_MOD_VIVANTE_SUPER_TILED,
+	DRM_FORMAT_MOD_INVALID
 };
 
 int ipu_plane_irq(struct ipu_plane *ipu_plane)
@@ -259,7 +273,7 @@ static void ipu_plane_destroy(struct drm_plane *plane)
 	kfree(ipu_plane);
 }
 
-void ipu_plane_state_reset(struct drm_plane *plane)
+static void ipu_plane_state_reset(struct drm_plane *plane)
 {
 	struct ipu_plane_state *ipu_state;
 
@@ -279,7 +293,8 @@ void ipu_plane_state_reset(struct drm_plane *plane)
 	plane->state = &ipu_state->base;
 }
 
-struct drm_plane_state *ipu_plane_duplicate_state(struct drm_plane *plane)
+static struct drm_plane_state *
+ipu_plane_duplicate_state(struct drm_plane *plane)
 {
 	struct ipu_plane_state *state;
 
@@ -293,13 +308,29 @@ struct drm_plane_state *ipu_plane_duplicate_state(struct drm_plane *plane)
 	return &state->base;
 }
 
-void ipu_plane_destroy_state(struct drm_plane *plane,
-			     struct drm_plane_state *state)
+static void ipu_plane_destroy_state(struct drm_plane *plane,
+				    struct drm_plane_state *state)
 {
 	struct ipu_plane_state *ipu_state = to_ipu_plane_state(state);
 
 	__drm_atomic_helper_plane_destroy_state(state);
 	kfree(ipu_state);
+}
+
+static bool ipu_plane_format_mod_supported(struct drm_plane *plane,
+					   uint32_t format, uint64_t modifier)
+{
+	struct ipu_soc *ipu = to_ipu_plane(plane)->ipu;
+
+	/* linear is supported for all planes and formats */
+	if (modifier == DRM_FORMAT_MOD_LINEAR)
+		return true;
+
+	/* without a PRG there are no supported modifiers */
+	if (!ipu_prg_present(ipu))
+		return false;
+
+	return ipu_prg_format_supported(ipu, format, modifier);
 }
 
 static const struct drm_plane_funcs ipu_plane_funcs = {
@@ -309,6 +340,7 @@ static const struct drm_plane_funcs ipu_plane_funcs = {
 	.reset		= ipu_plane_state_reset,
 	.atomic_duplicate_state	= ipu_plane_duplicate_state,
 	.atomic_destroy_state	= ipu_plane_destroy_state,
+	.format_mod_supported = ipu_plane_format_mod_supported,
 };
 
 static int ipu_plane_atomic_check(struct drm_plane *plane,
@@ -321,7 +353,6 @@ static int ipu_plane_atomic_check(struct drm_plane *plane,
 	struct drm_framebuffer *old_fb = old_state->fb;
 	unsigned long eba, ubo, vbo, old_ubo, old_vbo, alpha_eba;
 	bool can_position = (plane->type == DRM_PLANE_TYPE_OVERLAY);
-	struct drm_rect clip;
 	int hsub, vsub;
 	int ret;
 
@@ -337,14 +368,10 @@ static int ipu_plane_atomic_check(struct drm_plane *plane,
 	if (WARN_ON(!crtc_state))
 		return -EINVAL;
 
-	clip.x1 = 0;
-	clip.y1 = 0;
-	clip.x2 = crtc_state->adjusted_mode.hdisplay;
-	clip.y2 = crtc_state->adjusted_mode.vdisplay;
-	ret = drm_plane_helper_check_state(state, &clip,
-					   DRM_PLANE_HELPER_NO_SCALING,
-					   DRM_PLANE_HELPER_NO_SCALING,
-					   can_position, true);
+	ret = drm_atomic_helper_check_plane_state(state, crtc_state,
+						  DRM_PLANE_HELPER_NO_SCALING,
+						  DRM_PLANE_HELPER_NO_SCALING,
+						  can_position, true);
 	if (ret)
 		return ret;
 
@@ -496,6 +523,27 @@ static int ipu_chan_assign_axi_id(int ipu_chan)
 	}
 }
 
+static void ipu_calculate_bursts(u32 width, u32 cpp, u32 stride,
+				 u8 *burstsize, u8 *num_bursts)
+{
+	const unsigned int width_bytes = width * cpp;
+	unsigned int npb, bursts;
+
+	/* Maximum number of pixels per burst without overshooting stride */
+	for (npb = 64 / cpp; npb > 0; --npb) {
+		if (round_up(width_bytes, npb * cpp) <= stride)
+			break;
+	}
+	*burstsize = npb;
+
+	/* Maximum number of consecutive bursts without overshooting stride */
+	for (bursts = 8; bursts > 1; bursts /= 2) {
+		if (round_up(width_bytes, npb * cpp * bursts) <= stride)
+			break;
+	}
+	*num_bursts = bursts;
+}
+
 static void ipu_plane_atomic_update(struct drm_plane *plane,
 				    struct drm_plane_state *old_state)
 {
@@ -509,6 +557,9 @@ static void ipu_plane_atomic_update(struct drm_plane *plane,
 	unsigned long alpha_eba = 0;
 	enum ipu_color_space ics;
 	unsigned int axi_id = 0;
+	const struct drm_format_info *info;
+	u8 burstsize, num_bursts;
+	u32 width, height;
 	int active;
 
 	if (ipu_plane->dp_flow == IPU_DP_FLOW_SYNC_FG)
@@ -525,8 +576,8 @@ static void ipu_plane_atomic_update(struct drm_plane *plane,
 		ipu_prg_channel_configure(ipu_plane->ipu_ch, axi_id,
 					  drm_rect_width(&state->src) >> 16,
 					  drm_rect_height(&state->src) >> 16,
-					  state->fb->pitches[0],
-					  state->fb->format->format, &eba);
+					  fb->pitches[0], fb->format->format,
+					  fb->modifier, &eba);
 	}
 
 	if (old_state->fb && !drm_atomic_crtc_needs_modeset(crtc_state)) {
@@ -555,7 +606,7 @@ static void ipu_plane_atomic_update(struct drm_plane *plane,
 		ipu_dp_setup_channel(ipu_plane->dp, ics,
 					IPUV3_COLORSPACE_UNKNOWN);
 		/* Enable local alpha on partial plane */
-		switch (state->fb->format->format) {
+		switch (fb->format->format) {
 		case DRM_FORMAT_ARGB1555:
 		case DRM_FORMAT_ABGR1555:
 		case DRM_FORMAT_RGBA5551:
@@ -581,15 +632,21 @@ static void ipu_plane_atomic_update(struct drm_plane *plane,
 
 	ipu_dmfc_config_wait4eot(ipu_plane->dmfc, drm_rect_width(dst));
 
+	width = drm_rect_width(&state->src) >> 16;
+	height = drm_rect_height(&state->src) >> 16;
+	info = drm_format_info(fb->format->format);
+	ipu_calculate_bursts(width, info->cpp[0], fb->pitches[0],
+			     &burstsize, &num_bursts);
+
 	ipu_cpmem_zero(ipu_plane->ipu_ch);
-	ipu_cpmem_set_resolution(ipu_plane->ipu_ch,
-				 drm_rect_width(&state->src) >> 16,
-				 drm_rect_height(&state->src) >> 16);
-	ipu_cpmem_set_fmt(ipu_plane->ipu_ch, state->fb->format->format);
+	ipu_cpmem_set_resolution(ipu_plane->ipu_ch, width, height);
+	ipu_cpmem_set_fmt(ipu_plane->ipu_ch, fb->format->format);
+	ipu_cpmem_set_burstsize(ipu_plane->ipu_ch, burstsize);
 	ipu_cpmem_set_high_priority(ipu_plane->ipu_ch);
 	ipu_idmac_set_double_buffer(ipu_plane->ipu_ch, 1);
-	ipu_cpmem_set_stride(ipu_plane->ipu_ch, state->fb->pitches[0]);
+	ipu_cpmem_set_stride(ipu_plane->ipu_ch, fb->pitches[0]);
 	ipu_cpmem_set_axi_id(ipu_plane->ipu_ch, axi_id);
+
 	switch (fb->format->format) {
 	case DRM_FORMAT_YUV420:
 	case DRM_FORMAT_YVU420:
@@ -629,6 +686,7 @@ static void ipu_plane_atomic_update(struct drm_plane *plane,
 	case DRM_FORMAT_RGBX8888_A8:
 	case DRM_FORMAT_BGRX8888_A8:
 		alpha_eba = drm_plane_state_to_eba(state, 1);
+		num_bursts = 0;
 
 		dev_dbg(ipu_plane->base.dev->dev, "phys = %lu %lu, x = %d, y = %d",
 			eba, alpha_eba, state->src.x1 >> 16, state->src.y1 >> 16);
@@ -642,8 +700,7 @@ static void ipu_plane_atomic_update(struct drm_plane *plane,
 		ipu_cpmem_set_format_passthrough(ipu_plane->alpha_ch, 8);
 		ipu_cpmem_set_high_priority(ipu_plane->alpha_ch);
 		ipu_idmac_set_double_buffer(ipu_plane->alpha_ch, 1);
-		ipu_cpmem_set_stride(ipu_plane->alpha_ch,
-				     state->fb->pitches[1]);
+		ipu_cpmem_set_stride(ipu_plane->alpha_ch, fb->pitches[1]);
 		ipu_cpmem_set_burstsize(ipu_plane->alpha_ch, 16);
 		ipu_cpmem_set_buffer(ipu_plane->alpha_ch, 0, alpha_eba);
 		ipu_cpmem_set_buffer(ipu_plane->alpha_ch, 1, alpha_eba);
@@ -655,11 +712,12 @@ static void ipu_plane_atomic_update(struct drm_plane *plane,
 	}
 	ipu_cpmem_set_buffer(ipu_plane->ipu_ch, 0, eba);
 	ipu_cpmem_set_buffer(ipu_plane->ipu_ch, 1, eba);
+	ipu_idmac_lock_enable(ipu_plane->ipu_ch, num_bursts);
 	ipu_plane_enable(ipu_plane);
 }
 
 static const struct drm_plane_helper_funcs ipu_plane_helper_funcs = {
-	.prepare_fb = drm_fb_cma_prepare_fb,
+	.prepare_fb = drm_gem_fb_prepare_fb,
 	.atomic_check = ipu_plane_atomic_check,
 	.atomic_disable = ipu_plane_atomic_disable,
 	.atomic_update = ipu_plane_atomic_update,
@@ -668,18 +726,71 @@ static const struct drm_plane_helper_funcs ipu_plane_helper_funcs = {
 int ipu_planes_assign_pre(struct drm_device *dev,
 			  struct drm_atomic_state *state)
 {
+	struct drm_crtc_state *old_crtc_state, *crtc_state;
 	struct drm_plane_state *plane_state;
+	struct ipu_plane_state *ipu_state;
+	struct ipu_plane *ipu_plane;
 	struct drm_plane *plane;
+	struct drm_crtc *crtc;
 	int available_pres = ipu_prg_max_active_channels();
-	int i;
+	int ret, i;
 
-	for_each_plane_in_state(state, plane, plane_state, i) {
-		struct ipu_plane_state *ipu_state =
-				to_ipu_plane_state(plane_state);
-		struct ipu_plane *ipu_plane = to_ipu_plane(plane);
+	for_each_oldnew_crtc_in_state(state, crtc, old_crtc_state, crtc_state, i) {
+		ret = drm_atomic_add_affected_planes(state, crtc);
+		if (ret)
+			return ret;
+	}
+
+	/*
+	 * We are going over the planes in 2 passes: first we assign PREs to
+	 * planes with a tiling modifier, which need the PREs to resolve into
+	 * linear. Any failure to assign a PRE there is fatal. In the second
+	 * pass we try to assign PREs to linear FBs, to improve memory access
+	 * patterns for them. Failure at this point is non-fatal, as we can
+	 * scan out linear FBs without a PRE.
+	 */
+	for_each_new_plane_in_state(state, plane, plane_state, i) {
+		ipu_state = to_ipu_plane_state(plane_state);
+		ipu_plane = to_ipu_plane(plane);
+
+		if (!plane_state->fb) {
+			ipu_state->use_pre = false;
+			continue;
+		}
+
+		if (!(plane_state->fb->flags & DRM_MODE_FB_MODIFIERS) ||
+		    plane_state->fb->modifier == DRM_FORMAT_MOD_LINEAR)
+			continue;
+
+		if (!ipu_prg_present(ipu_plane->ipu) || !available_pres)
+			return -EINVAL;
+
+		if (!ipu_prg_format_supported(ipu_plane->ipu,
+					      plane_state->fb->format->format,
+					      plane_state->fb->modifier))
+			return -EINVAL;
+
+		ipu_state->use_pre = true;
+		available_pres--;
+	}
+
+	for_each_new_plane_in_state(state, plane, plane_state, i) {
+		ipu_state = to_ipu_plane_state(plane_state);
+		ipu_plane = to_ipu_plane(plane);
+
+		if (!plane_state->fb) {
+			ipu_state->use_pre = false;
+			continue;
+		}
+
+		if ((plane_state->fb->flags & DRM_MODE_FB_MODIFIERS) &&
+		    plane_state->fb->modifier != DRM_FORMAT_MOD_LINEAR)
+			continue;
+
+		/* make sure that modifier is initialized */
+		plane_state->fb->modifier = DRM_FORMAT_MOD_LINEAR;
 
 		if (ipu_prg_present(ipu_plane->ipu) && available_pres &&
-		    plane_state->fb &&
 		    ipu_prg_format_supported(ipu_plane->ipu,
 					     plane_state->fb->format->format,
 					     plane_state->fb->modifier)) {
@@ -699,6 +810,7 @@ struct ipu_plane *ipu_plane_init(struct drm_device *dev, struct ipu_soc *ipu,
 				 enum drm_plane_type type)
 {
 	struct ipu_plane *ipu_plane;
+	const uint64_t *modifiers = ipu_format_modifiers;
 	int ret;
 
 	DRM_DEBUG_KMS("channel %d, dp flow %d, possible_crtcs=0x%x\n",
@@ -714,10 +826,13 @@ struct ipu_plane *ipu_plane_init(struct drm_device *dev, struct ipu_soc *ipu,
 	ipu_plane->dma = dma;
 	ipu_plane->dp_flow = dp;
 
+	if (ipu_prg_present(ipu))
+		modifiers = pre_format_modifiers;
+
 	ret = drm_universal_plane_init(dev, &ipu_plane->base, possible_crtcs,
 				       &ipu_plane_funcs, ipu_plane_formats,
-				       ARRAY_SIZE(ipu_plane_formats), type,
-				       NULL);
+				       ARRAY_SIZE(ipu_plane_formats),
+				       modifiers, type, NULL);
 	if (ret) {
 		DRM_ERROR("failed to initialize plane\n");
 		kfree(ipu_plane);

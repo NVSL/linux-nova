@@ -68,6 +68,19 @@
 			};
 		};
 
+		cpcap_audio: audio-codec {
+			#sound-dai-cells = <1>;
+
+			port@0 {
+				cpcap_audio_codec0: endpoint {
+				};
+			};
+			port@1 {
+				cpcap_audio_codec1: endpoint {
+				};
+			};
+		};
+
 		cpcap_rtc: rtc {
 			compatible = "motorola,cpcap-rtc";
 
@@ -255,5 +268,6 @@
 		regulator-min-microvolt = <2775000>;
 		regulator-max-microvolt = <2775000>;
 		regulator-enable-ramp-delay = <1000>;
+		regulator-initial-mode = <0x00>; /* NORMAL */
 	};
 };

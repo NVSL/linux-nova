@@ -29,7 +29,7 @@
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/types.h>
-#include <linux/unaligned/le_struct.h>
+#include <asm/unaligned.h>
 #include <net/bluetooth/bluetooth.h>
 #include <net/bluetooth/hci_core.h>
 
@@ -477,8 +477,6 @@ static int nokia_open(struct hci_uart *hu)
 
 	dev_dbg(dev, "protocol open");
 
-	serdev_device_open(hu->serdev);
-
 	pm_runtime_enable(dev);
 
 	return 0;
@@ -513,7 +511,6 @@ static int nokia_close(struct hci_uart *hu)
 	gpiod_set_value(btdev->wakeup_bt, 0);
 
 	pm_runtime_disable(&btdev->serdev->dev);
-	serdev_device_close(btdev->serdev);
 
 	return 0;
 }
@@ -767,16 +764,8 @@ static int nokia_bluetooth_serdev_probe(struct serdev_device *serdev)
 static void nokia_bluetooth_serdev_remove(struct serdev_device *serdev)
 {
 	struct nokia_bt_dev *btdev = serdev_device_get_drvdata(serdev);
-	struct hci_uart *hu = &btdev->hu;
-	struct hci_dev *hdev = hu->hdev;
 
-	cancel_work_sync(&hu->write_work);
-
-	hci_unregister_dev(hdev);
-	hci_free_dev(hdev);
-	hu->proto->close(hu);
-
-	pm_runtime_disable(&btdev->serdev->dev);
+	hci_uart_unregister_device(&btdev->hu);
 }
 
 static int nokia_bluetooth_runtime_suspend(struct device *dev)

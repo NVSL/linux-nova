@@ -26,6 +26,7 @@
 #include <linux/pci.h>
 #include <linux/module.h>
 #include <linux/io.h>
+#include <linux/nospec.h>
 
 #include <sound/core.h>
 #include <sound/control.h>
@@ -2071,9 +2072,10 @@ static int snd_rme9652_channel_info(struct snd_pcm_substream *substream,
 	if (snd_BUG_ON(info->channel >= RME9652_NCHANNELS))
 		return -EINVAL;
 
-	if ((chn = rme9652->channel_map[info->channel]) < 0) {
+	chn = rme9652->channel_map[array_index_nospec(info->channel,
+						      RME9652_NCHANNELS)];
+	if (chn < 0)
 		return -EINVAL;
-	}
 
 	info->offset = chn * RME9652_CHANNEL_BUFFER_BYTES;
 	info->first = 0;
@@ -2181,7 +2183,7 @@ static int snd_rme9652_prepare(struct snd_pcm_substream *substream)
 	return result;
 }
 
-static struct snd_pcm_hardware snd_rme9652_playback_subinfo =
+static const struct snd_pcm_hardware snd_rme9652_playback_subinfo =
 {
 	.info =			(SNDRV_PCM_INFO_MMAP |
 				 SNDRV_PCM_INFO_MMAP_VALID |
@@ -2205,7 +2207,7 @@ static struct snd_pcm_hardware snd_rme9652_playback_subinfo =
 	.fifo_size =		0,
 };
 
-static struct snd_pcm_hardware snd_rme9652_capture_subinfo =
+static const struct snd_pcm_hardware snd_rme9652_capture_subinfo =
 {
 	.info =			(SNDRV_PCM_INFO_MMAP |
 				 SNDRV_PCM_INFO_MMAP_VALID |
@@ -2618,19 +2620,17 @@ static int snd_rme9652_probe(struct pci_dev *pci,
 	card->private_free = snd_rme9652_card_free;
 	rme9652->dev = dev;
 	rme9652->pci = pci;
-
-	if ((err = snd_rme9652_create(card, rme9652, precise_ptr[dev])) < 0) {
-		snd_card_free(card);
-		return err;
-	}
+	err = snd_rme9652_create(card, rme9652, precise_ptr[dev]);
+	if (err)
+		goto free_card;
 
 	strcpy(card->shortname, rme9652->card_name);
 
 	sprintf(card->longname, "%s at 0x%lx, irq %d",
 		card->shortname, rme9652->port, rme9652->irq);
-
-	
-	if ((err = snd_card_register(card)) < 0) {
+	err = snd_card_register(card);
+	if (err) {
+free_card:
 		snd_card_free(card);
 		return err;
 	}

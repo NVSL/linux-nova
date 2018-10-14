@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _LINUX_SIGNAL_H
 #define _LINUX_SIGNAL_H
 
@@ -10,16 +11,32 @@ struct task_struct;
 /* for sysctl */
 extern int print_fatal_signals;
 
-static inline void copy_siginfo(struct siginfo *to, struct siginfo *from)
+static inline void copy_siginfo(struct siginfo *to, const struct siginfo *from)
 {
-	if (from->si_code < 0)
-		memcpy(to, from, sizeof(*to));
-	else
-		/* _sigchld is currently the largest know union member */
-		memcpy(to, from, __ARCH_SI_PREAMBLE_SIZE + sizeof(from->_sifields._sigchld));
+	memcpy(to, from, sizeof(*to));
+}
+
+static inline void clear_siginfo(struct siginfo *info)
+{
+	memset(info, 0, sizeof(*info));
 }
 
 int copy_siginfo_to_user(struct siginfo __user *to, const struct siginfo *from);
+
+enum siginfo_layout {
+	SIL_KILL,
+	SIL_TIMER,
+	SIL_POLL,
+	SIL_FAULT,
+	SIL_FAULT_MCEERR,
+	SIL_FAULT_BNDERR,
+	SIL_FAULT_PKUERR,
+	SIL_CHLD,
+	SIL_RT,
+	SIL_SYS,
+};
+
+enum siginfo_layout siginfo_layout(int sig, int si_code);
 
 /*
  * Define some primitives to manipulate sigset_t.
@@ -380,10 +397,18 @@ int unhandled_signal(struct task_struct *tsk, int sig);
         rt_sigmask(SIGCONT)   |  rt_sigmask(SIGCHLD)   | \
 	rt_sigmask(SIGWINCH)  |  rt_sigmask(SIGURG)    )
 
+#define SIG_SPECIFIC_SICODES_MASK (\
+	rt_sigmask(SIGILL)    |  rt_sigmask(SIGFPE)    | \
+	rt_sigmask(SIGSEGV)   |  rt_sigmask(SIGBUS)    | \
+	rt_sigmask(SIGTRAP)   |  rt_sigmask(SIGCHLD)   | \
+	rt_sigmask(SIGPOLL)   |  rt_sigmask(SIGSYS)    | \
+	SIGEMT_MASK                                    )
+
 #define sig_kernel_only(sig)		siginmask(sig, SIG_KERNEL_ONLY_MASK)
 #define sig_kernel_coredump(sig)	siginmask(sig, SIG_KERNEL_COREDUMP_MASK)
 #define sig_kernel_ignore(sig)		siginmask(sig, SIG_KERNEL_IGNORE_MASK)
 #define sig_kernel_stop(sig)		siginmask(sig, SIG_KERNEL_STOP_MASK)
+#define sig_specific_sicodes(sig)	siginmask(sig, SIG_SPECIFIC_SICODES_MASK)
 
 #define sig_fatal(t, signr) \
 	(!siginmask(signr, SIG_KERNEL_IGNORE_MASK|SIG_KERNEL_STOP_MASK) && \

@@ -29,8 +29,21 @@ struct mqd_manager *mqd_manager_init(enum KFD_MQD_TYPE type,
 	switch (dev->device_info->asic_family) {
 	case CHIP_KAVERI:
 		return mqd_manager_init_cik(type, dev);
+	case CHIP_HAWAII:
+		return mqd_manager_init_cik_hawaii(type, dev);
 	case CHIP_CARRIZO:
 		return mqd_manager_init_vi(type, dev);
+	case CHIP_TONGA:
+	case CHIP_FIJI:
+	case CHIP_POLARIS10:
+	case CHIP_POLARIS11:
+		return mqd_manager_init_vi_tonga(type, dev);
+	case CHIP_VEGA10:
+	case CHIP_RAVEN:
+		return mqd_manager_init_v9(type, dev);
+	default:
+		WARN(1, "Unexpected ASIC family %u",
+		     dev->device_info->asic_family);
 	}
 
 	return NULL;

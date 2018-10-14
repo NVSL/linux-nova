@@ -133,7 +133,7 @@ static int cachefiles_daemon_add_cache(struct cachefiles_cache *cache)
 		goto error_unsupported;
 
 	ret = -EROFS;
-	if (root->d_sb->s_flags & MS_RDONLY)
+	if (sb_rdonly(root->d_sb))
 		goto error_unsupported;
 
 	/* determine the security of the on-disk cache as this governs
@@ -218,7 +218,8 @@ static int cachefiles_daemon_add_cache(struct cachefiles_cache *cache)
 			   "%s",
 			   fsdef->dentry->d_sb->s_id);
 
-	fscache_object_init(&fsdef->fscache, NULL, &cache->cache);
+	fscache_object_init(&fsdef->fscache, &fscache_fsdef_index,
+			    &cache->cache);
 
 	ret = fscache_add_cache(&cache->cache, &fsdef->fscache, cache->tag);
 	if (ret < 0)

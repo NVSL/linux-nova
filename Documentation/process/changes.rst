@@ -32,6 +32,8 @@ you probably needn't concern yourself with isdn4k-utils.
 GNU C                  3.2              gcc --version
 GNU make               3.81             make --version
 binutils               2.20             ld -v
+flex                   2.5.35           flex --version
+bison                  2.0              bison --version
 util-linux             2.10o            fdformat --version
 module-init-tools      0.9.10           depmod -V
 e2fsprogs              1.41.4           e2fsck -V
@@ -53,7 +55,7 @@ mcelog                 0.6              mcelog --version
 iptables               1.4.2            iptables -V
 openssl & libcrypto    1.0.0            openssl version
 bc                     1.06.95          bc --version
-Sphinx\ [#f1]_	       1.2		sphinx-build --version
+Sphinx\ [#f1]_	       1.3		sphinx-build --version
 ====================== ===============  ========================================
 
 .. [#f1] Sphinx is needed only to build the Kernel documentation
@@ -76,8 +78,21 @@ Binutils
 --------
 
 The build system has, as of 4.13, switched to using thin archives (`ar T`)
-rather than incremental linking (`ld -r`) for built-in.o intermediate steps.
+rather than incremental linking (`ld -r`) for built-in.a intermediate steps.
 This requires binutils 2.20 or newer.
+
+Flex
+----
+
+Since Linux 4.16, the build system generates lexical analyzers
+during build.  This requires flex 2.5.35 or later.
+
+
+Bison
+-----
+
+Since Linux 4.16, the build system generates parsers
+during build.  This requires bison 2.0 or later.
 
 Perl
 ----
@@ -309,18 +324,8 @@ Kernel documentation
 Sphinx
 ------
 
-The ReST markups currently used by the Documentation/ files are meant to be
-built with ``Sphinx`` version 1.2 or upper. If you're desiring to build
-PDF outputs, it is recommended to use version 1.4.6.
-
-.. note::
-
-  Please notice that, for PDF and LaTeX output, you'll also need ``XeLaTeX``
-  version 3.14159265. Depending on the distribution, you may also need to
-  install a series of ``texlive`` packages that provide the minimal set of
-  functionalities required for ``XeLaTex`` to work. For PDF output you'll also
-  need ``convert(1)`` from ImageMagick (https://www.imagemagick.org).
-
+Please see :ref:`sphinx_install` in ``Documentation/doc-guide/sphinx.rst``
+for details about Sphinx requirements.
 
 Getting updated software
 ========================
@@ -342,6 +347,16 @@ Binutils
 --------
 
 - <https://www.kernel.org/pub/linux/devel/binutils/>
+
+Flex
+----
+
+- <https://github.com/westes/flex/releases>
+
+Bison
+-----
+
+- <ftp://ftp.gnu.org/gnu/bison/>
 
 OpenSSL
 -------
@@ -415,7 +430,7 @@ udev
 FUSE
 ----
 
-- <http://sourceforge.net/projects/fuse>
+- <https://github.com/libfuse/libfuse/releases>
 
 mcelog
 ------

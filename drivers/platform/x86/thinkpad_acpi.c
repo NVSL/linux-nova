@@ -23,8 +23,8 @@
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
-#define TPACPI_VERSION "0.25"
-#define TPACPI_SYSFS_VERSION 0x020700
+#define TPACPI_VERSION "0.26"
+#define TPACPI_SYSFS_VERSION 0x030000
 
 /*
  *  Changelog:
@@ -66,6 +66,7 @@
 #include <linux/seq_file.h>
 #include <linux/sysfs.h>
 #include <linux/backlight.h>
+#include <linux/bitops.h>
 #include <linux/fb.h>
 #include <linux/platform_device.h>
 #include <linux/hwmon.h>
@@ -78,11 +79,13 @@
 #include <linux/workqueue.h>
 #include <linux/acpi.h>
 #include <linux/pci_ids.h>
+#include <linux/power_supply.h>
 #include <linux/thinkpad_acpi.h>
 #include <sound/core.h>
 #include <sound/control.h>
 #include <sound/initval.h>
 #include <linux/uaccess.h>
+#include <acpi/battery.h>
 #include <acpi/video.h>
 
 /* ThinkPad CMOS commands */
@@ -209,10 +212,19 @@ enum tpacpi_hkey_event_t {
 	TP_HKEY_EV_ALARM_BAT_XHOT	= 0x6012, /* battery critically hot */
 	TP_HKEY_EV_ALARM_SENSOR_HOT	= 0x6021, /* sensor too hot */
 	TP_HKEY_EV_ALARM_SENSOR_XHOT	= 0x6022, /* sensor critically hot */
-	TP_HKEY_EV_THM_TABLE_CHANGED	= 0x6030, /* thermal table changed */
+	TP_HKEY_EV_THM_TABLE_CHANGED	= 0x6030, /* windows; thermal table changed */
+	TP_HKEY_EV_THM_CSM_COMPLETED    = 0x6032, /* windows; thermal control set
+						   * command completed. Related to
+						   * AML DYTC */
+	TP_HKEY_EV_THM_TRANSFM_CHANGED  = 0x60F0, /* windows; thermal transformation
+						   * changed. Related to AML GMTS */
 
 	/* AC-related events */
 	TP_HKEY_EV_AC_CHANGED		= 0x6040, /* AC status changed */
+
+	/* Further user-interface events */
+	TP_HKEY_EV_PALM_DETECTED	= 0x60b0, /* palm hoveres keyboard */
+	TP_HKEY_EV_PALM_UNDETECTED	= 0x60b1, /* palm removed */
 
 	/* Misc */
 	TP_HKEY_EV_RFKILL_CHANGED	= 0x7000, /* rfkill switch changed */
@@ -310,8 +322,7 @@ static struct {
 	enum {
 		TP_HOTKEY_TABLET_NONE = 0,
 		TP_HOTKEY_TABLET_USES_MHKG,
-		/* X1 Yoga 2016, seen on BIOS N1FET44W */
-		TP_HOTKEY_TABLET_USES_CMMD,
+		TP_HOTKEY_TABLET_USES_GMMS,
 	} hotkey_tablet;
 	u32 kbdlight:1;
 	u32 light:1;
@@ -332,6 +343,7 @@ static struct {
 	u32 sensors_pdev_attrs_registered:1;
 	u32 hotkey_poll_active:1;
 	u32 has_adaptive_kbd:1;
+	u32 battery:1;
 } tp_features;
 
 static struct {
@@ -2044,8 +2056,28 @@ static void hotkey_poll_setup(const bool may_warn);
 
 /* HKEY.MHKG() return bits */
 #define TP_HOTKEY_TABLET_MASK (1 << 3)
-/* ThinkPad X1 Yoga (2016) */
-#define TP_EC_CMMD_TABLET_MODE 0x6
+enum {
+	TP_ACPI_MULTI_MODE_INVALID	= 0,
+	TP_ACPI_MULTI_MODE_UNKNOWN	= 1 << 0,
+	TP_ACPI_MULTI_MODE_LAPTOP	= 1 << 1,
+	TP_ACPI_MULTI_MODE_TABLET	= 1 << 2,
+	TP_ACPI_MULTI_MODE_FLAT		= 1 << 3,
+	TP_ACPI_MULTI_MODE_STAND	= 1 << 4,
+	TP_ACPI_MULTI_MODE_TENT		= 1 << 5,
+	TP_ACPI_MULTI_MODE_STAND_TENT	= 1 << 6,
+};
+
+enum {
+	/* The following modes are considered tablet mode for the purpose of
+	 * reporting the status to userspace. i.e. in all these modes it makes
+	 * sense to disable the laptop input devices such as touchpad and
+	 * keyboard.
+	 */
+	TP_ACPI_MULTI_MODE_TABLET_LIKE	= TP_ACPI_MULTI_MODE_TABLET |
+					  TP_ACPI_MULTI_MODE_STAND |
+					  TP_ACPI_MULTI_MODE_TENT |
+					  TP_ACPI_MULTI_MODE_STAND_TENT,
+};
 
 static int hotkey_get_wlsw(void)
 {
@@ -2066,6 +2098,88 @@ static int hotkey_get_wlsw(void)
 	return (status) ? TPACPI_RFK_RADIO_ON : TPACPI_RFK_RADIO_OFF;
 }
 
+static int hotkey_gmms_get_tablet_mode(int s, int *has_tablet_mode)
+{
+	int type = (s >> 16) & 0xffff;
+	int value = s & 0xffff;
+	int mode = TP_ACPI_MULTI_MODE_INVALID;
+	int valid_modes = 0;
+
+	if (has_tablet_mode)
+		*has_tablet_mode = 0;
+
+	switch (type) {
+	case 1:
+		valid_modes = TP_ACPI_MULTI_MODE_LAPTOP |
+			      TP_ACPI_MULTI_MODE_TABLET |
+			      TP_ACPI_MULTI_MODE_STAND_TENT;
+		break;
+	case 2:
+		valid_modes = TP_ACPI_MULTI_MODE_LAPTOP |
+			      TP_ACPI_MULTI_MODE_FLAT |
+			      TP_ACPI_MULTI_MODE_TABLET |
+			      TP_ACPI_MULTI_MODE_STAND |
+			      TP_ACPI_MULTI_MODE_TENT;
+		break;
+	case 3:
+		valid_modes = TP_ACPI_MULTI_MODE_LAPTOP |
+			      TP_ACPI_MULTI_MODE_FLAT;
+		break;
+	case 4:
+	case 5:
+		/* In mode 4, FLAT is not specified as a valid mode. However,
+		 * it can be seen at least on the X1 Yoga 2nd Generation.
+		 */
+		valid_modes = TP_ACPI_MULTI_MODE_LAPTOP |
+			      TP_ACPI_MULTI_MODE_FLAT |
+			      TP_ACPI_MULTI_MODE_TABLET |
+			      TP_ACPI_MULTI_MODE_STAND |
+			      TP_ACPI_MULTI_MODE_TENT;
+		break;
+	default:
+		pr_err("Unknown multi mode status type %d with value 0x%04X, please report this to %s\n",
+		       type, value, TPACPI_MAIL);
+		return 0;
+	}
+
+	if (has_tablet_mode && (valid_modes & TP_ACPI_MULTI_MODE_TABLET_LIKE))
+		*has_tablet_mode = 1;
+
+	switch (value) {
+	case 1:
+		mode = TP_ACPI_MULTI_MODE_LAPTOP;
+		break;
+	case 2:
+		mode = TP_ACPI_MULTI_MODE_FLAT;
+		break;
+	case 3:
+		mode = TP_ACPI_MULTI_MODE_TABLET;
+		break;
+	case 4:
+		if (type == 1)
+			mode = TP_ACPI_MULTI_MODE_STAND_TENT;
+		else
+			mode = TP_ACPI_MULTI_MODE_STAND;
+		break;
+	case 5:
+		mode = TP_ACPI_MULTI_MODE_TENT;
+		break;
+	default:
+		if (type == 5 && value == 0xffff) {
+			pr_warn("Multi mode status is undetected, assuming laptop\n");
+			return 0;
+		}
+	}
+
+	if (!(mode & valid_modes)) {
+		pr_err("Unknown/reserved multi mode value 0x%04X for type %d, please report this to %s\n",
+		       value, type, TPACPI_MAIL);
+		return 0;
+	}
+
+	return !!(mode & TP_ACPI_MULTI_MODE_TABLET_LIKE);
+}
+
 static int hotkey_get_tablet_mode(int *status)
 {
 	int s;
@@ -2077,11 +2191,11 @@ static int hotkey_get_tablet_mode(int *status)
 
 		*status = ((s & TP_HOTKEY_TABLET_MASK) != 0);
 		break;
-	case TP_HOTKEY_TABLET_USES_CMMD:
-		if (!acpi_evalf(ec_handle, &s, "CMMD", "d"))
+	case TP_HOTKEY_TABLET_USES_GMMS:
+		if (!acpi_evalf(hkey_handle, &s, "GMMS", "dd", 0))
 			return -EIO;
 
-		*status = (s == TP_EC_CMMD_TABLET_MODE);
+		*status = hotkey_gmms_get_tablet_mode(s, NULL);
 		break;
 	default:
 		break;
@@ -3113,16 +3227,19 @@ static int hotkey_init_tablet_mode(void)
 	int in_tablet_mode = 0, res;
 	char *type = NULL;
 
-	if (acpi_evalf(hkey_handle, &res, "MHKG", "qd")) {
+	if (acpi_evalf(hkey_handle, &res, "GMMS", "qdd", 0)) {
+		int has_tablet_mode;
+
+		in_tablet_mode = hotkey_gmms_get_tablet_mode(res,
+							     &has_tablet_mode);
+		if (has_tablet_mode)
+			tp_features.hotkey_tablet = TP_HOTKEY_TABLET_USES_GMMS;
+		type = "GMMS";
+	} else if (acpi_evalf(hkey_handle, &res, "MHKG", "qd")) {
 		/* For X41t, X60t, X61t Tablets... */
 		tp_features.hotkey_tablet = TP_HOTKEY_TABLET_USES_MHKG;
 		in_tablet_mode = !!(res & TP_HOTKEY_TABLET_MASK);
 		type = "MHKG";
-	} else if (acpi_evalf(ec_handle, &res, "CMMD", "qd")) {
-		/* For X1 Yoga (2016) */
-		tp_features.hotkey_tablet = TP_HOTKEY_TABLET_USES_CMMD;
-		in_tablet_mode = res == TP_EC_CMMD_TABLET_MODE;
-		type = "CMMD";
 	}
 
 	if (!tp_features.hotkey_tablet)
@@ -3922,15 +4039,23 @@ static bool hotkey_notify_6xxx(const u32 hkey,
 				 bool *send_acpi_ev,
 				 bool *ignore_acpi_ev)
 {
-	bool known = true;
-
 	/* 0x6000-0x6FFF: thermal alarms/notices and keyboard events */
 	*send_acpi_ev = true;
 	*ignore_acpi_ev = false;
 
 	switch (hkey) {
 	case TP_HKEY_EV_THM_TABLE_CHANGED:
-		pr_info("EC reports that Thermal Table has changed\n");
+		pr_debug("EC reports: Thermal Table has changed\n");
+		/* recommended action: do nothing, we don't have
+		 * Lenovo ATM information */
+		return true;
+	case TP_HKEY_EV_THM_CSM_COMPLETED:
+		pr_debug("EC reports: Thermal Control Command set completed (DYTC)\n");
+		/* recommended action: do nothing, we don't have
+		 * Lenovo ATM information */
+		return true;
+	case TP_HKEY_EV_THM_TRANSFM_CHANGED:
+		pr_debug("EC reports: Thermal Transformation changed (GMTS)\n");
 		/* recommended action: do nothing, we don't have
 		 * Lenovo ATM information */
 		return true;
@@ -3971,16 +4096,21 @@ static bool hotkey_notify_6xxx(const u32 hkey,
 		tpacpi_input_send_tabletsw();
 		hotkey_tablet_mode_notify_change();
 		*send_acpi_ev = false;
-		break;
+		return true;
+
+	case TP_HKEY_EV_PALM_DETECTED:
+	case TP_HKEY_EV_PALM_UNDETECTED:
+		/* palm detected hovering the keyboard, forward to user-space
+		 * via netlink for consumption */
+		return true;
 
 	default:
-		pr_warn("unknown possible thermal alarm or keyboard event received\n");
-		known = false;
+		/* report simply as unknown, no sensor dump */
+		return false;
 	}
 
 	thermal_dump_all_sensors();
-
-	return known;
+	return true;
 }
 
 static void hotkey_notify(struct ibm_struct *ibm, u32 event)
@@ -5888,7 +6018,7 @@ static int __init led_init(struct ibm_init_struct *iibm)
 	if (led_supported == TPACPI_LED_NONE)
 		return 1;
 
-	tpacpi_leds = kzalloc(sizeof(*tpacpi_leds) * TPACPI_LED_NUMLEDS,
+	tpacpi_leds = kcalloc(TPACPI_LED_NUMLEDS, sizeof(*tpacpi_leds),
 			      GFP_KERNEL);
 	if (!tpacpi_leds) {
 		pr_err("Out of memory for LED data\n");
@@ -6342,7 +6472,7 @@ static int __init thermal_init(struct ibm_init_struct *iibm)
 
 	switch (thermal_read_mode) {
 	case TPACPI_THERMAL_TPEC_16:
-		res = sysfs_create_group(&tpacpi_sensors_pdev->dev.kobj,
+		res = sysfs_create_group(&tpacpi_hwmon->kobj,
 				&thermal_temp_input16_group);
 		if (res)
 			return res;
@@ -6350,7 +6480,7 @@ static int __init thermal_init(struct ibm_init_struct *iibm)
 	case TPACPI_THERMAL_TPEC_8:
 	case TPACPI_THERMAL_ACPI_TMP07:
 	case TPACPI_THERMAL_ACPI_UPDT:
-		res = sysfs_create_group(&tpacpi_sensors_pdev->dev.kobj,
+		res = sysfs_create_group(&tpacpi_hwmon->kobj,
 				&thermal_temp_input8_group);
 		if (res)
 			return res;
@@ -6367,13 +6497,13 @@ static void thermal_exit(void)
 {
 	switch (thermal_read_mode) {
 	case TPACPI_THERMAL_TPEC_16:
-		sysfs_remove_group(&tpacpi_sensors_pdev->dev.kobj,
+		sysfs_remove_group(&tpacpi_hwmon->kobj,
 				   &thermal_temp_input16_group);
 		break;
 	case TPACPI_THERMAL_TPEC_8:
 	case TPACPI_THERMAL_ACPI_TMP07:
 	case TPACPI_THERMAL_ACPI_UPDT:
-		sysfs_remove_group(&tpacpi_sensors_pdev->dev.kobj,
+		sysfs_remove_group(&tpacpi_hwmon->kobj,
 				   &thermal_temp_input8_group);
 		break;
 	case TPACPI_THERMAL_NONE:
@@ -8585,16 +8715,24 @@ static const struct attribute_group fan_attr_group = {
 	  .ec = TPID(__id1, __id2),		\
 	  .quirks = __quirks }
 
+#define TPACPI_FAN_QB(__id1, __id2, __quirks)	\
+	{ .vendor = PCI_VENDOR_ID_LENOVO,	\
+	  .bios = TPID(__id1, __id2),		\
+	  .ec = TPACPI_MATCH_ANY,		\
+	  .quirks = __quirks }
+
 static const struct tpacpi_quirk fan_quirk_table[] __initconst = {
 	TPACPI_FAN_QI('1', 'Y', TPACPI_FAN_Q1),
 	TPACPI_FAN_QI('7', '8', TPACPI_FAN_Q1),
 	TPACPI_FAN_QI('7', '6', TPACPI_FAN_Q1),
 	TPACPI_FAN_QI('7', '0', TPACPI_FAN_Q1),
 	TPACPI_FAN_QL('7', 'M', TPACPI_FAN_2FAN),
+	TPACPI_FAN_QB('N', '1', TPACPI_FAN_2FAN),
 };
 
 #undef TPACPI_FAN_QL
 #undef TPACPI_FAN_QI
+#undef TPACPI_FAN_QB
 
 static int __init fan_init(struct ibm_init_struct *iibm)
 {
@@ -8696,7 +8834,7 @@ static int __init fan_init(struct ibm_init_struct *iibm)
 			fan_attributes[ARRAY_SIZE(fan_attributes)-2] =
 					&dev_attr_fan2_input.attr;
 		}
-		rc = sysfs_create_group(&tpacpi_sensors_pdev->dev.kobj,
+		rc = sysfs_create_group(&tpacpi_hwmon->kobj,
 					 &fan_attr_group);
 		if (rc < 0)
 			return rc;
@@ -8704,7 +8842,7 @@ static int __init fan_init(struct ibm_init_struct *iibm)
 		rc = driver_create_file(&tpacpi_hwmon_pdriver.driver,
 					&driver_attr_fan_watchdog);
 		if (rc < 0) {
-			sysfs_remove_group(&tpacpi_sensors_pdev->dev.kobj,
+			sysfs_remove_group(&tpacpi_hwmon->kobj,
 					&fan_attr_group);
 			return rc;
 		}
@@ -8719,7 +8857,7 @@ static void fan_exit(void)
 		    "cancelling any pending fan watchdog tasks\n");
 
 	/* FIXME: can we really do this unconditionally? */
-	sysfs_remove_group(&tpacpi_sensors_pdev->dev.kobj, &fan_attr_group);
+	sysfs_remove_group(&tpacpi_hwmon->kobj, &fan_attr_group);
 	driver_remove_file(&tpacpi_hwmon_pdriver.driver,
 			   &driver_attr_fan_watchdog);
 
@@ -9095,6 +9233,385 @@ static struct ibm_struct mute_led_driver_data = {
 	.resume = mute_led_resume,
 };
 
+/*
+ * Battery Wear Control Driver
+ * Contact: Ognjen Galic <smclt30p@gmail.com>
+ */
+
+/* Metadata */
+
+#define GET_START	"BCTG"
+#define SET_START	"BCCS"
+#define GET_STOP	"BCSG"
+#define SET_STOP	"BCSS"
+
+#define START_ATTR "charge_start_threshold"
+#define STOP_ATTR  "charge_stop_threshold"
+
+enum {
+	BAT_ANY = 0,
+	BAT_PRIMARY = 1,
+	BAT_SECONDARY = 2
+};
+
+enum {
+	/* Error condition bit */
+	METHOD_ERR = BIT(31),
+};
+
+enum {
+	/* This is used in the get/set helpers */
+	THRESHOLD_START,
+	THRESHOLD_STOP,
+};
+
+struct tpacpi_battery_data {
+	int charge_start;
+	int start_support;
+	int charge_stop;
+	int stop_support;
+};
+
+struct tpacpi_battery_driver_data {
+	struct tpacpi_battery_data batteries[3];
+	int individual_addressing;
+};
+
+static struct tpacpi_battery_driver_data battery_info;
+
+/* ACPI helpers/functions/probes */
+
+/**
+ * This evaluates a ACPI method call specific to the battery
+ * ACPI extension. The specifics are that an error is marked
+ * in the 32rd bit of the response, so we just check that here.
+ */
+static acpi_status tpacpi_battery_acpi_eval(char *method, int *ret, int param)
+{
+	int response;
+
+	if (!acpi_evalf(hkey_handle, &response, method, "dd", param)) {
+		acpi_handle_err(hkey_handle, "%s: evaluate failed", method);
+		return AE_ERROR;
+	}
+	if (response & METHOD_ERR) {
+		acpi_handle_err(hkey_handle,
+				"%s evaluated but flagged as error", method);
+		return AE_ERROR;
+	}
+	*ret = response;
+	return AE_OK;
+}
+
+static int tpacpi_battery_get(int what, int battery, int *ret)
+{
+	switch (what) {
+	case THRESHOLD_START:
+		if ACPI_FAILURE(tpacpi_battery_acpi_eval(GET_START, ret, battery))
+			return -ENODEV;
+
+		/* The value is in the low 8 bits of the response */
+		*ret = *ret & 0xFF;
+		return 0;
+	case THRESHOLD_STOP:
+		if ACPI_FAILURE(tpacpi_battery_acpi_eval(GET_STOP, ret, battery))
+			return -ENODEV;
+		/* Value is in lower 8 bits */
+		*ret = *ret & 0xFF;
+		/*
+		 * On the stop value, if we return 0 that
+		 * does not make any sense. 0 means Default, which
+		 * means that charging stops at 100%, so we return
+		 * that.
+		 */
+		if (*ret == 0)
+			*ret = 100;
+		return 0;
+	default:
+		pr_crit("wrong parameter: %d", what);
+		return -EINVAL;
+	}
+}
+
+static int tpacpi_battery_set(int what, int battery, int value)
+{
+	int param, ret;
+	/* The first 8 bits are the value of the threshold */
+	param = value;
+	/* The battery ID is in bits 8-9, 2 bits */
+	param |= battery << 8;
+
+	switch (what) {
+	case THRESHOLD_START:
+		if ACPI_FAILURE(tpacpi_battery_acpi_eval(SET_START, &ret, param)) {
+			pr_err("failed to set charge threshold on battery %d",
+					battery);
+			return -ENODEV;
+		}
+		return 0;
+	case THRESHOLD_STOP:
+		if ACPI_FAILURE(tpacpi_battery_acpi_eval(SET_STOP, &ret, param)) {
+			pr_err("failed to set stop threshold: %d", battery);
+			return -ENODEV;
+		}
+		return 0;
+	default:
+		pr_crit("wrong parameter: %d", what);
+		return -EINVAL;
+	}
+}
+
+static int tpacpi_battery_probe(int battery)
+{
+	int ret = 0;
+
+	memset(&battery_info, 0, sizeof(struct tpacpi_battery_driver_data));
+	/*
+	 * 1) Get the current start threshold
+	 * 2) Check for support
+	 * 3) Get the current stop threshold
+	 * 4) Check for support
+	 */
+	if (acpi_has_method(hkey_handle, GET_START)) {
+		if ACPI_FAILURE(tpacpi_battery_acpi_eval(GET_START, &ret, battery)) {
+			pr_err("Error probing battery %d\n", battery);
+			return -ENODEV;
+		}
+		/* Individual addressing is in bit 9 */
+		if (ret & BIT(9))
+			battery_info.individual_addressing = true;
+		/* Support is marked in bit 8 */
+		if (ret & BIT(8))
+			battery_info.batteries[battery].start_support = 1;
+		else
+			return -ENODEV;
+		if (tpacpi_battery_get(THRESHOLD_START, battery,
+			&battery_info.batteries[battery].charge_start)) {
+			pr_err("Error probing battery %d\n", battery);
+			return -ENODEV;
+		}
+	}
+	if (acpi_has_method(hkey_handle, GET_STOP)) {
+		if ACPI_FAILURE(tpacpi_battery_acpi_eval(GET_STOP, &ret, battery)) {
+			pr_err("Error probing battery stop; %d\n", battery);
+			return -ENODEV;
+		}
+		/* Support is marked in bit 8 */
+		if (ret & BIT(8))
+			battery_info.batteries[battery].stop_support = 1;
+		else
+			return -ENODEV;
+		if (tpacpi_battery_get(THRESHOLD_STOP, battery,
+			&battery_info.batteries[battery].charge_stop)) {
+			pr_err("Error probing battery stop: %d\n", battery);
+			return -ENODEV;
+		}
+	}
+	pr_info("battery %d registered (start %d, stop %d)",
+			battery,
+			battery_info.batteries[battery].charge_start,
+			battery_info.batteries[battery].charge_stop);
+
+	return 0;
+}
+
+/* General helper functions */
+
+static int tpacpi_battery_get_id(const char *battery_name)
+{
+
+	if (strcmp(battery_name, "BAT0") == 0)
+		return BAT_PRIMARY;
+	if (strcmp(battery_name, "BAT1") == 0)
+		return BAT_SECONDARY;
+	/*
+	 * If for some reason the battery is not BAT0 nor is it
+	 * BAT1, we will assume it's the default, first battery,
+	 * AKA primary.
+	 */
+	pr_warn("unknown battery %s, assuming primary", battery_name);
+	return BAT_PRIMARY;
+}
+
+/* sysfs interface */
+
+static ssize_t tpacpi_battery_store(int what,
+				    struct device *dev,
+				    const char *buf, size_t count)
+{
+	struct power_supply *supply = to_power_supply(dev);
+	unsigned long value;
+	int battery, rval;
+	/*
+	 * Some systems have support for more than
+	 * one battery. If that is the case,
+	 * tpacpi_battery_probe marked that addressing
+	 * them individually is supported, so we do that
+	 * based on the device struct.
+	 *
+	 * On systems that are not supported, we assume
+	 * the primary as most of the ACPI calls fail
+	 * with "Any Battery" as the parameter.
+	 */
+	if (battery_info.individual_addressing)
+		/* BAT_PRIMARY or BAT_SECONDARY */
+		battery = tpacpi_battery_get_id(supply->desc->name);
+	else
+		battery = BAT_PRIMARY;
+
+	rval = kstrtoul(buf, 10, &value);
+	if (rval)
+		return rval;
+
+	switch (what) {
+	case THRESHOLD_START:
+		if (!battery_info.batteries[battery].start_support)
+			return -ENODEV;
+		/* valid values are [0, 99] */
+		if (value < 0 || value > 99)
+			return -EINVAL;
+		if (value > battery_info.batteries[battery].charge_stop)
+			return -EINVAL;
+		if (tpacpi_battery_set(THRESHOLD_START, battery, value))
+			return -ENODEV;
+		battery_info.batteries[battery].charge_start = value;
+		return count;
+
+	case THRESHOLD_STOP:
+		if (!battery_info.batteries[battery].stop_support)
+			return -ENODEV;
+		/* valid values are [1, 100] */
+		if (value < 1 || value > 100)
+			return -EINVAL;
+		if (value < battery_info.batteries[battery].charge_start)
+			return -EINVAL;
+		battery_info.batteries[battery].charge_stop = value;
+		/*
+		 * When 100 is passed to stop, we need to flip
+		 * it to 0 as that the EC understands that as
+		 * "Default", which will charge to 100%
+		 */
+		if (value == 100)
+			value = 0;
+		if (tpacpi_battery_set(THRESHOLD_STOP, battery, value))
+			return -EINVAL;
+		return count;
+	default:
+		pr_crit("Wrong parameter: %d", what);
+		return -EINVAL;
+	}
+	return count;
+}
+
+static ssize_t tpacpi_battery_show(int what,
+				   struct device *dev,
+				   char *buf)
+{
+	struct power_supply *supply = to_power_supply(dev);
+	int ret, battery;
+	/*
+	 * Some systems have support for more than
+	 * one battery. If that is the case,
+	 * tpacpi_battery_probe marked that addressing
+	 * them individually is supported, so we;
+	 * based on the device struct.
+	 *
+	 * On systems that are not supported, we assume
+	 * the primary as most of the ACPI calls fail
+	 * with "Any Battery" as the parameter.
+	 */
+	if (battery_info.individual_addressing)
+		/* BAT_PRIMARY or BAT_SECONDARY */
+		battery = tpacpi_battery_get_id(supply->desc->name);
+	else
+		battery = BAT_PRIMARY;
+	if (tpacpi_battery_get(what, battery, &ret))
+		return -ENODEV;
+	return sprintf(buf, "%d\n", ret);
+}
+
+static ssize_t charge_start_threshold_show(struct device *device,
+				struct device_attribute *attr,
+				char *buf)
+{
+	return tpacpi_battery_show(THRESHOLD_START, device, buf);
+}
+
+static ssize_t charge_stop_threshold_show(struct device *device,
+				struct device_attribute *attr,
+				char *buf)
+{
+	return tpacpi_battery_show(THRESHOLD_STOP, device, buf);
+}
+
+static ssize_t charge_start_threshold_store(struct device *dev,
+				struct device_attribute *attr,
+				const char *buf, size_t count)
+{
+	return tpacpi_battery_store(THRESHOLD_START, dev, buf, count);
+}
+
+static ssize_t charge_stop_threshold_store(struct device *dev,
+				struct device_attribute *attr,
+				const char *buf, size_t count)
+{
+	return tpacpi_battery_store(THRESHOLD_STOP, dev, buf, count);
+}
+
+static DEVICE_ATTR_RW(charge_start_threshold);
+static DEVICE_ATTR_RW(charge_stop_threshold);
+
+static struct attribute *tpacpi_battery_attrs[] = {
+	&dev_attr_charge_start_threshold.attr,
+	&dev_attr_charge_stop_threshold.attr,
+	NULL,
+};
+
+ATTRIBUTE_GROUPS(tpacpi_battery);
+
+/* ACPI battery hooking */
+
+static int tpacpi_battery_add(struct power_supply *battery)
+{
+	int batteryid = tpacpi_battery_get_id(battery->desc->name);
+
+	if (tpacpi_battery_probe(batteryid))
+		return -ENODEV;
+	if (device_add_groups(&battery->dev, tpacpi_battery_groups))
+		return -ENODEV;
+	return 0;
+}
+
+static int tpacpi_battery_remove(struct power_supply *battery)
+{
+	device_remove_groups(&battery->dev, tpacpi_battery_groups);
+	return 0;
+}
+
+static struct acpi_battery_hook battery_hook = {
+	.add_battery = tpacpi_battery_add,
+	.remove_battery = tpacpi_battery_remove,
+	.name = "ThinkPad Battery Extension",
+};
+
+/* Subdriver init/exit */
+
+static int __init tpacpi_battery_init(struct ibm_init_struct *ibm)
+{
+	battery_hook_register(&battery_hook);
+	return 0;
+}
+
+static void tpacpi_battery_exit(void)
+{
+	battery_hook_unregister(&battery_hook);
+}
+
+static struct ibm_struct battery_driver_data = {
+	.name = "battery",
+	.exit = tpacpi_battery_exit,
+};
+
 /****************************************************************************
  ****************************************************************************
  *
@@ -9148,16 +9665,6 @@ static void hotkey_driver_event(const unsigned int scancode)
 {
 	tpacpi_driver_event(TP_HKEY_EV_HOTKEY_BASE + scancode);
 }
-
-/* sysfs name ---------------------------------------------------------- */
-static ssize_t thinkpad_acpi_pdev_name_show(struct device *dev,
-			   struct device_attribute *attr,
-			   char *buf)
-{
-	return snprintf(buf, PAGE_SIZE, "%s\n", TPACPI_NAME);
-}
-
-static DEVICE_ATTR(name, S_IRUGO, thinkpad_acpi_pdev_name_show, NULL);
 
 /* --------------------------------------------------------------------- */
 
@@ -9551,9 +10058,13 @@ static struct ibm_init_struct ibms_init[] __initdata = {
 		.init = mute_led_init,
 		.data = &mute_led_driver_data,
 	},
+	{
+		.init = tpacpi_battery_init,
+		.data = &battery_driver_data,
+	},
 };
 
-static int __init set_ibm_param(const char *val, struct kernel_param *kp)
+static int __init set_ibm_param(const char *val, const struct kernel_param *kp)
 {
 	unsigned int i;
 	struct ibm_struct *ibm;
@@ -9696,8 +10207,6 @@ static void thinkpad_acpi_module_exit(void)
 	if (tpacpi_hwmon)
 		hwmon_device_unregister(tpacpi_hwmon);
 
-	if (tp_features.sensors_pdev_attrs_registered)
-		device_remove_file(&tpacpi_sensors_pdev->dev, &dev_attr_name);
 	if (tpacpi_sensors_pdev)
 		platform_device_unregister(tpacpi_sensors_pdev);
 	if (tpacpi_pdev)
@@ -9818,14 +10327,10 @@ static int __init thinkpad_acpi_module_init(void)
 		thinkpad_acpi_module_exit();
 		return ret;
 	}
-	ret = device_create_file(&tpacpi_sensors_pdev->dev, &dev_attr_name);
-	if (ret) {
-		pr_err("unable to create sysfs hwmon device attributes\n");
-		thinkpad_acpi_module_exit();
-		return ret;
-	}
 	tp_features.sensors_pdev_attrs_registered = 1;
-	tpacpi_hwmon = hwmon_device_register(&tpacpi_sensors_pdev->dev);
+	tpacpi_hwmon = hwmon_device_register_with_groups(
+		&tpacpi_sensors_pdev->dev, TPACPI_NAME, NULL, NULL);
+
 	if (IS_ERR(tpacpi_hwmon)) {
 		ret = PTR_ERR(tpacpi_hwmon);
 		tpacpi_hwmon = NULL;

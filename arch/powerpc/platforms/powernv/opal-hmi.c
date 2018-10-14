@@ -1,5 +1,5 @@
 /*
- * OPAL hypervisor Maintenance interrupt handling support in PowreNV.
+ * OPAL hypervisor Maintenance interrupt handling support in PowerNV.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -29,6 +29,8 @@
 #include <asm/opal.h>
 #include <asm/cputable.h>
 #include <asm/machdep.h>
+
+#include "powernv.h"
 
 static int opal_hmi_handler_nb_init;
 struct OpalHmiEvtNode {
@@ -175,7 +177,7 @@ static void print_hmi_event_info(struct OpalHMIEvent *hmi_evt)
 		"Processor recovery occurred for masked error",
 		"Timer facility experienced an error",
 		"TFMR SPR is corrupted",
-		"UPS (Uniterrupted Power System) Overflow indication",
+		"UPS (Uninterrupted Power System) Overflow indication",
 		"An XSCOM operation failure",
 		"An XSCOM operation completed",
 		"SCOM has set a reserved FIR bit to cause recovery",
@@ -267,8 +269,6 @@ static void hmi_event_handler(struct work_struct *work)
 	spin_unlock_irqrestore(&opal_hmi_evt_lock, flags);
 
 	if (unrecoverable) {
-		int ret;
-
 		/* Pull all HMI events from OPAL before we panic. */
 		while (opal_get_msg(__pa(&msg), sizeof(msg)) == OPAL_SUCCESS) {
 			u32 type;
@@ -284,23 +284,7 @@ static void hmi_event_handler(struct work_struct *work)
 			print_hmi_event_info(hmi_evt);
 		}
 
-		/*
-		 * Unrecoverable HMI exception. We need to inform BMC/OCC
-		 * about this error so that it can collect relevant data
-		 * for error analysis before rebooting.
-		 */
-		ret = opal_cec_reboot2(OPAL_REBOOT_PLATFORM_ERROR,
-			"Unrecoverable HMI exception");
-		if (ret == OPAL_UNSUPPORTED) {
-			pr_emerg("Reboot type %d not supported\n",
-						OPAL_REBOOT_PLATFORM_ERROR);
-		}
-
-		/*
-		 * Fall through and panic if opal_cec_reboot2() returns
-		 * OPAL_UNSUPPORTED.
-		 */
-		panic("Unrecoverable HMI exception");
+		pnv_platform_error_reboot(NULL, "Unrecoverable HMI exception");
 	}
 }
 
@@ -330,7 +314,7 @@ static int opal_handle_hmi_event(struct notifier_block *nb,
 		pr_err("HMI: out of memory, Opal message event not handled\n");
 		return -ENOMEM;
 	}
-	memcpy(&msg_node->hmi_evt, hmi_evt, sizeof(struct OpalHMIEvent));
+	memcpy(&msg_node->hmi_evt, hmi_evt, sizeof(*hmi_evt));
 
 	spin_lock_irqsave(&opal_hmi_evt_lock, flags);
 	list_add(&msg_node->list, &opal_hmi_evt_list);

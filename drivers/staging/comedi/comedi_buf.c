@@ -1,19 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * comedi_buf.c
  *
  * COMEDI - Linux Control and Measurement Device Interface
  * Copyright (C) 1997-2000 David A. Schleef <ds@schleef.org>
  * Copyright (C) 2002 Frank Mori Hess <fmhess@users.sourceforge.net>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
  */
 
 #include <linux/vmalloc.h>
@@ -165,7 +156,7 @@ int comedi_buf_map_put(struct comedi_buf_map *bm)
 int comedi_buf_map_access(struct comedi_buf_map *bm, unsigned long offset,
 			  void *buf, int len, int write)
 {
-	unsigned int pgoff = offset & ~PAGE_MASK;
+	unsigned int pgoff = offset_in_page(offset);
 	unsigned long pg = offset >> PAGE_SHIFT;
 	int done = 0;
 

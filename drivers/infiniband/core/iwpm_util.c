@@ -54,18 +54,18 @@ static struct iwpm_admin_data iwpm_admin;
 int iwpm_init(u8 nl_client)
 {
 	int ret = 0;
-	if (iwpm_valid_client(nl_client))
-		return -EINVAL;
 	mutex_lock(&iwpm_admin_lock);
 	if (atomic_read(&iwpm_admin.refcount) == 0) {
-		iwpm_hash_bucket = kzalloc(IWPM_MAPINFO_HASH_SIZE *
-					sizeof(struct hlist_head), GFP_KERNEL);
+		iwpm_hash_bucket = kcalloc(IWPM_MAPINFO_HASH_SIZE,
+					   sizeof(struct hlist_head),
+					   GFP_KERNEL);
 		if (!iwpm_hash_bucket) {
 			ret = -ENOMEM;
 			goto init_exit;
 		}
-		iwpm_reminfo_bucket = kzalloc(IWPM_REMINFO_HASH_SIZE *
-					sizeof(struct hlist_head), GFP_KERNEL);
+		iwpm_reminfo_bucket = kcalloc(IWPM_REMINFO_HASH_SIZE,
+					      sizeof(struct hlist_head),
+					      GFP_KERNEL);
 		if (!iwpm_reminfo_bucket) {
 			kfree(iwpm_hash_bucket);
 			ret = -ENOMEM;
@@ -83,7 +83,6 @@ init_exit:
 	}
 	return ret;
 }
-EXPORT_SYMBOL(iwpm_init);
 
 static void free_hash_bucket(void);
 static void free_reminfo_bucket(void);
@@ -109,7 +108,6 @@ int iwpm_exit(u8 nl_client)
 	iwpm_set_registration(nl_client, IWPM_REG_UNDEF);
 	return 0;
 }
-EXPORT_SYMBOL(iwpm_exit);
 
 static struct hlist_head *get_mapinfo_hash_bucket(struct sockaddr_storage *,
 					       struct sockaddr_storage *);
@@ -118,7 +116,7 @@ int iwpm_create_mapinfo(struct sockaddr_storage *local_sockaddr,
 			struct sockaddr_storage *mapped_sockaddr,
 			u8 nl_client)
 {
-	struct hlist_head *hash_bucket_head;
+	struct hlist_head *hash_bucket_head = NULL;
 	struct iwpm_mapping_info *map_info;
 	unsigned long flags;
 	int ret = -EINVAL;
@@ -146,9 +144,11 @@ int iwpm_create_mapinfo(struct sockaddr_storage *local_sockaddr,
 		}
 	}
 	spin_unlock_irqrestore(&iwpm_mapinfo_lock, flags);
+
+	if (!hash_bucket_head)
+		kfree(map_info);
 	return ret;
 }
-EXPORT_SYMBOL(iwpm_create_mapinfo);
 
 int iwpm_remove_mapinfo(struct sockaddr_storage *local_sockaddr,
 			struct sockaddr_storage *mapped_local_addr)
@@ -184,7 +184,6 @@ remove_mapinfo_exit:
 	spin_unlock_irqrestore(&iwpm_mapinfo_lock, flags);
 	return ret;
 }
-EXPORT_SYMBOL(iwpm_remove_mapinfo);
 
 static void free_hash_bucket(void)
 {
@@ -297,7 +296,6 @@ get_remote_info_exit:
 	spin_unlock_irqrestore(&iwpm_reminfo_lock, flags);
 	return ret;
 }
-EXPORT_SYMBOL(iwpm_get_remote_info);
 
 struct iwpm_nlmsg_request *iwpm_get_nlmsg_request(__u32 nlmsg_seq,
 					u8 nl_client, gfp_t gfp)
@@ -383,15 +381,11 @@ int iwpm_get_nlmsg_seq(void)
 
 int iwpm_valid_client(u8 nl_client)
 {
-	if (nl_client >= RDMA_NL_NUM_CLIENTS)
-		return 0;
 	return iwpm_admin.client_list[nl_client];
 }
 
 void iwpm_set_valid(u8 nl_client, int valid)
 {
-	if (nl_client >= RDMA_NL_NUM_CLIENTS)
-		return;
 	iwpm_admin.client_list[nl_client] = valid;
 }
 
@@ -450,10 +444,9 @@ struct sk_buff *iwpm_create_nlmsg(u32 nl_op, struct nlmsghdr **nlh,
 	struct sk_buff *skb = NULL;
 
 	skb = dev_alloc_skb(IWPM_MSG_SIZE);
-	if (!skb) {
-		pr_err("%s Unable to allocate skb\n", __func__);
+	if (!skb)
 		goto create_nlmsg_exit;
-	}
+
 	if (!(ibnl_put_msg(skb, nlh, 0, 0, nl_client, nl_op,
 			   NLM_F_REQUEST))) {
 		pr_warn("%s: Unable to put the nlmsg header\n", __func__);
@@ -608,7 +601,10 @@ static int send_mapinfo_num(u32 mapping_num, u8 nl_client, int iwpm_pid)
 				&mapping_num, IWPM_NLA_MAPINFO_SEND_NUM);
 	if (ret)
 		goto mapinfo_num_error;
-	ret = ibnl_unicast(skb, nlh, iwpm_pid);
+
+	nlmsg_end(skb, nlh);
+
+	ret = rdma_nl_unicast(skb, iwpm_pid);
 	if (ret) {
 		skb = NULL;
 		err_str = "Unable to send a nlmsg";
@@ -637,7 +633,7 @@ static int send_nlmsg_done(struct sk_buff *skb, u8 nl_client, int iwpm_pid)
 		return -ENOMEM;
 	}
 	nlh->nlmsg_type = NLMSG_DONE;
-	ret = ibnl_unicast(skb, (struct nlmsghdr *)skb->data, iwpm_pid);
+	ret = rdma_nl_unicast(skb, iwpm_pid);
 	if (ret)
 		pr_warn("%s Unable to send a nlmsg\n", __func__);
 	return ret;
@@ -662,6 +658,7 @@ int iwpm_send_mapinfo(u8 nl_client, int iwpm_pid)
 	}
 	skb_num++;
 	spin_lock_irqsave(&iwpm_mapinfo_lock, flags);
+	ret = -EINVAL;
 	for (i = 0; i < IWPM_MAPINFO_HASH_SIZE; i++) {
 		hlist_for_each_entry(map_info, &iwpm_hash_bucket[i],
 				     hlist_node) {
@@ -688,6 +685,8 @@ int iwpm_send_mapinfo(u8 nl_client, int iwpm_pid)
 					IWPM_NLA_MAPINFO_MAPPED_ADDR);
 			if (ret)
 				goto send_mapping_info_unlock;
+
+			nlmsg_end(skb, nlh);
 
 			iwpm_print_sockaddr(&map_info->local_sockaddr,
 				"send_mapping_info: Local sockaddr:");

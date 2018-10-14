@@ -1,25 +1,10 @@
-/* linux/arch/arm/plat-s3c24xx/cpu.c
- *
- * Copyright (c) 2004-2005 Simtec Electronics
- *	http://www.simtec.co.uk/products/SWLINUX/
- *	Ben Dooks <ben@simtec.co.uk>
- *
- * Common code for S3C24XX machines
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
-*/
+// SPDX-License-Identifier: GPL-2.0+
+//
+// Copyright (c) 2004-2005 Simtec Electronics
+//	http://www.simtec.co.uk/products/SWLINUX/
+//	Ben Dooks <ben@simtec.co.uk>
+//
+// Common code for S3C24XX machines
 
 #include <linux/dma-mapping.h>
 #include <linux/init.h>
@@ -173,7 +158,7 @@ static unsigned long s3c24xx_read_idcode_v5(void)
 		return gs;
 #endif
 
-#if defined(CONFIG_CPU_S3C2412) || defined(CONFIG_CPU_S3C2413)
+#if defined(CONFIG_CPU_S3C2412)
 	return __raw_readl(S3C2412_GSTATUS1);
 #else
 	return 1UL;	/* don't look like an 2400 */

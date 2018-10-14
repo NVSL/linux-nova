@@ -17,6 +17,7 @@
 #include <linux/acpi.h>
 #include <linux/of.h>
 #include <linux/property.h>
+#include <linux/of_address.h>
 #include <linux/of_irq.h>
 #include <linux/of_platform.h>
 #include <linux/module.h>
@@ -28,7 +29,7 @@
 
 #include "hidma_mgmt.h"
 
-#define HIDMA_QOS_N_OFFSET		0x300
+#define HIDMA_QOS_N_OFFSET		0x700
 #define HIDMA_CFG_OFFSET		0x400
 #define HIDMA_MAX_BUS_REQ_LEN_OFFSET	0x41C
 #define HIDMA_MAX_XACTIONS_OFFSET	0x420
@@ -227,7 +228,8 @@ static int hidma_mgmt_probe(struct platform_device *pdev)
 		goto out;
 	}
 
-	if (max_write_request) {
+	if (max_write_request &&
+			(max_write_request != mgmtdev->max_write_request)) {
 		dev_info(&pdev->dev, "overriding max-write-burst-bytes: %d\n",
 			max_write_request);
 		mgmtdev->max_write_request = max_write_request;
@@ -240,7 +242,8 @@ static int hidma_mgmt_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "max-read-burst-bytes missing\n");
 		goto out;
 	}
-	if (max_read_request) {
+	if (max_read_request &&
+			(max_read_request != mgmtdev->max_read_request)) {
 		dev_info(&pdev->dev, "overriding max-read-burst-bytes: %d\n",
 			max_read_request);
 		mgmtdev->max_read_request = max_read_request;
@@ -253,7 +256,8 @@ static int hidma_mgmt_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "max-write-transactions missing\n");
 		goto out;
 	}
-	if (max_wr_xactions) {
+	if (max_wr_xactions &&
+			(max_wr_xactions != mgmtdev->max_wr_xactions)) {
 		dev_info(&pdev->dev, "overriding max-write-transactions: %d\n",
 			max_wr_xactions);
 		mgmtdev->max_wr_xactions = max_wr_xactions;
@@ -266,7 +270,8 @@ static int hidma_mgmt_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "max-read-transactions missing\n");
 		goto out;
 	}
-	if (max_rd_xactions) {
+	if (max_rd_xactions &&
+			(max_rd_xactions != mgmtdev->max_rd_xactions)) {
 		dev_info(&pdev->dev, "overriding max-read-transactions: %d\n",
 			max_rd_xactions);
 		mgmtdev->max_rd_xactions = max_rd_xactions;
@@ -352,59 +357,29 @@ static int __init hidma_mgmt_of_populate_channels(struct device_node *np)
 {
 	struct platform_device *pdev_parent = of_find_device_by_node(np);
 	struct platform_device_info pdevinfo;
-	struct of_phandle_args out_irq;
 	struct device_node *child;
 	struct resource *res;
-	const __be32 *cell;
-	int ret = 0, size, i, num;
-	u64 addr, addr_size;
+	int ret = 0;
+
+	/* allocate a resource array */
+	res = kcalloc(3, sizeof(*res), GFP_KERNEL);
+	if (!res)
+		return -ENOMEM;
 
 	for_each_available_child_of_node(np, child) {
-		struct resource *res_iter;
 		struct platform_device *new_pdev;
 
-		cell = of_get_property(child, "reg", &size);
-		if (!cell) {
-			ret = -EINVAL;
-			goto out;
-		}
-
-		size /= sizeof(*cell);
-		num = size /
-			(of_n_addr_cells(child) + of_n_size_cells(child)) + 1;
-
-		/* allocate a resource array */
-		res = kcalloc(num, sizeof(*res), GFP_KERNEL);
-		if (!res) {
-			ret = -ENOMEM;
-			goto out;
-		}
-
-		/* read each reg value */
-		i = 0;
-		res_iter = res;
-		while (i < size) {
-			addr = of_read_number(&cell[i],
-					      of_n_addr_cells(child));
-			i += of_n_addr_cells(child);
-
-			addr_size = of_read_number(&cell[i],
-						   of_n_size_cells(child));
-			i += of_n_size_cells(child);
-
-			res_iter->start = addr;
-			res_iter->end = res_iter->start + addr_size - 1;
-			res_iter->flags = IORESOURCE_MEM;
-			res_iter++;
-		}
-
-		ret = of_irq_parse_one(child, 0, &out_irq);
-		if (ret)
+		ret = of_address_to_resource(child, 0, &res[0]);
+		if (!ret)
 			goto out;
 
-		res_iter->start = irq_create_of_mapping(&out_irq);
-		res_iter->name = "hidma event irq";
-		res_iter->flags = IORESOURCE_IRQ;
+		ret = of_address_to_resource(child, 1, &res[1]);
+		if (!ret)
+			goto out;
+
+		ret = of_irq_to_resource(child, 0, &res[2]);
+		if (ret <= 0)
+			goto out;
 
 		memset(&pdevinfo, 0, sizeof(pdevinfo));
 		pdevinfo.fwnode = &child->fwnode;
@@ -412,7 +387,7 @@ static int __init hidma_mgmt_of_populate_channels(struct device_node *np)
 		pdevinfo.name = child->name;
 		pdevinfo.id = object_counter++;
 		pdevinfo.res = res;
-		pdevinfo.num_res = num;
+		pdevinfo.num_res = 3;
 		pdevinfo.data = NULL;
 		pdevinfo.size_data = 0;
 		pdevinfo.dma_mask = DMA_BIT_MASK(64);
@@ -423,15 +398,13 @@ static int __init hidma_mgmt_of_populate_channels(struct device_node *np)
 		}
 		of_node_get(child);
 		new_pdev->dev.of_node = child;
-		of_dma_configure(&new_pdev->dev, child);
+		of_dma_configure(&new_pdev->dev, child, true);
 		/*
 		 * It is assumed that calling of_msi_configure is safe on
 		 * platforms with or without MSI support.
 		 */
 		of_msi_configure(&new_pdev->dev, child);
 		of_node_put(child);
-		kfree(res);
-		res = NULL;
 	}
 out:
 	kfree(res);

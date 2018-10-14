@@ -50,7 +50,7 @@ static inline void wprotect_enable(void)
 int nova_writeable(void *vaddr, unsigned long size, int rw)
 {
 	static unsigned long flags;
-	timing_t wprotect_time;
+	INIT_TIMING(wprotect_time);
 
 	NOVA_START_TIMING(wprotect_t, wprotect_time);
 	if (rw) {
@@ -107,17 +107,17 @@ static int nova_update_dax_mapping(struct super_block *sb,
 	unsigned long value, new_value;
 	int i;
 	int ret = 0;
-	timing_t update_time;
+	INIT_TIMING(update_time);
 
 	NOVA_START_TIMING(update_mapping_t, update_time);
 
 	start_blocknr = nova_get_blocknr(sb, entry->block, sih->i_blk_type);
-	spin_lock_irq(&mapping->tree_lock);
+	xa_lock_irq(&mapping->i_pages);
 	for (i = 0; i < num_pages; i++) {
 		curr_pgoff = start_pgoff + i;
 		blocknr = start_blocknr + i;
 
-		pentry = radix_tree_lookup_slot(&mapping->page_tree,
+		pentry = radix_tree_lookup_slot(&mapping->i_pages,
 						curr_pgoff);
 		if (pentry) {
 			value = (unsigned long)radix_tree_deref_slot(pentry);
@@ -128,12 +128,12 @@ static int nova_update_dax_mapping(struct super_block *sb,
 						value, new_value);
 			radix_tree_replace_slot(&sih->tree, pentry,
 						(void *)new_value);
-			radix_tree_tag_set(&mapping->page_tree, curr_pgoff,
+			radix_tree_tag_set(&mapping->i_pages, curr_pgoff,
 						PAGECACHE_TAG_DIRTY);
 		}
 	}
 
-	spin_unlock_irq(&mapping->tree_lock);
+	xa_unlock_irq(&mapping->i_pages);
 
 	NOVA_END_TIMING(update_mapping_t, update_time);
 	return ret;
@@ -150,7 +150,7 @@ static int nova_update_entry_pfn(struct super_block *sb,
 	unsigned long pfn;
 	pgprot_t new_prot;
 	int ret;
-	timing_t update_time;
+	INIT_TIMING(update_time);
 
 	NOVA_START_TIMING(update_pfn_t, update_time);
 
@@ -211,7 +211,7 @@ static int nova_dax_cow_mmap_handler(struct super_block *sb,
 	u64 curr_p = begin_tail;
 	size_t entry_size = sizeof(struct nova_file_write_entry);
 	int ret = 0;
-	timing_t update_time;
+	INIT_TIMING(update_time);
 
 	NOVA_START_TIMING(mmap_handler_t, update_time);
 	entryc = (metadata_csum == 0) ? entry : &entry_copy;
@@ -308,12 +308,12 @@ int nova_mmap_to_new_blocks(struct vm_area_struct *vma,
 	void *from_kmem;
 	void *to_kmem;
 	size_t bytes;
-	timing_t memcpy_time;
+	INIT_TIMING(memcpy_time);
 	u64 begin_tail = 0;
 	u64 epoch_id;
 	u64 entry_size;
 	u32 time;
-	timing_t mmap_cow_time;
+	INIT_TIMING(mmap_cow_time);
 	int ret = 0;
 
 	NOVA_START_TIMING(mmap_cow_t, mmap_cow_time);
@@ -552,7 +552,7 @@ static int nova_set_sih_vmas_readonly(struct nova_inode_info_header *sih)
 {
 	struct vma_item *item;
 	struct rb_node *temp;
-	timing_t set_read_time;
+	INIT_TIMING(set_read_time);
 
 	NOVA_START_TIMING(set_vma_read_t, set_read_time);
 

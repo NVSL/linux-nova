@@ -24,6 +24,7 @@
 #include <linux/sched.h>
 #include <linux/moduleparam.h>
 #include <linux/device.h>
+#include <linux/printk.h>
 #include "kfd_priv.h"
 
 #define KFD_DRIVER_AUTHOR	"AMD Inc. and others"
@@ -42,12 +43,25 @@ static const struct kgd2kfd_calls kgd2kfd = {
 	.interrupt	= kgd2kfd_interrupt,
 	.suspend	= kgd2kfd_suspend,
 	.resume		= kgd2kfd_resume,
+	.quiesce_mm	= kgd2kfd_quiesce_mm,
+	.resume_mm	= kgd2kfd_resume_mm,
+	.schedule_evict_and_restore_process =
+			  kgd2kfd_schedule_evict_and_restore_process,
 };
 
 int sched_policy = KFD_SCHED_POLICY_HWS;
 module_param(sched_policy, int, 0444);
 MODULE_PARM_DESC(sched_policy,
 	"Scheduling policy (0 = HWS (Default), 1 = HWS without over-subscription, 2 = Non-HWS (Used for debugging only)");
+
+int hws_max_conc_proc = 8;
+module_param(hws_max_conc_proc, int, 0444);
+MODULE_PARM_DESC(hws_max_conc_proc,
+	"Max # processes HWS can execute concurrently when sched_policy=0 (0 = no concurrency, #VMIDs for KFD = Maximum(default))");
+
+int cwsr_enable = 1;
+module_param(cwsr_enable, int, 0444);
+MODULE_PARM_DESC(cwsr_enable, "CWSR enable (0 = Off, 1 = On (Default))");
 
 int max_num_of_queues_per_device = KFD_MAX_NUM_OF_QUEUES_PER_DEVICE_DEFAULT;
 module_param(max_num_of_queues_per_device, int, 0444);
@@ -59,9 +73,25 @@ module_param(send_sigterm, int, 0444);
 MODULE_PARM_DESC(send_sigterm,
 	"Send sigterm to HSA process on unhandled exception (0 = disable, 1 = enable)");
 
+int debug_largebar;
+module_param(debug_largebar, int, 0444);
+MODULE_PARM_DESC(debug_largebar,
+	"Debug large-bar flag used to simulate large-bar capability on non-large bar machine (0 = disable, 1 = enable)");
+
+int ignore_crat;
+module_param(ignore_crat, int, 0444);
+MODULE_PARM_DESC(ignore_crat,
+	"Ignore CRAT table during KFD initialization (0 = use CRAT (default), 1 = ignore CRAT)");
+
+int vega10_noretry;
+module_param_named(noretry, vega10_noretry, int, 0644);
+MODULE_PARM_DESC(noretry,
+	"Set sh_mem_config.retry_disable on Vega10 (0 = retry enabled (default), 1 = retry disabled)");
+
 static int amdkfd_init_completed;
 
-int kgd2kfd_init(unsigned interface_version, const struct kgd2kfd_calls **g2f)
+int kgd2kfd_init(unsigned int interface_version,
+		const struct kgd2kfd_calls **g2f)
 {
 	if (!amdkfd_init_completed)
 		return -EPROBE_DEFER;
@@ -90,7 +120,7 @@ static int __init kfd_module_init(void)
 	/* Verify module parameters */
 	if ((sched_policy < KFD_SCHED_POLICY_HWS) ||
 		(sched_policy > KFD_SCHED_POLICY_NO_HWS)) {
-		pr_err("kfd: sched_policy has invalid value\n");
+		pr_err("sched_policy has invalid value\n");
 		return -1;
 	}
 
@@ -98,13 +128,9 @@ static int __init kfd_module_init(void)
 	if ((max_num_of_queues_per_device < 1) ||
 		(max_num_of_queues_per_device >
 			KFD_MAX_NUM_OF_QUEUES_PER_DEVICE)) {
-		pr_err("kfd: max_num_of_queues_per_device must be between 1 to KFD_MAX_NUM_OF_QUEUES_PER_DEVICE\n");
+		pr_err("max_num_of_queues_per_device must be between 1 to KFD_MAX_NUM_OF_QUEUES_PER_DEVICE\n");
 		return -1;
 	}
-
-	err = kfd_pasid_init();
-	if (err < 0)
-		goto err_pasid;
 
 	err = kfd_chardev_init();
 	if (err < 0)
@@ -114,7 +140,11 @@ static int __init kfd_module_init(void)
 	if (err < 0)
 		goto err_topology;
 
-	kfd_process_create_wq();
+	err = kfd_process_create_wq();
+	if (err < 0)
+		goto err_create_wq;
+
+	kfd_debugfs_init();
 
 	amdkfd_init_completed = 1;
 
@@ -122,11 +152,11 @@ static int __init kfd_module_init(void)
 
 	return 0;
 
+err_create_wq:
+	kfd_topology_shutdown();
 err_topology:
 	kfd_chardev_exit();
 err_ioctl:
-	kfd_pasid_exit();
-err_pasid:
 	return err;
 }
 
@@ -134,11 +164,11 @@ static void __exit kfd_module_exit(void)
 {
 	amdkfd_init_completed = 0;
 
+	kfd_debugfs_fini();
 	kfd_process_destroy_wq();
 	kfd_topology_shutdown();
 	kfd_chardev_exit();
-	kfd_pasid_exit();
-	dev_info(kfd_device, "Removed module\n");
+	pr_info("amdkfd: Removed module\n");
 }
 
 module_init(kfd_module_init);

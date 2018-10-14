@@ -66,8 +66,7 @@ static void qib_ud_loopback(struct rvt_qp *sqp, struct rvt_swqe *swqe)
 	qp = rvt_lookup_qpn(rdi, &ibp->rvp, swqe->ud_wr.remote_qpn);
 	if (!qp) {
 		ibp->rvp.n_pkt_drops++;
-		rcu_read_unlock();
-		return;
+		goto drop;
 	}
 
 	sqptype = sqp->ibqp.qp_type == IB_QPT_GSI ?
@@ -94,11 +93,11 @@ static void qib_ud_loopback(struct rvt_qp *sqp, struct rvt_swqe *swqe)
 		if (unlikely(!qib_pkey_ok(pkey1, pkey2))) {
 			lid = ppd->lid | (rdma_ah_get_path_bits(ah_attr) &
 					  ((1 << ppd->lmc) - 1));
-			qib_bad_pqkey(ibp, IB_NOTICE_TRAP_BAD_PKEY, pkey1,
-				      rdma_ah_get_sl(ah_attr),
-				      sqp->ibqp.qp_num, qp->ibqp.qp_num,
-				      cpu_to_be16(lid),
-				      cpu_to_be16(rdma_ah_get_dlid(ah_attr)));
+			qib_bad_pkey(ibp, pkey1,
+				     rdma_ah_get_sl(ah_attr),
+				     sqp->ibqp.qp_num, qp->ibqp.qp_num,
+				     cpu_to_be16(lid),
+				     cpu_to_be16(rdma_ah_get_dlid(ah_attr)));
 			goto drop;
 		}
 	}
@@ -113,18 +112,8 @@ static void qib_ud_loopback(struct rvt_qp *sqp, struct rvt_swqe *swqe)
 
 		qkey = (int)swqe->ud_wr.remote_qkey < 0 ?
 			sqp->qkey : swqe->ud_wr.remote_qkey;
-		if (unlikely(qkey != qp->qkey)) {
-			u16 lid;
-
-			lid = ppd->lid | (rdma_ah_get_path_bits(ah_attr) &
-					  ((1 << ppd->lmc) - 1));
-			qib_bad_pqkey(ibp, IB_NOTICE_TRAP_BAD_QKEY, qkey,
-				      rdma_ah_get_sl(ah_attr),
-				      sqp->ibqp.qp_num, qp->ibqp.qp_num,
-				      cpu_to_be16(lid),
-				      cpu_to_be16(rdma_ah_get_dlid(ah_attr)));
+		if (unlikely(qkey != qp->qkey))
 			goto drop;
-		}
 	}
 
 	/*
@@ -150,7 +139,7 @@ static void qib_ud_loopback(struct rvt_qp *sqp, struct rvt_swqe *swqe)
 	else {
 		int ret;
 
-		ret = qib_get_rwqe(qp, 0);
+		ret = rvt_get_rwqe(qp, false);
 		if (ret < 0) {
 			rvt_rc_error(qp, IB_WC_LOC_QP_OP_ERR);
 			goto bail_unlock;
@@ -263,8 +252,7 @@ int qib_make_ud_req(struct rvt_qp *qp, unsigned long *flags)
 		if (!(ib_rvt_state_ops[qp->state] & RVT_FLUSH_SEND))
 			goto bail;
 		/* We are in the error state, flush the work request. */
-		smp_read_barrier_depends(); /* see post_one_send */
-		if (qp->s_last == ACCESS_ONCE(qp->s_head))
+		if (qp->s_last == READ_ONCE(qp->s_head))
 			goto bail;
 		/* If DMAs are in progress, we can't flush immediately. */
 		if (atomic_read(&priv->s_dma_busy)) {
@@ -277,8 +265,7 @@ int qib_make_ud_req(struct rvt_qp *qp, unsigned long *flags)
 	}
 
 	/* see post_one_send() */
-	smp_read_barrier_depends();
-	if (qp->s_cur == ACCESS_ONCE(qp->s_head))
+	if (qp->s_cur == READ_ONCE(qp->s_head))
 		goto bail;
 
 	wqe = rvt_get_swqe_ptr(qp, qp->s_cur);
@@ -487,22 +474,18 @@ void qib_ud_rcv(struct qib_ibport *ibp, struct ib_header *hdr,
 			pkey1 = be32_to_cpu(ohdr->bth[0]);
 			pkey2 = qib_get_pkey(ibp, qp->s_pkey_index);
 			if (unlikely(!qib_pkey_ok(pkey1, pkey2))) {
-				qib_bad_pqkey(ibp, IB_NOTICE_TRAP_BAD_PKEY,
-					      pkey1,
-					      (be16_to_cpu(hdr->lrh[0]) >> 4) &
+				qib_bad_pkey(ibp,
+					     pkey1,
+					     (be16_to_cpu(hdr->lrh[0]) >> 4) &
 						0xF,
-					      src_qp, qp->ibqp.qp_num,
-					      hdr->lrh[3], hdr->lrh[1]);
+					     src_qp, qp->ibqp.qp_num,
+					     hdr->lrh[3], hdr->lrh[1]);
 				return;
 			}
 		}
-		if (unlikely(qkey != qp->qkey)) {
-			qib_bad_pqkey(ibp, IB_NOTICE_TRAP_BAD_QKEY, qkey,
-				      (be16_to_cpu(hdr->lrh[0]) >> 4) & 0xF,
-				      src_qp, qp->ibqp.qp_num,
-				      hdr->lrh[3], hdr->lrh[1]);
+		if (unlikely(qkey != qp->qkey))
 			return;
-		}
+
 		/* Drop invalid MAD packets (see 13.5.3.1). */
 		if (unlikely(qp->ibqp.qp_num == 1 &&
 			     (tlen != 256 ||
@@ -551,7 +534,7 @@ void qib_ud_rcv(struct qib_ibport *ibp, struct ib_header *hdr,
 	else {
 		int ret;
 
-		ret = qib_get_rwqe(qp, 0);
+		ret = rvt_get_rwqe(qp, false);
 		if (ret < 0) {
 			rvt_rc_error(qp, IB_WC_LOC_QP_OP_ERR);
 			return;
@@ -596,8 +579,7 @@ void qib_ud_rcv(struct qib_ibport *ibp, struct ib_header *hdr,
 	wc.port_num = qp->port_num;
 	/* Signal completion event if the solicited bit is set. */
 	rvt_cq_enter(ibcq_to_rvtcq(qp->ibqp.recv_cq), &wc,
-		     (ohdr->bth[0] &
-			cpu_to_be32(IB_BTH_SOLICITED)) != 0);
+		     ib_bth_is_solicited(ohdr));
 	return;
 
 drop:

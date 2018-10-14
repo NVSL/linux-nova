@@ -56,7 +56,7 @@ static void asoc_graph_card_shutdown(struct snd_pcm_substream *substream)
 	asoc_simple_card_clk_disable(dai_props);
 }
 
-static struct snd_soc_ops asoc_graph_card_ops = {
+static const struct snd_soc_ops asoc_graph_card_ops = {
 	.startup = asoc_graph_card_startup,
 	.shutdown = asoc_graph_card_shutdown,
 };
@@ -348,8 +348,8 @@ static int asoc_graph_card_probe(struct platform_device *pdev)
 	if (num == 0)
 		return -EINVAL;
 
-	dai_props = devm_kzalloc(dev, sizeof(*dai_props) * num, GFP_KERNEL);
-	dai_link  = devm_kzalloc(dev, sizeof(*dai_link)  * num, GFP_KERNEL);
+	dai_props = devm_kcalloc(dev, num, sizeof(*dai_props), GFP_KERNEL);
+	dai_link  = devm_kcalloc(dev, num, sizeof(*dai_link), GFP_KERNEL);
 	if (!dai_props || !dai_link)
 		return -ENOMEM;
 
@@ -401,6 +401,7 @@ MODULE_DEVICE_TABLE(of, asoc_graph_of_match);
 static struct platform_driver asoc_graph_card = {
 	.driver = {
 		.name = "asoc-audio-graph-scu-card",
+		.pm = &snd_soc_pm_ops,
 		.of_match_table = asoc_graph_of_match,
 	},
 	.probe = asoc_graph_card_probe,

@@ -36,6 +36,7 @@ enum msm_dsi_phy_type {
 	MSM_DSI_PHY_20NM,
 	MSM_DSI_PHY_28NM_8960,
 	MSM_DSI_PHY_14NM,
+	MSM_DSI_PHY_10NM,
 	MSM_DSI_PHY_MAX
 };
 
@@ -179,6 +180,8 @@ void msm_dsi_host_destroy(struct mipi_dsi_host *host);
 int msm_dsi_host_modeset_init(struct mipi_dsi_host *host,
 					struct drm_device *dev);
 int msm_dsi_host_init(struct msm_dsi *msm_dsi);
+int msm_dsi_runtime_suspend(struct device *dev);
+int msm_dsi_runtime_resume(struct device *dev);
 
 /* dsi phy */
 struct msm_dsi_phy;

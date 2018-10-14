@@ -1,7 +1,7 @@
 /* Broadcom NetXtreme-C/E network driver.
  *
  * Copyright (c) 2014-2016 Broadcom Corporation
- * Copyright (c) 2016-2017 Broadcom Limited
+ * Copyright (c) 2016-2018 Broadcom Limited
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,6 +26,7 @@ struct bnxt_cos2bw_cfg {
 	u8			queue_id;
 	__le32			min_bw;
 	__le32			max_bw;
+#define BW_VALUE_UNIT_PERCENT1_100		(0x1UL << 29)
 	u8			tsa;
 	u8			pri_lvl;
 	u8			bw_weight;
@@ -33,7 +34,8 @@ struct bnxt_cos2bw_cfg {
 };
 
 #define BNXT_LLQ(q_profile)	\
-	((q_profile) == QUEUE_QPORTCFG_RESP_QUEUE_ID0_SERVICE_PROFILE_LOSSLESS)
+	((q_profile) ==		\
+	 QUEUE_QPORTCFG_RESP_QUEUE_ID0_SERVICE_PROFILE_LOSSLESS_ROCE)
 
 #define HWRM_STRUCT_DATA_SUBTYPE_HOST_OPERATIONAL	0x0300
 

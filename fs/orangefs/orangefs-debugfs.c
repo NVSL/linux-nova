@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * What:		/sys/kernel/debug/orangefs/debug-help
  * Date:		June 2015
@@ -113,7 +114,7 @@ static const struct seq_operations help_debug_ops = {
 	.show	= help_show,
 };
 
-const struct file_operations debug_help_fops = {
+static const struct file_operations debug_help_fops = {
 	.owner		= THIS_MODULE,
 	.open           = orangefs_debug_help_open,
 	.read           = seq_read,
@@ -327,7 +328,7 @@ static int help_show(struct seq_file *m, void *v)
 /*
  * initialize the client-debug file.
  */
-int orangefs_client_debug_init(void)
+static int orangefs_client_debug_init(void)
 {
 
 	int rc = -ENOMEM;
@@ -571,11 +572,8 @@ static int orangefs_prepare_cdm_array(char *debug_array_string)
 		goto out;
 	}
 
-	cdm_array =
-		kzalloc(cdm_element_count * sizeof(struct client_debug_mask),
-			GFP_KERNEL);
+	cdm_array = kcalloc(cdm_element_count, sizeof(*cdm_array), GFP_KERNEL);
 	if (!cdm_array) {
-		pr_info("malloc failed for cdm_array!\n");
 		rc = -ENOMEM;
 		goto out;
 	}
@@ -1058,7 +1056,7 @@ int orangefs_debugfs_new_debug(void __user *arg)
 			client_debug_string,
 			llu(mask_info.mask_value));
 	} else {
-		gossip_lerr("Invalid mask type....\n");
+		gossip_err("Invalid mask type....\n");
 		return -EINVAL;
 	}
 

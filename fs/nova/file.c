@@ -123,7 +123,7 @@ static int nova_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 	struct super_block *sb = inode->i_sb;
 	unsigned long start_pgoff, end_pgoff;
 	int ret = 0;
-	timing_t fsync_time;
+	INIT_TIMING(fsync_time);
 
 	NOVA_START_TIMING(fsync_t, fsync_time);
 
@@ -191,7 +191,7 @@ static long nova_fallocate(struct file *file, int mode, loff_t offset,
 	int blocksize_mask;
 	int allocated = 0;
 	bool update_log = false;
-	timing_t fallocate_time;
+	INIT_TIMING(fallocate_time);
 	u64 begin_tail = 0;
 	u64 epoch_id;
 	u32 time;
@@ -368,7 +368,7 @@ static ssize_t nova_dax_read_iter(struct kiocb *iocb, struct iov_iter *to)
 {
 	struct inode *inode = iocb->ki_filp->f_mapping->host;
 	ssize_t ret;
-	timing_t read_iter_time;
+	INIT_TIMING(read_iter_time);
 
 	if (!iov_iter_count(to))
 		return 0;
@@ -417,7 +417,7 @@ static ssize_t nova_dax_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	loff_t offset;
 	size_t count;
 	ssize_t ret;
-	timing_t write_iter_time;
+	INIT_TIMING(write_iter_time);
 
 	NOVA_START_TIMING(write_iter_t, write_iter_time);
 	inode_lock(inode);
@@ -467,7 +467,7 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 	unsigned long offset;
 	loff_t isize, pos;
 	size_t copied = 0, error = 0;
-	timing_t memcpy_time;
+	INIT_TIMING(memcpy_time);
 
 	pos = *ppos;
 	index = pos >> PAGE_SHIFT;
@@ -603,7 +603,7 @@ static ssize_t nova_dax_file_read(struct file *filp, char __user *buf,
 {
 	struct inode *inode = filp->f_mapping->host;
 	ssize_t res;
-	timing_t dax_read_time;
+	INIT_TIMING(dax_read_time);
 
 	NOVA_START_TIMING(dax_read_t, dax_read_time);
 	inode_lock_shared(inode);
@@ -639,7 +639,8 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	u64 file_size;
 	size_t bytes;
 	long status = 0;
-	timing_t cow_write_time, memcpy_time;
+	INIT_TIMING(cow_write_time);
+	INIT_TIMING(memcpy_time);
 	unsigned long step = 0;
 	ssize_t ret;
 	u64 begin_tail = 0;
@@ -840,7 +841,7 @@ ssize_t nova_cow_file_write(struct file *filp,
 	struct address_space *mapping = filp->f_mapping;
 	struct inode *inode = mapping->host;
 	int ret;
-	timing_t time;
+	INIT_TIMING(time);
 
 
 	if (len == 0)
@@ -930,7 +931,7 @@ static ssize_t nova_wrap_rw_iter(struct kiocb *iocb, struct iov_iter *iter)
 	unsigned long seg;
 	unsigned long nr_segs = iter->nr_segs;
 	const struct iovec *iv = iter->iov;
-	timing_t wrap_iter_time;
+	INIT_TIMING(wrap_iter_time);
 
 	NOVA_START_TIMING(wrap_iter_t, wrap_iter_time);
 

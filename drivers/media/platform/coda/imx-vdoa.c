@@ -86,7 +86,6 @@ struct vdoa_data {
 	struct device		*dev;
 	struct clk		*vdoa_clk;
 	void __iomem		*regs;
-	int			irq;
 };
 
 struct vdoa_q_data {
@@ -293,6 +292,7 @@ static int vdoa_probe(struct platform_device *pdev)
 {
 	struct vdoa_data *vdoa;
 	struct resource *res;
+	int ret;
 
 	dma_set_coherent_mask(&pdev->dev, DMA_BIT_MASK(32));
 
@@ -314,12 +314,14 @@ static int vdoa_probe(struct platform_device *pdev)
 		return PTR_ERR(vdoa->regs);
 
 	res = platform_get_resource(pdev, IORESOURCE_IRQ, 0);
-	vdoa->irq = devm_request_threaded_irq(&pdev->dev, res->start, NULL,
+	if (!res)
+		return -EINVAL;
+	ret = devm_request_threaded_irq(&pdev->dev, res->start, NULL,
 					vdoa_irq_handler, IRQF_ONESHOT,
 					"vdoa", vdoa);
-	if (vdoa->irq < 0) {
+	if (ret < 0) {
 		dev_err(vdoa->dev, "Failed to get irq\n");
-		return vdoa->irq;
+		return ret;
 	}
 
 	platform_set_drvdata(pdev, vdoa);

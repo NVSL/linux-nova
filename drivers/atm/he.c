@@ -161,7 +161,7 @@ static unsigned int clocktab[] = {
 	CLK_LOW
 };     
 
-static struct atmdev_ops he_ops =
+static const struct atmdev_ops he_ops =
 {
 	.open =		he_open,
 	.close =	he_close,	
@@ -738,13 +738,13 @@ static int he_init_cs_block_rcm(struct he_dev *he_dev)
 #else
 		/* this is pretty, but avoids _divdu3 and is mostly correct */
 		mult = he_dev->atm_dev->link_rate / ATM_OC3_PCR;
-		if (rate_cps > (272 * mult))
+		if (rate_cps > (272ULL * mult))
 			buf = 4;
-		else if (rate_cps > (204 * mult))
+		else if (rate_cps > (204ULL * mult))
 			buf = 3;
-		else if (rate_cps > (136 * mult))
+		else if (rate_cps > (136ULL * mult))
 			buf = 2;
-		else if (rate_cps > (68 * mult))
+		else if (rate_cps > (68ULL * mult))
 			buf = 1;
 		else
 			buf = 0;
@@ -2851,7 +2851,7 @@ MODULE_PARM_DESC(irq_coalesce, "use interrupt coalescing (default 1)");
 module_param(sdh, bool, 0);
 MODULE_PARM_DESC(sdh, "use SDH framing (default 0)");
 
-static struct pci_device_id he_pci_tbl[] = {
+static const struct pci_device_id he_pci_tbl[] = {
 	{ PCI_VDEVICE(FORE, PCI_DEVICE_ID_FORE_HE), 0 },
 	{ 0, }
 };

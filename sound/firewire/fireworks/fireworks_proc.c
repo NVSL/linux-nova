@@ -12,7 +12,7 @@
 static inline const char*
 get_phys_name(struct snd_efw_phys_grp *grp, bool input)
 {
-	const char *const ch_type[] = {
+	static const char *const ch_type[] = {
 		"Analog", "S/PDIF", "ADAT", "S/PDIF or ADAT", "Mirroring",
 		"Headphones", "I2S", "Guitar", "Pirzo Guitar", "Guitar String",
 	};
@@ -219,7 +219,7 @@ void snd_efw_proc_init(struct snd_efw *efw)
 					  efw->card->proc_root);
 	if (root == NULL)
 		return;
-	root->mode = S_IFDIR | S_IRUGO | S_IXUGO;
+	root->mode = S_IFDIR | 0555;
 	if (snd_info_register(root) < 0) {
 		snd_info_free_entry(root);
 		return;

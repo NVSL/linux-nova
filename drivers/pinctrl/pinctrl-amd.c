@@ -36,8 +36,22 @@
 #include <linux/pinctrl/pinconf.h>
 #include <linux/pinctrl/pinconf-generic.h>
 
+#include "core.h"
 #include "pinctrl-utils.h"
 #include "pinctrl-amd.h"
+
+static int amd_gpio_get_direction(struct gpio_chip *gc, unsigned offset)
+{
+	unsigned long flags;
+	u32 pin_reg;
+	struct amd_gpio *gpio_dev = gpiochip_get_data(gc);
+
+	raw_spin_lock_irqsave(&gpio_dev->lock, flags);
+	pin_reg = readl(gpio_dev->base + offset * 4);
+	raw_spin_unlock_irqrestore(&gpio_dev->lock, flags);
+
+	return !(pin_reg & BIT(OUTPUT_ENABLE_OFF));
+}
 
 static int amd_gpio_direction_input(struct gpio_chip *gc, unsigned offset)
 {
@@ -334,12 +348,21 @@ static void amd_gpio_irq_enable(struct irq_data *d)
 	unsigned long flags;
 	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
 	struct amd_gpio *gpio_dev = gpiochip_get_data(gc);
+	u32 mask = BIT(INTERRUPT_ENABLE_OFF) | BIT(INTERRUPT_MASK_OFF);
 
 	raw_spin_lock_irqsave(&gpio_dev->lock, flags);
 	pin_reg = readl(gpio_dev->base + (d->hwirq)*4);
 	pin_reg |= BIT(INTERRUPT_ENABLE_OFF);
 	pin_reg |= BIT(INTERRUPT_MASK_OFF);
 	writel(pin_reg, gpio_dev->base + (d->hwirq)*4);
+	/*
+	 * When debounce logic is enabled it takes ~900 us before interrupts
+	 * can be enabled.  During this "debounce warm up" period the
+	 * "INTERRUPT_ENABLE" bit will read as 0. Poll the bit here until it
+	 * reads back as 1, signaling that interrupts are now enabled.
+	 */
+	while ((readl(gpio_dev->base + (d->hwirq)*4) & mask) != mask)
+		continue;
 	raw_spin_unlock_irqrestore(&gpio_dev->lock, flags);
 }
 
@@ -531,10 +554,18 @@ static irqreturn_t amd_gpio_irq_handler(int irq, void *dev_id)
 			regval = readl(regs + i);
 			if (!(regval & PIN_IRQ_PENDING))
 				continue;
-			irq = irq_find_mapping(gc->irqdomain, irqnr + i);
+			irq = irq_find_mapping(gc->irq.domain, irqnr + i);
 			generic_handle_irq(irq);
-			/* Clear interrupt */
+
+			/* Clear interrupt.
+			 * We must read the pin register again, in case the
+			 * value was changed while executing
+			 * generic_handle_irq() above.
+			 */
+			raw_spin_lock_irqsave(&gpio_dev->lock, flags);
+			regval = readl(regs + i);
 			writel(regval, regs + i);
+			raw_spin_unlock_irqrestore(&gpio_dev->lock, flags);
 			ret = IRQ_HANDLED;
 		}
 	}
@@ -725,6 +756,69 @@ static const struct pinconf_ops amd_pinconf_ops = {
 	.pin_config_group_set = amd_pinconf_group_set,
 };
 
+#ifdef CONFIG_PM_SLEEP
+static bool amd_gpio_should_save(struct amd_gpio *gpio_dev, unsigned int pin)
+{
+	const struct pin_desc *pd = pin_desc_get(gpio_dev->pctrl, pin);
+
+	if (!pd)
+		return false;
+
+	/*
+	 * Only restore the pin if it is actually in use by the kernel (or
+	 * by userspace).
+	 */
+	if (pd->mux_owner || pd->gpio_owner ||
+	    gpiochip_line_is_irq(&gpio_dev->gc, pin))
+		return true;
+
+	return false;
+}
+
+static int amd_gpio_suspend(struct device *dev)
+{
+	struct platform_device *pdev = to_platform_device(dev);
+	struct amd_gpio *gpio_dev = platform_get_drvdata(pdev);
+	struct pinctrl_desc *desc = gpio_dev->pctrl->desc;
+	int i;
+
+	for (i = 0; i < desc->npins; i++) {
+		int pin = desc->pins[i].number;
+
+		if (!amd_gpio_should_save(gpio_dev, pin))
+			continue;
+
+		gpio_dev->saved_regs[i] = readl(gpio_dev->base + pin*4);
+	}
+
+	return 0;
+}
+
+static int amd_gpio_resume(struct device *dev)
+{
+	struct platform_device *pdev = to_platform_device(dev);
+	struct amd_gpio *gpio_dev = platform_get_drvdata(pdev);
+	struct pinctrl_desc *desc = gpio_dev->pctrl->desc;
+	int i;
+
+	for (i = 0; i < desc->npins; i++) {
+		int pin = desc->pins[i].number;
+
+		if (!amd_gpio_should_save(gpio_dev, pin))
+			continue;
+
+		writel(gpio_dev->saved_regs[i], gpio_dev->base + pin*4);
+	}
+
+	return 0;
+}
+
+static const struct dev_pm_ops amd_gpio_pm_ops = {
+	SET_LATE_SYSTEM_SLEEP_PM_OPS(amd_gpio_suspend,
+				     amd_gpio_resume)
+};
+#endif
+
 static struct pinctrl_desc amd_pinctrl_desc = {
 	.pins	= kerncz_pins,
 	.npins = ARRAY_SIZE(kerncz_pins),
@@ -760,11 +854,20 @@ static int amd_gpio_probe(struct platform_device *pdev)
 
 	irq_base = platform_get_irq(pdev, 0);
 	if (irq_base < 0) {
-		dev_err(&pdev->dev, "Failed to get gpio IRQ.\n");
-		return -EINVAL;
+		dev_err(&pdev->dev, "Failed to get gpio IRQ: %d\n", irq_base);
+		return irq_base;
 	}
 
+#ifdef CONFIG_PM_SLEEP
+	gpio_dev->saved_regs = devm_kcalloc(&pdev->dev, amd_pinctrl_desc.npins,
+					    sizeof(*gpio_dev->saved_regs),
+					    GFP_KERNEL);
+	if (!gpio_dev->saved_regs)
+		return -ENOMEM;
+#endif
+
 	gpio_dev->pdev = pdev;
+	gpio_dev->gc.get_direction	= amd_gpio_get_direction;
 	gpio_dev->gc.direction_input	= amd_gpio_direction_input;
 	gpio_dev->gc.direction_output	= amd_gpio_direction_output;
 	gpio_dev->gc.get			= amd_gpio_get_value;
@@ -853,6 +956,9 @@ static struct platform_driver amd_gpio_driver = {
 	.driver		= {
 		.name	= "amd_gpio",
 		.acpi_match_table = ACPI_PTR(amd_gpio_acpi_match),
+#ifdef CONFIG_PM_SLEEP
+		.pm	= &amd_gpio_pm_ops,
+#endif
 	},
 	.probe		= amd_gpio_probe,
 	.remove		= amd_gpio_remove,

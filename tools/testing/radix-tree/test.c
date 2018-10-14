@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #include <stdlib.h>
 #include <assert.h>
 #include <stdio.h>
@@ -69,6 +70,25 @@ int item_delete(struct radix_tree_root *root, unsigned long index)
 	if (item) {
 		item_sanity(item, index);
 		free(item);
+		return 1;
+	}
+	return 0;
+}
+
+static void item_free_rcu(struct rcu_head *head)
+{
+	struct item *item = container_of(head, struct item, rcu_head);
+
+	free(item);
+}
+
+int item_delete_rcu(struct radix_tree_root *root, unsigned long index)
+{
+	struct item *item = radix_tree_delete(root, index);
+
+	if (item) {
+		item_sanity(item, index);
+		call_rcu(&item->rcu_head, item_free_rcu);
 		return 1;
 	}
 	return 0;

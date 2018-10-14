@@ -526,7 +526,7 @@ static void smsc95xx_set_multicast(struct net_device *netdev)
 static int smsc95xx_phy_update_flowcontrol(struct usbnet *dev, u8 duplex,
 					   u16 lcladv, u16 rmtadv)
 {
-	u32 flow, afc_cfg = 0;
+	u32 flow = 0, afc_cfg;
 
 	int ret = smsc95xx_read_reg(dev, AFC_CFG, &afc_cfg);
 	if (ret < 0)
@@ -537,20 +537,19 @@ static int smsc95xx_phy_update_flowcontrol(struct usbnet *dev, u8 duplex,
 
 		if (cap & FLOW_CTRL_RX)
 			flow = 0xFFFF0002;
-		else
-			flow = 0;
 
-		if (cap & FLOW_CTRL_TX)
+		if (cap & FLOW_CTRL_TX) {
 			afc_cfg |= 0xF;
-		else
+			flow |= 0xFFFF0000;
+		} else {
 			afc_cfg &= ~0xF;
+		}
 
 		netif_dbg(dev, link, dev->net, "rx pause %s, tx pause %s\n",
 				   cap & FLOW_CTRL_RX ? "enabled" : "disabled",
 				   cap & FLOW_CTRL_TX ? "enabled" : "disabled");
 	} else {
 		netif_dbg(dev, link, dev->net, "half duplex\n");
-		flow = 0;
 		afc_cfg |= 0xF;
 	}
 
@@ -1662,7 +1661,7 @@ static int smsc95xx_suspend(struct usb_interface *intf, pm_message_t message)
 	}
 
 	if (pdata->wolopts & (WAKE_BCAST | WAKE_MCAST | WAKE_ARP | WAKE_UCAST)) {
-		u32 *filter_mask = kzalloc(sizeof(u32) * 32, GFP_KERNEL);
+		u32 *filter_mask = kcalloc(32, sizeof(u32), GFP_KERNEL);
 		u32 command[2];
 		u32 offset[2];
 		u32 crc[4];

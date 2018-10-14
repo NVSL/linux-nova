@@ -76,6 +76,7 @@ static struct sg_table *udl_map_dma_buf(struct dma_buf_attachment *attach,
 	struct udl_drm_dmabuf_attachment *udl_attach = attach->priv;
 	struct udl_gem_object *obj = to_udl_bo(attach->dmabuf->priv);
 	struct drm_device *dev = obj->base.dev;
+	struct udl_device *udl = dev->dev_private;
 	struct scatterlist *rd, *wr;
 	struct sg_table *sgt = NULL;
 	unsigned int i;
@@ -112,7 +113,7 @@ static struct sg_table *udl_map_dma_buf(struct dma_buf_attachment *attach,
 		return ERR_PTR(-ENOMEM);
 	}
 
-	mutex_lock(&dev->struct_mutex);
+	mutex_lock(&udl->gem_lock);
 
 	rd = obj->sg->sgl;
 	wr = sgt->sgl;
@@ -137,7 +138,7 @@ static struct sg_table *udl_map_dma_buf(struct dma_buf_attachment *attach,
 	attach->priv = udl_attach;
 
 err_unlock:
-	mutex_unlock(&dev->struct_mutex);
+	mutex_unlock(&udl->gem_lock);
 	return sgt;
 }
 
@@ -186,7 +187,7 @@ static int udl_dmabuf_mmap(struct dma_buf *dma_buf,
 	return -EINVAL;
 }
 
-static struct dma_buf_ops udl_dmabuf_ops = {
+static const struct dma_buf_ops udl_dmabuf_ops = {
 	.attach			= udl_attach_dma_buf,
 	.detach			= udl_detach_dma_buf,
 	.map_dma_buf		= udl_map_dma_buf,

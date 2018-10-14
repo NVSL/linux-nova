@@ -3406,8 +3406,8 @@ void rtl8xxxu_gen1_phy_iq_calibrate(struct rtl8xxxu_priv *priv)
 		reg_ecc = result[candidate][7];
 		dev_dbg(dev, "%s: candidate is %x\n", __func__, candidate);
 		dev_dbg(dev,
-			"%s: e94 =%x e9c=%x ea4=%x eac=%x eb4=%x ebc=%x ec4=%x "
-			"ecc=%x\n ", __func__, reg_e94, reg_e9c,
+			"%s: e94 =%x e9c=%x ea4=%x eac=%x eb4=%x ebc=%x ec4=%x ecc=%x\n",
+			__func__, reg_e94, reg_e9c,
 			reg_ea4, reg_eac, reg_eb4, reg_ebc, reg_ec4, reg_ecc);
 		path_a_ok = true;
 		path_b_ok = true;
@@ -4431,7 +4431,7 @@ void rtl8xxxu_gen1_init_aggregation(struct rtl8xxxu_priv *priv)
 			timeout = page_thresh;
 		else if (rtl8xxxu_dma_agg_pages <= 6)
 			dev_err(&priv->udev->dev,
-				"%s: dma_agg_pages=%i too small, minium is 6\n",
+				"%s: dma_agg_pages=%i too small, minimum is 6\n",
 				__func__, rtl8xxxu_dma_agg_pages);
 		else
 			dev_err(&priv->udev->dev,
@@ -6190,7 +6190,7 @@ static void rtl8xxxu_disconnect(struct usb_interface *interface)
 	ieee80211_free_hw(hw);
 }
 
-static struct usb_device_id dev_table[] = {
+static const struct usb_device_id dev_table[] = {
 {USB_DEVICE_AND_INTERFACE_INFO(USB_VENDOR_ID_REALTEK, 0x8724, 0xff, 0xff, 0xff),
 	.driver_info = (unsigned long)&rtl8723au_fops},
 {USB_DEVICE_AND_INTERFACE_INFO(USB_VENDOR_ID_REALTEK, 0x1724, 0xff, 0xff, 0xff),

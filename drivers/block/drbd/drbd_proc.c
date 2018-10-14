@@ -33,18 +33,7 @@
 #include <linux/drbd.h>
 #include "drbd_int.h"
 
-static int drbd_proc_open(struct inode *inode, struct file *file);
-static int drbd_proc_release(struct inode *inode, struct file *file);
-
-
 struct proc_dir_entry *drbd_proc;
-const struct file_operations drbd_proc_fops = {
-	.owner		= THIS_MODULE,
-	.open		= drbd_proc_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= drbd_proc_release,
-};
 
 static void seq_printf_with_thousands_grouping(struct seq_file *seq, long v)
 {
@@ -127,7 +116,7 @@ static void drbd_syncer_progress(struct drbd_device *device, struct seq_file *se
 		seq_putc(seq, '=');
 	seq_putc(seq, '>');
 	for (i = 0; i < y; i++)
-		seq_printf(seq, ".");
+		seq_putc(seq, '.');
 	seq_puts(seq, "] ");
 
 	if (state.conn == C_VERIFY_S || state.conn == C_VERIFY_T)
@@ -179,7 +168,7 @@ static void drbd_syncer_progress(struct drbd_device *device, struct seq_file *se
 	seq_printf_with_thousands_grouping(seq, dbdt);
 	seq_puts(seq, " (");
 	/* ------------------------- ~3s average ------------------------ */
-	if (proc_details >= 1) {
+	if (drbd_proc_details >= 1) {
 		/* this is what drbd_rs_should_slow_down() uses */
 		i = (device->rs_last_mark + DRBD_SYNC_MARKS-1) % DRBD_SYNC_MARKS;
 		dt = (jiffies - device->rs_mark_time[i]) / HZ;
@@ -209,7 +198,7 @@ static void drbd_syncer_progress(struct drbd_device *device, struct seq_file *se
 	}
 	seq_printf(seq, " K/sec%s\n", stalled ? " (stalled)" : "");
 
-	if (proc_details >= 1) {
+	if (drbd_proc_details >= 1) {
 		/* 64 bit:
 		 * we convert to sectors in the display below. */
 		unsigned long bm_bits = drbd_bm_bits(device);
@@ -235,7 +224,7 @@ static void drbd_syncer_progress(struct drbd_device *device, struct seq_file *se
 	}
 }
 
-static int drbd_seq_show(struct seq_file *seq, void *v)
+int drbd_seq_show(struct seq_file *seq, void *v)
 {
 	int i, prev_i = -1;
 	const char *sn;
@@ -332,37 +321,16 @@ static int drbd_seq_show(struct seq_file *seq, void *v)
 		    state.conn == C_VERIFY_T)
 			drbd_syncer_progress(device, seq, state);
 
-		if (proc_details >= 1 && get_ldev_if_state(device, D_FAILED)) {
+		if (drbd_proc_details >= 1 && get_ldev_if_state(device, D_FAILED)) {
 			lc_seq_printf_stats(seq, device->resync);
 			lc_seq_printf_stats(seq, device->act_log);
 			put_ldev(device);
 		}
 
-		if (proc_details >= 2)
+		if (drbd_proc_details >= 2)
 			seq_printf(seq, "\tblocked on activity log: %d\n", atomic_read(&device->ap_actlog_cnt));
 	}
 	rcu_read_unlock();
 
 	return 0;
 }
-
-static int drbd_proc_open(struct inode *inode, struct file *file)
-{
-	int err;
-
-	if (try_module_get(THIS_MODULE)) {
-		err = single_open(file, drbd_seq_show, NULL);
-		if (err)
-			module_put(THIS_MODULE);
-		return err;
-	}
-	return -ENODEV;
-}
-
-static int drbd_proc_release(struct inode *inode, struct file *file)
-{
-	module_put(THIS_MODULE);
-	return single_release(inode, file);
-}
-
-/* PROC FS stuff end */

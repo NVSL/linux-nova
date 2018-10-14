@@ -1,7 +1,7 @@
 #ifndef _QP_H
 #define _QP_H
 /*
- * Copyright(c) 2015, 2016 Intel Corporation.
+ * Copyright(c) 2015 - 2017 Intel Corporation.
  *
  * This file is provided under a dual BSD/GPLv2 license.  When using or
  * redistributing this file, you may do so under either license.
@@ -51,10 +51,23 @@
 #include <rdma/rdmavt_qp.h>
 #include "verbs.h"
 #include "sdma.h"
+#include "verbs_txreq.h"
 
 extern unsigned int hfi1_qp_table_size;
 
 extern const struct rvt_operation_params hfi1_post_parms[];
+
+/*
+ * Send if not busy or waiting for I/O and either
+ * a RC response is pending or we can process send work requests.
+ */
+static inline int hfi1_send_ok(struct rvt_qp *qp)
+{
+	return !(qp->s_flags & (RVT_S_BUSY | RVT_S_ANY_WAIT_IO)) &&
+		(verbs_txreq_queued(qp) ||
+		(qp->s_flags & RVT_S_RESP_PENDING) ||
+		 !(qp->s_flags & RVT_S_ANY_WAIT_SEND));
+}
 
 /*
  * free_ahg - clear ahg from QP
@@ -94,26 +107,7 @@ void hfi1_qp_wakeup(struct rvt_qp *qp, u32 flag);
 struct sdma_engine *qp_to_sdma_engine(struct rvt_qp *qp, u8 sc5);
 struct send_context *qp_to_send_context(struct rvt_qp *qp, u8 sc5);
 
-struct qp_iter;
-
-/**
- * qp_iter_init - initialize the iterator for the qp hash list
- * @dev: the hfi1_ibdev
- */
-struct qp_iter *qp_iter_init(struct hfi1_ibdev *dev);
-
-/**
- * qp_iter_next - Find the next qp in the hash list
- * @iter: the iterator for the qp hash list
- */
-int qp_iter_next(struct qp_iter *iter);
-
-/**
- * qp_iter_print - print the qp information to seq_file
- * @s: the seq_file to emit the qp information on
- * @iter: the iterator for the qp hash list
- */
-void qp_iter_print(struct seq_file *s, struct qp_iter *iter);
+void qp_iter_print(struct seq_file *s, struct rvt_qp_iter *iter);
 
 void _hfi1_schedule_send(struct rvt_qp *qp);
 void hfi1_schedule_send(struct rvt_qp *qp);

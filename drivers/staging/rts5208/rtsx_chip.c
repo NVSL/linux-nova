@@ -616,8 +616,8 @@ int rtsx_reset_chip(struct rtsx_chip *chip)
 		else
 			retval = rtsx_pre_handle_sdio_new(chip);
 
-		dev_dbg(rtsx_dev(chip), "chip->need_reset = 0x%x (rtsx_reset_chip)\n",
-			(unsigned int)(chip->need_reset));
+		dev_dbg(rtsx_dev(chip), "chip->need_reset = 0x%x (%s)\n",
+			(unsigned int)(chip->need_reset), __func__);
 #else  /* HW_AUTO_SWITCH_SD_BUS */
 		retval = rtsx_pre_handle_sdio_old(chip);
 #endif  /* HW_AUTO_SWITCH_SD_BUS */
@@ -1660,13 +1660,13 @@ int rtsx_write_cfg_seq(struct rtsx_chip *chip, u8 func, u16 addr, u8 *buf,
 
 	dev_dbg(rtsx_dev(chip), "dw_len = %d\n", dw_len);
 
-	data = vzalloc(dw_len * 4);
+	data = vzalloc(array_size(dw_len, 4));
 	if (!data) {
 		rtsx_trace(chip);
 		return STATUS_NOMEM;
 	}
 
-	mask = vzalloc(dw_len * 4);
+	mask = vzalloc(array_size(dw_len, 4));
 	if (!mask) {
 		vfree(data);
 		rtsx_trace(chip);
@@ -1721,7 +1721,7 @@ int rtsx_read_cfg_seq(struct rtsx_chip *chip, u8 func, u16 addr, u8 *buf,
 
 	dev_dbg(rtsx_dev(chip), "dw_len = %d\n", dw_len);
 
-	data = vmalloc(dw_len * 4);
+	data = vmalloc(array_size(dw_len, 4));
 	if (!data) {
 		rtsx_trace(chip);
 		return STATUS_NOMEM;

@@ -25,9 +25,9 @@ static bool node_has_compatible(struct device_node *pp)
 	return of_get_property(pp, "compatible", NULL);
 }
 
-static int parse_ofpart_partitions(struct mtd_info *master,
-				   const struct mtd_partition **pparts,
-				   struct mtd_part_parser_data *data)
+static int parse_fixed_partitions(struct mtd_info *master,
+				  const struct mtd_partition **pparts,
+				  struct mtd_part_parser_data *data)
 {
 	struct mtd_partition *parts;
 	struct device_node *mtd_node;
@@ -50,8 +50,8 @@ static int parse_ofpart_partitions(struct mtd_info *master,
 		 * when using another parser), so don't be louder than
 		 * KERN_DEBUG
 		 */
-		pr_debug("%s: 'partitions' subnode not found on %s. Trying to parse direct subnodes as partitions.\n",
-			 master->name, mtd_node->full_name);
+		pr_debug("%s: 'partitions' subnode not found on %pOF. Trying to parse direct subnodes as partitions.\n",
+			 master->name, mtd_node);
 		ofpart_node = mtd_node;
 		dedicated = false;
 	} else if (!of_device_is_compatible(ofpart_node, "fixed-partitions")) {
@@ -71,7 +71,7 @@ static int parse_ofpart_partitions(struct mtd_info *master,
 	if (nr_parts == 0)
 		return 0;
 
-	parts = kzalloc(nr_parts * sizeof(*parts), GFP_KERNEL);
+	parts = kcalloc(nr_parts, sizeof(*parts), GFP_KERNEL);
 	if (!parts)
 		return -ENOMEM;
 
@@ -87,9 +87,9 @@ static int parse_ofpart_partitions(struct mtd_info *master,
 		reg = of_get_property(pp, "reg", &len);
 		if (!reg) {
 			if (dedicated) {
-				pr_debug("%s: ofpart partition %s (%s) missing reg property.\n",
-					 master->name, pp->full_name,
-					 mtd_node->full_name);
+				pr_debug("%s: ofpart partition %pOF (%pOF) missing reg property.\n",
+					 master->name, pp,
+					 mtd_node);
 				goto ofpart_fail;
 			} else {
 				nr_parts--;
@@ -100,9 +100,9 @@ static int parse_ofpart_partitions(struct mtd_info *master,
 		a_cells = of_n_addr_cells(pp);
 		s_cells = of_n_size_cells(pp);
 		if (len / 4 != a_cells + s_cells) {
-			pr_debug("%s: ofpart partition %s (%s) error parsing reg property.\n",
-				 master->name, pp->full_name,
-				 mtd_node->full_name);
+			pr_debug("%s: ofpart partition %pOF (%pOF) error parsing reg property.\n",
+				 master->name, pp,
+				 mtd_node);
 			goto ofpart_fail;
 		}
 
@@ -131,8 +131,8 @@ static int parse_ofpart_partitions(struct mtd_info *master,
 	return nr_parts;
 
 ofpart_fail:
-	pr_err("%s: error parsing ofpart partition %s (%s)\n",
-	       master->name, pp->full_name, mtd_node->full_name);
+	pr_err("%s: error parsing ofpart partition %pOF (%pOF)\n",
+	       master->name, pp, mtd_node);
 	ret = -EINVAL;
 ofpart_none:
 	of_node_put(pp);
@@ -140,9 +140,16 @@ ofpart_none:
 	return ret;
 }
 
+static const struct of_device_id parse_ofpart_match_table[] = {
+	{ .compatible = "fixed-partitions" },
+	{},
+};
+MODULE_DEVICE_TABLE(of, parse_ofpart_match_table);
+
 static struct mtd_part_parser ofpart_parser = {
-	.parse_fn = parse_ofpart_partitions,
-	.name = "ofpart",
+	.parse_fn = parse_fixed_partitions,
+	.name = "fixed-partitions",
+	.of_match_table = parse_ofpart_match_table,
 };
 
 static int parse_ofoldpart_partitions(struct mtd_info *master,
@@ -166,12 +173,11 @@ static int parse_ofoldpart_partitions(struct mtd_info *master,
 	if (!part)
 		return 0; /* No partitions found */
 
-	pr_warn("Device tree uses obsolete partition map binding: %s\n",
-		dp->full_name);
+	pr_warn("Device tree uses obsolete partition map binding: %pOF\n", dp);
 
 	nr_parts = plen / sizeof(part[0]);
 
-	parts = kzalloc(nr_parts * sizeof(*parts), GFP_KERNEL);
+	parts = kcalloc(nr_parts, sizeof(*parts), GFP_KERNEL);
 	if (!parts)
 		return -ENOMEM;
 
@@ -230,4 +236,5 @@ MODULE_AUTHOR("Vitaly Wool, David Gibson");
  * with the same name. Since we provide the ofoldpart parser, we should have
  * the corresponding alias.
  */
+MODULE_ALIAS("fixed-partitions");
 MODULE_ALIAS("ofoldpart");

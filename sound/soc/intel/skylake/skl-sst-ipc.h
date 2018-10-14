@@ -44,12 +44,10 @@ struct skl_ipc_header {
 	u32 extension;
 };
 
-#define SKL_DSP_CORES_MAX  2
-
 struct skl_dsp_cores {
 	unsigned int count;
-	enum skl_dsp_states state[SKL_DSP_CORES_MAX];
-	int usage_count[SKL_DSP_CORES_MAX];
+	enum skl_dsp_states *state;
+	int *usage_count;
 };
 
 /**
@@ -120,6 +118,9 @@ struct skl_sst {
 	struct skl_d0i3_data d0i3;
 
 	const struct skl_dsp_ops *dsp_ops;
+
+	/* Callback to update dynamic clock and power gating registers */
+	void (*clock_power_gating)(struct device *dev, bool enable);
 };
 
 struct skl_ipc_init_instance_msg {
@@ -214,4 +215,10 @@ void skl_ipc_free(struct sst_generic_ipc *ipc);
 int skl_ipc_init(struct device *dev, struct skl_sst *skl);
 void skl_clear_module_cnt(struct sst_dsp *ctx);
 
+void skl_ipc_process_reply(struct sst_generic_ipc *ipc,
+		struct skl_ipc_header header);
+int skl_ipc_process_notification(struct sst_generic_ipc *ipc,
+		struct skl_ipc_header header);
+void skl_ipc_tx_data_copy(struct ipc_message *msg, char *tx_data,
+		size_t tx_size);
 #endif /* __SKL_IPC_H */

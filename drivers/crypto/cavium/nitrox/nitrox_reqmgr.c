@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #include <linux/gfp.h>
 #include <linux/workqueue.h>
 #include <crypto/internal/skcipher.h>
@@ -5,7 +6,6 @@
 #include "nitrox_dev.h"
 #include "nitrox_req.h"
 #include "nitrox_csr.h"
-#include "nitrox_req.h"
 
 /* SLC_STORE_INFO */
 #define MIN_UDD_LEN 16

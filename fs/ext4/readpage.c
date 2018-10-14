@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * linux/fs/ext4/readpage.c
  *
@@ -76,7 +77,7 @@ static void mpage_end_io(struct bio *bio)
 		if (bio->bi_status) {
 			fscrypt_release_ctx(bio->bi_private);
 		} else {
-			fscrypt_decrypt_bio_pages(bio->bi_private, bio);
+			fscrypt_enqueue_decrypt_bio(bio->bi_private, bio);
 			return;
 		}
 	}
@@ -254,7 +255,7 @@ int ext4_mpage_readpages(struct address_space *mapping,
 					fscrypt_release_ctx(ctx);
 				goto set_error_page;
 			}
-			bio->bi_bdev = bdev;
+			bio_set_dev(bio, bdev);
 			bio->bi_iter.bi_sector = blocks[0] << (blkbits - 9);
 			bio->bi_end_io = mpage_end_io;
 			bio->bi_private = ctx;

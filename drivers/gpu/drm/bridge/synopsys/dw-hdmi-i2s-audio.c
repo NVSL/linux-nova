@@ -1,7 +1,8 @@
 /*
  * dw-hdmi-i2s-audio.c
  *
- * Copyright (c) 2016 Kuninori Morimoto <kuninori.morimoto.gx@renesas.com>
+ * Copyright (c) 2017 Renesas Solutions Corp.
+ * Kuninori Morimoto <kuninori.morimoto.gx@renesas.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -151,7 +152,6 @@ static struct platform_driver snd_dw_hdmi_driver = {
 	.remove	= snd_dw_hdmi_remove,
 	.driver	= {
 		.name = DRIVER_NAME,
-		.owner = THIS_MODULE,
 	},
 };
 module_platform_driver(snd_dw_hdmi_driver);

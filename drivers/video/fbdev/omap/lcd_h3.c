@@ -21,7 +21,7 @@
 
 #include <linux/module.h>
 #include <linux/platform_device.h>
-#include <linux/i2c/tps65010.h>
+#include <linux/mfd/tps65010.h>
 #include <linux/gpio.h>
 
 #include "omapfb.h"
@@ -89,3 +89,7 @@ static struct platform_driver h3_panel_driver = {
 };
 
 module_platform_driver(h3_panel_driver);
+
+MODULE_AUTHOR("Imre Deak");
+MODULE_DESCRIPTION("LCD panel support for the TI OMAP H3 board");
+MODULE_LICENSE("GPL");

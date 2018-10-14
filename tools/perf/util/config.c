@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * config.c
  *
@@ -19,6 +20,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <linux/string.h>
 
 #include "sane_ctype.h"
 
@@ -433,22 +435,22 @@ static int perf_ui_config(const char *var, const char *value)
 int perf_default_config(const char *var, const char *value,
 			void *dummy __maybe_unused)
 {
-	if (!prefixcmp(var, "core."))
+	if (strstarts(var, "core."))
 		return perf_default_core_config(var, value);
 
-	if (!prefixcmp(var, "hist."))
+	if (strstarts(var, "hist."))
 		return perf_hist_config(var, value);
 
-	if (!prefixcmp(var, "ui."))
+	if (strstarts(var, "ui."))
 		return perf_ui_config(var, value);
 
-	if (!prefixcmp(var, "call-graph."))
+	if (strstarts(var, "call-graph."))
 		return perf_callchain_config(var, value);
 
-	if (!prefixcmp(var, "llvm."))
+	if (strstarts(var, "llvm."))
 		return perf_llvm_config(var, value);
 
-	if (!prefixcmp(var, "buildid."))
+	if (strstarts(var, "buildid."))
 		return perf_buildid_config(var, value);
 
 	/* Add other config variables here. */
@@ -699,13 +701,18 @@ struct perf_config_set *perf_config_set__new(void)
 
 	if (set) {
 		INIT_LIST_HEAD(&set->sections);
-		if (perf_config_set__init(set) < 0) {
-			perf_config_set__delete(set);
-			set = NULL;
-		}
+		perf_config_set__init(set);
 	}
 
 	return set;
+}
+
+static int perf_config__init(void)
+{
+	if (config_set == NULL)
+		config_set = perf_config_set__new();
+
+	return config_set == NULL;
 }
 
 int perf_config(config_fn_t fn, void *data)
@@ -715,7 +722,7 @@ int perf_config(config_fn_t fn, void *data)
 	struct perf_config_section *section;
 	struct perf_config_item *item;
 
-	if (config_set == NULL)
+	if (config_set == NULL && perf_config__init())
 		return -1;
 
 	perf_config_set__for_each_entry(config_set, section, item) {
@@ -734,12 +741,6 @@ int perf_config(config_fn_t fn, void *data)
 	}
 
 	return ret;
-}
-
-void perf_config__init(void)
-{
-	if (config_set == NULL)
-		config_set = perf_config_set__new();
 }
 
 void perf_config__exit(void)

@@ -14,8 +14,11 @@
 #include <asm/amd_nb.h>
 
 #define PCI_DEVICE_ID_AMD_17H_ROOT	0x1450
+#define PCI_DEVICE_ID_AMD_17H_M10H_ROOT	0x15d0
 #define PCI_DEVICE_ID_AMD_17H_DF_F3	0x1463
 #define PCI_DEVICE_ID_AMD_17H_DF_F4	0x1464
+#define PCI_DEVICE_ID_AMD_17H_M10H_DF_F3 0x15eb
+#define PCI_DEVICE_ID_AMD_17H_M10H_DF_F4 0x15ec
 
 /* Protect the PCI config register pairs used for SMN and DF indirect access. */
 static DEFINE_MUTEX(smn_mutex);
@@ -24,8 +27,11 @@ static u32 *flush_words;
 
 static const struct pci_device_id amd_root_ids[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_17H_ROOT) },
+	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_17H_M10H_ROOT) },
 	{}
 };
+
+#define PCI_DEVICE_ID_AMD_CNB17H_F4     0x1704
 
 const struct pci_device_id amd_nb_misc_ids[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_K8_NB_MISC) },
@@ -37,6 +43,8 @@ const struct pci_device_id amd_nb_misc_ids[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_16H_NB_F3) },
 	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_16H_M30H_NB_F3) },
 	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_17H_DF_F3) },
+	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_17H_M10H_DF_F3) },
+	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_CNB17H_F3) },
 	{}
 };
 EXPORT_SYMBOL_GPL(amd_nb_misc_ids);
@@ -48,6 +56,8 @@ static const struct pci_device_id amd_nb_link_ids[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_16H_NB_F4) },
 	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_16H_M30H_NB_F4) },
 	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_17H_DF_F4) },
+	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_17H_M10H_DF_F4) },
+	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_CNB17H_F4) },
 	{}
 };
 
@@ -231,7 +241,7 @@ int amd_cache_northbridges(void)
 	if (boot_cpu_data.x86 == 0x10 &&
 	    boot_cpu_data.x86_model >= 0x8 &&
 	    (boot_cpu_data.x86_model > 0x9 ||
-	     boot_cpu_data.x86_mask >= 0x1))
+	     boot_cpu_data.x86_stepping >= 0x1))
 		amd_northbridges.flags |= AMD_NB_L3_INDEX_DISABLE;
 
 	if (boot_cpu_data.x86 == 0x15)
@@ -402,10 +412,47 @@ void amd_flush_garts(void)
 }
 EXPORT_SYMBOL_GPL(amd_flush_garts);
 
+static void __fix_erratum_688(void *info)
+{
+#define MSR_AMD64_IC_CFG 0xC0011021
+
+	msr_set_bit(MSR_AMD64_IC_CFG, 3);
+	msr_set_bit(MSR_AMD64_IC_CFG, 14);
+}
+
+/* Apply erratum 688 fix so machines without a BIOS fix work. */
+static __init void fix_erratum_688(void)
+{
+	struct pci_dev *F4;
+	u32 val;
+
+	if (boot_cpu_data.x86 != 0x14)
+		return;
+
+	if (!amd_northbridges.num)
+		return;
+
+	F4 = node_to_amd_nb(0)->link;
+	if (!F4)
+		return;
+
+	if (pci_read_config_dword(F4, 0x164, &val))
+		return;
+
+	if (val & BIT(2))
+		return;
+
+	on_each_cpu(__fix_erratum_688, NULL, 0);
+
+	pr_info("x86/cpu/AMD: CPU erratum 688 worked around\n");
+}
+
 static __init int init_amd_nbs(void)
 {
 	amd_cache_northbridges();
 	amd_cache_gart();
+
+	fix_erratum_688();
 
 	return 0;
 }

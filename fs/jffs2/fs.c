@@ -146,9 +146,9 @@ int jffs2_do_setattr (struct inode *inode, struct iattr *iattr)
 		return PTR_ERR(new_metadata);
 	}
 	/* It worked. Update the inode */
-	inode->i_atime = ITIME(je32_to_cpu(ri->atime));
-	inode->i_ctime = ITIME(je32_to_cpu(ri->ctime));
-	inode->i_mtime = ITIME(je32_to_cpu(ri->mtime));
+	inode->i_atime = timespec_to_timespec64(ITIME(je32_to_cpu(ri->atime)));
+	inode->i_ctime = timespec_to_timespec64(ITIME(je32_to_cpu(ri->ctime)));
+	inode->i_mtime = timespec_to_timespec64(ITIME(je32_to_cpu(ri->mtime)));
 	inode->i_mode = jemode_to_cpu(ri->mode);
 	i_uid_write(inode, je16_to_cpu(ri->uid));
 	i_gid_write(inode, je16_to_cpu(ri->gid));
@@ -280,9 +280,9 @@ struct inode *jffs2_iget(struct super_block *sb, unsigned long ino)
 	i_uid_write(inode, je16_to_cpu(latest_node.uid));
 	i_gid_write(inode, je16_to_cpu(latest_node.gid));
 	inode->i_size = je32_to_cpu(latest_node.isize);
-	inode->i_atime = ITIME(je32_to_cpu(latest_node.atime));
-	inode->i_mtime = ITIME(je32_to_cpu(latest_node.mtime));
-	inode->i_ctime = ITIME(je32_to_cpu(latest_node.ctime));
+	inode->i_atime = timespec_to_timespec64(ITIME(je32_to_cpu(latest_node.atime)));
+	inode->i_mtime = timespec_to_timespec64(ITIME(je32_to_cpu(latest_node.mtime)));
+	inode->i_ctime = timespec_to_timespec64(ITIME(je32_to_cpu(latest_node.ctime)));
 
 	set_nlink(inode, f->inocache->pino_nlink);
 
@@ -362,7 +362,6 @@ error_io:
 	ret = -EIO;
 error:
 	mutex_unlock(&f->sem);
-	jffs2_do_clear_inode(c, f);
 	iget_failed(inode);
 	return ERR_PTR(ret);
 }
@@ -395,24 +394,24 @@ int jffs2_do_remount_fs(struct super_block *sb, int *flags, char *data)
 {
 	struct jffs2_sb_info *c = JFFS2_SB_INFO(sb);
 
-	if (c->flags & JFFS2_SB_FLAG_RO && !(sb->s_flags & MS_RDONLY))
+	if (c->flags & JFFS2_SB_FLAG_RO && !sb_rdonly(sb))
 		return -EROFS;
 
 	/* We stop if it was running, then restart if it needs to.
 	   This also catches the case where it was stopped and this
 	   is just a remount to restart it.
 	   Flush the writebuffer, if neccecary, else we loose it */
-	if (!(sb->s_flags & MS_RDONLY)) {
+	if (!sb_rdonly(sb)) {
 		jffs2_stop_garbage_collect_thread(c);
 		mutex_lock(&c->alloc_sem);
 		jffs2_flush_wbuf_pad(c);
 		mutex_unlock(&c->alloc_sem);
 	}
 
-	if (!(*flags & MS_RDONLY))
+	if (!(*flags & SB_RDONLY))
 		jffs2_start_garbage_collect_thread(c);
 
-	*flags |= MS_NOATIME;
+	*flags |= SB_NOATIME;
 	return 0;
 }
 
@@ -590,7 +589,7 @@ int jffs2_do_fill_super(struct super_block *sb, void *data, int silent)
 	sb->s_blocksize = PAGE_SIZE;
 	sb->s_blocksize_bits = PAGE_SHIFT;
 	sb->s_magic = JFFS2_SUPER_MAGIC;
-	if (!(sb->s_flags & MS_RDONLY))
+	if (!sb_rdonly(sb))
 		jffs2_start_garbage_collect_thread(c);
 	return 0;
 

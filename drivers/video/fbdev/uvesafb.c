@@ -486,8 +486,9 @@ static int uvesafb_vbe_getmodes(struct uvesafb_ktask *task,
 		mode++;
 	}
 
-	par->vbe_modes = kzalloc(sizeof(struct vbe_mode_ib) *
-				par->vbe_modes_cnt, GFP_KERNEL);
+	par->vbe_modes = kcalloc(par->vbe_modes_cnt,
+				 sizeof(struct vbe_mode_ib),
+				 GFP_KERNEL);
 	if (!par->vbe_modes)
 		return -ENOMEM;
 
@@ -858,7 +859,7 @@ static int uvesafb_vbe_init_mode(struct fb_info *info)
 	 * Convert the modelist into a modedb so that we can use it with
 	 * fb_find_mode().
 	 */
-	mode = kzalloc(i * sizeof(*mode), GFP_KERNEL);
+	mode = kcalloc(i, sizeof(*mode), GFP_KERNEL);
 	if (mode) {
 		i = 0;
 		list_for_each(pos, &info->modelist) {
@@ -1044,7 +1045,8 @@ static int uvesafb_setcmap(struct fb_cmap *cmap, struct fb_info *info)
 		    info->cmap.len || cmap->start < info->cmap.start)
 			return -EINVAL;
 
-		entries = kmalloc(sizeof(*entries) * cmap->len, GFP_KERNEL);
+		entries = kmalloc_array(cmap->len, sizeof(*entries),
+					GFP_KERNEL);
 		if (!entries)
 			return -ENOMEM;
 
@@ -1666,7 +1668,7 @@ static struct attribute *uvesafb_dev_attrs[] = {
 	NULL,
 };
 
-static struct attribute_group uvesafb_dev_attgrp = {
+static const struct attribute_group uvesafb_dev_attgrp = {
 	.name = NULL,
 	.attrs = uvesafb_dev_attrs,
 };
@@ -1860,19 +1862,18 @@ static int uvesafb_setup(char *options)
 }
 #endif /* !MODULE */
 
-static ssize_t show_v86d(struct device_driver *dev, char *buf)
+static ssize_t v86d_show(struct device_driver *dev, char *buf)
 {
 	return snprintf(buf, PAGE_SIZE, "%s\n", v86d_path);
 }
 
-static ssize_t store_v86d(struct device_driver *dev, const char *buf,
+static ssize_t v86d_store(struct device_driver *dev, const char *buf,
 		size_t count)
 {
 	strncpy(v86d_path, buf, PATH_MAX);
 	return count;
 }
-
-static DRIVER_ATTR(v86d, S_IRUGO | S_IWUSR, show_v86d, store_v86d);
+static DRIVER_ATTR_RW(v86d);
 
 static int uvesafb_init(void)
 {

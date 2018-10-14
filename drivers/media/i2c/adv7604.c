@@ -1,20 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * adv7604 - Analog Devices ADV7604 video decoder driver
  *
  * Copyright 2012 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
- *
- * This program is free software; you may redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; version 2 of the License.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
- * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
- * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
- * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
- * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
  *
  */
 
@@ -618,7 +606,7 @@ static int adv76xx_read_reg(struct v4l2_subdev *sd, unsigned int reg)
 	unsigned int val;
 	int err;
 
-	if (!(BIT(page) & state->info->page_mask))
+	if (page >= ADV76XX_PAGE_MAX || !(BIT(page) & state->info->page_mask))
 		return -EINVAL;
 
 	reg &= 0xff;
@@ -633,7 +621,7 @@ static int adv76xx_write_reg(struct v4l2_subdev *sd, unsigned int reg, u8 val)
 	struct adv76xx_state *state = to_state(sd);
 	unsigned int page = reg >> 8;
 
-	if (!(BIT(page) & state->info->page_mask))
+	if (page >= ADV76XX_PAGE_MAX || !(BIT(page) & state->info->page_mask))
 		return -EINVAL;
 
 	reg &= 0xff;
@@ -1948,7 +1936,7 @@ static int adv76xx_set_format(struct v4l2_subdev *sd,
 		return -EINVAL;
 
 	info = adv76xx_format_info(state, format->format.code);
-	if (info == NULL)
+	if (!info)
 		info = adv76xx_format_info(state, MEDIA_BUS_FMT_YUYV8_2X8);
 
 	adv76xx_fill_format(state, &format->format);
@@ -1982,6 +1970,7 @@ static void adv76xx_cec_tx_raw_status(struct v4l2_subdev *sd, u8 tx_raw_status)
 			 __func__);
 		cec_transmit_done(state->cec_adap, CEC_TX_STATUS_ARB_LOST,
 				  1, 0, 0, 0);
+		return;
 	}
 	if (tx_raw_status & 0x04) {
 		u8 status;
@@ -2256,7 +2245,7 @@ static int adv76xx_get_edid(struct v4l2_subdev *sd, struct v4l2_edid *edid)
 		return 0;
 	}
 
-	if (data == NULL)
+	if (!data)
 		return -ENODATA;
 
 	if (edid->start_block >= state->edid.blocks)
@@ -2733,6 +2722,27 @@ static const struct v4l2_ctrl_config adv76xx_ctrl_free_run_color = {
 
 /* ----------------------------------------------------------------------- */
 
+struct adv76xx_register_map {
+	const char *name;
+	u8 default_addr;
+};
+
+static const struct adv76xx_register_map adv76xx_default_addresses[] = {
+	[ADV76XX_PAGE_IO] = { "main", 0x4c },
+	[ADV7604_PAGE_AVLINK] = { "avlink", 0x42 },
+	[ADV76XX_PAGE_CEC] = { "cec", 0x40 },
+	[ADV76XX_PAGE_INFOFRAME] = { "infoframe", 0x3e },
+	[ADV7604_PAGE_ESDP] = { "esdp", 0x38 },
+	[ADV7604_PAGE_DPP] = { "dpp", 0x3c },
+	[ADV76XX_PAGE_AFE] = { "afe", 0x26 },
+	[ADV76XX_PAGE_REP] = { "rep", 0x32 },
+	[ADV76XX_PAGE_EDID] = { "edid", 0x36 },
+	[ADV76XX_PAGE_HDMI] = { "hdmi", 0x34 },
+	[ADV76XX_PAGE_TEST] = { "test", 0x30 },
+	[ADV76XX_PAGE_CP] = { "cp", 0x22 },
+	[ADV7604_PAGE_VDP] = { "vdp", 0x24 },
+};
+
 static int adv76xx_core_init(struct v4l2_subdev *sd)
 {
 	struct adv76xx_state *state = to_state(sd);
@@ -2833,13 +2843,26 @@ static void adv76xx_unregister_clients(struct adv76xx_state *state)
 }
 
 static struct i2c_client *adv76xx_dummy_client(struct v4l2_subdev *sd,
-							u8 addr, u8 io_reg)
+					       unsigned int page)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
+	struct adv76xx_state *state = to_state(sd);
+	struct adv76xx_platform_data *pdata = &state->pdata;
+	unsigned int io_reg = 0xf2 + page;
+	struct i2c_client *new_client;
 
-	if (addr)
-		io_write(sd, io_reg, addr << 1);
-	return i2c_new_dummy(client->adapter, io_read(sd, io_reg) >> 1);
+	if (pdata && pdata->i2c_addresses[page])
+		new_client = i2c_new_dummy(client->adapter,
+					   pdata->i2c_addresses[page]);
+	else
+		new_client = i2c_new_secondary_device(client,
+				adv76xx_default_addresses[page].name,
+				adv76xx_default_addresses[page].default_addr);
+
+	if (new_client)
+		io_write(sd, io_reg, new_client->addr << 1);
+
+	return new_client;
 }
 
 static const struct adv76xx_reg_seq adv7604_recommended_settings_afe[] = {
@@ -3114,20 +3137,6 @@ static int adv76xx_parse_dt(struct adv76xx_state *state)
 	/* Disable the interrupt for now as no DT-based board uses it. */
 	state->pdata.int1_config = ADV76XX_INT1_CONFIG_DISABLED;
 
-	/* Use the default I2C addresses. */
-	state->pdata.i2c_addresses[ADV7604_PAGE_AVLINK] = 0x42;
-	state->pdata.i2c_addresses[ADV76XX_PAGE_CEC] = 0x40;
-	state->pdata.i2c_addresses[ADV76XX_PAGE_INFOFRAME] = 0x3e;
-	state->pdata.i2c_addresses[ADV7604_PAGE_ESDP] = 0x38;
-	state->pdata.i2c_addresses[ADV7604_PAGE_DPP] = 0x3c;
-	state->pdata.i2c_addresses[ADV76XX_PAGE_AFE] = 0x26;
-	state->pdata.i2c_addresses[ADV76XX_PAGE_REP] = 0x32;
-	state->pdata.i2c_addresses[ADV76XX_PAGE_EDID] = 0x36;
-	state->pdata.i2c_addresses[ADV76XX_PAGE_HDMI] = 0x34;
-	state->pdata.i2c_addresses[ADV76XX_PAGE_TEST] = 0x30;
-	state->pdata.i2c_addresses[ADV76XX_PAGE_CP] = 0x22;
-	state->pdata.i2c_addresses[ADV7604_PAGE_VDP] = 0x24;
-
 	/* Hardcode the remaining platform data fields. */
 	state->pdata.disable_pwrdnb = 0;
 	state->pdata.disable_cable_det_rst = 0;
@@ -3316,10 +3325,8 @@ static int adv76xx_probe(struct i2c_client *client,
 			client->addr << 1);
 
 	state = devm_kzalloc(&client->dev, sizeof(*state), GFP_KERNEL);
-	if (!state) {
-		v4l_err(client, "Could not allocate adv76xx_state memory!\n");
+	if (!state)
 		return -ENOMEM;
-	}
 
 	state->i2c_clients[ADV76XX_PAGE_IO] = client;
 
@@ -3479,11 +3486,9 @@ static int adv76xx_probe(struct i2c_client *client,
 		if (!(BIT(i) & state->info->page_mask))
 			continue;
 
-		state->i2c_clients[i] =
-			adv76xx_dummy_client(sd, state->pdata.i2c_addresses[i],
-					     0xf2 + i);
-		if (state->i2c_clients[i] == NULL) {
-			err = -ENOMEM;
+		state->i2c_clients[i] = adv76xx_dummy_client(sd, i);
+		if (!state->i2c_clients[i]) {
+			err = -EINVAL;
 			v4l2_err(sd, "failed to create i2c client %u\n", i);
 			goto err_i2c;
 		}
@@ -3515,8 +3520,7 @@ static int adv76xx_probe(struct i2c_client *client,
 #if IS_ENABLED(CONFIG_VIDEO_ADV7604_CEC)
 	state->cec_adap = cec_allocate_adapter(&adv76xx_cec_adap_ops,
 		state, dev_name(&client->dev),
-		CEC_CAP_TRANSMIT | CEC_CAP_LOG_ADDRS |
-		CEC_CAP_PASSTHROUGH | CEC_CAP_RC, ADV76XX_MAX_ADDRS);
+		CEC_CAP_DEFAULTS, ADV76XX_MAX_ADDRS);
 	err = PTR_ERR_OR_ZERO(state->cec_adap);
 	if (err)
 		goto err_entity;

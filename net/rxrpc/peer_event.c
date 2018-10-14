@@ -28,39 +28,39 @@ static void rxrpc_store_error(struct rxrpc_peer *, struct sock_exterr_skb *);
  * Find the peer associated with an ICMP packet.
  */
 static struct rxrpc_peer *rxrpc_lookup_peer_icmp_rcu(struct rxrpc_local *local,
-						     const struct sk_buff *skb)
+						     const struct sk_buff *skb,
+						     struct sockaddr_rxrpc *srx)
 {
 	struct sock_exterr_skb *serr = SKB_EXT_ERR(skb);
-	struct sockaddr_rxrpc srx;
 
 	_enter("");
 
-	memset(&srx, 0, sizeof(srx));
-	srx.transport_type = local->srx.transport_type;
-	srx.transport.family = local->srx.transport.family;
+	memset(srx, 0, sizeof(*srx));
+	srx->transport_type = local->srx.transport_type;
+	srx->transport_len = local->srx.transport_len;
+	srx->transport.family = local->srx.transport.family;
 
 	/* Can we see an ICMP4 packet on an ICMP6 listening socket?  and vice
 	 * versa?
 	 */
-	switch (srx.transport.family) {
+	switch (srx->transport.family) {
 	case AF_INET:
-		srx.transport.sin.sin_port = serr->port;
-		srx.transport_len = sizeof(struct sockaddr_in);
+		srx->transport.sin.sin_port = serr->port;
 		switch (serr->ee.ee_origin) {
 		case SO_EE_ORIGIN_ICMP:
 			_net("Rx ICMP");
-			memcpy(&srx.transport.sin.sin_addr,
+			memcpy(&srx->transport.sin.sin_addr,
 			       skb_network_header(skb) + serr->addr_offset,
 			       sizeof(struct in_addr));
 			break;
 		case SO_EE_ORIGIN_ICMP6:
 			_net("Rx ICMP6 on v4 sock");
-			memcpy(&srx.transport.sin.sin_addr,
+			memcpy(&srx->transport.sin.sin_addr,
 			       skb_network_header(skb) + serr->addr_offset + 12,
 			       sizeof(struct in_addr));
 			break;
 		default:
-			memcpy(&srx.transport.sin.sin_addr, &ip_hdr(skb)->saddr,
+			memcpy(&srx->transport.sin.sin_addr, &ip_hdr(skb)->saddr,
 			       sizeof(struct in_addr));
 			break;
 		}
@@ -68,23 +68,25 @@ static struct rxrpc_peer *rxrpc_lookup_peer_icmp_rcu(struct rxrpc_local *local,
 
 #ifdef CONFIG_AF_RXRPC_IPV6
 	case AF_INET6:
-		srx.transport.sin6.sin6_port = serr->port;
-		srx.transport_len = sizeof(struct sockaddr_in6);
+		srx->transport.sin6.sin6_port = serr->port;
 		switch (serr->ee.ee_origin) {
 		case SO_EE_ORIGIN_ICMP6:
 			_net("Rx ICMP6");
-			memcpy(&srx.transport.sin6.sin6_addr,
+			memcpy(&srx->transport.sin6.sin6_addr,
 			       skb_network_header(skb) + serr->addr_offset,
 			       sizeof(struct in6_addr));
 			break;
 		case SO_EE_ORIGIN_ICMP:
 			_net("Rx ICMP on v6 sock");
-			memcpy(srx.transport.sin6.sin6_addr.s6_addr + 12,
+			srx->transport.sin6.sin6_addr.s6_addr32[0] = 0;
+			srx->transport.sin6.sin6_addr.s6_addr32[1] = 0;
+			srx->transport.sin6.sin6_addr.s6_addr32[2] = htonl(0xffff);
+			memcpy(srx->transport.sin6.sin6_addr.s6_addr + 12,
 			       skb_network_header(skb) + serr->addr_offset,
 			       sizeof(struct in_addr));
 			break;
 		default:
-			memcpy(&srx.transport.sin6.sin6_addr,
+			memcpy(&srx->transport.sin6.sin6_addr,
 			       &ipv6_hdr(skb)->saddr,
 			       sizeof(struct in6_addr));
 			break;
@@ -96,7 +98,7 @@ static struct rxrpc_peer *rxrpc_lookup_peer_icmp_rcu(struct rxrpc_local *local,
 		BUG();
 	}
 
-	return rxrpc_lookup_peer_rcu(local, &srx);
+	return rxrpc_lookup_peer_rcu(local, srx);
 }
 
 /*
@@ -144,6 +146,7 @@ static void rxrpc_adjust_mtu(struct rxrpc_peer *peer, struct sock_exterr_skb *se
 void rxrpc_error_report(struct sock *sk)
 {
 	struct sock_exterr_skb *serr;
+	struct sockaddr_rxrpc srx;
 	struct rxrpc_local *local = sk->sk_user_data;
 	struct rxrpc_peer *peer;
 	struct sk_buff *skb;
@@ -164,7 +167,7 @@ void rxrpc_error_report(struct sock *sk)
 	}
 
 	rcu_read_lock();
-	peer = rxrpc_lookup_peer_icmp_rcu(local, skb);
+	peer = rxrpc_lookup_peer_icmp_rcu(local, skb, &srx);
 	if (peer && !rxrpc_get_peer_maybe(peer))
 		peer = NULL;
 	if (!peer) {
@@ -173,6 +176,8 @@ void rxrpc_error_report(struct sock *sk)
 		_leave(" [no peer]");
 		return;
 	}
+
+	trace_rxrpc_rx_icmp(peer, &serr->ee, &srx);
 
 	if ((serr->ee.ee_origin == SO_EE_ORIGIN_ICMP &&
 	     serr->ee.ee_type == ICMP_DEST_UNREACH &&
@@ -190,7 +195,7 @@ void rxrpc_error_report(struct sock *sk)
 	rxrpc_free_skb(skb, rxrpc_skb_rx_freed);
 
 	/* The ref we obtained is passed off to the work item */
-	rxrpc_queue_work(&peer->error_distributor);
+	__rxrpc_queue_peer_error(peer);
 	_leave("");
 }
 
@@ -206,9 +211,6 @@ static void rxrpc_store_error(struct rxrpc_peer *peer,
 	_enter("");
 
 	ee = &serr->ee;
-
-	_net("Rx Error o=%d t=%d c=%d e=%d",
-	     ee->ee_origin, ee->ee_type, ee->ee_code, ee->ee_errno);
 
 	err = ee->ee_errno;
 
@@ -345,4 +347,120 @@ void rxrpc_peer_add_rtt(struct rxrpc_call *call, enum rxrpc_rtt_rx_trace why,
 	peer->rtt = avg;
 	trace_rxrpc_rtt_rx(call, why, send_serial, resp_serial, rtt,
 			   usage, avg);
+}
+
+/*
+ * Perform keep-alive pings.
+ */
+static void rxrpc_peer_keepalive_dispatch(struct rxrpc_net *rxnet,
+					  struct list_head *collector,
+					  time64_t base,
+					  u8 cursor)
+{
+	struct rxrpc_peer *peer;
+	const u8 mask = ARRAY_SIZE(rxnet->peer_keepalive) - 1;
+	time64_t keepalive_at;
+	int slot;
+
+	spin_lock_bh(&rxnet->peer_hash_lock);
+
+	while (!list_empty(collector)) {
+		peer = list_entry(collector->next,
+				  struct rxrpc_peer, keepalive_link);
+
+		list_del_init(&peer->keepalive_link);
+		if (!rxrpc_get_peer_maybe(peer))
+			continue;
+
+		spin_unlock_bh(&rxnet->peer_hash_lock);
+
+		keepalive_at = peer->last_tx_at + RXRPC_KEEPALIVE_TIME;
+		slot = keepalive_at - base;
+		_debug("%02x peer %u t=%d {%pISp}",
+		       cursor, peer->debug_id, slot, &peer->srx.transport);
+
+		if (keepalive_at <= base ||
+		    keepalive_at > base + RXRPC_KEEPALIVE_TIME) {
+			rxrpc_send_keepalive(peer);
+			slot = RXRPC_KEEPALIVE_TIME;
+		}
+
+		/* A transmission to this peer occurred since last we examined
+		 * it so put it into the appropriate future bucket.
+		 */
+		slot += cursor;
+		slot &= mask;
+		spin_lock_bh(&rxnet->peer_hash_lock);
+		list_add_tail(&peer->keepalive_link,
+			      &rxnet->peer_keepalive[slot & mask]);
+		rxrpc_put_peer(peer);
+	}
+
+	spin_unlock_bh(&rxnet->peer_hash_lock);
+}
+
+/*
+ * Perform keep-alive pings with VERSION packets to keep any NAT alive.
+ */
+void rxrpc_peer_keepalive_worker(struct work_struct *work)
+{
+	struct rxrpc_net *rxnet =
+		container_of(work, struct rxrpc_net, peer_keepalive_work);
+	const u8 mask = ARRAY_SIZE(rxnet->peer_keepalive) - 1;
+	time64_t base, now, delay;
+	u8 cursor, stop;
+	LIST_HEAD(collector);
+
+	now = ktime_get_seconds();
+	base = rxnet->peer_keepalive_base;
+	cursor = rxnet->peer_keepalive_cursor;
+	_enter("%lld,%u", base - now, cursor);
+
+	if (!rxnet->live)
+		return;
+
+	/* Remove to a temporary list all the peers that are currently lodged
+	 * in expired buckets plus all new peers.
+	 *
+	 * Everything in the bucket at the cursor is processed this
+	 * second; the bucket at cursor + 1 goes at now + 1s and so
+	 * on...
+	 */
+	spin_lock_bh(&rxnet->peer_hash_lock);
+	list_splice_init(&rxnet->peer_keepalive_new, &collector);
+
+	stop = cursor + ARRAY_SIZE(rxnet->peer_keepalive);
+	while (base <= now && (s8)(cursor - stop) < 0) {
+		list_splice_tail_init(&rxnet->peer_keepalive[cursor & mask],
+				      &collector);
+		base++;
+		cursor++;
+	}
+
+	base = now;
+	spin_unlock_bh(&rxnet->peer_hash_lock);
+
+	rxnet->peer_keepalive_base = base;
+	rxnet->peer_keepalive_cursor = cursor;
+	rxrpc_peer_keepalive_dispatch(rxnet, &collector, base, cursor);
+	ASSERT(list_empty(&collector));
+
+	/* Schedule the timer for the next occupied timeslot. */
+	cursor = rxnet->peer_keepalive_cursor;
+	stop = cursor + RXRPC_KEEPALIVE_TIME - 1;
+	for (; (s8)(cursor - stop) < 0; cursor++) {
+		if (!list_empty(&rxnet->peer_keepalive[cursor & mask]))
+			break;
+		base++;
+	}
+
+	now = ktime_get_seconds();
+	delay = base - now;
+	if (delay < 1)
+		delay = 1;
+	delay *= HZ;
+	if (rxnet->live)
+		timer_reduce(&rxnet->peer_keepalive_timer, jiffies + delay);
+
+	_leave("");
 }

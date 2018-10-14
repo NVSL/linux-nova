@@ -101,9 +101,6 @@ static DEFINE_IDA(ida_index);
 #define PP_BUFFER_SIZE 1024
 #define PARDEVICE_MAX 8
 
-/* ROUND_UP macro from fs/select.c */
-#define ROUND_UP(x,y) (((x)+(y)-1)/(y))
-
 static DEFINE_MUTEX(pp_do_mutex);
 
 /* define fixed sized ioctl cmd for y2038 migration */
@@ -772,14 +769,14 @@ static int pp_release(struct inode *inode, struct file *file)
 }
 
 /* No kernel lock held - fine */
-static unsigned int pp_poll(struct file *file, poll_table *wait)
+static __poll_t pp_poll(struct file *file, poll_table *wait)
 {
 	struct pp_struct *pp = file->private_data;
-	unsigned int mask = 0;
+	__poll_t mask = 0;
 
 	poll_wait(file, &pp->irq_wait, wait);
 	if (atomic_read(&pp->irqc))
-		mask |= POLLIN | POLLRDNORM;
+		mask |= EPOLLIN | EPOLLRDNORM;
 
 	return mask;
 }

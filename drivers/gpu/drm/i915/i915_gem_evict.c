@@ -33,21 +33,24 @@
 #include "intel_drv.h"
 #include "i915_trace.h"
 
-static bool ggtt_is_idle(struct drm_i915_private *dev_priv)
+I915_SELFTEST_DECLARE(static struct igt_evict_ctl {
+	bool fail_if_busy:1;
+} igt_evict_ctl;)
+
+static bool ggtt_is_idle(struct drm_i915_private *i915)
 {
-	struct i915_ggtt *ggtt = &dev_priv->ggtt;
-	struct intel_engine_cs *engine;
-	enum intel_engine_id id;
+       struct intel_engine_cs *engine;
+       enum intel_engine_id id;
 
-	for_each_engine(engine, dev_priv, id) {
-		struct intel_timeline *tl;
+       if (i915->gt.active_requests)
+	       return false;
 
-		tl = &ggtt->base.timeline.engine[engine->id];
-		if (i915_gem_active_isset(&tl->last_request))
-			return false;
-	}
+       for_each_engine(engine, i915, id) {
+	       if (!intel_engine_has_kernel_context(engine))
+		       return false;
+       }
 
-	return true;
+       return true;
 }
 
 static int ggtt_flush(struct drm_i915_private *i915)
@@ -70,6 +73,7 @@ static int ggtt_flush(struct drm_i915_private *i915)
 	if (err)
 		return err;
 
+	GEM_BUG_ON(!ggtt_is_idle(i915));
 	return 0;
 }
 
@@ -82,7 +86,7 @@ mark_free(struct drm_mm_scan *scan,
 	if (i915_vma_is_pinned(vma))
 		return false;
 
-	if (flags & PIN_NONFAULT && !list_empty(&vma->obj->userfault_link))
+	if (flags & PIN_NONFAULT && i915_vma_has_userfault(vma))
 		return false;
 
 	list_add(&vma->evict_link, unwind);
@@ -157,13 +161,14 @@ i915_gem_evict_something(struct i915_address_space *vm,
 				    min_size, alignment, cache_level,
 				    start, end, mode);
 
-	/* Retire before we search the active list. Although we have
+	/*
+	 * Retire before we search the active list. Although we have
 	 * reasonable accuracy in our retirement lists, we may have
 	 * a stray pin (preventing eviction) that can only be resolved by
 	 * retiring.
 	 */
 	if (!(flags & PIN_NONBLOCK))
-		i915_gem_retire_requests(dev_priv);
+		i915_retire_requests(dev_priv);
 	else
 		phases[1] = NULL;
 
@@ -182,7 +187,8 @@ search_again:
 		BUG_ON(ret);
 	}
 
-	/* Can we unpin some objects such as idle hw contents,
+	/*
+	 * Can we unpin some objects such as idle hw contents,
 	 * or pending flips? But since only the GGTT has global entries
 	 * such as scanouts, rinbuffers and contexts, we can skip the
 	 * purge when inspecting per-process local address spaces.
@@ -190,19 +196,37 @@ search_again:
 	if (!i915_is_ggtt(vm) || flags & PIN_NONBLOCK)
 		return -ENOSPC;
 
-	if (ggtt_is_idle(dev_priv)) {
-		/* If we still have pending pageflip completions, drop
-		 * back to userspace to give our workqueues time to
-		 * acquire our locks and unpin the old scanouts.
-		 */
-		return intel_has_pending_fb_unpin(dev_priv) ? -EAGAIN : -ENOSPC;
+	/*
+	 * Not everything in the GGTT is tracked via VMA using
+	 * i915_vma_move_to_active(), otherwise we could evict as required
+	 * with minimal stalling. Instead we are forced to idle the GPU and
+	 * explicitly retire outstanding requests which will then remove
+	 * the pinning for active objects such as contexts and ring,
+	 * enabling us to evict them on the next iteration.
+	 *
+	 * To ensure that all user contexts are evictable, we perform
+	 * a switch to the perma-pinned kernel context. This all also gives
+	 * us a termination condition, when the last retired context is
+	 * the kernel's there is no more we can evict.
+	 */
+	if (!ggtt_is_idle(dev_priv)) {
+		if (I915_SELFTEST_ONLY(igt_evict_ctl.fail_if_busy))
+			return -EBUSY;
+
+		ret = ggtt_flush(dev_priv);
+		if (ret)
+			return ret;
+
+		cond_resched();
+		goto search_again;
 	}
 
-	ret = ggtt_flush(dev_priv);
-	if (ret)
-		return ret;
-
-	goto search_again;
+	/*
+	 * If we still have pending pageflip completions, drop
+	 * back to userspace to give our workqueues time to
+	 * acquire our locks and unpin the old scanouts.
+	 */
+	return intel_has_pending_fb_unpin(dev_priv) ? -EAGAIN : -ENOSPC;
 
 found:
 	/* drm_mm doesn't allow any other other operations while
@@ -269,7 +293,7 @@ int i915_gem_evict_for_node(struct i915_address_space *vm,
 	 * retiring.
 	 */
 	if (!(flags & PIN_NONBLOCK))
-		i915_gem_retire_requests(vm->i915);
+		i915_retire_requests(vm->i915);
 
 	check_color = vm->mm.color_adjust;
 	if (check_color) {
@@ -315,11 +339,16 @@ int i915_gem_evict_for_node(struct i915_address_space *vm,
 			break;
 		}
 
+		if (flags & PIN_NONFAULT && i915_vma_has_userfault(vma)) {
+			ret = -ENOSPC;
+			break;
+		}
+
 		/* Overlap of objects in the same batch? */
 		if (i915_vma_is_pinned(vma)) {
 			ret = -ENOSPC;
-			if (vma->exec_entry &&
-			    vma->exec_entry->flags & EXEC_OBJECT_PINNED)
+			if (vma->exec_flags &&
+			    *vma->exec_flags & EXEC_OBJECT_PINNED)
 				ret = -EINVAL;
 			break;
 		}

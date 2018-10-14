@@ -9,7 +9,7 @@
  * the Free Software Foundation; either version 2 of the License, or
  * (at your option) any later version.
  */
-#include <linux/gpio.h>
+#include <linux/gpio/driver.h>
 #include <linux/errno.h>
 #include <linux/kernel.h>
 #include <linux/clk.h>
@@ -20,6 +20,7 @@
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/of_device.h>
+#include <linux/pinctrl/consumer.h>
 #include <linux/platform_device.h>
 #include <linux/platform_data/gpio-davinci.h>
 #include <linux/irqchip/chained_irq.h>
@@ -166,7 +167,7 @@ of_err:
 static int davinci_gpio_probe(struct platform_device *pdev)
 {
 	static int ctrl_num, bank_base;
-	int gpio, bank;
+	int gpio, bank, ret = 0;
 	unsigned ngpio, nbank;
 	struct davinci_gpio_controller *chips;
 	struct davinci_gpio_platform_data *pdata;
@@ -197,8 +198,8 @@ static int davinci_gpio_probe(struct platform_device *pdev)
 		ngpio = ARCH_NR_GPIOS;
 
 	nbank = DIV_ROUND_UP(ngpio, 32);
-	chips = devm_kzalloc(dev,
-			     nbank * sizeof(struct davinci_gpio_controller),
+	chips = devm_kcalloc(dev,
+			     nbank, sizeof(struct davinci_gpio_controller),
 			     GFP_KERNEL);
 	if (!chips)
 		return -ENOMEM;
@@ -225,6 +226,11 @@ static int davinci_gpio_probe(struct platform_device *pdev)
 	chips->chip.of_gpio_n_cells = 2;
 	chips->chip.parent = dev;
 	chips->chip.of_node = dev->of_node;
+
+	if (of_property_read_bool(dev->of_node, "gpio-ranges")) {
+		chips->chip.request = gpiochip_generic_request;
+		chips->chip.free = gpiochip_generic_free;
+	}
 #endif
 	spin_lock_init(&chips->lock);
 	bank_base += ngpio;
@@ -232,10 +238,23 @@ static int davinci_gpio_probe(struct platform_device *pdev)
 	for (gpio = 0, bank = 0; gpio < ngpio; gpio += 32, bank++)
 		chips->regs[bank] = gpio_base + offset_array[bank];
 
-	gpiochip_add_data(&chips->chip, chips);
+	ret = devm_gpiochip_add_data(dev, &chips->chip, chips);
+	if (ret)
+		goto err;
+
 	platform_set_drvdata(pdev, chips);
-	davinci_gpio_irq_setup(pdev);
+	ret = davinci_gpio_irq_setup(pdev);
+	if (ret)
+		goto err;
+
 	return 0;
+
+err:
+	/* Revert the static variable increments */
+	ctrl_num--;
+	bank_base -= ngpio;
+
+	return ret;
 }
 
 /*--------------------------------------------------------------------------*/
@@ -370,7 +389,7 @@ static int gpio_irq_type_unbanked(struct irq_data *data, unsigned trigger)
 	u32 mask;
 
 	d = (struct davinci_gpio_controller *)irq_data_get_irq_handler_data(data);
-	g = (struct davinci_gpio_regs __iomem *)d->regs;
+	g = (struct davinci_gpio_regs __iomem *)d->regs[0];
 	mask = __gpio_mask(data->irq - d->base_irq);
 
 	if (trigger & ~(IRQ_TYPE_EDGE_FALLING | IRQ_TYPE_EDGE_RISING))
@@ -477,8 +496,7 @@ static int davinci_gpio_irq_setup(struct platform_device *pdev)
 
 	clk = devm_clk_get(dev, "gpio");
 	if (IS_ERR(clk)) {
-		printk(KERN_ERR "Error %ld getting gpio clock?\n",
-		       PTR_ERR(clk));
+		dev_err(dev, "Error %ld getting gpio clock\n", PTR_ERR(clk));
 		return PTR_ERR(clk);
 	}
 	ret = clk_prepare_enable(clk);
@@ -592,14 +610,12 @@ done:
 	return 0;
 }
 
-#if IS_ENABLED(CONFIG_OF)
 static const struct of_device_id davinci_gpio_ids[] = {
 	{ .compatible = "ti,keystone-gpio", keystone_gpio_get_irq_chip},
 	{ .compatible = "ti,dm6441-gpio", davinci_gpio_get_irq_chip},
 	{ /* sentinel */ },
 };
 MODULE_DEVICE_TABLE(of, davinci_gpio_ids);
-#endif
 
 static struct platform_driver davinci_gpio_driver = {
 	.probe		= davinci_gpio_probe,

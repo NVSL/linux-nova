@@ -105,10 +105,6 @@ enum ch_state {
 	HIDMA_CH_STOPPED = 4,
 };
 
-enum tre_type {
-	HIDMA_TRE_MEMCPY = 3,
-};
-
 enum err_code {
 	HIDMA_EVRE_STATUS_COMPLETE = 1,
 	HIDMA_EVRE_STATUS_ERROR = 4,
@@ -174,8 +170,7 @@ int hidma_ll_request(struct hidma_lldev *lldev, u32 sig, const char *dev_name,
 	tre->err_info = 0;
 	tre->lldev = lldev;
 	tre_local = &tre->tre_local[0];
-	tre_local[HIDMA_TRE_CFG_IDX] = HIDMA_TRE_MEMCPY;
-	tre_local[HIDMA_TRE_CFG_IDX] |= (lldev->chidx & 0xFF) << 8;
+	tre_local[HIDMA_TRE_CFG_IDX] = (lldev->chidx & 0xFF) << 8;
 	tre_local[HIDMA_TRE_CFG_IDX] |= BIT(16);	/* set IEOB */
 	*tre_ch = i;
 	if (callback)
@@ -398,6 +393,8 @@ static int hidma_ll_reset(struct hidma_lldev *lldev)
  */
 static void hidma_ll_int_handler_internal(struct hidma_lldev *lldev, int cause)
 {
+	unsigned long irqflags;
+
 	if (cause & HIDMA_ERR_INT_MASK) {
 		dev_err(lldev->dev, "error 0x%x, disabling...\n",
 				cause);
@@ -415,6 +412,10 @@ static void hidma_ll_int_handler_internal(struct hidma_lldev *lldev, int cause)
 		return;
 	}
 
+	spin_lock_irqsave(&lldev->lock, irqflags);
+	writel_relaxed(cause, lldev->evca + HIDMA_EVCA_IRQ_CLR_REG);
+	spin_unlock_irqrestore(&lldev->lock, irqflags);
+
 	/*
 	 * Fine tuned for this HW...
 	 *
@@ -426,9 +427,6 @@ static void hidma_ll_int_handler_internal(struct hidma_lldev *lldev, int cause)
 	 * Try to consume as many EVREs as possible.
 	 */
 	hidma_handle_tre_completion(lldev);
-
-	/* We consumed TREs or there are pending TREs or EVREs. */
-	writel_relaxed(cause, lldev->evca + HIDMA_EVCA_IRQ_CLR_REG);
 }
 
 irqreturn_t hidma_ll_inthandler(int chirq, void *arg)
@@ -607,7 +605,7 @@ int hidma_ll_disable(struct hidma_lldev *lldev)
 
 void hidma_ll_set_transfer_params(struct hidma_lldev *lldev, u32 tre_ch,
 				  dma_addr_t src, dma_addr_t dest, u32 len,
-				  u32 flags)
+				  u32 flags, u32 txntype)
 {
 	struct hidma_tre *tre;
 	u32 *tre_local;
@@ -626,6 +624,8 @@ void hidma_ll_set_transfer_params(struct hidma_lldev *lldev, u32 tre_ch,
 	}
 
 	tre_local = &tre->tre_local[0];
+	tre_local[HIDMA_TRE_CFG_IDX] &= ~GENMASK(7, 0);
+	tre_local[HIDMA_TRE_CFG_IDX] |= txntype;
 	tre_local[HIDMA_TRE_LEN_IDX] = len;
 	tre_local[HIDMA_TRE_SRC_LOW_IDX] = lower_32_bits(src);
 	tre_local[HIDMA_TRE_SRC_HI_IDX] = upper_32_bits(src);

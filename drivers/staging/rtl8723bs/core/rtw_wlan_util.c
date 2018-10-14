@@ -1,15 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0
 /******************************************************************************
  *
  * Copyright(c) 2007 - 2012 Realtek Corporation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
- * more details.
  *
  ******************************************************************************/
 #define _RTW_WLAN_UTIL_C_
@@ -1359,7 +1351,7 @@ int rtw_check_bcn_info(struct adapter *Adapter, u8 *pframe, u32 packet_len)
 		return true;
 	}
 
-	bssid = (struct wlan_bssid_ex *)rtw_zmalloc(sizeof(struct wlan_bssid_ex));
+	bssid = rtw_zmalloc(sizeof(struct wlan_bssid_ex));
 	if (bssid == NULL) {
 		DBG_871X("%s rtw_zmalloc fail !!!\n", __func__);
 		return true;
@@ -1946,7 +1938,7 @@ void process_addba_req(struct adapter *padapter, u8 *paddba_req, u8 *addr)
 		preorder_ctrl->indicate_seq = 0xffff;
 		#endif
 
-		preorder_ctrl->enable = (pmlmeinfo->bAcceptAddbaReq == true) ? true : false;
+		preorder_ctrl->enable = pmlmeinfo->accept_addba_req;
 	}
 
 }

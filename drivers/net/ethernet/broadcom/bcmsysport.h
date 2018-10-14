@@ -12,6 +12,7 @@
 #define __BCM_SYSPORT_H
 
 #include <linux/if_vlan.h>
+#include <linux/net_dim.h>
 
 /* Receive/transmit descriptor format */
 #define DESC_ADDR_HI_STATUS_LEN	0x00
@@ -277,7 +278,8 @@ struct bcm_rsb {
 #define  GIB_GTX_CLK_EXT_CLK		(0 << GIB_GTX_CLK_SEL_SHIFT)
 #define  GIB_GTX_CLK_125MHZ		(1 << GIB_GTX_CLK_SEL_SHIFT)
 #define  GIB_GTX_CLK_250MHZ		(2 << GIB_GTX_CLK_SEL_SHIFT)
-#define  GIB_FCS_STRIP			(1 << 6)
+#define  GIB_FCS_STRIP_SHIFT		6
+#define  GIB_FCS_STRIP			(1 << GIB_FCS_STRIP_SHIFT)
 #define  GIB_LCL_LOOP_EN		(1 << 7)
 #define  GIB_LCL_LOOP_TXEN		(1 << 8)
 #define  GIB_RMT_LOOP_EN		(1 << 9)
@@ -404,7 +406,7 @@ struct bcm_rsb {
 #define  RING_CONS_INDEX_MASK		0xffff
 
 #define RING_MAPPING			0x14
-#define  RING_QID_MASK			0x3
+#define  RING_QID_MASK			0x7
 #define  RING_PORT_ID_SHIFT		3
 #define  RING_PORT_ID_MASK		0x7
 #define  RING_IGNORE_STATUS		(1 << 6)
@@ -449,7 +451,8 @@ struct bcm_rsb {
 /* Uses 2 bits on SYSTEMPORT Lite and shifts everything by 1 bit, we
  * keep the SYSTEMPORT layout here and adjust with tdma_control_bit()
  */
-#define  TSB_SWAP			2
+#define  TSB_SWAP0			2
+#define  TSB_SWAP1			3
 #define  ACB_ALGO			3
 #define  BUF_DATA_OFFSET_SHIFT		4
 #define  BUF_DATA_OFFSET_MASK		0x3ff
@@ -603,6 +606,7 @@ struct bcm_sysport_mib {
 /* HW maintains a large list of counters */
 enum bcm_sysport_stat_type {
 	BCM_SYSPORT_STAT_NETDEV = -1,
+	BCM_SYSPORT_STAT_NETDEV64,
 	BCM_SYSPORT_STAT_MIB_RX,
 	BCM_SYSPORT_STAT_MIB_TX,
 	BCM_SYSPORT_STAT_RUNT,
@@ -617,6 +621,13 @@ enum bcm_sysport_stat_type {
 	.stat_sizeof = sizeof(((struct net_device_stats *)0)->m), \
 	.stat_offset = offsetof(struct net_device_stats, m), \
 	.type = BCM_SYSPORT_STAT_NETDEV, \
+}
+
+#define STAT_NETDEV64(m) { \
+	.stat_string = __stringify(m), \
+	.stat_sizeof = sizeof(((struct bcm_sysport_stats64 *)0)->m), \
+	.stat_offset = offsetof(struct bcm_sysport_stats64, m), \
+	.type = BCM_SYSPORT_STAT_NETDEV64, \
 }
 
 #define STAT_MIB(str, m, _type) { \
@@ -659,6 +670,14 @@ struct bcm_sysport_stats {
 	u16 reg_offset;
 };
 
+struct bcm_sysport_stats64 {
+	/* 64bit stats on 32bit/64bit Machine */
+	u64	rx_packets;
+	u64	rx_bytes;
+	u64	tx_packets;
+	u64	tx_bytes;
+};
+
 /* Software house keeping helper structure */
 struct bcm_sysport_cb {
 	struct sk_buff	*skb;		/* SKB for RX packets */
@@ -678,6 +697,14 @@ struct bcm_sysport_hw_params {
 	unsigned int	num_rx_desc_words;
 };
 
+struct bcm_sysport_net_dim {
+	u16			use_dim;
+	u16			event_ctr;
+	unsigned long		packets;
+	unsigned long		bytes;
+	struct net_dim		dim;
+};
+
 /* Software view of the TX ring */
 struct bcm_sysport_tx_ring {
 	spinlock_t	lock;		/* Ring lock for tx reclaim/xmit */
@@ -689,12 +716,15 @@ struct bcm_sysport_tx_ring {
 	unsigned int	desc_count;	/* Number of descriptors */
 	unsigned int	curr_desc;	/* Current descriptor */
 	unsigned int	c_index;	/* Last consumer index */
-	unsigned int	p_index;	/* Current producer index */
+	unsigned int	clean_index;	/* Current clean index */
 	struct bcm_sysport_cb *cbs;	/* Transmit control blocks */
 	struct dma_desc	*desc_cpu;	/* CPU view of the descriptor */
 	struct bcm_sysport_priv *priv;	/* private context backpointer */
 	unsigned long	packets;	/* packets statistics */
 	unsigned long	bytes;		/* bytes statistics */
+	unsigned int	switch_queue;	/* switch port queue number */
+	unsigned int	switch_port;	/* switch port queue number */
+	bool		inspect;	/* inspect switch port and queue */
 };
 
 /* Driver private structure */
@@ -723,6 +753,10 @@ struct bcm_sysport_priv {
 	unsigned int		rx_read_ptr;
 	unsigned int		rx_c_index;
 
+	struct bcm_sysport_net_dim	dim;
+	u32			rx_max_coalesced_frames;
+	u32			rx_coalesce_usecs;
+
 	/* PHY device */
 	struct device_node	*phy_dn;
 	phy_interface_t		phy_interface;
@@ -743,5 +777,17 @@ struct bcm_sysport_priv {
 
 	/* Ethtool */
 	u32			msg_enable;
+
+	struct bcm_sysport_stats64	stats64;
+
+	/* For atomic update generic 64bit value on 32bit Machine */
+	struct u64_stats_sync	syncp;
+
+	/* map information between switch port queues and local queues */
+	struct notifier_block	dsa_notifier;
+	unsigned int		per_port_num_tx_queues;
+	unsigned long		queue_bitmap;
+	struct bcm_sysport_tx_ring *ring_map[DSA_MAX_PORTS * 8];
+
 };
 #endif /* __BCM_SYSPORT_H */

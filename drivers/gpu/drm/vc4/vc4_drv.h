@@ -10,6 +10,58 @@
 #include <drm/drmP.h>
 #include <drm/drm_encoder.h>
 #include <drm/drm_gem_cma_helper.h>
+#include <drm/drm_atomic.h>
+#include <drm/drm_syncobj.h>
+
+#include "uapi/drm/vc4_drm.h"
+
+/* Don't forget to update vc4_bo.c: bo_type_names[] when adding to
+ * this.
+ */
+enum vc4_kernel_bo_type {
+	/* Any kernel allocation (gem_create_object hook) before it
+	 * gets another type set.
+	 */
+	VC4_BO_TYPE_KERNEL,
+	VC4_BO_TYPE_V3D,
+	VC4_BO_TYPE_V3D_SHADER,
+	VC4_BO_TYPE_DUMB,
+	VC4_BO_TYPE_BIN,
+	VC4_BO_TYPE_RCL,
+	VC4_BO_TYPE_BCL,
+	VC4_BO_TYPE_KERNEL_CACHE,
+	VC4_BO_TYPE_COUNT
+};
+
+/* Performance monitor object. The perform lifetime is controlled by userspace
+ * using perfmon related ioctls. A perfmon can be attached to a submit_cl
+ * request, and when this is the case, HW perf counters will be activated just
+ * before the submit_cl is submitted to the GPU and disabled when the job is
+ * done. This way, only events related to a specific job will be counted.
+ */
+struct vc4_perfmon {
+	/* Tracks the number of users of the perfmon, when this counter reaches
+	 * zero the perfmon is destroyed.
+	 */
+	refcount_t refcnt;
+
+	/* Number of counters activated in this perfmon instance
+	 * (should be less than DRM_VC4_MAX_PERF_COUNTERS).
+	 */
+	u8 ncounters;
+
+	/* Events counted by the HW perf counters. */
+	u8 events[DRM_VC4_MAX_PERF_COUNTERS];
+
+	/* Storage for counter values. Counters are incremented by the HW
+	 * perf counter values every time the perfmon is attached to a GPU job.
+	 * This way, perfmon users don't have to retrieve the results after
+	 * each job if they want to track events covering several submissions.
+	 * Note that counter values can't be reset, but you can fake a reset by
+	 * destroying the perfmon and creating a new one.
+	 */
+	u64 counters[0];
+};
 
 struct vc4_dev {
 	struct drm_device *dev;
@@ -20,8 +72,6 @@ struct vc4_dev {
 	struct vc4_dpi *dpi;
 	struct vc4_dsi *dsi1;
 	struct vc4_vec *vec;
-
-	struct drm_fbdev_cma *fbdev;
 
 	struct vc4_hang_state *hang_state;
 
@@ -46,15 +96,28 @@ struct vc4_dev {
 		struct timer_list time_timer;
 	} bo_cache;
 
-	struct vc4_bo_stats {
+	u32 num_labels;
+	struct vc4_label {
+		const char *name;
 		u32 num_allocated;
 		u32 size_allocated;
-		u32 num_cached;
-		u32 size_cached;
-	} bo_stats;
+	} *bo_labels;
 
-	/* Protects bo_cache and the BO stats. */
+	/* Protects bo_cache and bo_labels. */
 	struct mutex bo_lock;
+
+	/* Purgeable BO pool. All BOs in this pool can have their memory
+	 * reclaimed if the driver is unable to allocate new BOs. We also
+	 * keep stats related to the purge mechanism here.
+	 */
+	struct {
+		struct list_head list;
+		unsigned int num;
+		size_t size;
+		unsigned int purged_num;
+		size_t purged_size;
+		struct mutex lock;
+	} purgeable;
 
 	uint64_t dma_fence_context;
 
@@ -92,6 +155,11 @@ struct vc4_dev {
 	wait_queue_head_t job_wait_queue;
 	struct work_struct job_done_work;
 
+	/* Used to track the active perfmon if any. Access to this field is
+	 * protected by job_lock.
+	 */
+	struct vc4_perfmon *active_perfmon;
+
 	/* List of struct vc4_seqno_cb for callbacks to be made from a
 	 * workqueue when the given seqno is passed.
 	 */
@@ -127,6 +195,9 @@ struct vc4_dev {
 	} hangcheck;
 
 	struct semaphore async_modeset;
+
+	struct drm_modeset_lock ctm_state_lock;
+	struct drm_private_obj ctm_manager;
 };
 
 static inline struct vc4_dev *
@@ -169,6 +240,21 @@ struct vc4_bo {
 	/* normally (resv == &_resv) except for imported bo's */
 	struct reservation_object *resv;
 	struct reservation_object _resv;
+
+	/* One of enum vc4_kernel_bo_type, or VC4_BO_TYPE_COUNT + i
+	 * for user-allocated labels.
+	 */
+	int label;
+
+	/* Count the number of active users. This is needed to determine
+	 * whether we can move the BO to the purgeable list or not (when the BO
+	 * is used by the GPU or the display engine we can't purge it).
+	 */
+	refcount_t usecnt;
+
+	/* Store purgeable/purged state here */
+	u32 madv;
+	struct mutex madv_lock;
 };
 
 static inline struct vc4_bo *
@@ -229,6 +315,66 @@ to_vc4_plane(struct drm_plane *plane)
 	return (struct vc4_plane *)plane;
 }
 
+enum vc4_scaling_mode {
+	VC4_SCALING_NONE,
+	VC4_SCALING_TPZ,
+	VC4_SCALING_PPF,
+};
+
+struct vc4_plane_state {
+	struct drm_plane_state base;
+	/* System memory copy of the display list for this element, computed
+	 * at atomic_check time.
+	 */
+	u32 *dlist;
+	u32 dlist_size; /* Number of dwords allocated for the display list */
+	u32 dlist_count; /* Number of used dwords in the display list. */
+
+	/* Offset in the dlist to various words, for pageflip or
+	 * cursor updates.
+	 */
+	u32 pos0_offset;
+	u32 pos2_offset;
+	u32 ptr0_offset;
+
+	/* Offset where the plane's dlist was last stored in the
+	 * hardware at vc4_crtc_atomic_flush() time.
+	 */
+	u32 __iomem *hw_dlist;
+
+	/* Clipped coordinates of the plane on the display. */
+	int crtc_x, crtc_y, crtc_w, crtc_h;
+	/* Clipped area being scanned from in the FB. */
+	u32 src_x, src_y;
+
+	u32 src_w[2], src_h[2];
+
+	/* Scaling selection for the RGB/Y plane and the Cb/Cr planes. */
+	enum vc4_scaling_mode x_scaling[2], y_scaling[2];
+	bool is_unity;
+	bool is_yuv;
+
+	/* Offset to start scanning out from the start of the plane's
+	 * BO.
+	 */
+	u32 offsets[3];
+
+	/* Our allocation in LBM for temporary storage during scaling. */
+	struct drm_mm_node lbm;
+
+	/* Set when the plane has per-pixel alpha content or does not cover
+	 * the entire screen. This is a hint to the CRTC that it might need
+	 * to enable background color fill.
+	 */
+	bool needs_bg_fill;
+};
+
+static inline struct vc4_plane_state *
+to_vc4_plane_state(struct drm_plane_state *state)
+{
+	return (struct vc4_plane_state *)state;
+}
+
 enum vc4_encoder_type {
 	VC4_ENCODER_TYPE_NONE,
 	VC4_ENCODER_TYPE_HDMI,
@@ -249,6 +395,39 @@ static inline struct vc4_encoder *
 to_vc4_encoder(struct drm_encoder *encoder)
 {
 	return container_of(encoder, struct vc4_encoder, base);
+}
+
+struct vc4_crtc_data {
+	/* Which channel of the HVS this pixelvalve sources from. */
+	int hvs_channel;
+
+	enum vc4_encoder_type encoder_types[4];
+};
+
+struct vc4_crtc {
+	struct drm_crtc base;
+	const struct vc4_crtc_data *data;
+	void __iomem *regs;
+
+	/* Timestamp at start of vblank irq - unaffected by lock delays. */
+	ktime_t t_vblank;
+
+	/* Which HVS channel we're using for our CRTC. */
+	int channel;
+
+	u8 lut_r[256];
+	u8 lut_g[256];
+	u8 lut_b[256];
+	/* Size in pixels of the COB memory allocated to this CRTC. */
+	u32 cob_size;
+
+	struct drm_pending_vblank_event *event;
+};
+
+static inline struct vc4_crtc *
+to_vc4_crtc(struct drm_crtc *crtc)
+{
+	return (struct vc4_crtc *)crtc;
 }
 
 #define V3D_READ(offset) readl(vc4->v3d->regs + offset)
@@ -362,6 +541,21 @@ struct vc4_exec_info {
 	void *uniforms_v;
 	uint32_t uniforms_p;
 	uint32_t uniforms_size;
+
+	/* Pointer to a performance monitor object if the user requested it,
+	 * NULL otherwise.
+	 */
+	struct vc4_perfmon *perfmon;
+};
+
+/* Per-open file private data. Any driver-specific resource that has to be
+ * released when the DRM file is closed should be placed here.
+ */
+struct vc4_file {
+	struct {
+		struct idr idr;
+		struct mutex lock;
+	} perfmon;
 };
 
 static inline struct vc4_exec_info *
@@ -460,7 +654,7 @@ struct vc4_validated_shader_info {
 struct drm_gem_object *vc4_create_object(struct drm_device *dev, size_t size);
 void vc4_free_object(struct drm_gem_object *gem_obj);
 struct vc4_bo *vc4_bo_create(struct drm_device *dev, size_t size,
-			     bool from_cache);
+			     bool from_cache, enum vc4_kernel_bo_type type);
 int vc4_dumb_create(struct drm_file *file_priv,
 		    struct drm_device *dev,
 		    struct drm_mode_create_dumb *args);
@@ -478,6 +672,9 @@ int vc4_get_tiling_ioctl(struct drm_device *dev, void *data,
 			 struct drm_file *file_priv);
 int vc4_get_hang_state_ioctl(struct drm_device *dev, void *data,
 			     struct drm_file *file_priv);
+int vc4_label_bo_ioctl(struct drm_device *dev, void *data,
+		       struct drm_file *file_priv);
+int vc4_fault(struct vm_fault *vmf);
 int vc4_mmap(struct file *filp, struct vm_area_struct *vma);
 struct reservation_object *vc4_prime_res_obj(struct drm_gem_object *obj);
 int vc4_prime_mmap(struct drm_gem_object *obj, struct vm_area_struct *vma);
@@ -485,13 +682,16 @@ struct drm_gem_object *vc4_prime_import_sg_table(struct drm_device *dev,
 						 struct dma_buf_attachment *attach,
 						 struct sg_table *sgt);
 void *vc4_prime_vmap(struct drm_gem_object *obj);
-void vc4_bo_cache_init(struct drm_device *dev);
+int vc4_bo_cache_init(struct drm_device *dev);
 void vc4_bo_cache_destroy(struct drm_device *dev);
 int vc4_bo_stats_debugfs(struct seq_file *m, void *arg);
+int vc4_bo_inc_usecnt(struct vc4_bo *bo);
+void vc4_bo_dec_usecnt(struct vc4_bo *bo);
+void vc4_bo_add_to_purgeable_pool(struct vc4_bo *bo);
+void vc4_bo_remove_from_purgeable_pool(struct vc4_bo *bo);
 
 /* vc4_crtc.c */
 extern struct platform_driver vc4_crtc_driver;
-bool vc4_event_pending(struct drm_crtc *crtc);
 int vc4_crtc_debugfs_regs(struct seq_file *m, void *arg);
 bool vc4_crtc_get_scanoutpos(struct drm_device *dev, unsigned int crtc_id,
 			     bool in_vblank_irq, int *vpos, int *hpos,
@@ -533,6 +733,8 @@ void vc4_job_handle_completed(struct vc4_dev *vc4);
 int vc4_queue_seqno_cb(struct drm_device *dev,
 		       struct vc4_seqno_cb *cb, uint64_t seqno,
 		       void (*func)(struct vc4_seqno_cb *cb));
+int vc4_gem_madvise_ioctl(struct drm_device *dev, void *data,
+			  struct drm_file *file_priv);
 
 /* vc4_hdmi.c */
 extern struct platform_driver vc4_hdmi_driver;
@@ -594,3 +796,19 @@ bool vc4_check_tex_size(struct vc4_exec_info *exec,
 /* vc4_validate_shader.c */
 struct vc4_validated_shader_info *
 vc4_validate_shader(struct drm_gem_cma_object *shader_obj);
+
+/* vc4_perfmon.c */
+void vc4_perfmon_get(struct vc4_perfmon *perfmon);
+void vc4_perfmon_put(struct vc4_perfmon *perfmon);
+void vc4_perfmon_start(struct vc4_dev *vc4, struct vc4_perfmon *perfmon);
+void vc4_perfmon_stop(struct vc4_dev *vc4, struct vc4_perfmon *perfmon,
+		      bool capture);
+struct vc4_perfmon *vc4_perfmon_find(struct vc4_file *vc4file, int id);
+void vc4_perfmon_open_file(struct vc4_file *vc4file);
+void vc4_perfmon_close_file(struct vc4_file *vc4file);
+int vc4_perfmon_create_ioctl(struct drm_device *dev, void *data,
+			     struct drm_file *file_priv);
+int vc4_perfmon_destroy_ioctl(struct drm_device *dev, void *data,
+			      struct drm_file *file_priv);
+int vc4_perfmon_get_values_ioctl(struct drm_device *dev, void *data,
+				 struct drm_file *file_priv);

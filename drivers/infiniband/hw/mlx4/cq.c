@@ -140,14 +140,18 @@ static int mlx4_ib_get_cq_umem(struct mlx4_ib_dev *dev, struct ib_ucontext *cont
 {
 	int err;
 	int cqe_size = dev->dev->caps.cqe_size;
+	int shift;
+	int n;
 
 	*umem = ib_umem_get(context, buf_addr, cqe * cqe_size,
 			    IB_ACCESS_LOCAL_WRITE, 1);
 	if (IS_ERR(*umem))
 		return PTR_ERR(*umem);
 
-	err = mlx4_mtt_init(dev->dev, ib_umem_page_count(*umem),
-			    (*umem)->page_shift, &buf->mtt);
+	n = ib_umem_page_count(*umem);
+	shift = mlx4_ib_umem_calc_optimal_mtt_size(*umem, 0, &n);
+	err = mlx4_mtt_init(dev->dev, n, shift, &buf->mtt);
+
 	if (err)
 		goto err_buf;
 
@@ -166,7 +170,7 @@ err_buf:
 	return err;
 }
 
-#define CQ_CREATE_FLAGS_SUPPORTED IB_CQ_FLAGS_TIMESTAMP_COMPLETION
+#define CQ_CREATE_FLAGS_SUPPORTED IB_UVERBS_CQ_FLAGS_TIMESTAMP_COMPLETION
 struct ib_cq *mlx4_ib_create_cq(struct ib_device *ibdev,
 				const struct ib_cq_init_attr *attr,
 				struct ib_ucontext *context,
@@ -218,6 +222,7 @@ struct ib_cq *mlx4_ib_create_cq(struct ib_device *ibdev,
 			goto err_mtt;
 
 		uar = &to_mucontext(context)->uar;
+		cq->mcq.usage = MLX4_RES_USAGE_USER_VERBS;
 	} else {
 		err = mlx4_db_alloc(dev->dev, &cq->db, 1);
 		if (err)
@@ -233,6 +238,7 @@ struct ib_cq *mlx4_ib_create_cq(struct ib_device *ibdev,
 			goto err_db;
 
 		uar = &dev->priv_uar;
+		cq->mcq.usage = MLX4_RES_USAGE_DRIVER;
 	}
 
 	if (dev->eq_table)
@@ -240,7 +246,7 @@ struct ib_cq *mlx4_ib_create_cq(struct ib_device *ibdev,
 
 	err = mlx4_cq_alloc(dev->dev, entries, &cq->buf.mtt, uar,
 			    cq->db.dma, &cq->mcq, vector, 0,
-			    !!(cq->create_flags & IB_CQ_FLAGS_TIMESTAMP_COMPLETION));
+			    !!(cq->create_flags & IB_UVERBS_CQ_FLAGS_TIMESTAMP_COMPLETION));
 	if (err)
 		goto err_dbmap;
 
@@ -595,6 +601,7 @@ static void use_tunnel_data(struct mlx4_ib_qp *qp, struct mlx4_ib_cq *cq, struct
 	wc->dlid_path_bits = 0;
 
 	if (is_eth) {
+		wc->slid = 0;
 		wc->vlan_id = be16_to_cpu(hdr->tun.sl_vid);
 		memcpy(&(wc->smac[0]), (char *)&hdr->tun.mac_31_0, 4);
 		memcpy(&(wc->smac[4]), (char *)&hdr->tun.slid_mac_47_32, 2);
@@ -635,7 +642,7 @@ static void mlx4_ib_poll_sw_comp(struct mlx4_ib_cq *cq, int num_entries,
 	struct mlx4_ib_qp *qp;
 
 	*npolled = 0;
-	/* Find uncompleted WQEs belonging to that cq and retrun
+	/* Find uncompleted WQEs belonging to that cq and return
 	 * simulated FLUSH_ERR completions
 	 */
 	list_for_each_entry(qp, &cq->send_qp_list, cq_send_list) {
@@ -766,11 +773,13 @@ repoll:
 		switch (cqe->owner_sr_opcode & MLX4_CQE_OPCODE_MASK) {
 		case MLX4_OPCODE_RDMA_WRITE_IMM:
 			wc->wc_flags |= IB_WC_WITH_IMM;
+			/* fall through */
 		case MLX4_OPCODE_RDMA_WRITE:
 			wc->opcode    = IB_WC_RDMA_WRITE;
 			break;
 		case MLX4_OPCODE_SEND_IMM:
 			wc->wc_flags |= IB_WC_WITH_IMM;
+			/* fall through */
 		case MLX4_OPCODE_SEND:
 		case MLX4_OPCODE_SEND_INVAL:
 			wc->opcode    = IB_WC_SEND;
@@ -843,7 +852,6 @@ repoll:
 			}
 		}
 
-		wc->slid	   = be16_to_cpu(cqe->rlid);
 		g_mlpath_rqpn	   = be32_to_cpu(cqe->g_mlpath_rqpn);
 		wc->src_qp	   = g_mlpath_rqpn & 0xffffff;
 		wc->dlid_path_bits = (g_mlpath_rqpn >> 24) & 0x7f;
@@ -852,6 +860,7 @@ repoll:
 		wc->wc_flags	  |= mlx4_ib_ipoib_csum_ok(cqe->status,
 					cqe->checksum) ? IB_WC_IP_CSUM_OK : 0;
 		if (is_eth) {
+			wc->slid = 0;
 			wc->sl  = be16_to_cpu(cqe->sl_vid) >> 13;
 			if (be32_to_cpu(cqe->vlan_my_qpn) &
 					MLX4_CQE_CVLAN_PRESENT_MASK) {
@@ -863,6 +872,7 @@ repoll:
 			memcpy(wc->smac, cqe->smac, ETH_ALEN);
 			wc->wc_flags |= (IB_WC_WITH_VLAN | IB_WC_WITH_SMAC);
 		} else {
+			wc->slid = be16_to_cpu(cqe->rlid);
 			wc->sl  = be16_to_cpu(cqe->sl_vid) >> 12;
 			wc->vlan_id = 0xffff;
 		}

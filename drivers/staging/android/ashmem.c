@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /* mm/ashmem.c
  *
  * Anonymous Shared Memory Subsystem, ashmem
@@ -5,15 +6,6 @@
  * Copyright (C) 2008 Google, Inc.
  *
  * Robert Love <rlove@google.com>
- *
- * This software is licensed under the terms of the GNU General Public
- * License version 2, as published by the Free Software Foundation, and
- * may be copied, distributed, and modified under those terms.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
  */
 
 #define pr_fmt(fmt) "ashmem: " fmt
@@ -294,19 +286,9 @@ static int ashmem_release(struct inode *ignored, struct file *file)
 	return 0;
 }
 
-/**
- * ashmem_read() - Reads a set of bytes from an Ashmem-enabled file
- * @file:	   The associated backing file.
- * @buf:	   The buffer of data being written to
- * @len:	   The number of bytes being read
- * @pos:	   The position of the first byte to read.
- *
- * Return: 0 if successful, or another return code if not.
- */
-static ssize_t ashmem_read(struct file *file, char __user *buf,
-			   size_t len, loff_t *pos)
+static ssize_t ashmem_read_iter(struct kiocb *iocb, struct iov_iter *iter)
 {
-	struct ashmem_area *asma = file->private_data;
+	struct ashmem_area *asma = iocb->ki_filp->private_data;
 	int ret = 0;
 
 	mutex_lock(&ashmem_mutex);
@@ -320,20 +302,17 @@ static ssize_t ashmem_read(struct file *file, char __user *buf,
 		goto out_unlock;
 	}
 
-	mutex_unlock(&ashmem_mutex);
-
 	/*
 	 * asma and asma->file are used outside the lock here.  We assume
 	 * once asma->file is set it will never be changed, and will not
 	 * be destroyed until all references to the file are dropped and
 	 * ashmem_release is called.
 	 */
-	ret = __vfs_read(asma->file, buf, len, pos);
-	if (ret >= 0)
-		/** Update backing file pos, since f_ops->read() doesn't */
-		asma->file->f_pos = *pos;
-	return ret;
-
+	mutex_unlock(&ashmem_mutex);
+	ret = vfs_iter_read(asma->file, iter, &iocb->ki_pos, 0);
+	mutex_lock(&ashmem_mutex);
+	if (ret > 0)
+		asma->file->f_pos = iocb->ki_pos;
 out_unlock:
 	mutex_unlock(&ashmem_mutex);
 	return ret;
@@ -342,29 +321,28 @@ out_unlock:
 static loff_t ashmem_llseek(struct file *file, loff_t offset, int origin)
 {
 	struct ashmem_area *asma = file->private_data;
-	int ret;
+	loff_t ret;
 
 	mutex_lock(&ashmem_mutex);
 
 	if (asma->size == 0) {
-		ret = -EINVAL;
-		goto out;
+		mutex_unlock(&ashmem_mutex);
+		return -EINVAL;
 	}
 
 	if (!asma->file) {
-		ret = -EBADF;
-		goto out;
+		mutex_unlock(&ashmem_mutex);
+		return -EBADF;
 	}
+
+	mutex_unlock(&ashmem_mutex);
 
 	ret = vfs_llseek(asma->file, offset, origin);
 	if (ret < 0)
-		goto out;
+		return ret;
 
 	/** Copy f_pos from backing file, since f_ops->llseek() sets it */
 	file->f_pos = asma->file->f_pos;
-
-out:
-	mutex_unlock(&ashmem_mutex);
 	return ret;
 }
 
@@ -424,6 +402,8 @@ static int ashmem_mmap(struct file *file, struct vm_area_struct *vma)
 			fput(asma->file);
 			goto out;
 		}
+	} else {
+		vma_set_anonymous(vma);
 	}
 
 	if (vma->vm_file)
@@ -723,29 +703,29 @@ static int ashmem_pin_unpin(struct ashmem_area *asma, unsigned long cmd,
 	size_t pgstart, pgend;
 	int ret = -EINVAL;
 
-	if (unlikely(!asma->file))
-		return -EINVAL;
-
 	if (unlikely(copy_from_user(&pin, p, sizeof(pin))))
 		return -EFAULT;
+
+	mutex_lock(&ashmem_mutex);
+
+	if (unlikely(!asma->file))
+		goto out_unlock;
 
 	/* per custom, you can pass zero for len to mean "everything onward" */
 	if (!pin.len)
 		pin.len = PAGE_ALIGN(asma->size) - pin.offset;
 
 	if (unlikely((pin.offset | pin.len) & ~PAGE_MASK))
-		return -EINVAL;
+		goto out_unlock;
 
 	if (unlikely(((__u32)-1) - pin.offset < pin.len))
-		return -EINVAL;
+		goto out_unlock;
 
 	if (unlikely(PAGE_ALIGN(asma->size) < pin.offset + pin.len))
-		return -EINVAL;
+		goto out_unlock;
 
 	pgstart = pin.offset / PAGE_SIZE;
 	pgend = pgstart + (pin.len / PAGE_SIZE) - 1;
-
-	mutex_lock(&ashmem_mutex);
 
 	switch (cmd) {
 	case ASHMEM_PIN:
@@ -759,6 +739,7 @@ static int ashmem_pin_unpin(struct ashmem_area *asma, unsigned long cmd,
 		break;
 	}
 
+out_unlock:
 	mutex_unlock(&ashmem_mutex);
 
 	return ret;
@@ -778,10 +759,12 @@ static long ashmem_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		break;
 	case ASHMEM_SET_SIZE:
 		ret = -EINVAL;
+		mutex_lock(&ashmem_mutex);
 		if (!asma->file) {
 			ret = 0;
 			asma->size = (size_t)arg;
 		}
+		mutex_unlock(&ashmem_mutex);
 		break;
 	case ASHMEM_GET_SIZE:
 		ret = asma->size;
@@ -829,17 +812,36 @@ static long compat_ashmem_ioctl(struct file *file, unsigned int cmd,
 	return ashmem_ioctl(file, cmd, arg);
 }
 #endif
+#ifdef CONFIG_PROC_FS
+static void ashmem_show_fdinfo(struct seq_file *m, struct file *file)
+{
+	struct ashmem_area *asma = file->private_data;
 
+	mutex_lock(&ashmem_mutex);
+
+	if (asma->file)
+		seq_printf(m, "inode:\t%ld\n", file_inode(asma->file)->i_ino);
+
+	if (asma->name[ASHMEM_NAME_PREFIX_LEN] != '\0')
+		seq_printf(m, "name:\t%s\n",
+			   asma->name + ASHMEM_NAME_PREFIX_LEN);
+
+	mutex_unlock(&ashmem_mutex);
+}
+#endif
 static const struct file_operations ashmem_fops = {
 	.owner = THIS_MODULE,
 	.open = ashmem_open,
 	.release = ashmem_release,
-	.read = ashmem_read,
+	.read_iter = ashmem_read_iter,
 	.llseek = ashmem_llseek,
 	.mmap = ashmem_mmap,
 	.unlocked_ioctl = ashmem_ioctl,
 #ifdef CONFIG_COMPAT
 	.compat_ioctl = compat_ashmem_ioctl,
+#endif
+#ifdef CONFIG_PROC_FS
+	.show_fdinfo = ashmem_show_fdinfo,
 #endif
 };
 
@@ -875,12 +877,18 @@ static int __init ashmem_init(void)
 		goto out_free2;
 	}
 
-	register_shrinker(&ashmem_shrinker);
+	ret = register_shrinker(&ashmem_shrinker);
+	if (ret) {
+		pr_err("failed to register shrinker!\n");
+		goto out_demisc;
+	}
 
 	pr_info("initialized\n");
 
 	return 0;
 
+out_demisc:
+	misc_deregister(&ashmem_misc);
 out_free2:
 	kmem_cache_destroy(ashmem_range_cachep);
 out_free1:

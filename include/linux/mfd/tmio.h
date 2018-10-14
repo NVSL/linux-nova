@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef MFD_TMIO_H
 #define MFD_TMIO_H
 
@@ -24,26 +25,6 @@
 		writew((val) >> 16, (addr) + 2); \
 	} while (0)
 
-#define CNF_CMD     0x04
-#define CNF_CTL_BASE   0x10
-#define CNF_INT_PIN  0x3d
-#define CNF_STOP_CLK_CTL 0x40
-#define CNF_GCLK_CTL 0x41
-#define CNF_SD_CLK_MODE 0x42
-#define CNF_PIN_STATUS 0x44
-#define CNF_PWR_CTL_1 0x48
-#define CNF_PWR_CTL_2 0x49
-#define CNF_PWR_CTL_3 0x4a
-#define CNF_CARD_DETECT_MODE 0x4c
-#define CNF_SD_SLOT 0x50
-#define CNF_EXT_GCLK_CTL_1 0xf0
-#define CNF_EXT_GCLK_CTL_2 0xf1
-#define CNF_EXT_GCLK_CTL_3 0xf9
-#define CNF_SD_LED_EN_1 0xfa
-#define CNF_SD_LED_EN_2 0xfe
-
-#define   SDCREN 0x2   /* Enable access to MMC CTL regs. (flag in COMMAND_REG)*/
-
 #define sd_config_write8(base, shift, reg, val) \
 	tmio_iowrite8((val), (base) + ((reg) << (shift)))
 #define sd_config_write16(base, shift, reg, val) \
@@ -55,7 +36,6 @@
 	} while (0)
 
 /* tmio MMC platform flags */
-#define TMIO_MMC_WRPROTECT_DISABLE	BIT(0)
 /*
  * Some controllers can support a 2-byte block size when the bus width
  * is configured in 4-bit mode.
@@ -107,6 +87,9 @@
  */
 #define TMIO_MMC_CLK_ACTUAL		BIT(10)
 
+/* Some controllers have a CBSY bit */
+#define TMIO_MMC_HAVE_CBSY		BIT(11)
+
 int tmio_core_mmc_enable(void __iomem *cnf, int shift, unsigned long base);
 int tmio_core_mmc_resume(void __iomem *cnf, int shift, unsigned long base);
 void tmio_core_mmc_pwr(void __iomem *cnf, int shift, int state);
@@ -128,6 +111,8 @@ struct tmio_mmc_data {
 	unsigned int			cd_gpio;
 	int				alignment_shift;
 	dma_addr_t			dma_rx_offset;
+	unsigned int			max_blk_count;
+	unsigned short			max_segs;
 	void (*set_pwr)(struct platform_device *host, int state);
 	void (*set_clk_div)(struct platform_device *host, int state);
 };
@@ -139,6 +124,7 @@ struct tmio_nand_data {
 	struct nand_bbt_descr	*badblock_pattern;
 	struct mtd_partition	*partition;
 	unsigned int		num_partitions;
+	const char *const	*part_parsers;
 };
 
 #define FBIO_TMIO_ACC_WRITE	0x7C639300

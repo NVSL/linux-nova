@@ -82,13 +82,13 @@ static inline struct v4l2_subdev *to_sd(struct v4l2_ctrl *ctrl)
 /* ----------------------------------------------------------------------- */
 
 /* for audio mode */
-#define TUNER_AUDIO_MONO   	0  /* LL */
-#define TUNER_AUDIO_STEREO 	1  /* LR */
-#define TUNER_AUDIO_LANG1  	2  /* LL */
-#define TUNER_AUDIO_LANG2  	3  /* RR */
+#define TUNER_AUDIO_MONO	0  /* LL */
+#define TUNER_AUDIO_STEREO	1  /* LR */
+#define TUNER_AUDIO_LANG1	2  /* LL */
+#define TUNER_AUDIO_LANG2	3  /* RR */
 
-#define SAA717X_NTSC_WIDTH   	(704)
-#define SAA717X_NTSC_HEIGHT  	(480)
+#define SAA717X_NTSC_WIDTH	(704)
+#define SAA717X_NTSC_HEIGHT	(480)
 
 /* ----------------------------------------------------------------------- */
 
@@ -1069,7 +1069,7 @@ static int saa717x_s_std(struct v4l2_subdev *sd, v4l2_std_id std)
 	struct saa717x_state *decoder = to_state(sd);
 
 	v4l2_dbg(1, debug, sd, "decoder set norm ");
-	v4l2_dbg(1, debug, sd, "(not yet implementd)\n");
+	v4l2_dbg(1, debug, sd, "(not yet implemented)\n");
 
 	decoder->radio = 0;
 	decoder->std = std;

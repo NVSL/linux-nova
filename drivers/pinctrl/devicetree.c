@@ -83,7 +83,6 @@ static int dt_remember_or_free_map(struct pinctrl *p, const char *statename,
 	/* Remember the converted mapping table entries */
 	dt_map = kzalloc(sizeof(*dt_map), GFP_KERNEL);
 	if (!dt_map) {
-		dev_err(p->dev, "failed to alloc struct pinctrl_dt_map\n");
 		dt_free_map(pctldev, map, num_maps);
 		return -ENOMEM;
 	}
@@ -102,10 +101,11 @@ struct pinctrl_dev *of_pinctrl_get(struct device_node *np)
 }
 
 static int dt_to_map_one_config(struct pinctrl *p,
-				struct pinctrl_dev *pctldev,
+				struct pinctrl_dev *hog_pctldev,
 				const char *statename,
 				struct device_node *np_config)
 {
+	struct pinctrl_dev *pctldev = NULL;
 	struct device_node *np_pctldev;
 	const struct pinctrl_ops *ops;
 	int ret;
@@ -117,14 +117,18 @@ static int dt_to_map_one_config(struct pinctrl *p,
 	for (;;) {
 		np_pctldev = of_get_next_parent(np_pctldev);
 		if (!np_pctldev || of_node_is_root(np_pctldev)) {
-			dev_info(p->dev, "could not find pctldev for node %s, deferring probe\n",
-				np_config->full_name);
+			dev_info(p->dev, "could not find pctldev for node %pOF, deferring probe\n",
+				np_config);
 			of_node_put(np_pctldev);
 			/* OK let's just assume this will appear later then */
 			return -EPROBE_DEFER;
 		}
-		if (!pctldev)
-			pctldev = get_pinctrl_dev_from_of_node(np_pctldev);
+		/* If we're creating a hog we can use the passed pctldev */
+		if (hog_pctldev && (np_pctldev == p->dev->of_node)) {
+			pctldev = hog_pctldev;
+			break;
+		}
+		pctldev = get_pinctrl_dev_from_of_node(np_pctldev);
 		if (pctldev)
 			break;
 		/* Do not defer probing of hogs (circular loop) */
@@ -158,10 +162,8 @@ static int dt_remember_dummy_state(struct pinctrl *p, const char *statename)
 	struct pinctrl_map *map;
 
 	map = kzalloc(sizeof(*map), GFP_KERNEL);
-	if (!map) {
-		dev_err(p->dev, "failed to alloc struct pinctrl_map\n");
+	if (!map)
 		return -ENOMEM;
-	}
 
 	/* There is no pctldev for PIN_MAP_TYPE_DUMMY_STATE */
 	map->type = PIN_MAP_TYPE_DUMMY_STATE;

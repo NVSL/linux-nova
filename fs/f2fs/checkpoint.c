@@ -24,12 +24,11 @@
 #include <trace/events/f2fs.h>
 
 static struct kmem_cache *ino_entry_slab;
-struct kmem_cache *inode_entry_slab;
+struct kmem_cache *f2fs_inode_entry_slab;
 
 void f2fs_stop_checkpoint(struct f2fs_sb_info *sbi, bool end_io)
 {
 	set_ckpt_flags(sbi, CP_ERROR_FLAG);
-	sbi->sb->s_flags |= MS_RDONLY;
 	if (!end_io)
 		f2fs_flush_merged_writes(sbi);
 }
@@ -37,7 +36,7 @@ void f2fs_stop_checkpoint(struct f2fs_sb_info *sbi, bool end_io)
 /*
  * We guarantee no failure on the returned page.
  */
-struct page *grab_meta_page(struct f2fs_sb_info *sbi, pgoff_t index)
+struct page *f2fs_grab_meta_page(struct f2fs_sb_info *sbi, pgoff_t index)
 {
 	struct address_space *mapping = META_MAPPING(sbi);
 	struct page *page = NULL;
@@ -69,6 +68,7 @@ static struct page *__get_meta_page(struct f2fs_sb_info *sbi, pgoff_t index,
 		.old_blkaddr = index,
 		.new_blkaddr = index,
 		.encrypted_page = NULL,
+		.is_meta = is_meta,
 	};
 
 	if (unlikely(!is_meta))
@@ -100,24 +100,27 @@ repeat:
 	 * readonly and make sure do not write checkpoint with non-uptodate
 	 * meta page.
 	 */
-	if (unlikely(!PageUptodate(page)))
+	if (unlikely(!PageUptodate(page))) {
+		memset(page_address(page), 0, PAGE_SIZE);
 		f2fs_stop_checkpoint(sbi, false);
+	}
 out:
 	return page;
 }
 
-struct page *get_meta_page(struct f2fs_sb_info *sbi, pgoff_t index)
+struct page *f2fs_get_meta_page(struct f2fs_sb_info *sbi, pgoff_t index)
 {
 	return __get_meta_page(sbi, index, true);
 }
 
 /* for POR only */
-struct page *get_tmp_page(struct f2fs_sb_info *sbi, pgoff_t index)
+struct page *f2fs_get_tmp_page(struct f2fs_sb_info *sbi, pgoff_t index)
 {
 	return __get_meta_page(sbi, index, false);
 }
 
-bool is_valid_blkaddr(struct f2fs_sb_info *sbi, block_t blkaddr, int type)
+bool f2fs_is_valid_meta_blkaddr(struct f2fs_sb_info *sbi,
+					block_t blkaddr, int type)
 {
 	switch (type) {
 	case META_NAT:
@@ -151,7 +154,7 @@ bool is_valid_blkaddr(struct f2fs_sb_info *sbi, block_t blkaddr, int type)
 /*
  * Readahead CP/NAT/SIT/SSA pages
  */
-int ra_meta_pages(struct f2fs_sb_info *sbi, block_t start, int nrpages,
+int f2fs_ra_meta_pages(struct f2fs_sb_info *sbi, block_t start, int nrpages,
 							int type, bool sync)
 {
 	struct page *page;
@@ -163,6 +166,7 @@ int ra_meta_pages(struct f2fs_sb_info *sbi, block_t start, int nrpages,
 		.op_flags = sync ? (REQ_META | REQ_PRIO) : REQ_RAHEAD,
 		.encrypted_page = NULL,
 		.in_list = false,
+		.is_meta = (type != META_POR),
 	};
 	struct blk_plug plug;
 
@@ -172,7 +176,7 @@ int ra_meta_pages(struct f2fs_sb_info *sbi, block_t start, int nrpages,
 	blk_start_plug(&plug);
 	for (; nrpages-- > 0; blkno++) {
 
-		if (!is_valid_blkaddr(sbi, blkno, type))
+		if (!f2fs_is_valid_meta_blkaddr(sbi, blkno, type))
 			goto out;
 
 		switch (type) {
@@ -216,7 +220,7 @@ out:
 	return blkno - start;
 }
 
-void ra_meta_pages_cond(struct f2fs_sb_info *sbi, pgoff_t index)
+void f2fs_ra_meta_pages_cond(struct f2fs_sb_info *sbi, pgoff_t index)
 {
 	struct page *page;
 	bool readahead = false;
@@ -227,24 +231,28 @@ void ra_meta_pages_cond(struct f2fs_sb_info *sbi, pgoff_t index)
 	f2fs_put_page(page, 0);
 
 	if (readahead)
-		ra_meta_pages(sbi, index, BIO_MAX_PAGES, META_POR, true);
+		f2fs_ra_meta_pages(sbi, index, BIO_MAX_PAGES, META_POR, true);
 }
 
-static int f2fs_write_meta_page(struct page *page,
-				struct writeback_control *wbc)
+static int __f2fs_write_meta_page(struct page *page,
+				struct writeback_control *wbc,
+				enum iostat_type io_type)
 {
 	struct f2fs_sb_info *sbi = F2FS_P_SB(page);
 
 	trace_f2fs_writepage(page, META);
 
+	if (unlikely(f2fs_cp_error(sbi))) {
+		dec_page_count(sbi, F2FS_DIRTY_META);
+		unlock_page(page);
+		return 0;
+	}
 	if (unlikely(is_sbi_flag_set(sbi, SBI_POR_DOING)))
 		goto redirty_out;
 	if (wbc->for_reclaim && page->index < GET_SUM_BLOCK(sbi, 0))
 		goto redirty_out;
-	if (unlikely(f2fs_cp_error(sbi)))
-		goto redirty_out;
 
-	write_meta_page(sbi, page);
+	f2fs_do_write_meta_page(sbi, page, io_type);
 	dec_page_count(sbi, F2FS_DIRTY_META);
 
 	if (wbc->for_reclaim)
@@ -261,6 +269,12 @@ static int f2fs_write_meta_page(struct page *page,
 redirty_out:
 	redirty_page_for_writepage(wbc, page);
 	return AOP_WRITEPAGE_ACTIVATE;
+}
+
+static int f2fs_write_meta_page(struct page *page,
+				struct writeback_control *wbc)
+{
+	return __f2fs_write_meta_page(page, wbc, FS_META_IO);
 }
 
 static int f2fs_write_meta_pages(struct address_space *mapping,
@@ -283,7 +297,7 @@ static int f2fs_write_meta_pages(struct address_space *mapping,
 
 	trace_f2fs_writepages(mapping->host, wbc, META);
 	diff = nr_pages_to_write(sbi, META, wbc);
-	written = sync_meta_pages(sbi, META, wbc->nr_to_write);
+	written = f2fs_sync_meta_pages(sbi, META, wbc->nr_to_write, FS_META_IO);
 	mutex_unlock(&sbi->cp_mutex);
 	wbc->nr_to_write = max((long)0, wbc->nr_to_write - written - diff);
 	return 0;
@@ -294,29 +308,26 @@ skip_write:
 	return 0;
 }
 
-long sync_meta_pages(struct f2fs_sb_info *sbi, enum page_type type,
-						long nr_to_write)
+long f2fs_sync_meta_pages(struct f2fs_sb_info *sbi, enum page_type type,
+				long nr_to_write, enum iostat_type io_type)
 {
 	struct address_space *mapping = META_MAPPING(sbi);
-	pgoff_t index = 0, end = ULONG_MAX, prev = ULONG_MAX;
+	pgoff_t index = 0, prev = ULONG_MAX;
 	struct pagevec pvec;
 	long nwritten = 0;
+	int nr_pages;
 	struct writeback_control wbc = {
 		.for_reclaim = 0,
 	};
 	struct blk_plug plug;
 
-	pagevec_init(&pvec, 0);
+	pagevec_init(&pvec);
 
 	blk_start_plug(&plug);
 
-	while (index <= end) {
-		int i, nr_pages;
-		nr_pages = pagevec_lookup_tag(&pvec, mapping, &index,
-				PAGECACHE_TAG_DIRTY,
-				min(end - index, (pgoff_t)PAGEVEC_SIZE-1) + 1);
-		if (unlikely(nr_pages == 0))
-			break;
+	while ((nr_pages = pagevec_lookup_tag(&pvec, mapping, &index,
+				PAGECACHE_TAG_DIRTY))) {
+		int i;
 
 		for (i = 0; i < nr_pages; i++) {
 			struct page *page = pvec.pages[i];
@@ -346,7 +357,7 @@ continue_unlock:
 			if (!clear_page_dirty_for_io(page))
 				goto continue_unlock;
 
-			if (mapping->a_ops->writepage(page, &wbc)) {
+			if (__f2fs_write_meta_page(page, &wbc, io_type)) {
 				unlock_page(page);
 				break;
 			}
@@ -374,7 +385,7 @@ static int f2fs_set_meta_page_dirty(struct page *page)
 	if (!PageUptodate(page))
 		SetPageUptodate(page);
 	if (!PageDirty(page)) {
-		f2fs_set_page_dirty_nobuffers(page);
+		__set_page_dirty_nobuffers(page);
 		inc_page_count(F2FS_P_SB(page), F2FS_DIRTY_META);
 		SetPagePrivate(page);
 		f2fs_trace_pid(page);
@@ -394,24 +405,23 @@ const struct address_space_operations f2fs_meta_aops = {
 #endif
 };
 
-static void __add_ino_entry(struct f2fs_sb_info *sbi, nid_t ino, int type)
+static void __add_ino_entry(struct f2fs_sb_info *sbi, nid_t ino,
+						unsigned int devidx, int type)
 {
 	struct inode_management *im = &sbi->im[type];
 	struct ino_entry *e, *tmp;
 
 	tmp = f2fs_kmem_cache_alloc(ino_entry_slab, GFP_NOFS);
-retry:
+
 	radix_tree_preload(GFP_NOFS | __GFP_NOFAIL);
 
 	spin_lock(&im->ino_lock);
 	e = radix_tree_lookup(&im->ino_root, ino);
 	if (!e) {
 		e = tmp;
-		if (radix_tree_insert(&im->ino_root, ino, e)) {
-			spin_unlock(&im->ino_lock);
-			radix_tree_preload_end();
-			goto retry;
-		}
+		if (unlikely(radix_tree_insert(&im->ino_root, ino, e)))
+			f2fs_bug_on(sbi, 1);
+
 		memset(e, 0, sizeof(struct ino_entry));
 		e->ino = ino;
 
@@ -419,6 +429,10 @@ retry:
 		if (type != ORPHAN_INO)
 			im->ino_num++;
 	}
+
+	if (type == FLUSH_INO)
+		f2fs_set_bit(devidx, (char *)&e->dirty_device);
+
 	spin_unlock(&im->ino_lock);
 	radix_tree_preload_end();
 
@@ -444,20 +458,20 @@ static void __remove_ino_entry(struct f2fs_sb_info *sbi, nid_t ino, int type)
 	spin_unlock(&im->ino_lock);
 }
 
-void add_ino_entry(struct f2fs_sb_info *sbi, nid_t ino, int type)
+void f2fs_add_ino_entry(struct f2fs_sb_info *sbi, nid_t ino, int type)
 {
 	/* add new dirty ino entry into list */
-	__add_ino_entry(sbi, ino, type);
+	__add_ino_entry(sbi, ino, 0, type);
 }
 
-void remove_ino_entry(struct f2fs_sb_info *sbi, nid_t ino, int type)
+void f2fs_remove_ino_entry(struct f2fs_sb_info *sbi, nid_t ino, int type)
 {
 	/* remove dirty ino entry from list */
 	__remove_ino_entry(sbi, ino, type);
 }
 
 /* mode should be APPEND_INO or UPDATE_INO */
-bool exist_written_data(struct f2fs_sb_info *sbi, nid_t ino, int mode)
+bool f2fs_exist_written_data(struct f2fs_sb_info *sbi, nid_t ino, int mode)
 {
 	struct inode_management *im = &sbi->im[mode];
 	struct ino_entry *e;
@@ -468,12 +482,12 @@ bool exist_written_data(struct f2fs_sb_info *sbi, nid_t ino, int mode)
 	return e ? true : false;
 }
 
-void release_ino_entry(struct f2fs_sb_info *sbi, bool all)
+void f2fs_release_ino_entry(struct f2fs_sb_info *sbi, bool all)
 {
 	struct ino_entry *e, *tmp;
 	int i;
 
-	for (i = all ? ORPHAN_INO: APPEND_INO; i <= UPDATE_INO; i++) {
+	for (i = all ? ORPHAN_INO : APPEND_INO; i < MAX_INO_ENTRY; i++) {
 		struct inode_management *im = &sbi->im[i];
 
 		spin_lock(&im->ino_lock);
@@ -487,7 +501,28 @@ void release_ino_entry(struct f2fs_sb_info *sbi, bool all)
 	}
 }
 
-int acquire_orphan_inode(struct f2fs_sb_info *sbi)
+void f2fs_set_dirty_device(struct f2fs_sb_info *sbi, nid_t ino,
+					unsigned int devidx, int type)
+{
+	__add_ino_entry(sbi, ino, devidx, type);
+}
+
+bool f2fs_is_dirty_device(struct f2fs_sb_info *sbi, nid_t ino,
+					unsigned int devidx, int type)
+{
+	struct inode_management *im = &sbi->im[type];
+	struct ino_entry *e;
+	bool is_dirty = false;
+
+	spin_lock(&im->ino_lock);
+	e = radix_tree_lookup(&im->ino_root, ino);
+	if (e && f2fs_test_bit(devidx, (char *)&e->dirty_device))
+		is_dirty = true;
+	spin_unlock(&im->ino_lock);
+	return is_dirty;
+}
+
+int f2fs_acquire_orphan_inode(struct f2fs_sb_info *sbi)
 {
 	struct inode_management *im = &sbi->im[ORPHAN_INO];
 	int err = 0;
@@ -510,7 +545,7 @@ int acquire_orphan_inode(struct f2fs_sb_info *sbi)
 	return err;
 }
 
-void release_orphan_inode(struct f2fs_sb_info *sbi)
+void f2fs_release_orphan_inode(struct f2fs_sb_info *sbi)
 {
 	struct inode_management *im = &sbi->im[ORPHAN_INO];
 
@@ -520,14 +555,14 @@ void release_orphan_inode(struct f2fs_sb_info *sbi)
 	spin_unlock(&im->ino_lock);
 }
 
-void add_orphan_inode(struct inode *inode)
+void f2fs_add_orphan_inode(struct inode *inode)
 {
 	/* add new orphan ino entry into list */
-	__add_ino_entry(F2FS_I_SB(inode), inode->i_ino, ORPHAN_INO);
-	update_inode_page(inode);
+	__add_ino_entry(F2FS_I_SB(inode), inode->i_ino, 0, ORPHAN_INO);
+	f2fs_update_inode_page(inode);
 }
 
-void remove_orphan_inode(struct f2fs_sb_info *sbi, nid_t ino)
+void f2fs_remove_orphan_inode(struct f2fs_sb_info *sbi, nid_t ino)
 {
 	/* remove orphan entry from orphan list */
 	__remove_ino_entry(sbi, ino, ORPHAN_INO);
@@ -537,17 +572,12 @@ static int recover_orphan_inode(struct f2fs_sb_info *sbi, nid_t ino)
 {
 	struct inode *inode;
 	struct node_info ni;
-	int err = acquire_orphan_inode(sbi);
+	int err = f2fs_acquire_orphan_inode(sbi);
 
-	if (err) {
-		set_sbi_flag(sbi, SBI_NEED_FSCK);
-		f2fs_msg(sbi->sb, KERN_WARNING,
-				"%s: orphan failed (ino=%x), run fsck to fix.",
-				__func__, ino);
-		return err;
-	}
+	if (err)
+		goto err_out;
 
-	__add_ino_entry(sbi, ino, ORPHAN_INO);
+	__add_ino_entry(sbi, ino, 0, ORPHAN_INO);
 
 	inode = f2fs_iget_retry(sbi->sb, ino);
 	if (IS_ERR(inode)) {
@@ -559,40 +589,67 @@ static int recover_orphan_inode(struct f2fs_sb_info *sbi, nid_t ino)
 		return PTR_ERR(inode);
 	}
 
+	err = dquot_initialize(inode);
+	if (err) {
+		iput(inode);
+		goto err_out;
+	}
+
 	clear_nlink(inode);
 
 	/* truncate all the data during iput */
 	iput(inode);
 
-	get_node_info(sbi, ino, &ni);
+	f2fs_get_node_info(sbi, ino, &ni);
 
 	/* ENOMEM was fully retried in f2fs_evict_inode. */
 	if (ni.blk_addr != NULL_ADDR) {
-		set_sbi_flag(sbi, SBI_NEED_FSCK);
-		f2fs_msg(sbi->sb, KERN_WARNING,
-			"%s: orphan failed (ino=%x) by kernel, retry mount.",
-				__func__, ino);
-		return -EIO;
+		err = -EIO;
+		goto err_out;
 	}
 	__remove_ino_entry(sbi, ino, ORPHAN_INO);
 	return 0;
+
+err_out:
+	set_sbi_flag(sbi, SBI_NEED_FSCK);
+	f2fs_msg(sbi->sb, KERN_WARNING,
+			"%s: orphan failed (ino=%x), run fsck to fix.",
+			__func__, ino);
+	return err;
 }
 
-int recover_orphan_inodes(struct f2fs_sb_info *sbi)
+int f2fs_recover_orphan_inodes(struct f2fs_sb_info *sbi)
 {
 	block_t start_blk, orphan_blocks, i, j;
-	int err;
+	unsigned int s_flags = sbi->sb->s_flags;
+	int err = 0;
+#ifdef CONFIG_QUOTA
+	int quota_enabled;
+#endif
 
 	if (!is_set_ckpt_flags(sbi, CP_ORPHAN_PRESENT_FLAG))
 		return 0;
 
+	if (s_flags & SB_RDONLY) {
+		f2fs_msg(sbi->sb, KERN_INFO, "orphan cleanup on readonly fs");
+		sbi->sb->s_flags &= ~SB_RDONLY;
+	}
+
+#ifdef CONFIG_QUOTA
+	/* Needed for iput() to work correctly and not trash data */
+	sbi->sb->s_flags |= SB_ACTIVE;
+
+	/* Turn on quotas so that they are updated correctly */
+	quota_enabled = f2fs_enable_quota_files(sbi, s_flags & SB_RDONLY);
+#endif
+
 	start_blk = __start_cp_addr(sbi) + 1 + __cp_payload(sbi);
 	orphan_blocks = __start_sum_addr(sbi) - 1 - __cp_payload(sbi);
 
-	ra_meta_pages(sbi, start_blk, orphan_blocks, META_CP, true);
+	f2fs_ra_meta_pages(sbi, start_blk, orphan_blocks, META_CP, true);
 
 	for (i = 0; i < orphan_blocks; i++) {
-		struct page *page = get_meta_page(sbi, start_blk + i);
+		struct page *page = f2fs_get_meta_page(sbi, start_blk + i);
 		struct f2fs_orphan_block *orphan_blk;
 
 		orphan_blk = (struct f2fs_orphan_block *)page_address(page);
@@ -601,14 +658,22 @@ int recover_orphan_inodes(struct f2fs_sb_info *sbi)
 			err = recover_orphan_inode(sbi, ino);
 			if (err) {
 				f2fs_put_page(page, 1);
-				return err;
+				goto out;
 			}
 		}
 		f2fs_put_page(page, 1);
 	}
 	/* clear Orphan Flag */
 	clear_ckpt_flags(sbi, CP_ORPHAN_PRESENT_FLAG);
-	return 0;
+out:
+#ifdef CONFIG_QUOTA
+	/* Turn quotas off */
+	if (quota_enabled)
+		f2fs_quota_off_umount(sbi->sb);
+#endif
+	sbi->sb->s_flags = s_flags; /* Restore SB_RDONLY status */
+
+	return err;
 }
 
 static void write_orphan_inodes(struct f2fs_sb_info *sbi, block_t start_blk)
@@ -634,7 +699,7 @@ static void write_orphan_inodes(struct f2fs_sb_info *sbi, block_t start_blk)
 	/* loop for each orphan inode entry and write them in Jornal block */
 	list_for_each_entry(orphan, head, list) {
 		if (!page) {
-			page = grab_meta_page(sbi, start_blk++);
+			page = f2fs_grab_meta_page(sbi, start_blk++);
 			orphan_blk =
 				(struct f2fs_orphan_block *)page_address(page);
 			memset(orphan_blk, 0, sizeof(*orphan_blk));
@@ -676,7 +741,7 @@ static int get_checkpoint_version(struct f2fs_sb_info *sbi, block_t cp_addr,
 	size_t crc_offset = 0;
 	__u32 crc = 0;
 
-	*cp_page = get_meta_page(sbi, cp_addr);
+	*cp_page = f2fs_get_meta_page(sbi, cp_addr);
 	*cp_block = (struct f2fs_checkpoint *)page_address(*cp_page);
 
 	crc_offset = le32_to_cpu((*cp_block)->checksum_offset);
@@ -729,7 +794,7 @@ invalid_cp1:
 	return NULL;
 }
 
-int get_valid_checkpoint(struct f2fs_sb_info *sbi)
+int f2fs_get_valid_checkpoint(struct f2fs_sb_info *sbi)
 {
 	struct f2fs_checkpoint *cp_block;
 	struct f2fs_super_block *fsb = sbi->raw_super;
@@ -741,7 +806,8 @@ int get_valid_checkpoint(struct f2fs_sb_info *sbi)
 	block_t cp_blk_no;
 	int i;
 
-	sbi->ckpt = kzalloc(cp_blks * blk_size, GFP_KERNEL);
+	sbi->ckpt = f2fs_kzalloc(sbi, array_size(blk_size, cp_blks),
+				 GFP_KERNEL);
 	if (!sbi->ckpt)
 		return -ENOMEM;
 	/*
@@ -773,7 +839,7 @@ int get_valid_checkpoint(struct f2fs_sb_info *sbi)
 	memcpy(sbi->ckpt, cp_block, blk_size);
 
 	/* Sanity checking of checkpoint */
-	if (sanity_check_ckpt(sbi))
+	if (f2fs_sanity_check_ckpt(sbi))
 		goto free_fail_no_cp;
 
 	if (cur_page == cp1)
@@ -792,7 +858,7 @@ int get_valid_checkpoint(struct f2fs_sb_info *sbi)
 		void *sit_bitmap_ptr;
 		unsigned char *ckpt = (unsigned char *)sbi->ckpt;
 
-		cur_page = get_meta_page(sbi, cp_blk_no + i);
+		cur_page = f2fs_get_meta_page(sbi, cp_blk_no + i);
 		sit_bitmap_ptr = page_address(cur_page);
 		memcpy(ckpt + i * blk_size, sit_bitmap_ptr, blk_size);
 		f2fs_put_page(cur_page, 1);
@@ -837,7 +903,7 @@ static void __remove_dirty_inode(struct inode *inode, enum inode_type type)
 	stat_dec_dirty_inode(F2FS_I_SB(inode), type);
 }
 
-void update_dirty_page(struct inode *inode, struct page *page)
+void f2fs_update_dirty_page(struct inode *inode, struct page *page)
 {
 	struct f2fs_sb_info *sbi = F2FS_I_SB(inode);
 	enum inode_type type = S_ISDIR(inode->i_mode) ? DIR_INODE : FILE_INODE;
@@ -856,7 +922,7 @@ void update_dirty_page(struct inode *inode, struct page *page)
 	f2fs_trace_pid(page);
 }
 
-void remove_dirty_inode(struct inode *inode)
+void f2fs_remove_dirty_inode(struct inode *inode)
 {
 	struct f2fs_sb_info *sbi = F2FS_I_SB(inode);
 	enum inode_type type = S_ISDIR(inode->i_mode) ? DIR_INODE : FILE_INODE;
@@ -873,7 +939,7 @@ void remove_dirty_inode(struct inode *inode)
 	spin_unlock(&sbi->inode_lock[type]);
 }
 
-int sync_dirty_inodes(struct f2fs_sb_info *sbi, enum inode_type type)
+int f2fs_sync_dirty_inodes(struct f2fs_sb_info *sbi, enum inode_type type)
 {
 	struct list_head *head;
 	struct inode *inode;
@@ -904,7 +970,14 @@ retry:
 	if (inode) {
 		unsigned long cur_ino = inode->i_ino;
 
+		if (is_dir)
+			F2FS_I(inode)->cp_task = current;
+
 		filemap_fdatawrite(inode->i_mapping);
+
+		if (is_dir)
+			F2FS_I(inode)->cp_task = NULL;
+
 		iput(inode);
 		/* We need to give cpu to another writers. */
 		if (ino == cur_ino) {
@@ -949,10 +1022,10 @@ int f2fs_sync_inode_meta(struct f2fs_sb_info *sbi)
 
 			/* it's on eviction */
 			if (is_inode_flag_set(inode, FI_DIRTY_INODE))
-				update_inode_page(inode);
+				f2fs_update_inode_page(inode);
 			iput(inode);
 		}
-	};
+	}
 	return 0;
 }
 
@@ -989,7 +1062,7 @@ retry_flush_dents:
 	/* write all the dirty dentry pages */
 	if (get_pages(sbi, F2FS_DIRTY_DENTS)) {
 		f2fs_unlock_all(sbi);
-		err = sync_dirty_inodes(sbi, DIR_INODE);
+		err = f2fs_sync_dirty_inodes(sbi, DIR_INODE);
 		if (err)
 			goto out;
 		cond_resched();
@@ -1017,7 +1090,9 @@ retry_flush_nodes:
 
 	if (get_pages(sbi, F2FS_DIRTY_NODES)) {
 		up_write(&sbi->node_write);
-		err = sync_node_pages(sbi, &wbc);
+		atomic_inc(&sbi->wb_sync_req[NODE]);
+		err = f2fs_sync_node_pages(sbi, &wbc, false, FS_CP_NODE_IO);
+		atomic_dec(&sbi->wb_sync_req[NODE]);
 		if (err) {
 			up_write(&sbi->node_change);
 			f2fs_unlock_all(sbi);
@@ -1074,6 +1149,8 @@ static void update_ckpt_flags(struct f2fs_sb_info *sbi, struct cp_control *cpc)
 
 	if (cpc->reason & CP_TRIMMED)
 		__set_ckpt_flags(ckpt, CP_TRIMMED_FLAG);
+	else
+		__clear_ckpt_flags(ckpt, CP_TRIMMED_FLAG);
 
 	if (cpc->reason & CP_UMOUNT)
 		__set_ckpt_flags(ckpt, CP_UMOUNT_FLAG);
@@ -1095,8 +1172,42 @@ static void update_ckpt_flags(struct f2fs_sb_info *sbi, struct cp_control *cpc)
 
 	/* set this flag to activate crc|cp_ver for recovery */
 	__set_ckpt_flags(ckpt, CP_CRC_RECOVERY_FLAG);
+	__clear_ckpt_flags(ckpt, CP_NOCRC_RECOVERY_FLAG);
 
 	spin_unlock_irqrestore(&sbi->cp_lock, flags);
+}
+
+static void commit_checkpoint(struct f2fs_sb_info *sbi,
+	void *src, block_t blk_addr)
+{
+	struct writeback_control wbc = {
+		.for_reclaim = 0,
+	};
+
+	/*
+	 * pagevec_lookup_tag and lock_page again will take
+	 * some extra time. Therefore, f2fs_update_meta_pages and
+	 * f2fs_sync_meta_pages are combined in this function.
+	 */
+	struct page *page = f2fs_grab_meta_page(sbi, blk_addr);
+	int err;
+
+	memcpy(page_address(page), src, PAGE_SIZE);
+	set_page_dirty(page);
+
+	f2fs_wait_on_page_writeback(page, META, true);
+	f2fs_bug_on(sbi, PageWriteback(page));
+	if (unlikely(!clear_page_dirty_for_io(page)))
+		f2fs_bug_on(sbi, 1);
+
+	/* writeout cp pack 2 page */
+	err = __f2fs_write_meta_page(page, &wbc, FS_CP_META_IO);
+	f2fs_bug_on(sbi, err);
+
+	f2fs_put_page(page, 0);
+
+	/* submit checkpoint (with barrier if NOBARRIER is not set) */
+	f2fs_submit_merged_write(sbi, META_FLUSH);
 }
 
 static int do_checkpoint(struct f2fs_sb_info *sbi, struct cp_control *cpc)
@@ -1112,10 +1223,11 @@ static int do_checkpoint(struct f2fs_sb_info *sbi, struct cp_control *cpc)
 	struct super_block *sb = sbi->sb;
 	struct curseg_info *seg_i = CURSEG_I(sbi, CURSEG_HOT_NODE);
 	u64 kbytes_written;
+	int err;
 
 	/* Flush all the NAT/SIT pages */
 	while (get_pages(sbi, F2FS_DIRTY_META)) {
-		sync_meta_pages(sbi, META, LONG_MAX);
+		f2fs_sync_meta_pages(sbi, META, LONG_MAX, FS_CP_META_IO);
 		if (unlikely(f2fs_cp_error(sbi)))
 			return -EIO;
 	}
@@ -1124,7 +1236,7 @@ static int do_checkpoint(struct f2fs_sb_info *sbi, struct cp_control *cpc)
 	 * modify checkpoint
 	 * version number is already updated
 	 */
-	ckpt->elapsed_time = cpu_to_le64(get_mtime(sbi));
+	ckpt->elapsed_time = cpu_to_le64(get_mtime(sbi, true));
 	ckpt->free_segment_count = cpu_to_le32(free_segments(sbi));
 	for (i = 0; i < NR_CURSEG_NODE_TYPE; i++) {
 		ckpt->cur_node_segno[i] =
@@ -1144,7 +1256,7 @@ static int do_checkpoint(struct f2fs_sb_info *sbi, struct cp_control *cpc)
 	}
 
 	/* 2 cp  + n data seg summary + orphan inode blocks */
-	data_sum_blocks = npages_for_summary_flush(sbi, false);
+	data_sum_blocks = f2fs_npages_for_summary_flush(sbi, false);
 	spin_lock_irqsave(&sbi->cp_lock, flags);
 	if (data_sum_blocks < NR_CURSEG_DATA_TYPE)
 		__set_ckpt_flags(ckpt, CP_COMPACT_SUM_FLAG);
@@ -1189,27 +1301,23 @@ static int do_checkpoint(struct f2fs_sb_info *sbi, struct cp_control *cpc)
 
 		blk = start_blk + sbi->blocks_per_seg - nm_i->nat_bits_blocks;
 		for (i = 0; i < nm_i->nat_bits_blocks; i++)
-			update_meta_page(sbi, nm_i->nat_bits +
+			f2fs_update_meta_page(sbi, nm_i->nat_bits +
 					(i << F2FS_BLKSIZE_BITS), blk + i);
 
 		/* Flush all the NAT BITS pages */
 		while (get_pages(sbi, F2FS_DIRTY_META)) {
-			sync_meta_pages(sbi, META, LONG_MAX);
+			f2fs_sync_meta_pages(sbi, META, LONG_MAX,
+							FS_CP_META_IO);
 			if (unlikely(f2fs_cp_error(sbi)))
 				return -EIO;
 		}
 	}
 
-	/* need to wait for end_io results */
-	wait_on_all_pages_writeback(sbi);
-	if (unlikely(f2fs_cp_error(sbi)))
-		return -EIO;
-
 	/* write out checkpoint buffer at block 0 */
-	update_meta_page(sbi, ckpt, start_blk++);
+	f2fs_update_meta_page(sbi, ckpt, start_blk++);
 
 	for (i = 1; i < 1 + cp_payload_blks; i++)
-		update_meta_page(sbi, (char *)ckpt + i * F2FS_BLKSIZE,
+		f2fs_update_meta_page(sbi, (char *)ckpt + i * F2FS_BLKSIZE,
 							start_blk++);
 
 	if (orphan_num) {
@@ -1217,7 +1325,7 @@ static int do_checkpoint(struct f2fs_sb_info *sbi, struct cp_control *cpc)
 		start_blk += orphan_blocks;
 	}
 
-	write_data_summaries(sbi, start_blk);
+	f2fs_write_data_summaries(sbi, start_blk);
 	start_blk += data_sum_blocks;
 
 	/* Record write statistics in the hot node summary */
@@ -1228,33 +1336,33 @@ static int do_checkpoint(struct f2fs_sb_info *sbi, struct cp_control *cpc)
 	seg_i->journal->info.kbytes_written = cpu_to_le64(kbytes_written);
 
 	if (__remain_node_summaries(cpc->reason)) {
-		write_node_summaries(sbi, start_blk);
+		f2fs_write_node_summaries(sbi, start_blk);
 		start_blk += NR_CURSEG_NODE_TYPE;
 	}
-
-	/* writeout checkpoint block */
-	update_meta_page(sbi, ckpt, start_blk);
-
-	/* wait for previous submitted node/meta pages writeback */
-	wait_on_all_pages_writeback(sbi);
-
-	if (unlikely(f2fs_cp_error(sbi)))
-		return -EIO;
-
-	filemap_fdatawait_range(NODE_MAPPING(sbi), 0, LLONG_MAX);
-	filemap_fdatawait_range(META_MAPPING(sbi), 0, LLONG_MAX);
 
 	/* update user_block_counts */
 	sbi->last_valid_block_count = sbi->total_valid_block_count;
 	percpu_counter_set(&sbi->alloc_valid_block_count, 0);
 
-	/* Here, we only have one bio having CP pack */
-	sync_meta_pages(sbi, META_FLUSH, LONG_MAX);
+	/* Here, we have one bio having CP pack except cp pack 2 page */
+	f2fs_sync_meta_pages(sbi, META, LONG_MAX, FS_CP_META_IO);
 
 	/* wait for previous submitted meta pages writeback */
 	wait_on_all_pages_writeback(sbi);
 
-	release_ino_entry(sbi, false);
+	if (unlikely(f2fs_cp_error(sbi)))
+		return -EIO;
+
+	/* flush all device cache */
+	err = f2fs_flush_device_cache(sbi);
+	if (err)
+		return err;
+
+	/* barrier and flush checkpoint cp pack 2 page if it can */
+	commit_checkpoint(sbi, ckpt, start_blk);
+	wait_on_all_pages_writeback(sbi);
+
+	f2fs_release_ino_entry(sbi, false);
 
 	if (unlikely(f2fs_cp_error(sbi)))
 		return -EIO;
@@ -1279,7 +1387,7 @@ static int do_checkpoint(struct f2fs_sb_info *sbi, struct cp_control *cpc)
 /*
  * We guarantee that this checkpoint procedure will not fail.
  */
-int write_checkpoint(struct f2fs_sb_info *sbi, struct cp_control *cpc)
+int f2fs_write_checkpoint(struct f2fs_sb_info *sbi, struct cp_control *cpc)
 {
 	struct f2fs_checkpoint *ckpt = F2FS_CKPT(sbi);
 	unsigned long long ckpt_ver;
@@ -1312,7 +1420,7 @@ int write_checkpoint(struct f2fs_sb_info *sbi, struct cp_control *cpc)
 
 	/* this is the case of multiple fstrims without any changes */
 	if (cpc->reason & CP_DISCARD) {
-		if (!exist_trim_candidates(sbi, cpc)) {
+		if (!f2fs_exist_trim_candidates(sbi, cpc)) {
 			unblock_operations(sbi);
 			goto out;
 		}
@@ -1320,8 +1428,8 @@ int write_checkpoint(struct f2fs_sb_info *sbi, struct cp_control *cpc)
 		if (NM_I(sbi)->dirty_nat_cnt == 0 &&
 				SIT_I(sbi)->dirty_sentries == 0 &&
 				prefree_segments(sbi) == 0) {
-			flush_sit_entries(sbi, cpc);
-			clear_prefree_segments(sbi, cpc);
+			f2fs_flush_sit_entries(sbi, cpc);
+			f2fs_clear_prefree_segments(sbi, cpc);
 			unblock_operations(sbi);
 			goto out;
 		}
@@ -1336,15 +1444,15 @@ int write_checkpoint(struct f2fs_sb_info *sbi, struct cp_control *cpc)
 	ckpt->checkpoint_ver = cpu_to_le64(++ckpt_ver);
 
 	/* write cached NAT/SIT entries to NAT/SIT area */
-	flush_nat_entries(sbi, cpc);
-	flush_sit_entries(sbi, cpc);
+	f2fs_flush_nat_entries(sbi, cpc);
+	f2fs_flush_sit_entries(sbi, cpc);
 
 	/* unlock all the fs_lock[] in do_checkpoint() */
 	err = do_checkpoint(sbi, cpc);
 	if (err)
-		release_discard_addrs(sbi);
+		f2fs_release_discard_addrs(sbi);
 	else
-		clear_prefree_segments(sbi, cpc);
+		f2fs_clear_prefree_segments(sbi, cpc);
 
 	unblock_operations(sbi);
 	stat_inc_cp_count(sbi->stat_info);
@@ -1361,7 +1469,7 @@ out:
 	return err;
 }
 
-void init_ino_entry_info(struct f2fs_sb_info *sbi)
+void f2fs_init_ino_entry_info(struct f2fs_sb_info *sbi)
 {
 	int i;
 
@@ -1379,23 +1487,23 @@ void init_ino_entry_info(struct f2fs_sb_info *sbi)
 				F2FS_ORPHANS_PER_BLOCK;
 }
 
-int __init create_checkpoint_caches(void)
+int __init f2fs_create_checkpoint_caches(void)
 {
 	ino_entry_slab = f2fs_kmem_cache_create("f2fs_ino_entry",
 			sizeof(struct ino_entry));
 	if (!ino_entry_slab)
 		return -ENOMEM;
-	inode_entry_slab = f2fs_kmem_cache_create("f2fs_inode_entry",
+	f2fs_inode_entry_slab = f2fs_kmem_cache_create("f2fs_inode_entry",
 			sizeof(struct inode_entry));
-	if (!inode_entry_slab) {
+	if (!f2fs_inode_entry_slab) {
 		kmem_cache_destroy(ino_entry_slab);
 		return -ENOMEM;
 	}
 	return 0;
 }
 
-void destroy_checkpoint_caches(void)
+void f2fs_destroy_checkpoint_caches(void)
 {
 	kmem_cache_destroy(ino_entry_slab);
-	kmem_cache_destroy(inode_entry_slab);
+	kmem_cache_destroy(f2fs_inode_entry_slab);
 }

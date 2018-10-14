@@ -24,6 +24,10 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/thp.h>
 
+#if H_PGTABLE_RANGE > (USER_VSID_RANGE * (TASK_SIZE_USER64 / TASK_CONTEXT_SIZE))
+#warning Limited user VSID range means pagetable space is wasted
+#endif
+
 #ifdef CONFIG_SPARSEMEM_VMEMMAP
 /*
  * vmemmap is the starting address of the virtual address space where
@@ -189,7 +193,7 @@ unsigned long hash__pmd_hugepage_update(struct mm_struct *mm, unsigned long addr
 
 #ifdef CONFIG_DEBUG_VM
 	WARN_ON(!hash__pmd_trans_huge(*pmdp) && !pmd_devmap(*pmdp));
-	assert_spin_locked(&mm->page_table_lock);
+	assert_spin_locked(pmd_lockptr(mm, pmdp));
 #endif
 
 	__asm__ __volatile__(
@@ -239,7 +243,7 @@ pmd_t hash__pmdp_collapse_flush(struct vm_area_struct *vma, unsigned long addres
 	 * by sending an IPI to all the cpus and executing a dummy
 	 * function there.
 	 */
-	kick_all_cpus_sync();
+	serialize_against_pte_lookup(vma->vm_mm);
 	/*
 	 * Now invalidate the hpte entries in the range
 	 * covered by pmd. This make sure we take a
@@ -261,7 +265,8 @@ void hash__pgtable_trans_huge_deposit(struct mm_struct *mm, pmd_t *pmdp,
 				  pgtable_t pgtable)
 {
 	pgtable_t *pgtable_slot;
-	assert_spin_locked(&mm->page_table_lock);
+
+	assert_spin_locked(pmd_lockptr(mm, pmdp));
 	/*
 	 * we store the pgtable in the second half of PMD
 	 */
@@ -281,7 +286,8 @@ pgtable_t hash__pgtable_trans_huge_withdraw(struct mm_struct *mm, pmd_t *pmdp)
 	pgtable_t pgtable;
 	pgtable_t *pgtable_slot;
 
-	assert_spin_locked(&mm->page_table_lock);
+	assert_spin_locked(pmd_lockptr(mm, pmdp));
+
 	pgtable_slot = (pgtable_t *)pmdp + PTRS_PER_PMD;
 	pgtable = *pgtable_slot;
 	/*
@@ -296,28 +302,6 @@ pgtable_t hash__pgtable_trans_huge_withdraw(struct mm_struct *mm, pmd_t *pmdp)
 	return pgtable;
 }
 
-void hash__pmdp_huge_split_prepare(struct vm_area_struct *vma,
-			       unsigned long address, pmd_t *pmdp)
-{
-	VM_BUG_ON(address & ~HPAGE_PMD_MASK);
-	VM_BUG_ON(REGION_ID(address) != USER_REGION_ID);
-	VM_BUG_ON(pmd_devmap(*pmdp));
-
-	/*
-	 * We can't mark the pmd none here, because that will cause a race
-	 * against exit_mmap. We need to continue mark pmd TRANS HUGE, while
-	 * we spilt, but at the same time we wan't rest of the ppc64 code
-	 * not to insert hash pte on this, because we will be modifying
-	 * the deposited pgtable in the caller of this function. Hence
-	 * clear the _PAGE_USER so that we move the fault handling to
-	 * higher level function and that will serialize against ptl.
-	 * We need to flush existing hash pte entries here even though,
-	 * the translation is still valid, because we will withdraw
-	 * pgtable_t after this.
-	 */
-	pmd_hugepage_update(vma->vm_mm, address, pmdp, 0, _PAGE_PRIVILEGED);
-}
-
 /*
  * A linux hugepage PMD was changed and the corresponding hash table entries
  * neesd to be flushed.
@@ -329,7 +313,6 @@ void hpte_do_hugepage_flush(struct mm_struct *mm, unsigned long addr,
 	unsigned int psize;
 	unsigned long vsid;
 	unsigned long flags = 0;
-	const struct cpumask *tmp;
 
 	/* get the base page size,vsid and segment size */
 #ifdef CONFIG_DEBUG_VM
@@ -343,15 +326,14 @@ void hpte_do_hugepage_flush(struct mm_struct *mm, unsigned long addr,
 
 	if (!is_kernel_addr(addr)) {
 		ssize = user_segment_size(addr);
-		vsid = get_vsid(mm->context.id, addr, ssize);
+		vsid = get_user_vsid(&mm->context, addr, ssize);
 		WARN_ON(vsid == 0);
 	} else {
 		vsid = get_kernel_vsid(addr, mmu_kernel_ssize);
 		ssize = mmu_kernel_ssize;
 	}
 
-	tmp = cpumask_of(smp_processor_id());
-	if (cpumask_equal(mm_cpumask(mm), tmp))
+	if (mm_is_thread_local(mm))
 		flags |= HPTE_LOCAL_UPDATE;
 
 	return flush_hash_hugepage(vsid, addr, pmdp, psize, ssize, flags);
@@ -380,16 +362,16 @@ pmd_t hash__pmdp_huge_get_and_clear(struct mm_struct *mm,
 	 */
 	memset(pgtable, 0, PTE_FRAG_SIZE);
 	/*
-	 * Serialize against find_linux_pte_or_hugepte which does lock-less
+	 * Serialize against find_current_mm_pte variants which does lock-less
 	 * lookup in page tables with local interrupts disabled. For huge pages
 	 * it casts pmd_t to pte_t. Since format of pte_t is different from
 	 * pmd_t we want to prevent transit from pmd pointing to page table
 	 * to pmd pointing to huge page (and back) while interrupts are disabled.
 	 * We clear pmd to possibly replace it with page table pointer in
 	 * different code paths. So make sure we wait for the parallel
-	 * find_linux_pte_or_hugepage to finish.
+	 * find_curren_mm_pte to finish.
 	 */
-	kick_all_cpus_sync();
+	serialize_against_pte_lookup(mm);
 	return old_pmd;
 }
 

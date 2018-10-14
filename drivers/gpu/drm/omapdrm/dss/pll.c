@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Texas Instruments Incorporated
+ * Copyright (C) 2014 Texas Instruments Incorporated - http://www.ti.com/
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License version 2 as published by
@@ -35,15 +35,14 @@
 #define PLL_SSC_CONFIGURATION2		0x001C
 #define PLL_CONFIGURATION4		0x0020
 
-static struct dss_pll *dss_plls[4];
-
-int dss_pll_register(struct dss_pll *pll)
+int dss_pll_register(struct dss_device *dss, struct dss_pll *pll)
 {
 	int i;
 
-	for (i = 0; i < ARRAY_SIZE(dss_plls); ++i) {
-		if (!dss_plls[i]) {
-			dss_plls[i] = pll;
+	for (i = 0; i < ARRAY_SIZE(dss->plls); ++i) {
+		if (!dss->plls[i]) {
+			dss->plls[i] = pll;
+			pll->dss = dss;
 			return 0;
 		}
 	}
@@ -53,29 +52,32 @@ int dss_pll_register(struct dss_pll *pll)
 
 void dss_pll_unregister(struct dss_pll *pll)
 {
+	struct dss_device *dss = pll->dss;
 	int i;
 
-	for (i = 0; i < ARRAY_SIZE(dss_plls); ++i) {
-		if (dss_plls[i] == pll) {
-			dss_plls[i] = NULL;
+	for (i = 0; i < ARRAY_SIZE(dss->plls); ++i) {
+		if (dss->plls[i] == pll) {
+			dss->plls[i] = NULL;
+			pll->dss = NULL;
 			return;
 		}
 	}
 }
 
-struct dss_pll *dss_pll_find(const char *name)
+struct dss_pll *dss_pll_find(struct dss_device *dss, const char *name)
 {
 	int i;
 
-	for (i = 0; i < ARRAY_SIZE(dss_plls); ++i) {
-		if (dss_plls[i] && strcmp(dss_plls[i]->name, name) == 0)
-			return dss_plls[i];
+	for (i = 0; i < ARRAY_SIZE(dss->plls); ++i) {
+		if (dss->plls[i] && strcmp(dss->plls[i]->name, name) == 0)
+			return dss->plls[i];
 	}
 
 	return NULL;
 }
 
-struct dss_pll *dss_pll_find_by_src(enum dss_clk_source src)
+struct dss_pll *dss_pll_find_by_src(struct dss_device *dss,
+				    enum dss_clk_source src)
 {
 	struct dss_pll *pll;
 
@@ -85,27 +87,27 @@ struct dss_pll *dss_pll_find_by_src(enum dss_clk_source src)
 		return NULL;
 
 	case DSS_CLK_SRC_HDMI_PLL:
-		return dss_pll_find("hdmi");
+		return dss_pll_find(dss, "hdmi");
 
 	case DSS_CLK_SRC_PLL1_1:
 	case DSS_CLK_SRC_PLL1_2:
 	case DSS_CLK_SRC_PLL1_3:
-		pll = dss_pll_find("dsi0");
+		pll = dss_pll_find(dss, "dsi0");
 		if (!pll)
-			pll = dss_pll_find("video0");
+			pll = dss_pll_find(dss, "video0");
 		return pll;
 
 	case DSS_CLK_SRC_PLL2_1:
 	case DSS_CLK_SRC_PLL2_2:
 	case DSS_CLK_SRC_PLL2_3:
-		pll = dss_pll_find("dsi1");
+		pll = dss_pll_find(dss, "dsi1");
 		if (!pll)
-			pll = dss_pll_find("video1");
+			pll = dss_pll_find(dss, "video1");
 		return pll;
 	}
 }
 
-unsigned dss_pll_get_clkout_idx_for_src(enum dss_clk_source src)
+unsigned int dss_pll_get_clkout_idx_for_src(enum dss_clk_source src)
 {
 	switch (src) {
 	case DSS_CLK_SRC_HDMI_PLL:
@@ -215,8 +217,8 @@ bool dss_pll_calc_a(const struct dss_pll *pll, unsigned long clkin,
 		dss_pll_calc_func func, void *data)
 {
 	const struct dss_pll_hw *hw = pll->hw;
-	int n, n_min, n_max;
-	int m, m_min, m_max;
+	int n, n_start, n_stop, n_inc;
+	int m, m_start, m_stop, m_inc;
 	unsigned long fint, clkdco;
 	unsigned long pll_hw_max;
 	unsigned long fint_hw_min, fint_hw_max;
@@ -226,22 +228,33 @@ bool dss_pll_calc_a(const struct dss_pll *pll, unsigned long clkin,
 	fint_hw_min = hw->fint_min;
 	fint_hw_max = hw->fint_max;
 
-	n_min = max(DIV_ROUND_UP(clkin, fint_hw_max), 1ul);
-	n_max = min((unsigned)(clkin / fint_hw_min), hw->n_max);
+	n_start = max(DIV_ROUND_UP(clkin, fint_hw_max), 1ul);
+	n_stop = min((unsigned)(clkin / fint_hw_min), hw->n_max);
+	n_inc = 1;
+
+	if (hw->errata_i886) {
+		swap(n_start, n_stop);
+		n_inc = -1;
+	}
 
 	pll_max = pll_max ? pll_max : ULONG_MAX;
 
-	/* Try to find high N & M to avoid jitter (DRA7 errata i886) */
-	for (n = n_max; n >= n_min; --n) {
+	for (n = n_start; n != n_stop; n += n_inc) {
 		fint = clkin / n;
 
-		m_min = max(DIV_ROUND_UP(DIV_ROUND_UP(pll_min, fint), 2),
+		m_start = max(DIV_ROUND_UP(DIV_ROUND_UP(pll_min, fint), 2),
 				1ul);
-		m_max = min3((unsigned)(pll_max / fint / 2),
+		m_stop = min3((unsigned)(pll_max / fint / 2),
 				(unsigned)(pll_hw_max / fint / 2),
 				hw->m_max);
+		m_inc = 1;
 
-		for (m = m_max; m >= m_min; --m) {
+		if (hw->errata_i886) {
+			swap(m_start, m_stop);
+			m_inc = -1;
+		}
+
+		for (m = m_start; m != m_stop; m += m_inc) {
 			clkdco = 2 * m * fint;
 
 			if (func(n, m, fint, clkdco, data))
@@ -266,7 +279,7 @@ bool dss_pll_calc_b(const struct dss_pll *pll, unsigned long clkin,
 	unsigned long fint, clkdco, clkout;
 	unsigned long target_clkdco;
 	unsigned long min_dco;
-	unsigned n, m, mf, m2, sd;
+	unsigned int n, m, mf, m2, sd;
 	const struct dss_pll_hw *hw = pll->hw;
 
 	DSSDBG("clkin %lu, target clkout %lu\n", clkin, target_clkout);

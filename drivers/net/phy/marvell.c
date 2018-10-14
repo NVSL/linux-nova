@@ -55,43 +55,35 @@
 #define MII_M1011_IMASK_INIT		0x6400
 #define MII_M1011_IMASK_CLEAR		0x0000
 
-#define MII_M1011_PHY_SCR		0x10
-#define MII_M1011_PHY_SCR_MDI		0x0000
-#define MII_M1011_PHY_SCR_MDI_X		0x0020
-#define MII_M1011_PHY_SCR_AUTO_CROSS	0x0060
-
-#define MII_M1145_PHY_EXT_SR		0x1b
-#define MII_M1145_PHY_EXT_CR		0x14
-#define MII_M1145_RGMII_RX_DELAY	0x0080
-#define MII_M1145_RGMII_TX_DELAY	0x0002
-#define MII_M1145_HWCFG_MODE_SGMII_NO_CLK	0x4
-#define MII_M1145_HWCFG_MODE_MASK		0xf
-#define MII_M1145_HWCFG_FIBER_COPPER_AUTO	0x8000
-
-#define MII_M1145_HWCFG_MODE_SGMII_NO_CLK	0x4
-#define MII_M1145_HWCFG_MODE_MASK		0xf
-#define MII_M1145_HWCFG_FIBER_COPPER_AUTO	0x8000
+#define MII_M1011_PHY_SCR			0x10
+#define MII_M1011_PHY_SCR_DOWNSHIFT_EN		BIT(11)
+#define MII_M1011_PHY_SCR_DOWNSHIFT_SHIFT	12
+#define MII_M1011_PHY_SRC_DOWNSHIFT_MASK	0x7800
+#define MII_M1011_PHY_SCR_MDI			(0x0 << 5)
+#define MII_M1011_PHY_SCR_MDI_X			(0x1 << 5)
+#define MII_M1011_PHY_SCR_AUTO_CROSS		(0x3 << 5)
 
 #define MII_M1111_PHY_LED_CONTROL	0x18
 #define MII_M1111_PHY_LED_DIRECT	0x4100
 #define MII_M1111_PHY_LED_COMBINE	0x411c
 #define MII_M1111_PHY_EXT_CR		0x14
-#define MII_M1111_RX_DELAY		0x80
-#define MII_M1111_TX_DELAY		0x2
+#define MII_M1111_RGMII_RX_DELAY	BIT(7)
+#define MII_M1111_RGMII_TX_DELAY	BIT(1)
 #define MII_M1111_PHY_EXT_SR		0x1b
 
 #define MII_M1111_HWCFG_MODE_MASK		0xf
-#define MII_M1111_HWCFG_MODE_COPPER_RGMII	0xb
 #define MII_M1111_HWCFG_MODE_FIBER_RGMII	0x3
 #define MII_M1111_HWCFG_MODE_SGMII_NO_CLK	0x4
+#define MII_M1111_HWCFG_MODE_RTBI		0x7
 #define MII_M1111_HWCFG_MODE_COPPER_RTBI	0x9
-#define MII_M1111_HWCFG_FIBER_COPPER_AUTO	0x8000
-#define MII_M1111_HWCFG_FIBER_COPPER_RES	0x2000
+#define MII_M1111_HWCFG_MODE_COPPER_RGMII	0xb
+#define MII_M1111_HWCFG_FIBER_COPPER_RES	BIT(13)
+#define MII_M1111_HWCFG_FIBER_COPPER_AUTO	BIT(15)
 
 #define MII_88E1121_PHY_MSCR_REG	21
 #define MII_88E1121_PHY_MSCR_RX_DELAY	BIT(5)
 #define MII_88E1121_PHY_MSCR_TX_DELAY	BIT(4)
-#define MII_88E1121_PHY_MSCR_DELAY_MASK	(~(0x3 << 4))
+#define MII_88E1121_PHY_MSCR_DELAY_MASK	(BIT(5) | BIT(4))
 
 #define MII_88E1121_MISC_TEST				0x1a
 #define MII_88E1510_MISC_TEST_TEMP_THRESHOLD_MASK	0x1f00
@@ -104,31 +96,43 @@
 #define MII_88E1510_TEMP_SENSOR		0x1b
 #define MII_88E1510_TEMP_SENSOR_MASK	0xff
 
+#define MII_88E6390_MISC_TEST		0x1b
+#define MII_88E6390_MISC_TEST_SAMPLE_1S		0
+#define MII_88E6390_MISC_TEST_SAMPLE_10MS	BIT(14)
+#define MII_88E6390_MISC_TEST_SAMPLE_DISABLE	BIT(15)
+#define MII_88E6390_MISC_TEST_SAMPLE_ENABLE	0
+#define MII_88E6390_MISC_TEST_SAMPLE_MASK	(0x3 << 14)
+
+#define MII_88E6390_TEMP_SENSOR		0x1c
+#define MII_88E6390_TEMP_SENSOR_MASK	0xff
+#define MII_88E6390_TEMP_SENSOR_SAMPLES 10
+
 #define MII_88E1318S_PHY_MSCR1_REG	16
 #define MII_88E1318S_PHY_MSCR1_PAD_ODD	BIT(6)
 
 /* Copper Specific Interrupt Enable Register */
-#define MII_88E1318S_PHY_CSIER                              0x12
+#define MII_88E1318S_PHY_CSIER				0x12
 /* WOL Event Interrupt Enable */
-#define MII_88E1318S_PHY_CSIER_WOL_EIE                      BIT(7)
+#define MII_88E1318S_PHY_CSIER_WOL_EIE			BIT(7)
 
 /* LED Timer Control Register */
-#define MII_88E1318S_PHY_LED_TCR                            0x12
-#define MII_88E1318S_PHY_LED_TCR_FORCE_INT                  BIT(15)
-#define MII_88E1318S_PHY_LED_TCR_INTn_ENABLE                BIT(7)
-#define MII_88E1318S_PHY_LED_TCR_INT_ACTIVE_LOW             BIT(11)
+#define MII_88E1318S_PHY_LED_TCR			0x12
+#define MII_88E1318S_PHY_LED_TCR_FORCE_INT		BIT(15)
+#define MII_88E1318S_PHY_LED_TCR_INTn_ENABLE		BIT(7)
+#define MII_88E1318S_PHY_LED_TCR_INT_ACTIVE_LOW		BIT(11)
 
 /* Magic Packet MAC address registers */
-#define MII_88E1318S_PHY_MAGIC_PACKET_WORD2                 0x17
-#define MII_88E1318S_PHY_MAGIC_PACKET_WORD1                 0x18
-#define MII_88E1318S_PHY_MAGIC_PACKET_WORD0                 0x19
+#define MII_88E1318S_PHY_MAGIC_PACKET_WORD2		0x17
+#define MII_88E1318S_PHY_MAGIC_PACKET_WORD1		0x18
+#define MII_88E1318S_PHY_MAGIC_PACKET_WORD0		0x19
 
-#define MII_88E1318S_PHY_WOL_CTRL                           0x10
-#define MII_88E1318S_PHY_WOL_CTRL_CLEAR_WOL_STATUS          BIT(12)
-#define MII_88E1318S_PHY_WOL_CTRL_MAGIC_PACKET_MATCH_ENABLE BIT(14)
+#define MII_88E1318S_PHY_WOL_CTRL				0x10
+#define MII_88E1318S_PHY_WOL_CTRL_CLEAR_WOL_STATUS		BIT(12)
+#define MII_88E1318S_PHY_WOL_CTRL_MAGIC_PACKET_MATCH_ENABLE	BIT(14)
 
-#define MII_88E1121_PHY_LED_CTRL	16
+#define MII_PHY_LED_CTRL	        16
 #define MII_88E1121_PHY_LED_DEF		0x0030
+#define MII_88E1510_PHY_LED_DEF		0x1177
 
 #define MII_M1011_PHY_STATUS		0x11
 #define MII_M1011_PHY_STATUS_1000	0x8000
@@ -137,8 +141,6 @@
 #define MII_M1011_PHY_STATUS_FULLDUPLEX	0x2000
 #define MII_M1011_PHY_STATUS_RESOLVED	0x0800
 #define MII_M1011_PHY_STATUS_LINK	0x0400
-
-#define MII_M1116R_CONTROL_REG_MAC	21
 
 #define MII_88E3016_PHY_SPEC_CTRL	0x10
 #define MII_88E3016_DISABLE_SCRAMBLER	0x0200
@@ -152,7 +154,7 @@
 #define LPA_FIBER_1000HALF	0x40
 #define LPA_FIBER_1000FULL	0x20
 
-#define LPA_PAUSE_FIBER	0x180
+#define LPA_PAUSE_FIBER		0x180
 #define LPA_PAUSE_ASYM_FIBER	0x100
 
 #define ADVERTISE_FIBER_1000HALF	0x40
@@ -187,27 +189,19 @@ struct marvell_priv {
 	struct device *hwmon_dev;
 };
 
-static int marvell_get_page(struct phy_device *phydev)
+static int marvell_read_page(struct phy_device *phydev)
 {
-	return phy_read(phydev, MII_MARVELL_PHY_PAGE);
+	return __phy_read(phydev, MII_MARVELL_PHY_PAGE);
+}
+
+static int marvell_write_page(struct phy_device *phydev, int page)
+{
+	return __phy_write(phydev, MII_MARVELL_PHY_PAGE, page);
 }
 
 static int marvell_set_page(struct phy_device *phydev, int page)
 {
 	return phy_write(phydev, MII_MARVELL_PHY_PAGE, page);
-}
-
-static int marvell_get_set_page(struct phy_device *phydev, int page)
-{
-	int oldpage = marvell_get_page(phydev);
-
-	if (oldpage < 0)
-		return oldpage;
-
-	if (page != oldpage)
-		return marvell_set_page(phydev, page);
-
-	return 0;
 }
 
 static int marvell_ack_interrupt(struct phy_device *phydev)
@@ -274,6 +268,23 @@ static int marvell_set_polarity(struct phy_device *phydev, int polarity)
 	return 0;
 }
 
+static int marvell_set_downshift(struct phy_device *phydev, bool enable,
+				 u8 retries)
+{
+	int reg;
+
+	reg = phy_read(phydev, MII_M1011_PHY_SCR);
+	if (reg < 0)
+		return reg;
+
+	reg &= MII_M1011_PHY_SRC_DOWNSHIFT_MASK;
+	reg |= ((retries - 1) << MII_M1011_PHY_SCR_DOWNSHIFT_SHIFT);
+	if (enable)
+		reg |= MII_M1011_PHY_SCR_DOWNSHIFT_EN;
+
+	return phy_write(phydev, MII_M1011_PHY_SCR, reg);
+}
+
 static int marvell_config_aneg(struct phy_device *phydev)
 {
 	int err;
@@ -292,17 +303,11 @@ static int marvell_config_aneg(struct phy_device *phydev)
 		return err;
 
 	if (phydev->autoneg != AUTONEG_ENABLE) {
-		int bmcr;
-
 		/* A write to speed/duplex bits (that is performed by
 		 * genphy_config_aneg() call above) must be followed by
 		 * a software reset. Otherwise, the write has no effect.
 		 */
-		bmcr = phy_read(phydev, MII_BMCR);
-		if (bmcr < 0)
-			return bmcr;
-
-		err = phy_write(phydev, MII_BMCR, bmcr | BMCR_RESET);
+		err = genphy_soft_reset(phydev);
 		if (err < 0)
 			return err;
 	}
@@ -318,8 +323,7 @@ static int m88e1101_config_aneg(struct phy_device *phydev)
 	 * that certain registers get written in order
 	 * to restart autonegotiation
 	 */
-	err = phy_write(phydev, MII_BMCR, BMCR_RESET);
-
+	err = genphy_soft_reset(phydev);
 	if (err < 0)
 		return err;
 
@@ -354,7 +358,7 @@ static int m88e1111_config_aneg(struct phy_device *phydev)
 	 * that certain registers get written in order
 	 * to restart autonegotiation
 	 */
-	err = phy_write(phydev, MII_BMCR, BMCR_RESET);
+	err = genphy_soft_reset(phydev);
 
 	err = marvell_set_polarity(phydev, phydev->mdix_ctrl);
 	if (err < 0)
@@ -370,17 +374,11 @@ static int m88e1111_config_aneg(struct phy_device *phydev)
 		return err;
 
 	if (phydev->autoneg != AUTONEG_ENABLE) {
-		int bmcr;
-
 		/* A write to speed/duplex bits (that is performed by
 		 * genphy_config_aneg() call above) must be followed by
 		 * a software reset. Otherwise, the write has no effect.
 		 */
-		bmcr = phy_read(phydev, MII_BMCR);
-		if (bmcr < 0)
-			return bmcr;
-
-		err = phy_write(phydev, MII_BMCR, bmcr | BMCR_RESET);
+		err = genphy_soft_reset(phydev);
 		if (err < 0)
 			return err;
 	}
@@ -405,7 +403,7 @@ static int m88e1111_config_aneg(struct phy_device *phydev)
 static int marvell_of_reg_init(struct phy_device *phydev)
 {
 	const __be32 *paddr;
-	int len, i, saved_page, current_page, ret;
+	int len, i, saved_page, current_page, ret = 0;
 
 	if (!phydev->mdio.dev.of_node)
 		return 0;
@@ -415,12 +413,11 @@ static int marvell_of_reg_init(struct phy_device *phydev)
 	if (!paddr || len < (4 * sizeof(*paddr)))
 		return 0;
 
-	saved_page = marvell_get_page(phydev);
+	saved_page = phy_save_page(phydev);
 	if (saved_page < 0)
-		return saved_page;
+		goto err;
 	current_page = saved_page;
 
-	ret = 0;
 	len /= sizeof(*paddr);
 	for (i = 0; i < len - 3; i += 4) {
 		u16 page = be32_to_cpup(paddr + i);
@@ -431,14 +428,14 @@ static int marvell_of_reg_init(struct phy_device *phydev)
 
 		if (page != current_page) {
 			current_page = page;
-			ret = marvell_set_page(phydev, page);
+			ret = marvell_write_page(phydev, page);
 			if (ret < 0)
 				goto err;
 		}
 
 		val = 0;
 		if (mask) {
-			val = phy_read(phydev, reg);
+			val = __phy_read(phydev, reg);
 			if (val < 0) {
 				ret = val;
 				goto err;
@@ -447,17 +444,12 @@ static int marvell_of_reg_init(struct phy_device *phydev)
 		}
 		val |= val_bits;
 
-		ret = phy_write(phydev, reg, val);
+		ret = __phy_write(phydev, reg, val);
 		if (ret < 0)
 			goto err;
 	}
 err:
-	if (current_page != saved_page) {
-		i = marvell_set_page(phydev, saved_page);
-		if (ret == 0)
-			ret = i;
-	}
-	return ret;
+	return phy_restore_page(phydev, saved_page, ret);
 }
 #else
 static int marvell_of_reg_init(struct phy_device *phydev)
@@ -466,39 +458,40 @@ static int marvell_of_reg_init(struct phy_device *phydev)
 }
 #endif /* CONFIG_OF_MDIO */
 
+static int m88e1121_config_aneg_rgmii_delays(struct phy_device *phydev)
+{
+	int mscr;
+
+	if (phydev->interface == PHY_INTERFACE_MODE_RGMII_ID)
+		mscr = MII_88E1121_PHY_MSCR_RX_DELAY |
+		       MII_88E1121_PHY_MSCR_TX_DELAY;
+	else if (phydev->interface == PHY_INTERFACE_MODE_RGMII_RXID)
+		mscr = MII_88E1121_PHY_MSCR_RX_DELAY;
+	else if (phydev->interface == PHY_INTERFACE_MODE_RGMII_TXID)
+		mscr = MII_88E1121_PHY_MSCR_TX_DELAY;
+	else
+		mscr = 0;
+
+	return phy_modify_paged(phydev, MII_MARVELL_MSCR_PAGE,
+				MII_88E1121_PHY_MSCR_REG,
+				MII_88E1121_PHY_MSCR_DELAY_MASK, mscr);
+}
+
 static int m88e1121_config_aneg(struct phy_device *phydev)
 {
-	int err, oldpage, mscr;
-
-	oldpage = marvell_get_set_page(phydev, MII_MARVELL_MSCR_PAGE);
-	if (oldpage < 0)
-		return oldpage;
+	int err = 0;
 
 	if (phy_interface_is_rgmii(phydev)) {
-		mscr = phy_read(phydev, MII_88E1121_PHY_MSCR_REG) &
-			MII_88E1121_PHY_MSCR_DELAY_MASK;
-
-		if (phydev->interface == PHY_INTERFACE_MODE_RGMII_ID)
-			mscr |= (MII_88E1121_PHY_MSCR_RX_DELAY |
-				 MII_88E1121_PHY_MSCR_TX_DELAY);
-		else if (phydev->interface == PHY_INTERFACE_MODE_RGMII_RXID)
-			mscr |= MII_88E1121_PHY_MSCR_RX_DELAY;
-		else if (phydev->interface == PHY_INTERFACE_MODE_RGMII_TXID)
-			mscr |= MII_88E1121_PHY_MSCR_TX_DELAY;
-
-		err = phy_write(phydev, MII_88E1121_PHY_MSCR_REG, mscr);
+		err = m88e1121_config_aneg_rgmii_delays(phydev);
 		if (err < 0)
 			return err;
 	}
 
-	marvell_set_page(phydev, oldpage);
-
-	err = phy_write(phydev, MII_BMCR, BMCR_RESET);
+	err = genphy_soft_reset(phydev);
 	if (err < 0)
 		return err;
 
-	err = phy_write(phydev, MII_M1011_PHY_SCR,
-			MII_M1011_PHY_SCR_AUTO_CROSS);
+	err = marvell_set_polarity(phydev, phydev->mdix_ctrl);
 	if (err < 0)
 		return err;
 
@@ -507,20 +500,11 @@ static int m88e1121_config_aneg(struct phy_device *phydev)
 
 static int m88e1318_config_aneg(struct phy_device *phydev)
 {
-	int err, oldpage, mscr;
+	int err;
 
-	oldpage = marvell_get_set_page(phydev, MII_MARVELL_MSCR_PAGE);
-	if (oldpage < 0)
-		return oldpage;
-
-	mscr = phy_read(phydev, MII_88E1318S_PHY_MSCR1_REG);
-	mscr |= MII_88E1318S_PHY_MSCR1_PAD_ODD;
-
-	err = phy_write(phydev, MII_88E1318S_PHY_MSCR1_REG, mscr);
-	if (err < 0)
-		return err;
-
-	err = marvell_set_page(phydev, oldpage);
+	err = phy_modify_paged(phydev, MII_MARVELL_MSCR_PAGE,
+			       MII_88E1318S_PHY_MSCR1_REG,
+			       0, MII_88E1318S_PHY_MSCR1_PAD_ODD);
 	if (err < 0)
 		return err;
 
@@ -596,7 +580,7 @@ static int marvell_config_aneg_fiber(struct phy_device *phydev)
 
 	if (changed == 0) {
 		/* Advertisement hasn't changed, but maybe aneg was never on to
-		 * begin with?  Or maybe phy was isolated?
+		 * begin with?	Or maybe phy was isolated?
 		 */
 		int ctl = phy_read(phydev, MII_BMCR);
 
@@ -629,6 +613,10 @@ static int m88e1510_config_aneg(struct phy_device *phydev)
 	if (err < 0)
 		goto error;
 
+	/* Do not touch the fiber page if we're in copper->sgmii mode */
+	if (phydev->interface == PHY_INTERFACE_MODE_SGMII)
+		return 0;
+
 	/* Then the fiber link */
 	err = marvell_set_page(phydev, MII_MARVELL_FIBER_PAGE);
 	if (err < 0)
@@ -645,20 +633,49 @@ error:
 	return err;
 }
 
+static void marvell_config_led(struct phy_device *phydev)
+{
+	u16 def_config;
+	int err;
+
+	switch (MARVELL_PHY_FAMILY_ID(phydev->phy_id)) {
+	/* Default PHY LED config: LED[0] .. Link, LED[1] .. Activity */
+	case MARVELL_PHY_FAMILY_ID(MARVELL_PHY_ID_88E1121R):
+	case MARVELL_PHY_FAMILY_ID(MARVELL_PHY_ID_88E1318S):
+		def_config = MII_88E1121_PHY_LED_DEF;
+		break;
+	/* Default PHY LED config:
+	 * LED[0] .. 1000Mbps Link
+	 * LED[1] .. 100Mbps Link
+	 * LED[2] .. Blink, Activity
+	 */
+	case MARVELL_PHY_FAMILY_ID(MARVELL_PHY_ID_88E1510):
+		def_config = MII_88E1510_PHY_LED_DEF;
+		break;
+	default:
+		return;
+	}
+
+	err = phy_write_paged(phydev, MII_MARVELL_LED_PAGE, MII_PHY_LED_CTRL,
+			      def_config);
+	if (err < 0)
+		pr_warn("Fail to config marvell phy LED.\n");
+}
+
 static int marvell_config_init(struct phy_device *phydev)
 {
+	/* Set defalut LED */
+	marvell_config_led(phydev);
+
 	/* Set registers from marvell,reg-init DT property */
 	return marvell_of_reg_init(phydev);
 }
 
 static int m88e1116r_config_init(struct phy_device *phydev)
 {
-	int temp;
 	int err;
 
-	temp = phy_read(phydev, MII_BMCR);
-	temp |= BMCR_RESET;
-	err = phy_write(phydev, MII_BMCR, temp);
+	err = genphy_soft_reset(phydev);
 	if (err < 0)
 		return err;
 
@@ -668,77 +685,80 @@ static int m88e1116r_config_init(struct phy_device *phydev)
 	if (err < 0)
 		return err;
 
-	temp = phy_read(phydev, MII_M1011_PHY_SCR);
-	temp |= (7 << 12);	/* max number of gigabit attempts */
-	temp |= (1 << 11);	/* enable downshift */
-	temp |= MII_M1011_PHY_SCR_AUTO_CROSS;
-	err = phy_write(phydev, MII_M1011_PHY_SCR, temp);
+	err = marvell_set_polarity(phydev, phydev->mdix_ctrl);
 	if (err < 0)
 		return err;
 
-	err = marvell_set_page(phydev, MII_MARVELL_MSCR_PAGE);
-	if (err < 0)
-		return err;
-	temp = phy_read(phydev, MII_M1116R_CONTROL_REG_MAC);
-	temp |= (1 << 5);
-	temp |= (1 << 4);
-	err = phy_write(phydev, MII_M1116R_CONTROL_REG_MAC, temp);
-	if (err < 0)
-		return err;
-	err = marvell_set_page(phydev, MII_MARVELL_COPPER_PAGE);
+	err = marvell_set_downshift(phydev, true, 8);
 	if (err < 0)
 		return err;
 
-	temp = phy_read(phydev, MII_BMCR);
-	temp |= BMCR_RESET;
-	err = phy_write(phydev, MII_BMCR, temp);
+	if (phy_interface_is_rgmii(phydev)) {
+		err = m88e1121_config_aneg_rgmii_delays(phydev);
+		if (err < 0)
+			return err;
+	}
+
+	err = genphy_soft_reset(phydev);
 	if (err < 0)
 		return err;
-
-	mdelay(500);
 
 	return marvell_config_init(phydev);
 }
 
 static int m88e3016_config_init(struct phy_device *phydev)
 {
-	int reg;
+	int ret;
 
 	/* Enable Scrambler and Auto-Crossover */
-	reg = phy_read(phydev, MII_88E3016_PHY_SPEC_CTRL);
-	if (reg < 0)
-		return reg;
-
-	reg &= ~MII_88E3016_DISABLE_SCRAMBLER;
-	reg |= MII_88E3016_AUTO_MDIX_CROSSOVER;
-
-	reg = phy_write(phydev, MII_88E3016_PHY_SPEC_CTRL, reg);
-	if (reg < 0)
-		return reg;
+	ret = phy_modify(phydev, MII_88E3016_PHY_SPEC_CTRL,
+			 MII_88E3016_DISABLE_SCRAMBLER,
+			 MII_88E3016_AUTO_MDIX_CROSSOVER);
+	if (ret < 0)
+		return ret;
 
 	return marvell_config_init(phydev);
 }
 
-static int m88e1111_config_init_rgmii(struct phy_device *phydev)
+static int m88e1111_config_init_hwcfg_mode(struct phy_device *phydev,
+					   u16 mode,
+					   int fibre_copper_auto)
 {
-	int err;
-	int temp;
+	if (fibre_copper_auto)
+		mode |= MII_M1111_HWCFG_FIBER_COPPER_AUTO;
 
-	temp = phy_read(phydev, MII_M1111_PHY_EXT_CR);
-	if (temp < 0)
-		return temp;
+	return phy_modify(phydev, MII_M1111_PHY_EXT_SR,
+			  MII_M1111_HWCFG_MODE_MASK |
+			  MII_M1111_HWCFG_FIBER_COPPER_AUTO |
+			  MII_M1111_HWCFG_FIBER_COPPER_RES,
+			  mode);
+}
+
+static int m88e1111_config_init_rgmii_delays(struct phy_device *phydev)
+{
+	int delay;
 
 	if (phydev->interface == PHY_INTERFACE_MODE_RGMII_ID) {
-		temp |= (MII_M1111_RX_DELAY | MII_M1111_TX_DELAY);
+		delay = MII_M1111_RGMII_RX_DELAY | MII_M1111_RGMII_TX_DELAY;
 	} else if (phydev->interface == PHY_INTERFACE_MODE_RGMII_RXID) {
-		temp &= ~MII_M1111_TX_DELAY;
-		temp |= MII_M1111_RX_DELAY;
+		delay = MII_M1111_RGMII_RX_DELAY;
 	} else if (phydev->interface == PHY_INTERFACE_MODE_RGMII_TXID) {
-		temp &= ~MII_M1111_RX_DELAY;
-		temp |= MII_M1111_TX_DELAY;
+		delay = MII_M1111_RGMII_TX_DELAY;
+	} else {
+		delay = 0;
 	}
 
-	err = phy_write(phydev, MII_M1111_PHY_EXT_CR, temp);
+	return phy_modify(phydev, MII_M1111_PHY_EXT_CR,
+			  MII_M1111_RGMII_RX_DELAY | MII_M1111_RGMII_TX_DELAY,
+			  delay);
+}
+
+static int m88e1111_config_init_rgmii(struct phy_device *phydev)
+{
+	int temp;
+	int err;
+
+	err = m88e1111_config_init_rgmii_delays(phydev);
 	if (err < 0)
 		return err;
 
@@ -759,17 +779,11 @@ static int m88e1111_config_init_rgmii(struct phy_device *phydev)
 static int m88e1111_config_init_sgmii(struct phy_device *phydev)
 {
 	int err;
-	int temp;
 
-	temp = phy_read(phydev, MII_M1111_PHY_EXT_SR);
-	if (temp < 0)
-		return temp;
-
-	temp &= ~(MII_M1111_HWCFG_MODE_MASK);
-	temp |= MII_M1111_HWCFG_MODE_SGMII_NO_CLK;
-	temp |= MII_M1111_HWCFG_FIBER_COPPER_AUTO;
-
-	err = phy_write(phydev, MII_M1111_PHY_EXT_SR, temp);
+	err = m88e1111_config_init_hwcfg_mode(
+		phydev,
+		MII_M1111_HWCFG_MODE_SGMII_NO_CLK,
+		MII_M1111_HWCFG_FIBER_COPPER_AUTO);
 	if (err < 0)
 		return err;
 
@@ -780,48 +794,27 @@ static int m88e1111_config_init_sgmii(struct phy_device *phydev)
 static int m88e1111_config_init_rtbi(struct phy_device *phydev)
 {
 	int err;
-	int temp;
 
-	temp = phy_read(phydev, MII_M1111_PHY_EXT_CR);
-	if (temp < 0)
-		return temp;
-
-	temp |= (MII_M1111_RX_DELAY | MII_M1111_TX_DELAY);
-	err = phy_write(phydev, MII_M1111_PHY_EXT_CR, temp);
+	err = m88e1111_config_init_rgmii_delays(phydev);
 	if (err < 0)
 		return err;
 
-	temp = phy_read(phydev, MII_M1111_PHY_EXT_SR);
-	if (temp < 0)
-		return temp;
-
-	temp &= ~(MII_M1111_HWCFG_MODE_MASK |
-		  MII_M1111_HWCFG_FIBER_COPPER_RES);
-	temp |= 0x7 | MII_M1111_HWCFG_FIBER_COPPER_AUTO;
-
-	err = phy_write(phydev, MII_M1111_PHY_EXT_SR, temp);
+	err = m88e1111_config_init_hwcfg_mode(
+		phydev,
+		MII_M1111_HWCFG_MODE_RTBI,
+		MII_M1111_HWCFG_FIBER_COPPER_AUTO);
 	if (err < 0)
 		return err;
 
 	/* soft reset */
-	err = phy_write(phydev, MII_BMCR, BMCR_RESET);
+	err = genphy_soft_reset(phydev);
 	if (err < 0)
 		return err;
 
-	do
-		temp = phy_read(phydev, MII_BMCR);
-	while (temp & BMCR_RESET);
-
-	temp = phy_read(phydev, MII_M1111_PHY_EXT_SR);
-	if (temp < 0)
-		return temp;
-
-	temp &= ~(MII_M1111_HWCFG_MODE_MASK |
-		  MII_M1111_HWCFG_FIBER_COPPER_RES);
-	temp |= MII_M1111_HWCFG_MODE_COPPER_RTBI |
-		MII_M1111_HWCFG_FIBER_COPPER_AUTO;
-
-	return phy_write(phydev, MII_M1111_PHY_EXT_SR, temp);
+	return m88e1111_config_init_hwcfg_mode(
+		phydev,
+		MII_M1111_HWCFG_MODE_RTBI,
+		MII_M1111_HWCFG_FIBER_COPPER_AUTO);
 }
 
 static int m88e1111_config_init(struct phy_device *phydev)
@@ -830,7 +823,7 @@ static int m88e1111_config_init(struct phy_device *phydev)
 
 	if (phy_interface_is_rgmii(phydev)) {
 		err = m88e1111_config_init_rgmii(phydev);
-		if (err)
+		if (err < 0)
 			return err;
 	}
 
@@ -850,52 +843,48 @@ static int m88e1111_config_init(struct phy_device *phydev)
 	if (err < 0)
 		return err;
 
-	return phy_write(phydev, MII_BMCR, BMCR_RESET);
+	return genphy_soft_reset(phydev);
 }
 
-static int m88e1121_config_init(struct phy_device *phydev)
+static int m88e1318_config_init(struct phy_device *phydev)
 {
-	int err, oldpage;
+	if (phy_interrupt_is_valid(phydev)) {
+		int err = phy_modify_paged(
+			phydev, MII_MARVELL_LED_PAGE,
+			MII_88E1318S_PHY_LED_TCR,
+			MII_88E1318S_PHY_LED_TCR_FORCE_INT,
+			MII_88E1318S_PHY_LED_TCR_INTn_ENABLE |
+			MII_88E1318S_PHY_LED_TCR_INT_ACTIVE_LOW);
+		if (err < 0)
+			return err;
+	}
 
-	oldpage = marvell_get_set_page(phydev, MII_MARVELL_LED_PAGE);
-	if (oldpage < 0)
-		return oldpage;
-
-	/* Default PHY LED config: LED[0] .. Link, LED[1] .. Activity */
-	err = phy_write(phydev, MII_88E1121_PHY_LED_CTRL,
-			MII_88E1121_PHY_LED_DEF);
-	if (err < 0)
-		return err;
-
-	marvell_set_page(phydev, oldpage);
-
-	/* Set marvell,reg-init configuration from device tree */
 	return marvell_config_init(phydev);
 }
 
 static int m88e1510_config_init(struct phy_device *phydev)
 {
 	int err;
-	int temp;
 
 	/* SGMII-to-Copper mode initialization */
 	if (phydev->interface == PHY_INTERFACE_MODE_SGMII) {
+		u32 pause;
+
 		/* Select page 18 */
 		err = marvell_set_page(phydev, 18);
 		if (err < 0)
 			return err;
 
 		/* In reg 20, write MODE[2:0] = 0x1 (SGMII to Copper) */
-		temp = phy_read(phydev, MII_88E1510_GEN_CTRL_REG_1);
-		temp &= ~MII_88E1510_GEN_CTRL_REG_1_MODE_MASK;
-		temp |= MII_88E1510_GEN_CTRL_REG_1_MODE_SGMII;
-		err = phy_write(phydev, MII_88E1510_GEN_CTRL_REG_1, temp);
+		err = phy_modify(phydev, MII_88E1510_GEN_CTRL_REG_1,
+				 MII_88E1510_GEN_CTRL_REG_1_MODE_MASK,
+				 MII_88E1510_GEN_CTRL_REG_1_MODE_SGMII);
 		if (err < 0)
 			return err;
 
 		/* PHY reset is necessary after changing MODE[2:0] */
-		temp |= MII_88E1510_GEN_CTRL_REG_1_RESET;
-		err = phy_write(phydev, MII_88E1510_GEN_CTRL_REG_1, temp);
+		err = phy_modify(phydev, MII_88E1510_GEN_CTRL_REG_1, 0,
+				 MII_88E1510_GEN_CTRL_REG_1_RESET);
 		if (err < 0)
 			return err;
 
@@ -903,21 +892,30 @@ static int m88e1510_config_init(struct phy_device *phydev)
 		err = marvell_set_page(phydev, MII_MARVELL_COPPER_PAGE);
 		if (err < 0)
 			return err;
+
+		/* There appears to be a bug in the 88e1512 when used in
+		 * SGMII to copper mode, where the AN advertisement register
+		 * clears the pause bits each time a negotiation occurs.
+		 * This means we can never be truely sure what was advertised,
+		 * so disable Pause support.
+		 */
+		pause = SUPPORTED_Pause | SUPPORTED_Asym_Pause;
+		phydev->supported &= ~pause;
+		phydev->advertising &= ~pause;
 	}
 
-	return m88e1121_config_init(phydev);
+	return m88e1318_config_init(phydev);
 }
 
 static int m88e1118_config_aneg(struct phy_device *phydev)
 {
 	int err;
 
-	err = phy_write(phydev, MII_BMCR, BMCR_RESET);
+	err = genphy_soft_reset(phydev);
 	if (err < 0)
 		return err;
 
-	err = phy_write(phydev, MII_M1011_PHY_SCR,
-			MII_M1011_PHY_SCR_AUTO_CROSS);
+	err = marvell_set_polarity(phydev, phydev->mdix_ctrl);
 	if (err < 0)
 		return err;
 
@@ -961,7 +959,7 @@ static int m88e1118_config_init(struct phy_device *phydev)
 	if (err < 0)
 		return err;
 
-	return phy_write(phydev, MII_BMCR, BMCR_RESET);
+	return genphy_soft_reset(phydev);
 }
 
 static int m88e1149_config_init(struct phy_device *phydev)
@@ -987,20 +985,14 @@ static int m88e1149_config_init(struct phy_device *phydev)
 	if (err < 0)
 		return err;
 
-	return phy_write(phydev, MII_BMCR, BMCR_RESET);
+	return genphy_soft_reset(phydev);
 }
 
 static int m88e1145_config_init_rgmii(struct phy_device *phydev)
 {
 	int err;
-	int temp = phy_read(phydev, MII_M1145_PHY_EXT_CR);
 
-	if (temp < 0)
-		return temp;
-
-	temp |= (MII_M1145_RGMII_RX_DELAY | MII_M1145_RGMII_TX_DELAY);
-
-	err = phy_write(phydev, MII_M1145_PHY_EXT_CR, temp);
+	err = m88e1111_config_init_rgmii_delays(phydev);
 	if (err < 0)
 		return err;
 
@@ -1009,15 +1001,9 @@ static int m88e1145_config_init_rgmii(struct phy_device *phydev)
 		if (err < 0)
 			return err;
 
-		temp = phy_read(phydev, 0x1e);
-		if (temp < 0)
-			return temp;
-
-		temp &= 0xf03f;
-		temp |= 2 << 9;	/* 36 ohm */
-		temp |= 2 << 6;	/* 39 ohm */
-
-		err = phy_write(phydev, 0x1e, temp);
+		err = phy_modify(phydev, 0x1e, 0x0fc0,
+				 2 << 9 | /* 36 ohm */
+				 2 << 6); /* 39 ohm */
 		if (err < 0)
 			return err;
 
@@ -1032,16 +1018,9 @@ static int m88e1145_config_init_rgmii(struct phy_device *phydev)
 
 static int m88e1145_config_init_sgmii(struct phy_device *phydev)
 {
-	int temp = phy_read(phydev, MII_M1145_PHY_EXT_SR);
-
-	if (temp < 0)
-		return temp;
-
-	temp &= ~MII_M1145_HWCFG_MODE_MASK;
-	temp |= MII_M1145_HWCFG_MODE_SGMII_NO_CLK;
-	temp |= MII_M1145_HWCFG_FIBER_COPPER_AUTO;
-
-	return phy_write(phydev, MII_M1145_PHY_EXT_SR, temp);
+	return m88e1111_config_init_hwcfg_mode(
+		phydev, MII_M1111_HWCFG_MODE_SGMII_NO_CLK,
+		MII_M1111_HWCFG_FIBER_COPPER_AUTO);
 }
 
 static int m88e1145_config_init(struct phy_device *phydev)
@@ -1400,100 +1379,107 @@ static int m88e1121_did_interrupt(struct phy_device *phydev)
 static void m88e1318_get_wol(struct phy_device *phydev,
 			     struct ethtool_wolinfo *wol)
 {
+	int oldpage, ret = 0;
+
 	wol->supported = WAKE_MAGIC;
 	wol->wolopts = 0;
 
-	if (marvell_set_page(phydev, MII_MARVELL_WOL_PAGE) < 0)
-		return;
+	oldpage = phy_select_page(phydev, MII_MARVELL_WOL_PAGE);
+	if (oldpage < 0)
+		goto error;
 
-	if (phy_read(phydev, MII_88E1318S_PHY_WOL_CTRL) &
-	    MII_88E1318S_PHY_WOL_CTRL_MAGIC_PACKET_MATCH_ENABLE)
+	ret = __phy_read(phydev, MII_88E1318S_PHY_WOL_CTRL);
+	if (ret & MII_88E1318S_PHY_WOL_CTRL_MAGIC_PACKET_MATCH_ENABLE)
 		wol->wolopts |= WAKE_MAGIC;
 
-	if (marvell_set_page(phydev, MII_MARVELL_COPPER_PAGE) < 0)
-		return;
+error:
+	phy_restore_page(phydev, oldpage, ret);
 }
 
 static int m88e1318_set_wol(struct phy_device *phydev,
 			    struct ethtool_wolinfo *wol)
 {
-	int err, oldpage, temp;
+	int err = 0, oldpage;
 
-	oldpage = marvell_get_page(phydev);
+	oldpage = phy_save_page(phydev);
+	if (oldpage < 0)
+		goto error;
 
 	if (wol->wolopts & WAKE_MAGIC) {
 		/* Explicitly switch to page 0x00, just to be sure */
-		err = marvell_set_page(phydev, MII_MARVELL_COPPER_PAGE);
+		err = marvell_write_page(phydev, MII_MARVELL_COPPER_PAGE);
 		if (err < 0)
-			return err;
+			goto error;
+
+		/* If WOL event happened once, the LED[2] interrupt pin
+		 * will not be cleared unless we reading the interrupt status
+		 * register. If interrupts are in use, the normal interrupt
+		 * handling will clear the WOL event. Clear the WOL event
+		 * before enabling it if !phy_interrupt_is_valid()
+		 */
+		if (!phy_interrupt_is_valid(phydev))
+			phy_read(phydev, MII_M1011_IEVENT);
 
 		/* Enable the WOL interrupt */
-		temp = phy_read(phydev, MII_88E1318S_PHY_CSIER);
-		temp |= MII_88E1318S_PHY_CSIER_WOL_EIE;
-		err = phy_write(phydev, MII_88E1318S_PHY_CSIER, temp);
+		err = __phy_modify(phydev, MII_88E1318S_PHY_CSIER, 0,
+				   MII_88E1318S_PHY_CSIER_WOL_EIE);
 		if (err < 0)
-			return err;
+			goto error;
 
-		err = marvell_set_page(phydev, MII_MARVELL_LED_PAGE);
+		err = marvell_write_page(phydev, MII_MARVELL_LED_PAGE);
 		if (err < 0)
-			return err;
+			goto error;
 
 		/* Setup LED[2] as interrupt pin (active low) */
-		temp = phy_read(phydev, MII_88E1318S_PHY_LED_TCR);
-		temp &= ~MII_88E1318S_PHY_LED_TCR_FORCE_INT;
-		temp |= MII_88E1318S_PHY_LED_TCR_INTn_ENABLE;
-		temp |= MII_88E1318S_PHY_LED_TCR_INT_ACTIVE_LOW;
-		err = phy_write(phydev, MII_88E1318S_PHY_LED_TCR, temp);
+		err = __phy_modify(phydev, MII_88E1318S_PHY_LED_TCR,
+				   MII_88E1318S_PHY_LED_TCR_FORCE_INT,
+				   MII_88E1318S_PHY_LED_TCR_INTn_ENABLE |
+				   MII_88E1318S_PHY_LED_TCR_INT_ACTIVE_LOW);
 		if (err < 0)
-			return err;
+			goto error;
 
-		err = marvell_set_page(phydev, MII_MARVELL_WOL_PAGE);
+		err = marvell_write_page(phydev, MII_MARVELL_WOL_PAGE);
 		if (err < 0)
-			return err;
+			goto error;
 
 		/* Store the device address for the magic packet */
-		err = phy_write(phydev, MII_88E1318S_PHY_MAGIC_PACKET_WORD2,
+		err = __phy_write(phydev, MII_88E1318S_PHY_MAGIC_PACKET_WORD2,
 				((phydev->attached_dev->dev_addr[5] << 8) |
 				 phydev->attached_dev->dev_addr[4]));
 		if (err < 0)
-			return err;
-		err = phy_write(phydev, MII_88E1318S_PHY_MAGIC_PACKET_WORD1,
+			goto error;
+		err = __phy_write(phydev, MII_88E1318S_PHY_MAGIC_PACKET_WORD1,
 				((phydev->attached_dev->dev_addr[3] << 8) |
 				 phydev->attached_dev->dev_addr[2]));
 		if (err < 0)
-			return err;
-		err = phy_write(phydev, MII_88E1318S_PHY_MAGIC_PACKET_WORD0,
+			goto error;
+		err = __phy_write(phydev, MII_88E1318S_PHY_MAGIC_PACKET_WORD0,
 				((phydev->attached_dev->dev_addr[1] << 8) |
 				 phydev->attached_dev->dev_addr[0]));
 		if (err < 0)
-			return err;
+			goto error;
 
 		/* Clear WOL status and enable magic packet matching */
-		temp = phy_read(phydev, MII_88E1318S_PHY_WOL_CTRL);
-		temp |= MII_88E1318S_PHY_WOL_CTRL_CLEAR_WOL_STATUS;
-		temp |= MII_88E1318S_PHY_WOL_CTRL_MAGIC_PACKET_MATCH_ENABLE;
-		err = phy_write(phydev, MII_88E1318S_PHY_WOL_CTRL, temp);
+		err = __phy_modify(phydev, MII_88E1318S_PHY_WOL_CTRL, 0,
+				   MII_88E1318S_PHY_WOL_CTRL_CLEAR_WOL_STATUS |
+				   MII_88E1318S_PHY_WOL_CTRL_MAGIC_PACKET_MATCH_ENABLE);
 		if (err < 0)
-			return err;
+			goto error;
 	} else {
-		err = marvell_set_page(phydev, MII_MARVELL_WOL_PAGE);
+		err = marvell_write_page(phydev, MII_MARVELL_WOL_PAGE);
 		if (err < 0)
-			return err;
+			goto error;
 
 		/* Clear WOL status and disable magic packet matching */
-		temp = phy_read(phydev, MII_88E1318S_PHY_WOL_CTRL);
-		temp |= MII_88E1318S_PHY_WOL_CTRL_CLEAR_WOL_STATUS;
-		temp &= ~MII_88E1318S_PHY_WOL_CTRL_MAGIC_PACKET_MATCH_ENABLE;
-		err = phy_write(phydev, MII_88E1318S_PHY_WOL_CTRL, temp);
+		err = __phy_modify(phydev, MII_88E1318S_PHY_WOL_CTRL,
+				   MII_88E1318S_PHY_WOL_CTRL_MAGIC_PACKET_MATCH_ENABLE,
+				   MII_88E1318S_PHY_WOL_CTRL_CLEAR_WOL_STATUS);
 		if (err < 0)
-			return err;
+			goto error;
 	}
 
-	err = marvell_set_page(phydev, oldpage);
-	if (err < 0)
-		return err;
-
-	return 0;
+error:
+	return phy_restore_page(phydev, oldpage, err);
 }
 
 static int marvell_get_sset_count(struct phy_device *phydev)
@@ -1509,35 +1495,26 @@ static void marvell_get_strings(struct phy_device *phydev, u8 *data)
 	int i;
 
 	for (i = 0; i < ARRAY_SIZE(marvell_hw_stats); i++) {
-		memcpy(data + i * ETH_GSTRING_LEN,
-		       marvell_hw_stats[i].string, ETH_GSTRING_LEN);
+		strlcpy(data + i * ETH_GSTRING_LEN,
+			marvell_hw_stats[i].string, ETH_GSTRING_LEN);
 	}
 }
 
-#ifndef UINT64_MAX
-#define UINT64_MAX              (u64)(~((u64)0))
-#endif
 static u64 marvell_get_stat(struct phy_device *phydev, int i)
 {
 	struct marvell_hw_stat stat = marvell_hw_stats[i];
 	struct marvell_priv *priv = phydev->priv;
-	int oldpage, val;
+	int val;
 	u64 ret;
 
-	oldpage = marvell_get_set_page(phydev, stat.page);
-	if (oldpage < 0)
-		return UINT64_MAX;
-
-	val = phy_read(phydev, stat.reg);
+	val = phy_read_paged(phydev, stat.page, stat.reg);
 	if (val < 0) {
-		ret = UINT64_MAX;
+		ret = U64_MAX;
 	} else {
 		val = val & ((1 << stat.bits) - 1);
 		priv->stats[i] += val;
 		ret = priv->stats[i];
 	}
-
-	marvell_set_page(phydev, oldpage);
 
 	return ret;
 }
@@ -1555,51 +1532,44 @@ static void marvell_get_stats(struct phy_device *phydev,
 static int m88e1121_get_temp(struct phy_device *phydev, long *temp)
 {
 	int oldpage;
-	int ret;
+	int ret = 0;
 	int val;
 
 	*temp = 0;
 
-	mutex_lock(&phydev->lock);
-
-	oldpage = marvell_get_set_page(phydev, MII_MARVELL_MISC_TEST_PAGE);
-	if (oldpage < 0) {
-		mutex_unlock(&phydev->lock);
-		return oldpage;
-	}
+	oldpage = phy_select_page(phydev, MII_MARVELL_MISC_TEST_PAGE);
+	if (oldpage < 0)
+		goto error;
 
 	/* Enable temperature sensor */
-	ret = phy_read(phydev, MII_88E1121_MISC_TEST);
+	ret = __phy_read(phydev, MII_88E1121_MISC_TEST);
 	if (ret < 0)
 		goto error;
 
-	ret = phy_write(phydev, MII_88E1121_MISC_TEST,
-			ret | MII_88E1121_MISC_TEST_TEMP_SENSOR_EN);
+	ret = __phy_write(phydev, MII_88E1121_MISC_TEST,
+			  ret | MII_88E1121_MISC_TEST_TEMP_SENSOR_EN);
 	if (ret < 0)
 		goto error;
 
 	/* Wait for temperature to stabilize */
 	usleep_range(10000, 12000);
 
-	val = phy_read(phydev, MII_88E1121_MISC_TEST);
+	val = __phy_read(phydev, MII_88E1121_MISC_TEST);
 	if (val < 0) {
 		ret = val;
 		goto error;
 	}
 
 	/* Disable temperature sensor */
-	ret = phy_write(phydev, MII_88E1121_MISC_TEST,
-			ret & ~MII_88E1121_MISC_TEST_TEMP_SENSOR_EN);
+	ret = __phy_write(phydev, MII_88E1121_MISC_TEST,
+			  ret & ~MII_88E1121_MISC_TEST_TEMP_SENSOR_EN);
 	if (ret < 0)
 		goto error;
 
 	*temp = ((val & MII_88E1121_MISC_TEST_TEMP_MASK) - 5) * 5000;
 
 error:
-	marvell_set_page(phydev, oldpage);
-	mutex_unlock(&phydev->lock);
-
-	return ret;
+	return phy_restore_page(phydev, oldpage, ret);
 }
 
 static int m88e1121_hwmon_read(struct device *dev,
@@ -1673,118 +1643,64 @@ static const struct hwmon_chip_info m88e1121_hwmon_chip_info = {
 
 static int m88e1510_get_temp(struct phy_device *phydev, long *temp)
 {
-	int oldpage;
 	int ret;
 
 	*temp = 0;
 
-	mutex_lock(&phydev->lock);
-
-	oldpage = marvell_get_set_page(phydev, MII_MARVELL_MISC_TEST_PAGE);
-	if (oldpage < 0) {
-		mutex_unlock(&phydev->lock);
-		return oldpage;
-	}
-
-	ret = phy_read(phydev, MII_88E1510_TEMP_SENSOR);
+	ret = phy_read_paged(phydev, MII_MARVELL_MISC_TEST_PAGE,
+			     MII_88E1510_TEMP_SENSOR);
 	if (ret < 0)
-		goto error;
+		return ret;
 
 	*temp = ((ret & MII_88E1510_TEMP_SENSOR_MASK) - 25) * 1000;
 
-error:
-	marvell_set_page(phydev, oldpage);
-	mutex_unlock(&phydev->lock);
-
-	return ret;
+	return 0;
 }
 
 static int m88e1510_get_temp_critical(struct phy_device *phydev, long *temp)
 {
-	int oldpage;
 	int ret;
 
 	*temp = 0;
 
-	mutex_lock(&phydev->lock);
-
-	oldpage = marvell_get_set_page(phydev, MII_MARVELL_MISC_TEST_PAGE);
-	if (oldpage < 0) {
-		mutex_unlock(&phydev->lock);
-		return oldpage;
-	}
-
-	ret = phy_read(phydev, MII_88E1121_MISC_TEST);
+	ret = phy_read_paged(phydev, MII_MARVELL_MISC_TEST_PAGE,
+			     MII_88E1121_MISC_TEST);
 	if (ret < 0)
-		goto error;
+		return ret;
 
 	*temp = (((ret & MII_88E1510_MISC_TEST_TEMP_THRESHOLD_MASK) >>
 		  MII_88E1510_MISC_TEST_TEMP_THRESHOLD_SHIFT) * 5) - 25;
 	/* convert to mC */
 	*temp *= 1000;
 
-error:
-	marvell_set_page(phydev, oldpage);
-	mutex_unlock(&phydev->lock);
-
-	return ret;
+	return 0;
 }
 
 static int m88e1510_set_temp_critical(struct phy_device *phydev, long temp)
 {
-	int oldpage;
-	int ret;
-
-	mutex_lock(&phydev->lock);
-
-	oldpage = marvell_get_set_page(phydev, MII_MARVELL_MISC_TEST_PAGE);
-	if (oldpage < 0) {
-		mutex_unlock(&phydev->lock);
-		return oldpage;
-	}
-
-	ret = phy_read(phydev, MII_88E1121_MISC_TEST);
-	if (ret < 0)
-		goto error;
-
 	temp = temp / 1000;
 	temp = clamp_val(DIV_ROUND_CLOSEST(temp, 5) + 5, 0, 0x1f);
-	ret = phy_write(phydev, MII_88E1121_MISC_TEST,
-			(ret & ~MII_88E1510_MISC_TEST_TEMP_THRESHOLD_MASK) |
-			(temp << MII_88E1510_MISC_TEST_TEMP_THRESHOLD_SHIFT));
 
-error:
-	marvell_set_page(phydev, oldpage);
-	mutex_unlock(&phydev->lock);
-
-	return ret;
+	return phy_modify_paged(phydev, MII_MARVELL_MISC_TEST_PAGE,
+				MII_88E1121_MISC_TEST,
+				MII_88E1510_MISC_TEST_TEMP_THRESHOLD_MASK,
+				temp << MII_88E1510_MISC_TEST_TEMP_THRESHOLD_SHIFT);
 }
 
 static int m88e1510_get_temp_alarm(struct phy_device *phydev, long *alarm)
 {
-	int oldpage;
 	int ret;
 
 	*alarm = false;
 
-	mutex_lock(&phydev->lock);
-
-	oldpage = marvell_get_set_page(phydev, MII_MARVELL_MISC_TEST_PAGE);
-	if (oldpage < 0) {
-		mutex_unlock(&phydev->lock);
-		return oldpage;
-	}
-
-	ret = phy_read(phydev, MII_88E1121_MISC_TEST);
+	ret = phy_read_paged(phydev, MII_MARVELL_MISC_TEST_PAGE,
+			     MII_88E1121_MISC_TEST);
 	if (ret < 0)
-		goto error;
+		return ret;
+
 	*alarm = !!(ret & MII_88E1510_MISC_TEST_TEMP_IRQ);
 
-error:
-	marvell_set_page(phydev, oldpage);
-	mutex_unlock(&phydev->lock);
-
-	return ret;
+	return 0;
 }
 
 static int m88e1510_hwmon_read(struct device *dev,
@@ -1873,6 +1789,123 @@ static const struct hwmon_chip_info m88e1510_hwmon_chip_info = {
 	.info = m88e1510_hwmon_info,
 };
 
+static int m88e6390_get_temp(struct phy_device *phydev, long *temp)
+{
+	int sum = 0;
+	int oldpage;
+	int ret = 0;
+	int i;
+
+	*temp = 0;
+
+	oldpage = phy_select_page(phydev, MII_MARVELL_MISC_TEST_PAGE);
+	if (oldpage < 0)
+		goto error;
+
+	/* Enable temperature sensor */
+	ret = __phy_read(phydev, MII_88E6390_MISC_TEST);
+	if (ret < 0)
+		goto error;
+
+	ret = ret & ~MII_88E6390_MISC_TEST_SAMPLE_MASK;
+	ret |= MII_88E6390_MISC_TEST_SAMPLE_ENABLE |
+		MII_88E6390_MISC_TEST_SAMPLE_1S;
+
+	ret = __phy_write(phydev, MII_88E6390_MISC_TEST, ret);
+	if (ret < 0)
+		goto error;
+
+	/* Wait for temperature to stabilize */
+	usleep_range(10000, 12000);
+
+	/* Reading the temperature sense has an errata. You need to read
+	 * a number of times and take an average.
+	 */
+	for (i = 0; i < MII_88E6390_TEMP_SENSOR_SAMPLES; i++) {
+		ret = __phy_read(phydev, MII_88E6390_TEMP_SENSOR);
+		if (ret < 0)
+			goto error;
+		sum += ret & MII_88E6390_TEMP_SENSOR_MASK;
+	}
+
+	sum /= MII_88E6390_TEMP_SENSOR_SAMPLES;
+	*temp = (sum  - 75) * 1000;
+
+	/* Disable temperature sensor */
+	ret = __phy_read(phydev, MII_88E6390_MISC_TEST);
+	if (ret < 0)
+		goto error;
+
+	ret = ret & ~MII_88E6390_MISC_TEST_SAMPLE_MASK;
+	ret |= MII_88E6390_MISC_TEST_SAMPLE_DISABLE;
+
+	ret = __phy_write(phydev, MII_88E6390_MISC_TEST, ret);
+
+error:
+	phy_restore_page(phydev, oldpage, ret);
+
+	return ret;
+}
+
+static int m88e6390_hwmon_read(struct device *dev,
+			       enum hwmon_sensor_types type,
+			       u32 attr, int channel, long *temp)
+{
+	struct phy_device *phydev = dev_get_drvdata(dev);
+	int err;
+
+	switch (attr) {
+	case hwmon_temp_input:
+		err = m88e6390_get_temp(phydev, temp);
+		break;
+	default:
+		return -EOPNOTSUPP;
+	}
+
+	return err;
+}
+
+static umode_t m88e6390_hwmon_is_visible(const void *data,
+					 enum hwmon_sensor_types type,
+					 u32 attr, int channel)
+{
+	if (type != hwmon_temp)
+		return 0;
+
+	switch (attr) {
+	case hwmon_temp_input:
+		return 0444;
+	default:
+		return 0;
+	}
+}
+
+static u32 m88e6390_hwmon_temp_config[] = {
+	HWMON_T_INPUT,
+	0
+};
+
+static const struct hwmon_channel_info m88e6390_hwmon_temp = {
+	.type = hwmon_temp,
+	.config = m88e6390_hwmon_temp_config,
+};
+
+static const struct hwmon_channel_info *m88e6390_hwmon_info[] = {
+	&m88e1121_hwmon_chip,
+	&m88e6390_hwmon_temp,
+	NULL
+};
+
+static const struct hwmon_ops m88e6390_hwmon_hwmon_ops = {
+	.is_visible = m88e6390_hwmon_is_visible,
+	.read = m88e6390_hwmon_read,
+};
+
+static const struct hwmon_chip_info m88e6390_hwmon_chip_info = {
+	.ops = &m88e6390_hwmon_hwmon_ops,
+	.info = m88e6390_hwmon_info,
+};
+
 static int marvell_hwmon_name(struct phy_device *phydev)
 {
 	struct marvell_priv *priv = phydev->priv;
@@ -1919,6 +1952,11 @@ static int m88e1510_hwmon_probe(struct phy_device *phydev)
 {
 	return marvell_hwmon_probe(phydev, &m88e1510_hwmon_chip_info);
 }
+
+static int m88e6390_hwmon_probe(struct phy_device *phydev)
+{
+	return marvell_hwmon_probe(phydev, &m88e6390_hwmon_chip_info);
+}
 #else
 static int m88e1121_hwmon_probe(struct phy_device *phydev)
 {
@@ -1926,6 +1964,11 @@ static int m88e1121_hwmon_probe(struct phy_device *phydev)
 }
 
 static int m88e1510_hwmon_probe(struct phy_device *phydev)
+{
+	return 0;
+}
+
+static int m88e6390_hwmon_probe(struct phy_device *phydev)
 {
 	return 0;
 }
@@ -1966,6 +2009,17 @@ static int m88e1510_probe(struct phy_device *phydev)
 	return m88e1510_hwmon_probe(phydev);
 }
 
+static int m88e6390_probe(struct phy_device *phydev)
+{
+	int err;
+
+	err = marvell_probe(phydev);
+	if (err)
+		return err;
+
+	return m88e6390_hwmon_probe(phydev);
+}
+
 static struct phy_driver marvell_drivers[] = {
 	{
 		.phy_id = MARVELL_PHY_ID_88E1101,
@@ -1976,11 +2030,12 @@ static struct phy_driver marvell_drivers[] = {
 		.probe = marvell_probe,
 		.config_init = &marvell_config_init,
 		.config_aneg = &m88e1101_config_aneg,
-		.read_status = &genphy_read_status,
 		.ack_interrupt = &marvell_ack_interrupt,
 		.config_intr = &marvell_config_intr,
 		.resume = &genphy_resume,
 		.suspend = &genphy_suspend,
+		.read_page = marvell_read_page,
+		.write_page = marvell_write_page,
 		.get_sset_count = marvell_get_sset_count,
 		.get_strings = marvell_get_strings,
 		.get_stats = marvell_get_stats,
@@ -1994,11 +2049,12 @@ static struct phy_driver marvell_drivers[] = {
 		.probe = marvell_probe,
 		.config_init = &m88e1111_config_init,
 		.config_aneg = &marvell_config_aneg,
-		.read_status = &genphy_read_status,
 		.ack_interrupt = &marvell_ack_interrupt,
 		.config_intr = &marvell_config_intr,
 		.resume = &genphy_resume,
 		.suspend = &genphy_suspend,
+		.read_page = marvell_read_page,
+		.write_page = marvell_write_page,
 		.get_sset_count = marvell_get_sset_count,
 		.get_strings = marvell_get_strings,
 		.get_stats = marvell_get_stats,
@@ -2017,6 +2073,8 @@ static struct phy_driver marvell_drivers[] = {
 		.config_intr = &marvell_config_intr,
 		.resume = &genphy_resume,
 		.suspend = &genphy_suspend,
+		.read_page = marvell_read_page,
+		.write_page = marvell_write_page,
 		.get_sset_count = marvell_get_sset_count,
 		.get_strings = marvell_get_strings,
 		.get_stats = marvell_get_stats,
@@ -2030,11 +2088,12 @@ static struct phy_driver marvell_drivers[] = {
 		.probe = marvell_probe,
 		.config_init = &m88e1118_config_init,
 		.config_aneg = &m88e1118_config_aneg,
-		.read_status = &genphy_read_status,
 		.ack_interrupt = &marvell_ack_interrupt,
 		.config_intr = &marvell_config_intr,
 		.resume = &genphy_resume,
 		.suspend = &genphy_suspend,
+		.read_page = marvell_read_page,
+		.write_page = marvell_write_page,
 		.get_sset_count = marvell_get_sset_count,
 		.get_strings = marvell_get_strings,
 		.get_stats = marvell_get_stats,
@@ -2046,7 +2105,7 @@ static struct phy_driver marvell_drivers[] = {
 		.features = PHY_GBIT_FEATURES,
 		.flags = PHY_HAS_INTERRUPT,
 		.probe = &m88e1121_probe,
-		.config_init = &m88e1121_config_init,
+		.config_init = &marvell_config_init,
 		.config_aneg = &m88e1121_config_aneg,
 		.read_status = &marvell_read_status,
 		.ack_interrupt = &marvell_ack_interrupt,
@@ -2054,6 +2113,8 @@ static struct phy_driver marvell_drivers[] = {
 		.did_interrupt = &m88e1121_did_interrupt,
 		.resume = &genphy_resume,
 		.suspend = &genphy_suspend,
+		.read_page = marvell_read_page,
+		.write_page = marvell_write_page,
 		.get_sset_count = marvell_get_sset_count,
 		.get_strings = marvell_get_strings,
 		.get_stats = marvell_get_stats,
@@ -2065,7 +2126,7 @@ static struct phy_driver marvell_drivers[] = {
 		.features = PHY_GBIT_FEATURES,
 		.flags = PHY_HAS_INTERRUPT,
 		.probe = marvell_probe,
-		.config_init = &m88e1121_config_init,
+		.config_init = &m88e1318_config_init,
 		.config_aneg = &m88e1318_config_aneg,
 		.read_status = &marvell_read_status,
 		.ack_interrupt = &marvell_ack_interrupt,
@@ -2075,6 +2136,8 @@ static struct phy_driver marvell_drivers[] = {
 		.set_wol = &m88e1318_set_wol,
 		.resume = &genphy_resume,
 		.suspend = &genphy_suspend,
+		.read_page = marvell_read_page,
+		.write_page = marvell_write_page,
 		.get_sset_count = marvell_get_sset_count,
 		.get_strings = marvell_get_strings,
 		.get_stats = marvell_get_stats,
@@ -2087,12 +2150,14 @@ static struct phy_driver marvell_drivers[] = {
 		.flags = PHY_HAS_INTERRUPT,
 		.probe = marvell_probe,
 		.config_init = &m88e1145_config_init,
-		.config_aneg = &marvell_config_aneg,
+		.config_aneg = &m88e1101_config_aneg,
 		.read_status = &genphy_read_status,
 		.ack_interrupt = &marvell_ack_interrupt,
 		.config_intr = &marvell_config_intr,
 		.resume = &genphy_resume,
 		.suspend = &genphy_suspend,
+		.read_page = marvell_read_page,
+		.write_page = marvell_write_page,
 		.get_sset_count = marvell_get_sset_count,
 		.get_strings = marvell_get_strings,
 		.get_stats = marvell_get_stats,
@@ -2106,11 +2171,12 @@ static struct phy_driver marvell_drivers[] = {
 		.probe = marvell_probe,
 		.config_init = &m88e1149_config_init,
 		.config_aneg = &m88e1118_config_aneg,
-		.read_status = &genphy_read_status,
 		.ack_interrupt = &marvell_ack_interrupt,
 		.config_intr = &marvell_config_intr,
 		.resume = &genphy_resume,
 		.suspend = &genphy_suspend,
+		.read_page = marvell_read_page,
+		.write_page = marvell_write_page,
 		.get_sset_count = marvell_get_sset_count,
 		.get_strings = marvell_get_strings,
 		.get_stats = marvell_get_stats,
@@ -2124,11 +2190,12 @@ static struct phy_driver marvell_drivers[] = {
 		.probe = marvell_probe,
 		.config_init = &m88e1111_config_init,
 		.config_aneg = &marvell_config_aneg,
-		.read_status = &genphy_read_status,
 		.ack_interrupt = &marvell_ack_interrupt,
 		.config_intr = &marvell_config_intr,
 		.resume = &genphy_resume,
 		.suspend = &genphy_suspend,
+		.read_page = marvell_read_page,
+		.write_page = marvell_write_page,
 		.get_sset_count = marvell_get_sset_count,
 		.get_strings = marvell_get_strings,
 		.get_stats = marvell_get_stats,
@@ -2141,12 +2208,12 @@ static struct phy_driver marvell_drivers[] = {
 		.flags = PHY_HAS_INTERRUPT,
 		.probe = marvell_probe,
 		.config_init = &m88e1116r_config_init,
-		.config_aneg = &genphy_config_aneg,
-		.read_status = &genphy_read_status,
 		.ack_interrupt = &marvell_ack_interrupt,
 		.config_intr = &marvell_config_intr,
 		.resume = &genphy_resume,
 		.suspend = &genphy_suspend,
+		.read_page = marvell_read_page,
+		.write_page = marvell_write_page,
 		.get_sset_count = marvell_get_sset_count,
 		.get_strings = marvell_get_strings,
 		.get_stats = marvell_get_stats,
@@ -2168,6 +2235,8 @@ static struct phy_driver marvell_drivers[] = {
 		.set_wol = &m88e1318_set_wol,
 		.resume = &marvell_resume,
 		.suspend = &marvell_suspend,
+		.read_page = marvell_read_page,
+		.write_page = marvell_write_page,
 		.get_sset_count = marvell_get_sset_count,
 		.get_strings = marvell_get_strings,
 		.get_stats = marvell_get_stats,
@@ -2188,6 +2257,8 @@ static struct phy_driver marvell_drivers[] = {
 		.did_interrupt = &m88e1121_did_interrupt,
 		.resume = &genphy_resume,
 		.suspend = &genphy_suspend,
+		.read_page = marvell_read_page,
+		.write_page = marvell_write_page,
 		.get_sset_count = marvell_get_sset_count,
 		.get_strings = marvell_get_strings,
 		.get_stats = marvell_get_stats,
@@ -2207,6 +2278,8 @@ static struct phy_driver marvell_drivers[] = {
 		.did_interrupt = &m88e1121_did_interrupt,
 		.resume = &genphy_resume,
 		.suspend = &genphy_suspend,
+		.read_page = marvell_read_page,
+		.write_page = marvell_write_page,
 		.get_sset_count = marvell_get_sset_count,
 		.get_strings = marvell_get_strings,
 		.get_stats = marvell_get_stats,
@@ -2218,7 +2291,6 @@ static struct phy_driver marvell_drivers[] = {
 		.features = PHY_BASIC_FEATURES,
 		.flags = PHY_HAS_INTERRUPT,
 		.probe = marvell_probe,
-		.config_aneg = &genphy_config_aneg,
 		.config_init = &m88e3016_config_init,
 		.aneg_done = &marvell_aneg_done,
 		.read_status = &marvell_read_status,
@@ -2227,6 +2299,8 @@ static struct phy_driver marvell_drivers[] = {
 		.did_interrupt = &m88e1121_did_interrupt,
 		.resume = &genphy_resume,
 		.suspend = &genphy_suspend,
+		.read_page = marvell_read_page,
+		.write_page = marvell_write_page,
 		.get_sset_count = marvell_get_sset_count,
 		.get_strings = marvell_get_strings,
 		.get_stats = marvell_get_stats,
@@ -2237,7 +2311,7 @@ static struct phy_driver marvell_drivers[] = {
 		.name = "Marvell 88E6390",
 		.features = PHY_GBIT_FEATURES,
 		.flags = PHY_HAS_INTERRUPT,
-		.probe = m88e1510_probe,
+		.probe = m88e6390_probe,
 		.config_init = &marvell_config_init,
 		.config_aneg = &m88e1510_config_aneg,
 		.read_status = &marvell_read_status,
@@ -2246,6 +2320,8 @@ static struct phy_driver marvell_drivers[] = {
 		.did_interrupt = &m88e1121_did_interrupt,
 		.resume = &genphy_resume,
 		.suspend = &genphy_suspend,
+		.read_page = marvell_read_page,
+		.write_page = marvell_write_page,
 		.get_sset_count = marvell_get_sset_count,
 		.get_strings = marvell_get_strings,
 		.get_stats = marvell_get_stats,

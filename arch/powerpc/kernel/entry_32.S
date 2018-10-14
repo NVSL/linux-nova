@@ -43,6 +43,13 @@
 #define LOAD_MSR_KERNEL(r, x)	li r,(x)
 #endif
 
+/*
+ * Align to 4k in order to ensure that all functions modyfing srr0/srr1
+ * fit into one page in order to not encounter a TLB miss between the
+ * modification of srr0/srr1 and the associated rfi.
+ */
+	.align	12
+
 #ifdef CONFIG_BOOKE
 	.globl	mcheck_transfer_to_handler
 mcheck_transfer_to_handler:
@@ -204,7 +211,7 @@ transfer_to_handler_cont:
 	mflr	r9
 	lwz	r11,0(r9)		/* virtual address of handler */
 	lwz	r9,4(r9)		/* where to go when done */
-#ifdef CONFIG_PPC_8xx_PERF_EVENT
+#if defined(CONFIG_PPC_8xx) && defined(CONFIG_PERF_EVENTS)
 	mtspr	SPRN_NRI, r0
 #endif
 #ifdef CONFIG_TRACE_IRQFLAGS
@@ -294,7 +301,7 @@ stack_ovf:
 	lis	r9,StackOverflow@ha
 	addi	r9,r9,StackOverflow@l
 	LOAD_MSR_KERNEL(r10,MSR_KERNEL)
-#ifdef CONFIG_PPC_8xx_PERF_EVENT
+#if defined(CONFIG_PPC_8xx) && defined(CONFIG_PERF_EVENTS)
 	mtspr	SPRN_NRI, r0
 #endif
 	mtspr	SPRN_SRR0,r9
@@ -358,6 +365,13 @@ syscall_dotrace_cont:
 	blrl			/* Call handler */
 	.globl	ret_from_syscall
 ret_from_syscall:
+#ifdef CONFIG_DEBUG_RSEQ
+	/* Check whether the syscall is issued inside a restartable sequence */
+	stw	r3,GPR3(r1)
+	addi    r3,r1,STACK_FRAME_OVERHEAD
+	bl      rseq_syscall
+	lwz	r3,GPR3(r1)
+#endif
 	mr	r6,r3
 	CURRENT_THREAD_INFO(r12, r1)
 	/* disable interrupts so current_thread_info()->flags can't change */
@@ -423,7 +437,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_NEED_PAIRED_STWCX)
 	lwz	r7,_NIP(r1)
 	lwz	r2,GPR2(r1)
 	lwz	r1,GPR1(r1)
-#ifdef CONFIG_PPC_8xx_PERF_EVENT
+#if defined(CONFIG_PPC_8xx) && defined(CONFIG_PERF_EVENTS)
 	mtspr	SPRN_NRI, r0
 #endif
 	mtspr	SPRN_SRR0,r7
@@ -586,6 +600,10 @@ ppc_swapcontext:
 handle_page_fault:
 	stw	r4,_DAR(r1)
 	addi	r3,r1,STACK_FRAME_OVERHEAD
+#ifdef CONFIG_6xx
+	andis.  r0,r5,DSISR_DABRMATCH@h
+	bne-    handle_dabr_fault
+#endif
 	bl	do_page_fault
 	cmpwi	r3,0
 	beq+	ret_from_except
@@ -598,6 +616,17 @@ handle_page_fault:
 	lwz	r4,_DAR(r1)
 	bl	bad_page_fault
 	b	ret_from_except_full
+
+#ifdef CONFIG_6xx
+	/* We have a data breakpoint exception - handle it */
+handle_dabr_fault:
+	SAVE_NVGPRS(r1)
+	lwz	r0,_TRAP(r1)
+	clrrwi	r0,r0,1
+	stw	r0,_TRAP(r1)
+	bl      do_break
+	b	ret_from_except_full
+#endif
 
 /*
  * This routine switches between two different tasks.  The process
@@ -705,7 +734,7 @@ fast_exception_return:
 	lwz	r10,_LINK(r11)
 	mtlr	r10
 	REST_GPR(10, r11)
-#ifdef CONFIG_PPC_8xx_PERF_EVENT
+#if defined(CONFIG_PPC_8xx) && defined(CONFIG_PERF_EVENTS)
 	mtspr	SPRN_NRI, r0
 #endif
 	mtspr	SPRN_SRR1,r9
@@ -956,7 +985,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_NEED_PAIRED_STWCX)
 	.globl exc_exit_restart
 exc_exit_restart:
 	lwz	r12,_NIP(r1)
-#ifdef CONFIG_PPC_8xx_PERF_EVENT
+#if defined(CONFIG_PPC_8xx) && defined(CONFIG_PERF_EVENTS)
 	mtspr	SPRN_NRI, r0
 #endif
 	mtspr	SPRN_SRR0,r12

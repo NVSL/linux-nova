@@ -24,6 +24,7 @@
 #include <net/protocol.h>
 #include <net/udp.h>
 #include <net/transp_v6.h>
+#include <linux/proc_fs.h>
 #include <net/ping.h>
 
 /* Compatibility glue so we can support IPv6 when it's compiled as a module */
@@ -121,7 +122,7 @@ static int ping_v6_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 	ipc6.tclass = np->tclass;
 	fl6.flowlabel = ip6_make_flowinfo(ipc6.tclass, fl6.flowlabel);
 
-	dst = ip6_sk_dst_lookup_flow(sk, &fl6,  daddr);
+	dst = ip6_sk_dst_lookup_flow(sk, &fl6, daddr, false);
 	if (IS_ERR(dst))
 		return PTR_ERR(dst);
 	rt = (struct rt6_info *) dst;
@@ -154,9 +155,8 @@ static int ping_v6_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 				ICMP6_MIB_OUTERRORS);
 		ip6_flush_pending_frames(sk);
 	} else {
-		err = icmpv6_push_pending_frames(sk, &fl6,
-						 (struct icmp6hdr *) &pfh.icmph,
-						 len);
+		icmpv6_push_pending_frames(sk, &fl6,
+					   (struct icmp6hdr *)&pfh.icmph, len);
 	}
 	release_sock(sk);
 
@@ -216,26 +216,24 @@ static int ping_v6_seq_show(struct seq_file *seq, void *v)
 	return 0;
 }
 
-static struct ping_seq_afinfo ping_v6_seq_afinfo = {
-	.name		= "icmp6",
-	.family		= AF_INET6,
-	.seq_fops       = &ping_seq_fops,
-	.seq_ops	= {
-		.start		= ping_v6_seq_start,
-		.show		= ping_v6_seq_show,
-		.next		= ping_seq_next,
-		.stop		= ping_seq_stop,
-	},
+static const struct seq_operations ping_v6_seq_ops = {
+	.start		= ping_v6_seq_start,
+	.show		= ping_v6_seq_show,
+	.next		= ping_seq_next,
+	.stop		= ping_seq_stop,
 };
 
 static int __net_init ping_v6_proc_init_net(struct net *net)
 {
-	return ping_proc_register(net, &ping_v6_seq_afinfo);
+	if (!proc_create_net("icmp6", 0444, net->proc_net, &ping_v6_seq_ops,
+			sizeof(struct ping_iter_state)))
+		return -ENOMEM;
+	return 0;
 }
 
 static void __net_init ping_v6_proc_exit_net(struct net *net)
 {
-	return ping_proc_unregister(net, &ping_v6_seq_afinfo);
+	remove_proc_entry("icmp6", net->proc_net);
 }
 
 static struct pernet_operations ping_v6_net_ops = {

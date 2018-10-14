@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0+ WITH Linux-syscall-note */
 /*
  * OpenRISC Linux
  *
@@ -15,8 +16,6 @@
  * the Free Software Foundation; either version 2 of the License, or
  * (at your option) any later version.
  */
-
-#define __ARCH_HAVE_MMU
 
 #define sys_mmap2 sys_mmap_pgoff
 

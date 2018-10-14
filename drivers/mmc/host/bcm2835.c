@@ -1252,7 +1252,7 @@ static void bcm2835_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 	mutex_unlock(&host->mutex);
 }
 
-static struct mmc_host_ops bcm2835_ops = {
+static const struct mmc_host_ops bcm2835_ops = {
 	.request = bcm2835_request,
 	.set_ios = bcm2835_set_ios,
 	.hw_reset = bcm2835_reset,
@@ -1265,7 +1265,8 @@ static int bcm2835_add_host(struct bcm2835_host *host)
 	char pio_limit_string[20];
 	int ret;
 
-	mmc->f_max = host->max_clk;
+	if (!mmc->f_max || mmc->f_max > host->max_clk)
+		mmc->f_max = host->max_clk;
 	mmc->f_min = host->max_clk / SDCDIV_MAX_CDIV;
 
 	mmc->max_busy_timeout = ~0 / (mmc->f_max / 1000);

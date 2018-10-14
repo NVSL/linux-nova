@@ -28,7 +28,7 @@
 #include <linux/firmware.h>
 #include <linux/delay.h>
 #include <sound/pcm.h>
-#include "../common/sst-acpi.h"
+#include <sound/soc-acpi.h>
 #include <sound/hda_register.h>
 #include <sound/hdaudio.h>
 #include <sound/hda_i915.h>
@@ -94,6 +94,32 @@ static void skl_enable_miscbdcge(struct device *dev, bool enable)
 	update_pci_dword(pci, AZX_PCIREG_CGCTL, AZX_CGCTL_MISCBDCGE_MASK, val);
 }
 
+/**
+ * skl_clock_power_gating: Enable/Disable clock and power gating
+ *
+ * @dev: Device pointer
+ * @enable: Enable/Disable flag
+ */
+static void skl_clock_power_gating(struct device *dev, bool enable)
+{
+	struct pci_dev *pci = to_pci_dev(dev);
+	struct hdac_ext_bus *ebus = pci_get_drvdata(pci);
+	struct hdac_bus *bus = ebus_to_hbus(ebus);
+	u32 val;
+
+	/* Update PDCGE bit of CGCTL register */
+	val = enable ? AZX_CGCTL_ADSPDCGE : 0;
+	update_pci_dword(pci, AZX_PCIREG_CGCTL, AZX_CGCTL_ADSPDCGE, val);
+
+	/* Update L1SEN bit of EM2 register */
+	val = enable ? AZX_REG_VS_EM2_L1SEN : 0;
+	snd_hdac_chip_updatel(bus, VS_EM2, AZX_REG_VS_EM2_L1SEN, val);
+
+	/* Update ADSPPGD bit of PGCTL register */
+	val = enable ? 0 : AZX_PGCTL_ADSPPGD;
+	update_pci_dword(pci, AZX_PCIREG_PGCTL, AZX_PGCTL_ADSPPGD, val);
+}
+
 /*
  * While performing reset, controller may not come back properly causing
  * issues, so recommendation is to set CGCTL.MISCBDCGE to 0 then do reset
@@ -101,10 +127,17 @@ static void skl_enable_miscbdcge(struct device *dev, bool enable)
  */
 static int skl_init_chip(struct hdac_bus *bus, bool full_reset)
 {
+	struct hdac_ext_bus *ebus = hbus_to_ebus(bus);
+	struct hdac_ext_link *hlink;
 	int ret;
 
 	skl_enable_miscbdcge(bus->dev, false);
 	ret = snd_hdac_bus_init_chip(bus, full_reset);
+
+	/* Reset stream-to-link mapping */
+	list_for_each_entry(hlink, &ebus->hlink_list, list)
+		bus->io_ops->reg_writel(0, hlink->ml_addr + AZX_REG_ML_LOSIDV);
+
 	skl_enable_miscbdcge(bus->dev, true);
 
 	return ret;
@@ -355,6 +388,7 @@ static int skl_resume(struct device *dev)
 
 		if (ebus->cmd_dma_state)
 			snd_hdac_bus_init_cmd_io(&ebus->bus);
+		ret = 0;
 	} else {
 		ret = _skl_resume(ebus);
 
@@ -415,7 +449,7 @@ static int skl_free(struct hdac_ext_bus *ebus)
 	snd_hdac_ext_stop_streams(ebus);
 
 	if (bus->irq >= 0)
-		free_irq(bus->irq, (void *)bus);
+		free_irq(bus->irq, (void *)ebus);
 	snd_hdac_bus_free_stream_pages(bus);
 	snd_hdac_stream_free_all(ebus);
 	snd_hdac_link_free_all(ebus);
@@ -435,19 +469,51 @@ static int skl_free(struct hdac_ext_bus *ebus)
 	return 0;
 }
 
-static int skl_machine_device_register(struct skl *skl, void *driver_data)
-{
-	struct hdac_bus *bus = ebus_to_hbus(&skl->ebus);
-	struct platform_device *pdev;
-	struct sst_acpi_mach *mach = driver_data;
-	int ret;
+/*
+ * For each ssp there are 3 clocks (mclk/sclk/sclkfs).
+ * e.g. for ssp0, clocks will be named as
+ *      "ssp0_mclk", "ssp0_sclk", "ssp0_sclkfs"
+ * So for skl+, there are 6 ssps, so 18 clocks will be created.
+ */
+static struct skl_ssp_clk skl_ssp_clks[] = {
+	{.name = "ssp0_mclk"}, {.name = "ssp1_mclk"}, {.name = "ssp2_mclk"},
+	{.name = "ssp3_mclk"}, {.name = "ssp4_mclk"}, {.name = "ssp5_mclk"},
+	{.name = "ssp0_sclk"}, {.name = "ssp1_sclk"}, {.name = "ssp2_sclk"},
+	{.name = "ssp3_sclk"}, {.name = "ssp4_sclk"}, {.name = "ssp5_sclk"},
+	{.name = "ssp0_sclkfs"}, {.name = "ssp1_sclkfs"},
+						{.name = "ssp2_sclkfs"},
+	{.name = "ssp3_sclkfs"}, {.name = "ssp4_sclkfs"},
+						{.name = "ssp5_sclkfs"},
+};
 
-	mach = sst_acpi_find_machine(mach);
+static int skl_find_machine(struct skl *skl, void *driver_data)
+{
+	struct snd_soc_acpi_mach *mach = driver_data;
+	struct hdac_bus *bus = ebus_to_hbus(&skl->ebus);
+	struct skl_machine_pdata *pdata;
+
+	mach = snd_soc_acpi_find_machine(mach);
 	if (mach == NULL) {
 		dev_err(bus->dev, "No matching machine driver found\n");
 		return -ENODEV;
 	}
+
+	skl->mach = mach;
 	skl->fw_name = mach->fw_filename;
+	pdata = skl->mach->pdata;
+
+	if (mach->pdata)
+		skl->use_tplg_pcm = pdata->use_tplg_pcm;
+
+	return 0;
+}
+
+static int skl_machine_device_register(struct skl *skl)
+{
+	struct hdac_bus *bus = ebus_to_hbus(&skl->ebus);
+	struct snd_soc_acpi_mach *mach = skl->mach;
+	struct platform_device *pdev;
+	int ret;
 
 	pdev = platform_device_alloc(mach->drv_name, -1);
 	if (pdev == NULL) {
@@ -506,6 +572,74 @@ static void skl_dmic_device_unregister(struct skl *skl)
 		platform_device_unregister(skl->dmic_dev);
 }
 
+static struct skl_clk_parent_src skl_clk_src[] = {
+	{ .clk_id = SKL_XTAL, .name = "xtal" },
+	{ .clk_id = SKL_CARDINAL, .name = "cardinal", .rate = 24576000 },
+	{ .clk_id = SKL_PLL, .name = "pll", .rate = 96000000 },
+};
+
+struct skl_clk_parent_src *skl_get_parent_clk(u8 clk_id)
+{
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(skl_clk_src); i++) {
+		if (skl_clk_src[i].clk_id == clk_id)
+			return &skl_clk_src[i];
+	}
+
+	return NULL;
+}
+
+static void init_skl_xtal_rate(int pci_id)
+{
+	switch (pci_id) {
+	case 0x9d70:
+	case 0x9d71:
+		skl_clk_src[0].rate = 24000000;
+		return;
+
+	default:
+		skl_clk_src[0].rate = 19200000;
+		return;
+	}
+}
+
+static int skl_clock_device_register(struct skl *skl)
+{
+	struct platform_device_info pdevinfo = {NULL};
+	struct skl_clk_pdata *clk_pdata;
+
+	clk_pdata = devm_kzalloc(&skl->pci->dev, sizeof(*clk_pdata),
+							GFP_KERNEL);
+	if (!clk_pdata)
+		return -ENOMEM;
+
+	init_skl_xtal_rate(skl->pci->device);
+
+	clk_pdata->parent_clks = skl_clk_src;
+	clk_pdata->ssp_clks = skl_ssp_clks;
+	clk_pdata->num_clks = ARRAY_SIZE(skl_ssp_clks);
+
+	/* Query NHLT to fill the rates and parent */
+	skl_get_clks(skl, clk_pdata->ssp_clks);
+	clk_pdata->pvt_data = skl;
+
+	/* Register Platform device */
+	pdevinfo.parent = &skl->pci->dev;
+	pdevinfo.id = -1;
+	pdevinfo.name = "skl-ssp-clk";
+	pdevinfo.data = clk_pdata;
+	pdevinfo.size_data = sizeof(*clk_pdata);
+	skl->clk_dev = platform_device_register_full(&pdevinfo);
+	return PTR_ERR_OR_ZERO(skl->clk_dev);
+}
+
+static void skl_clock_device_unregister(struct skl *skl)
+{
+	if (skl->clk_dev)
+		platform_device_unregister(skl->clk_dev);
+}
+
 /*
  * Probe the given codec address
  */
@@ -528,7 +662,7 @@ static int probe_codec(struct hdac_ext_bus *ebus, int addr)
 }
 
 /* Codec initialization */
-static int skl_codec_create(struct hdac_ext_bus *ebus)
+static void skl_codec_create(struct hdac_ext_bus *ebus)
 {
 	struct hdac_bus *bus = ebus_to_hbus(ebus);
 	int c, max_slots;
@@ -559,8 +693,6 @@ static int skl_codec_create(struct hdac_ext_bus *ebus)
 			}
 		}
 	}
-
-	return 0;
 }
 
 static const struct hdac_bus_ops bus_core_ops = {
@@ -612,22 +744,32 @@ static void skl_probe_work(struct work_struct *work)
 		dev_info(bus->dev, "no hda codecs found!\n");
 
 	/* create codec instances */
-	err = skl_codec_create(ebus);
-	if (err < 0)
-		goto out_err;
+	skl_codec_create(ebus);
+
+	/* register platform dai and controls */
+	err = skl_platform_register(bus->dev);
+	if (err < 0) {
+		dev_err(bus->dev, "platform register failed: %d\n", err);
+		return;
+	}
+
+	if (bus->ppcap) {
+		err = skl_machine_device_register(skl);
+		if (err < 0) {
+			dev_err(bus->dev, "machine register failed: %d\n", err);
+			goto out_err;
+		}
+	}
 
 	if (IS_ENABLED(CONFIG_SND_SOC_HDAC_HDMI)) {
 		err = snd_hdac_display_power(bus, false);
 		if (err < 0) {
 			dev_err(bus->dev, "Cannot turn off display power on i915\n");
+			skl_machine_device_unregister(skl);
 			return;
 		}
 	}
 
-	/* register platform dai and controls */
-	err = skl_platform_register(bus->dev);
-	if (err < 0)
-		return;
 	/*
 	 * we are done probing so decrement link counts
 	 */
@@ -701,6 +843,8 @@ static int skl_first_init(struct hdac_ext_bus *ebus)
 		dev_err(bus->dev, "ioremap error\n");
 		return -ENXIO;
 	}
+
+	skl_init_chip(bus, true);
 
 	snd_hdac_bus_parse_capabilities(bus);
 
@@ -790,18 +934,22 @@ static int skl_probe(struct pci_dev *pci,
 
 	/* check if dsp is there */
 	if (bus->ppcap) {
-		err = skl_machine_device_register(skl,
-				  (void *)pci_id->driver_data);
+		/* create device for dsp clk */
+		err = skl_clock_device_register(skl);
+		if (err < 0)
+			goto out_clk_free;
+
+		err = skl_find_machine(skl, (void *)pci_id->driver_data);
 		if (err < 0)
 			goto out_nhlt_free;
 
 		err = skl_init_dsp(skl);
 		if (err < 0) {
 			dev_dbg(bus->dev, "error failed to register dsp\n");
-			goto out_mach_free;
+			goto out_nhlt_free;
 		}
 		skl->skl_sst->enable_miscbdcge = skl_enable_miscbdcge;
-
+		skl->skl_sst->clock_power_gating = skl_clock_power_gating;
 	}
 	if (bus->mlcap)
 		snd_hdac_ext_bus_get_ml_capabilities(ebus);
@@ -819,8 +967,8 @@ static int skl_probe(struct pci_dev *pci,
 
 out_dsp_free:
 	skl_free_dsp(skl);
-out_mach_free:
-	skl_machine_device_unregister(skl);
+out_clk_free:
+	skl_clock_device_unregister(skl);
 out_nhlt_free:
 	skl_nhlt_free(skl->nhlt);
 out_free:
@@ -871,39 +1019,48 @@ static void skl_remove(struct pci_dev *pci)
 	skl_free_dsp(skl);
 	skl_machine_device_unregister(skl);
 	skl_dmic_device_unregister(skl);
+	skl_clock_device_unregister(skl);
 	skl_nhlt_remove_sysfs(skl);
 	skl_nhlt_free(skl->nhlt);
 	skl_free(ebus);
 	dev_set_drvdata(&pci->dev, NULL);
 }
 
-static struct sst_codecs skl_codecs = {
+static struct snd_soc_acpi_codecs skl_codecs = {
 	.num_codecs = 1,
-	.codecs = {"NAU88L25"}
+	.codecs = {"10508825"}
 };
 
-static struct sst_codecs kbl_codecs = {
+static struct snd_soc_acpi_codecs kbl_codecs = {
 	.num_codecs = 1,
-	.codecs = {"NAU88L25"}
+	.codecs = {"10508825"}
 };
 
-static struct sst_codecs bxt_codecs = {
+static struct snd_soc_acpi_codecs bxt_codecs = {
 	.num_codecs = 1,
 	.codecs = {"MX98357A"}
 };
 
-static struct sst_codecs kbl_poppy_codecs = {
+static struct snd_soc_acpi_codecs kbl_poppy_codecs = {
 	.num_codecs = 1,
 	.codecs = {"10EC5663"}
 };
 
-static struct sst_codecs kbl_5663_5514_codecs = {
+static struct snd_soc_acpi_codecs kbl_5663_5514_codecs = {
 	.num_codecs = 2,
 	.codecs = {"10EC5663", "10EC5514"}
 };
 
+static struct snd_soc_acpi_codecs kbl_7219_98357_codecs = {
+	.num_codecs = 1,
+	.codecs = {"MX98357A"}
+};
 
-static struct sst_acpi_mach sst_skl_devdata[] = {
+static struct skl_machine_pdata cnl_pdata = {
+	.use_tplg_pcm = true,
+};
+
+static struct snd_soc_acpi_mach sst_skl_devdata[] = {
 	{
 		.id = "INT343A",
 		.drv_name = "skl_alc286s_i2s",
@@ -913,7 +1070,7 @@ static struct sst_acpi_mach sst_skl_devdata[] = {
 		.id = "INT343B",
 		.drv_name = "skl_n88l25_s4567",
 		.fw_filename = "intel/dsp_fw_release.bin",
-		.machine_quirk = sst_acpi_codec_list,
+		.machine_quirk = snd_soc_acpi_codec_list,
 		.quirk_data = &skl_codecs,
 		.pdata = &skl_dmic_data
 	},
@@ -921,14 +1078,14 @@ static struct sst_acpi_mach sst_skl_devdata[] = {
 		.id = "MX98357A",
 		.drv_name = "skl_n88l25_m98357a",
 		.fw_filename = "intel/dsp_fw_release.bin",
-		.machine_quirk = sst_acpi_codec_list,
+		.machine_quirk = snd_soc_acpi_codec_list,
 		.quirk_data = &skl_codecs,
 		.pdata = &skl_dmic_data
 	},
 	{}
 };
 
-static struct sst_acpi_mach sst_bxtp_devdata[] = {
+static struct snd_soc_acpi_mach sst_bxtp_devdata[] = {
 	{
 		.id = "INT343A",
 		.drv_name = "bxt_alc298s_i2s",
@@ -938,13 +1095,13 @@ static struct sst_acpi_mach sst_bxtp_devdata[] = {
 		.id = "DLGS7219",
 		.drv_name = "bxt_da7219_max98357a_i2s",
 		.fw_filename = "intel/dsp_fw_bxtn.bin",
-		.machine_quirk = sst_acpi_codec_list,
+		.machine_quirk = snd_soc_acpi_codec_list,
 		.quirk_data = &bxt_codecs,
 	},
 	{}
 };
 
-static struct sst_acpi_mach sst_kbl_devdata[] = {
+static struct snd_soc_acpi_mach sst_kbl_devdata[] = {
 	{
 		.id = "INT343A",
 		.drv_name = "kbl_alc286s_i2s",
@@ -954,7 +1111,7 @@ static struct sst_acpi_mach sst_kbl_devdata[] = {
 		.id = "INT343B",
 		.drv_name = "kbl_n88l25_s4567",
 		.fw_filename = "intel/dsp_fw_kbl.bin",
-		.machine_quirk = sst_acpi_codec_list,
+		.machine_quirk = snd_soc_acpi_codec_list,
 		.quirk_data = &kbl_codecs,
 		.pdata = &skl_dmic_data
 	},
@@ -962,7 +1119,7 @@ static struct sst_acpi_mach sst_kbl_devdata[] = {
 		.id = "MX98357A",
 		.drv_name = "kbl_n88l25_m98357a",
 		.fw_filename = "intel/dsp_fw_kbl.bin",
-		.machine_quirk = sst_acpi_codec_list,
+		.machine_quirk = snd_soc_acpi_codec_list,
 		.quirk_data = &kbl_codecs,
 		.pdata = &skl_dmic_data
 	},
@@ -970,7 +1127,7 @@ static struct sst_acpi_mach sst_kbl_devdata[] = {
 		.id = "MX98927",
 		.drv_name = "kbl_r5514_5663_max",
 		.fw_filename = "intel/dsp_fw_kbl.bin",
-		.machine_quirk = sst_acpi_codec_list,
+		.machine_quirk = snd_soc_acpi_codec_list,
 		.quirk_data = &kbl_5663_5514_codecs,
 		.pdata = &skl_dmic_data
 	},
@@ -978,19 +1135,42 @@ static struct sst_acpi_mach sst_kbl_devdata[] = {
 		.id = "MX98927",
 		.drv_name = "kbl_rt5663_m98927",
 		.fw_filename = "intel/dsp_fw_kbl.bin",
-		.machine_quirk = sst_acpi_codec_list,
+		.machine_quirk = snd_soc_acpi_codec_list,
 		.quirk_data = &kbl_poppy_codecs,
+		.pdata = &skl_dmic_data
+	},
+	{
+		.id = "10EC5663",
+		.drv_name = "kbl_rt5663",
+		.fw_filename = "intel/dsp_fw_kbl.bin",
+	},
+	{
+		.id = "DLGS7219",
+		.drv_name = "kbl_da7219_max98357a",
+		.fw_filename = "intel/dsp_fw_kbl.bin",
+		.machine_quirk = snd_soc_acpi_codec_list,
+		.quirk_data = &kbl_7219_98357_codecs,
 		.pdata = &skl_dmic_data
 	},
 
 	{}
 };
 
-static struct sst_acpi_mach sst_glk_devdata[] = {
+static struct snd_soc_acpi_mach sst_glk_devdata[] = {
 	{
 		.id = "INT343A",
 		.drv_name = "glk_alc298s_i2s",
 		.fw_filename = "intel/dsp_fw_glk.bin",
+	},
+	{}
+};
+
+static const struct snd_soc_acpi_mach sst_cnl_devdata[] = {
+	{
+		.id = "INT34C2",
+		.drv_name = "cnl_rt274",
+		.fw_filename = "intel/dsp_fw_cnl.bin",
+		.pdata = &cnl_pdata,
 	},
 	{}
 };
@@ -1009,6 +1189,9 @@ static const struct pci_device_id skl_ids[] = {
 	/* GLK */
 	{ PCI_DEVICE(0x8086, 0x3198),
 		.driver_data = (unsigned long)&sst_glk_devdata},
+	/* CNL */
+	{ PCI_DEVICE(0x8086, 0x9dc8),
+		.driver_data = (unsigned long)&sst_cnl_devdata},
 	{ 0, }
 };
 MODULE_DEVICE_TABLE(pci, skl_ids);

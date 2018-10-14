@@ -21,7 +21,7 @@
  * occasionally getting stuck as 1. To avoid the potential for a hang, check
  * TXFE == 0 instead of BUSY == 1. This may not be suitable for all UART
  * implementations, so only do so if an affected platform is detected in
- * parse_spcr().
+ * acpi_parse_spcr().
  */
 bool qdf2400_e44_present;
 EXPORT_SYMBOL(qdf2400_e44_present);
@@ -53,33 +53,42 @@ static bool qdf2400_erratum_44_present(struct acpi_table_header *h)
  */
 static bool xgene_8250_erratum_present(struct acpi_table_spcr *tb)
 {
+	bool xgene_8250 = false;
+
 	if (tb->interface_type != ACPI_DBG2_16550_COMPATIBLE)
 		return false;
 
-	if (memcmp(tb->header.oem_id, "APMC0D", ACPI_OEM_ID_SIZE))
+	if (memcmp(tb->header.oem_id, "APMC0D", ACPI_OEM_ID_SIZE) &&
+	    memcmp(tb->header.oem_id, "HPE   ", ACPI_OEM_ID_SIZE))
 		return false;
 
 	if (!memcmp(tb->header.oem_table_id, "XGENESPC",
 	    ACPI_OEM_TABLE_ID_SIZE) && tb->header.oem_revision == 0)
-		return true;
+		xgene_8250 = true;
 
-	return false;
+	if (!memcmp(tb->header.oem_table_id, "ProLiant",
+	    ACPI_OEM_TABLE_ID_SIZE) && tb->header.oem_revision == 1)
+		xgene_8250 = true;
+
+	return xgene_8250;
 }
 
 /**
- * parse_spcr() - parse ACPI SPCR table and add preferred console
+ * acpi_parse_spcr() - parse ACPI SPCR table and add preferred console
  *
- * @earlycon: set up earlycon for the console specified by the table
+ * @enable_earlycon: set up earlycon for the console specified by the table
+ * @enable_console: setup the console specified by the table.
  *
  * For the architectures with support for ACPI, CONFIG_ACPI_SPCR_TABLE may be
  * defined to parse ACPI SPCR table.  As a result of the parsing preferred
- * console is registered and if @earlycon is true, earlycon is set up.
+ * console is registered and if @enable_earlycon is true, earlycon is set up.
+ * If @enable_console is true the system console is also configured.
  *
  * When CONFIG_ACPI_SPCR_TABLE is defined, this function should be called
  * from arch initialization code as soon as the DT/ACPI decision is made.
  *
  */
-int __init parse_spcr(bool earlycon)
+int __init acpi_parse_spcr(bool enable_earlycon, bool enable_console)
 {
 	static char opts[64];
 	struct acpi_table_spcr *table;
@@ -98,23 +107,22 @@ int __init parse_spcr(bool earlycon)
 	if (ACPI_FAILURE(status))
 		return -ENOENT;
 
-	if (table->header.revision < 2) {
-		err = -ENOENT;
-		pr_err("wrong table version\n");
-		goto done;
-	}
+	if (table->header.revision < 2)
+		pr_info("SPCR table version %d\n", table->header.revision);
 
 	if (table->serial_port.space_id == ACPI_ADR_SPACE_SYSTEM_MEMORY) {
-		switch (table->serial_port.access_width) {
+		switch (ACPI_ACCESS_BIT_WIDTH((
+			table->serial_port.access_width))) {
 		default:
 			pr_err("Unexpected SPCR Access Width.  Defaulting to byte size\n");
-		case ACPI_ACCESS_SIZE_BYTE:
+			/* fall through */
+		case 8:
 			iotype = "mmio";
 			break;
-		case ACPI_ACCESS_SIZE_WORD:
+		case 16:
 			iotype = "mmio16";
 			break;
-		case ACPI_ACCESS_SIZE_DWORD:
+		case 32:
 			iotype = "mmio32";
 			break;
 		}
@@ -177,23 +185,33 @@ int __init parse_spcr(bool earlycon)
 	 */
 	if (qdf2400_erratum_44_present(&table->header)) {
 		qdf2400_e44_present = true;
-		if (earlycon)
+		if (enable_earlycon)
 			uart = "qdf2400_e44";
 	}
 
-	if (xgene_8250_erratum_present(table))
+	if (xgene_8250_erratum_present(table)) {
 		iotype = "mmio32";
 
-	snprintf(opts, sizeof(opts), "%s,%s,0x%llx,%d", uart, iotype,
-		 table->serial_port.address, baud_rate);
+		/* for xgene v1 and v2 we don't know the clock rate of the
+		 * UART so don't attempt to change to the baud rate state
+		 * in the table because driver cannot calculate the dividers
+		 */
+		snprintf(opts, sizeof(opts), "%s,%s,0x%llx", uart, iotype,
+			 table->serial_port.address);
+	} else {
+		snprintf(opts, sizeof(opts), "%s,%s,0x%llx,%d", uart, iotype,
+			 table->serial_port.address, baud_rate);
+	}
 
 	pr_info("console: %s\n", opts);
 
-	if (earlycon)
+	if (enable_earlycon)
 		setup_earlycon(opts);
 
-	err = add_preferred_console(uart, 0, opts + strlen(uart) + 1);
-
+	if (enable_console)
+		err = add_preferred_console(uart, 0, opts + strlen(uart) + 1);
+	else
+		err = 0;
 done:
 	acpi_put_table((struct acpi_table_header *)table);
 	return err;

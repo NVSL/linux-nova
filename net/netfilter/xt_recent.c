@@ -51,8 +51,8 @@ static unsigned int ip_list_gid __read_mostly;
 module_param(ip_list_tot, uint, 0400);
 module_param(ip_list_hash_size, uint, 0400);
 module_param(ip_list_perms, uint, 0400);
-module_param(ip_list_uid, uint, S_IRUGO | S_IWUSR);
-module_param(ip_list_gid, uint, S_IRUGO | S_IWUSR);
+module_param(ip_list_uid, uint, 0644);
+module_param(ip_list_gid, uint, 0644);
 MODULE_PARM_DESC(ip_list_tot, "number of IPs to remember per list");
 MODULE_PARM_DESC(ip_list_hash_size, "size of hash table used to look up IPs");
 MODULE_PARM_DESC(ip_list_perms, "permissions on /proc/net/xt_recent/* files");
@@ -106,7 +106,7 @@ static DEFINE_SPINLOCK(recent_lock);
 static DEFINE_MUTEX(recent_mutex);
 
 #ifdef CONFIG_PROC_FS
-static const struct file_operations recent_old_fops, recent_mt_fops;
+static const struct file_operations recent_mt_fops;
 #endif
 
 static u_int32_t hash_rnd __read_mostly;
@@ -184,8 +184,7 @@ recent_entry_init(struct recent_table *t, const union nf_inet_addr *addr,
 	}
 
 	nstamps_max += 1;
-	e = kmalloc(sizeof(*e) + sizeof(e->stamps[0]) * nstamps_max,
-		    GFP_ATOMIC);
+	e = kmalloc(struct_size(e, stamps, nstamps_max), GFP_ATOMIC);
 	if (e == NULL)
 		return NULL;
 	memcpy(&e->addr, addr, sizeof(e->addr));
@@ -342,8 +341,8 @@ static int recent_mt_check(const struct xt_mtchk_param *par,
 	net_get_random_once(&hash_rnd, sizeof(hash_rnd));
 
 	if (info->check_set & ~XT_RECENT_VALID_FLAGS) {
-		pr_info("Unsupported user space flags (%08x)\n",
-			info->check_set);
+		pr_info_ratelimited("Unsupported userspace flags (%08x)\n",
+				    info->check_set);
 		return -EINVAL;
 	}
 	if (hweight8(info->check_set &
@@ -357,13 +356,13 @@ static int recent_mt_check(const struct xt_mtchk_param *par,
 	if ((info->check_set & XT_RECENT_REAP) && !info->seconds)
 		return -EINVAL;
 	if (info->hit_count >= XT_RECENT_MAX_NSTAMPS) {
-		pr_info("hitcount (%u) is larger than allowed maximum (%u)\n",
-			info->hit_count, XT_RECENT_MAX_NSTAMPS - 1);
+		pr_info_ratelimited("hitcount (%u) is larger than allowed maximum (%u)\n",
+				    info->hit_count, XT_RECENT_MAX_NSTAMPS - 1);
 		return -EINVAL;
 	}
-	if (info->name[0] == '\0' ||
-	    strnlen(info->name, XT_RECENT_NAME_LEN) == XT_RECENT_NAME_LEN)
-		return -EINVAL;
+	ret = xt_check_proc_name(info->name, sizeof(info->name));
+	if (ret)
+		return ret;
 
 	if (ip_pkt_list_tot && info->hit_count < ip_pkt_list_tot)
 		nstamp_mask = roundup_pow_of_two(ip_pkt_list_tot) - 1;
@@ -587,7 +586,7 @@ recent_mt_proc_write(struct file *file, const char __user *input,
 		add = true;
 		break;
 	default:
-		pr_info("Need \"+ip\", \"-ip\" or \"/\"\n");
+		pr_info_ratelimited("Need \"+ip\", \"-ip\" or \"/\"\n");
 		return -EINVAL;
 	}
 
@@ -601,10 +600,8 @@ recent_mt_proc_write(struct file *file, const char __user *input,
 		succ   = in4_pton(c, size, (void *)&addr, '\n', NULL);
 	}
 
-	if (!succ) {
-		pr_info("illegal address written to procfs\n");
+	if (!succ)
 		return -EINVAL;
-	}
 
 	spin_lock_bh(&recent_lock);
 	e = recent_entry_lookup(t, &addr, family, 0);

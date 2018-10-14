@@ -31,7 +31,7 @@
 #include <linux/gpio.h>
 #include <linux/gpio_keys.h>
 #include <linux/i2c.h>
-#include <linux/i2c-gpio.h>
+#include <linux/platform_data/i2c-gpio.h>
 #include <linux/htcpld.h>
 #include <linux/leds.h>
 #include <linux/spi/spi.h>
@@ -391,7 +391,7 @@ static struct omap_usb_config htcherald_usb_config __initdata = {
 };
 
 /* LCD Device resources */
-static struct omap_lcd_config htcherald_lcd_config __initdata = {
+static const struct omap_lcd_config htcherald_lcd_config __initconst = {
 	.ctrl_name	= "internal",
 };
 

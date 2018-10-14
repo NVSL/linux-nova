@@ -26,7 +26,7 @@
 /* FE Power */
 #include "lnbp22.h"
 
-#include "dvb_ca_en50221.h"
+#include <media/dvb_ca_en50221.h>
 #include "ttpci-eeprom.h"
 
 static int debug;
@@ -600,7 +600,7 @@ static int pctv452e_rc_query(struct dvb_usb_device *d)
 			info("%s: cmd=0x%02x sys=0x%02x\n",
 				__func__, rx[6], rx[7]);
 
-		rc_keydown(d->rc_dev, RC_TYPE_RC5, state->last_rc_key, 0);
+		rc_keydown(d->rc_dev, RC_PROTO_RC5, state->last_rc_key, 0);
 	} else if (state->last_rc_key) {
 		rc_keyup(d->rc_dev);
 		state->last_rc_key = 0;
@@ -913,6 +913,14 @@ static int pctv452e_frontend_attach(struct dvb_usb_adapter *a)
 						&a->dev->i2c_adap);
 	if (!a->fe_adap[0].fe)
 		return -ENODEV;
+
+	/*
+	 * dvb_frontend will call dvb_detach for both stb0899_detach
+	 * and stb0899_release but we only do dvb_attach(stb0899_attach).
+	 * Increment the module refcount instead.
+	 */
+	symbol_get(stb0899_attach);
+
 	if ((dvb_attach(lnbp22_attach, a->fe_adap[0].fe,
 					&a->dev->i2c_adap)) == NULL)
 		err("Cannot attach lnbp22\n");
@@ -958,7 +966,7 @@ static struct dvb_usb_device_properties pctv452e_properties = {
 
 	.rc.core = {
 		.rc_codes	= RC_MAP_DIB0700_RC5_TABLE,
-		.allowed_protos	= RC_BIT_RC5,
+		.allowed_protos	= RC_PROTO_BIT_RC5,
 		.rc_query	= pctv452e_rc_query,
 		.rc_interval	= 100,
 	},
@@ -1011,7 +1019,7 @@ static struct dvb_usb_device_properties tt_connect_s2_3600_properties = {
 
 	.rc.core = {
 		.rc_codes	= RC_MAP_TT_1500,
-		.allowed_protos	= RC_BIT_RC5,
+		.allowed_protos	= RC_PROTO_BIT_RC5,
 		.rc_query	= pctv452e_rc_query,
 		.rc_interval	= 100,
 	},

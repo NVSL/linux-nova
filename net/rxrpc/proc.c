@@ -29,6 +29,8 @@ static const char *const rxrpc_conn_states[RXRPC_CONN__NR_STATES] = {
  * generate a list of extant and dead calls in /proc/net/rxrpc_calls
  */
 static void *rxrpc_call_seq_start(struct seq_file *seq, loff_t *_pos)
+	__acquires(rcu)
+	__acquires(rxnet->call_lock)
 {
 	struct rxrpc_net *rxnet = rxrpc_net(seq_file_net(seq));
 
@@ -45,6 +47,8 @@ static void *rxrpc_call_seq_next(struct seq_file *seq, void *v, loff_t *pos)
 }
 
 static void rxrpc_call_seq_stop(struct seq_file *seq, void *v)
+	__releases(rxnet->call_lock)
+	__releases(rcu)
 {
 	struct rxrpc_net *rxnet = rxrpc_net(seq_file_net(seq));
 
@@ -111,31 +115,18 @@ static int rxrpc_call_seq_show(struct seq_file *seq, void *v)
 	return 0;
 }
 
-static const struct seq_operations rxrpc_call_seq_ops = {
+const struct seq_operations rxrpc_call_seq_ops = {
 	.start  = rxrpc_call_seq_start,
 	.next   = rxrpc_call_seq_next,
 	.stop   = rxrpc_call_seq_stop,
 	.show   = rxrpc_call_seq_show,
 };
 
-static int rxrpc_call_seq_open(struct inode *inode, struct file *file)
-{
-	return seq_open_net(inode, file, &rxrpc_call_seq_ops,
-			    sizeof(struct seq_net_private));
-}
-
-const struct file_operations rxrpc_call_seq_fops = {
-	.owner		= THIS_MODULE,
-	.open		= rxrpc_call_seq_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= seq_release,
-};
-
 /*
  * generate a list of extant virtual connections in /proc/net/rxrpc_conns
  */
 static void *rxrpc_connection_seq_start(struct seq_file *seq, loff_t *_pos)
+	__acquires(rxnet->conn_lock)
 {
 	struct rxrpc_net *rxnet = rxrpc_net(seq_file_net(seq));
 
@@ -152,6 +143,7 @@ static void *rxrpc_connection_seq_next(struct seq_file *seq, void *v,
 }
 
 static void rxrpc_connection_seq_stop(struct seq_file *seq, void *v)
+	__releases(rxnet->conn_lock)
 {
 	struct rxrpc_net *rxnet = rxrpc_net(seq_file_net(seq));
 
@@ -202,24 +194,9 @@ print:
 	return 0;
 }
 
-static const struct seq_operations rxrpc_connection_seq_ops = {
+const struct seq_operations rxrpc_connection_seq_ops = {
 	.start  = rxrpc_connection_seq_start,
 	.next   = rxrpc_connection_seq_next,
 	.stop   = rxrpc_connection_seq_stop,
 	.show   = rxrpc_connection_seq_show,
-};
-
-
-static int rxrpc_connection_seq_open(struct inode *inode, struct file *file)
-{
-	return seq_open_net(inode, file, &rxrpc_connection_seq_ops,
-			    sizeof(struct seq_net_private));
-}
-
-const struct file_operations rxrpc_connection_seq_fops = {
-	.owner		= THIS_MODULE,
-	.open		= rxrpc_connection_seq_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= seq_release,
 };

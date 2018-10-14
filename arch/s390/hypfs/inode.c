@@ -1,9 +1,9 @@
+// SPDX-License-Identifier: GPL-1.0+
 /*
  *    Hypervisor filesystem for Linux on s390.
  *
  *    Copyright IBM Corp. 2006, 2008
  *    Author(s): Michael Holzheu <holzheu@de.ibm.com>
- *    License: GPL
  */
 
 #define KMSG_COMPONENT "hypfs"
@@ -320,7 +320,7 @@ static void hypfs_kill_super(struct super_block *sb)
 
 	if (sb->s_root)
 		hypfs_delete_tree(sb->s_root);
-	if (sb_info->update_file)
+	if (sb_info && sb_info->update_file)
 		hypfs_remove(sb_info->update_file);
 	kfree(sb->s_fs_info);
 	sb->s_fs_info = NULL;

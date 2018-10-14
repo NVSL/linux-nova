@@ -52,6 +52,7 @@
 	clocks {
 		mmc_clk: mmc_clk {
 			compatible = "fixed-clock";
+			#clock-cells = <0>;
 			clock-frequency = <50000000>;
 			clock-output-names = "mmc_clk";
 		};
@@ -359,20 +360,6 @@
 		interrupts = <31 0x4 15 0x84>;
 	};
 
-	mmc0: sdhci@020c0000 {
-		compatible	= "st,sdhci-stih407", "st,sdhci";
-		status		= "disabled";
-		reg		= <0x020c0000 0x20000>;
-		reg-names	= "mmc";
-		interrupt-parent = <&UIC1_3>;
-		interrupts	= <21 0x4 22 0x4>;
-		interrupt-names	= "mmcirq";
-		pinctrl-names	= "default";
-		pinctrl-0	= <>;
-		clock-names	= "mmc";
-		clocks		= <&mmc_clk>;
-	};
-
 	plb6 {
 		compatible = "ibm,plb6";
 		#address-cells = <2>;
@@ -501,6 +488,24 @@
 					 /*RXDE*/  4 &UIC1_2 13 0x4>;
 		};
 
+		mmc0: mmc@20c0000 {
+			compatible	= "st,sdhci-stih407", "st,sdhci";
+			reg		= <0x020c0000 0x20000>;
+			reg-names	= "mmc";
+			interrupts	= <21 0x4>;
+			interrupt-parent = <&UIC1_3>;
+			interrupt-names	= "mmcirq";
+			pinctrl-names	= "default";
+			pinctrl-0	= <>;
+			clock-names	= "mmc";
+			clocks		= <&mmc_clk>;
+			bus-width	= <4>;
+			non-removable;
+			sd-uhs-sdr50;
+			sd-uhs-sdr104;
+			sd-uhs-ddr50;
+		};
+
 		opb {
 			compatible = "ibm,opb";
 			#address-cells = <1>;
@@ -578,21 +583,21 @@
 			};
 		};
 
-		OHCI1: ohci@02040000 {
+		OHCI1: ohci@2040000 {
 			compatible = "ohci-le";
 			reg = <0x02040000 0xa0>;
 			interrupt-parent = <&UIC1_3>;
 			interrupts = <28 0x8 29 0x8>;
 		};
 
-		OHCI2: ohci@02080000 {
+		OHCI2: ohci@2080000 {
 			compatible = "ohci-le";
 			reg = <0x02080000 0xa0>;
 			interrupt-parent = <&UIC1_3>;
 			interrupts = <30 0x8 31 0x8>;
 		};
 
-		EHCI: ehci@02000000 {
+		EHCI: ehci@2000000 {
 			compatible = "usb-ehci";
 			reg = <0x02000000 0xa4>;
 			interrupt-parent = <&UIC1_3>;
@@ -602,7 +607,7 @@
 	};
 
 	chosen {
-		linux,stdout-path = "/plb/opb/serial@b0020000";
+		stdout-path = "/plb/opb/serial@b0020000";
 		bootargs = "console=ttyS0,115200 rw log_buf_len=32768 debug";
 	};
 };

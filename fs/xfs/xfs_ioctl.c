@@ -1,19 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2000-2005 Silicon Graphics, Inc.
  * All Rights Reserved.
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it would be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write the Free Software Foundation,
- * Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  */
 #include "xfs.h"
 #include "xfs_fs.h"
@@ -39,11 +27,12 @@
 #include "xfs_icache.h"
 #include "xfs_symlink.h"
 #include "xfs_trans.h"
-#include "xfs_pnfs.h"
 #include "xfs_acl.h"
 #include "xfs_btree.h"
 #include <linux/fsmap.h>
 #include "xfs_fsmap.h"
+#include "scrub/xfs_scrub.h"
+#include "xfs_sb.h"
 
 #include <linux/capability.h>
 #include <linux/cred.h>
@@ -310,8 +299,8 @@ xfs_readlink_by_handle(
 int
 xfs_set_dmattrs(
 	xfs_inode_t     *ip,
-	u_int		evmask,
-	u_int16_t	state)
+	uint		evmask,
+	uint16_t	state)
 {
 	xfs_mount_t	*mp = ip->i_mount;
 	xfs_trans_t	*tp;
@@ -612,7 +601,7 @@ xfs_ioc_space(
 	struct xfs_inode	*ip = XFS_I(inode);
 	struct iattr		iattr;
 	enum xfs_prealloc_flags	flags = 0;
-	uint			iolock = XFS_IOLOCK_EXCL;
+	uint			iolock = XFS_IOLOCK_EXCL | XFS_MMAPLOCK_EXCL;
 	int			error;
 
 	/*
@@ -642,12 +631,9 @@ xfs_ioc_space(
 		return error;
 
 	xfs_ilock(ip, iolock);
-	error = xfs_break_layouts(inode, &iolock);
+	error = xfs_break_layouts(inode, &iolock, BREAK_UNMAP);
 	if (error)
 		goto out_unlock;
-
-	xfs_ilock(ip, XFS_MMAPLOCK_EXCL);
-	iolock |= XFS_MMAPLOCK_EXCL;
 
 	switch (bf->l_whence) {
 	case 0: /*SEEK_SET*/
@@ -808,7 +794,7 @@ xfs_ioc_fsgeometry_v1(
 	xfs_fsop_geom_t         fsgeo;
 	int			error;
 
-	error = xfs_fs_geometry(mp, &fsgeo, 3);
+	error = xfs_fs_geometry(&mp->m_sb, &fsgeo, 3);
 	if (error)
 		return error;
 
@@ -830,7 +816,7 @@ xfs_ioc_fsgeometry(
 	xfs_fsop_geom_t		fsgeo;
 	int			error;
 
-	error = xfs_fs_geometry(mp, &fsgeo, 4);
+	error = xfs_fs_geometry(&mp->m_sb, &fsgeo, 4);
 	if (error)
 		return error;
 
@@ -931,16 +917,15 @@ xfs_ioc_fsgetxattr(
 	return 0;
 }
 
-STATIC void
-xfs_set_diflags(
+STATIC uint16_t
+xfs_flags2diflags(
 	struct xfs_inode	*ip,
 	unsigned int		xflags)
 {
-	unsigned int		di_flags;
-	uint64_t		di_flags2;
-
 	/* can't set PREALLOC this way, just preserve it */
-	di_flags = (ip->i_d.di_flags & XFS_DIFLAG_PREALLOC);
+	uint16_t		di_flags =
+		(ip->i_d.di_flags & XFS_DIFLAG_PREALLOC);
+
 	if (xflags & FS_XFLAG_IMMUTABLE)
 		di_flags |= XFS_DIFLAG_IMMUTABLE;
 	if (xflags & FS_XFLAG_APPEND)
@@ -970,19 +955,24 @@ xfs_set_diflags(
 		if (xflags & FS_XFLAG_EXTSIZE)
 			di_flags |= XFS_DIFLAG_EXTSIZE;
 	}
-	ip->i_d.di_flags = di_flags;
 
-	/* diflags2 only valid for v3 inodes. */
-	if (ip->i_d.di_version < 3)
-		return;
+	return di_flags;
+}
 
-	di_flags2 = (ip->i_d.di_flags2 & XFS_DIFLAG2_REFLINK);
+STATIC uint64_t
+xfs_flags2diflags2(
+	struct xfs_inode	*ip,
+	unsigned int		xflags)
+{
+	uint64_t		di_flags2 =
+		(ip->i_d.di_flags2 & XFS_DIFLAG2_REFLINK);
+
 	if (xflags & FS_XFLAG_DAX)
 		di_flags2 |= XFS_DIFLAG2_DAX;
 	if (xflags & FS_XFLAG_COWEXTSIZE)
 		di_flags2 |= XFS_DIFLAG2_COWEXTSIZE;
 
-	ip->i_d.di_flags2 = di_flags2;
+	return di_flags2;
 }
 
 STATIC void
@@ -1008,11 +998,12 @@ xfs_diflags_to_linux(
 		inode->i_flags |= S_NOATIME;
 	else
 		inode->i_flags &= ~S_NOATIME;
+#if 0	/* disabled until the flag switching races are sorted out */
 	if (xflags & FS_XFLAG_DAX)
 		inode->i_flags |= S_DAX;
 	else
 		inode->i_flags &= ~S_DAX;
-
+#endif
 }
 
 static int
@@ -1022,6 +1013,7 @@ xfs_ioctl_setattr_xflags(
 	struct fsxattr		*fa)
 {
 	struct xfs_mount	*mp = ip->i_mount;
+	uint64_t		di_flags2;
 
 	/* Can't change realtime flag if any extents are allocated. */
 	if ((ip->i_d.di_nextents || ip->i_delayed_blks) &&
@@ -1052,7 +1044,14 @@ xfs_ioctl_setattr_xflags(
 	    !capable(CAP_LINUX_IMMUTABLE))
 		return -EPERM;
 
-	xfs_set_diflags(ip, fa->fsx_xflags);
+	/* diflags2 only valid for v3 inodes. */
+	di_flags2 = xfs_flags2diflags2(ip, fa->fsx_xflags);
+	if (di_flags2 && ip->i_d.di_version < 3)
+		return -EINVAL;
+
+	ip->i_d.di_flags = xfs_flags2diflags(ip, fa->fsx_xflags);
+	ip->i_d.di_flags2 = di_flags2;
+
 	xfs_diflags_to_linux(ip);
 	xfs_trans_ichgtime(tp, ip, XFS_ICHGTIME_CHG);
 	xfs_trans_log_inode(tp, ip, XFS_ILOG_CORE);
@@ -1075,6 +1074,7 @@ xfs_ioctl_setattr_dax_invalidate(
 	int			*join_flags)
 {
 	struct inode		*inode = VFS_I(ip);
+	struct super_block	*sb = inode->i_sb;
 	int			error;
 
 	*join_flags = 0;
@@ -1082,12 +1082,15 @@ xfs_ioctl_setattr_dax_invalidate(
 	/*
 	 * It is only valid to set the DAX flag on regular files and
 	 * directories on filesystems where the block size is equal to the page
-	 * size. On directories it serves as an inherit hint.
+	 * size. On directories it serves as an inherited hint so we don't
+	 * have to check the device for dax support or flush pagecache.
 	 */
 	if (fa->fsx_xflags & FS_XFLAG_DAX) {
 		if (!(S_ISREG(inode->i_mode) || S_ISDIR(inode->i_mode)))
 			return -EINVAL;
-		if (ip->i_mount->m_sb.sb_blocksize != PAGE_SIZE)
+		if (S_ISREG(inode->i_mode) &&
+		    !bdev_dax_supported(xfs_find_bdev_for_inode(VFS_I(ip)),
+				sb->s_blocksize))
 			return -EINVAL;
 	}
 
@@ -1095,6 +1098,9 @@ xfs_ioctl_setattr_dax_invalidate(
 	if ((fa->fsx_xflags & FS_XFLAG_DAX) && IS_DAX(inode))
 		return 0;
 	if (!(fa->fsx_xflags & FS_XFLAG_DAX) && !IS_DAX(inode))
+		return 0;
+
+	if (S_ISDIR(inode->i_mode))
 		return 0;
 
 	/* lock, flush and invalidate mapping in preparation for flag change */
@@ -1187,6 +1193,8 @@ out_unlock:
  * 8. for non-realtime files, the extent size hint must be limited
  *    to half the AG size to avoid alignment extending the extent beyond the
  *    limits of the AG.
+ *
+ * Please keep this function in sync with xfs_scrub_inode_extsize.
  */
 static int
 xfs_ioctl_setattr_check_extsize(
@@ -1243,6 +1251,8 @@ xfs_ioctl_setattr_check_extsize(
  * 5. Extent size must be a multiple of the appropriate block size.
  * 6. The extent size hint must be limited to half the AG size to avoid
  *    alignment extending the extent beyond the limits of the AG.
+ *
+ * Please keep this function in sync with xfs_scrub_inode_cowextsize.
  */
 static int
 xfs_ioctl_setattr_check_cowextsize(
@@ -1526,17 +1536,26 @@ out_drop_write:
 	return error;
 }
 
-STATIC int
-xfs_getbmap_format(void **ap, struct getbmapx *bmv)
+static bool
+xfs_getbmap_format(
+	struct kgetbmap		*p,
+	struct getbmapx __user	*u,
+	size_t			recsize)
 {
-	struct getbmap __user	*base = (struct getbmap __user *)*ap;
-
-	/* copy only getbmap portion (not getbmapx) */
-	if (copy_to_user(base, bmv, sizeof(struct getbmap)))
-		return -EFAULT;
-
-	*ap += sizeof(struct getbmap);
-	return 0;
+	if (put_user(p->bmv_offset, &u->bmv_offset) ||
+	    put_user(p->bmv_block, &u->bmv_block) ||
+	    put_user(p->bmv_length, &u->bmv_length) ||
+	    put_user(0, &u->bmv_count) ||
+	    put_user(0, &u->bmv_entries))
+		return false;
+	if (recsize < sizeof(struct getbmapx))
+		return true;
+	if (put_user(0, &u->bmv_iflags) ||
+	    put_user(p->bmv_oflags, &u->bmv_oflags) ||
+	    put_user(0, &u->bmv_unused1) ||
+	    put_user(0, &u->bmv_unused2))
+		return false;
+	return true;
 }
 
 STATIC int
@@ -1546,68 +1565,57 @@ xfs_ioc_getbmap(
 	void			__user *arg)
 {
 	struct getbmapx		bmx = { 0 };
-	int			error;
+	struct kgetbmap		*buf;
+	size_t			recsize;
+	int			error, i;
 
-	/* struct getbmap is a strict subset of struct getbmapx. */
-	if (copy_from_user(&bmx, arg, offsetof(struct getbmapx, bmv_iflags)))
+	switch (cmd) {
+	case XFS_IOC_GETBMAPA:
+		bmx.bmv_iflags = BMV_IF_ATTRFORK;
+		/*FALLTHRU*/
+	case XFS_IOC_GETBMAP:
+		if (file->f_mode & FMODE_NOCMTIME)
+			bmx.bmv_iflags |= BMV_IF_NO_DMAPI_READ;
+		/* struct getbmap is a strict subset of struct getbmapx. */
+		recsize = sizeof(struct getbmap);
+		break;
+	case XFS_IOC_GETBMAPX:
+		recsize = sizeof(struct getbmapx);
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	if (copy_from_user(&bmx, arg, recsize))
 		return -EFAULT;
 
 	if (bmx.bmv_count < 2)
 		return -EINVAL;
+	if (bmx.bmv_count > ULONG_MAX / recsize)
+		return -ENOMEM;
 
-	bmx.bmv_iflags = (cmd == XFS_IOC_GETBMAPA ? BMV_IF_ATTRFORK : 0);
-	if (file->f_mode & FMODE_NOCMTIME)
-		bmx.bmv_iflags |= BMV_IF_NO_DMAPI_READ;
+	buf = kmem_zalloc_large(bmx.bmv_count * sizeof(*buf), 0);
+	if (!buf)
+		return -ENOMEM;
 
-	error = xfs_getbmap(XFS_I(file_inode(file)), &bmx, xfs_getbmap_format,
-			    (__force struct getbmap *)arg+1);
+	error = xfs_getbmap(XFS_I(file_inode(file)), &bmx, buf);
 	if (error)
-		return error;
+		goto out_free_buf;
 
-	/* copy back header - only size of getbmap */
-	if (copy_to_user(arg, &bmx, sizeof(struct getbmap)))
-		return -EFAULT;
-	return 0;
-}
+	error = -EFAULT;
+	if (copy_to_user(arg, &bmx, recsize))
+		goto out_free_buf;
+	arg += recsize;
 
-STATIC int
-xfs_getbmapx_format(void **ap, struct getbmapx *bmv)
-{
-	struct getbmapx __user	*base = (struct getbmapx __user *)*ap;
+	for (i = 0; i < bmx.bmv_entries; i++) {
+		if (!xfs_getbmap_format(buf + i, arg, recsize))
+			goto out_free_buf;
+		arg += recsize;
+	}
 
-	if (copy_to_user(base, bmv, sizeof(struct getbmapx)))
-		return -EFAULT;
-
-	*ap += sizeof(struct getbmapx);
-	return 0;
-}
-
-STATIC int
-xfs_ioc_getbmapx(
-	struct xfs_inode	*ip,
-	void			__user *arg)
-{
-	struct getbmapx		bmx;
-	int			error;
-
-	if (copy_from_user(&bmx, arg, sizeof(bmx)))
-		return -EFAULT;
-
-	if (bmx.bmv_count < 2)
-		return -EINVAL;
-
-	if (bmx.bmv_iflags & (~BMV_IF_VALID))
-		return -EINVAL;
-
-	error = xfs_getbmap(ip, &bmx, xfs_getbmapx_format,
-			    (__force struct getbmapx *)arg+1);
-	if (error)
-		return error;
-
-	/* copy back header */
-	if (copy_to_user(arg, &bmx, sizeof(struct getbmapx)))
-		return -EFAULT;
-
+	error = 0;
+out_free_buf:
+	kmem_free(buf);
 	return 0;
 }
 
@@ -1684,6 +1692,30 @@ xfs_ioc_getfsmap(
 	head.fmh_entries = xhead.fmh_entries;
 	head.fmh_oflags = xhead.fmh_oflags;
 	if (copy_to_user(arg, &head, sizeof(struct fsmap_head)))
+		return -EFAULT;
+
+	return 0;
+}
+
+STATIC int
+xfs_ioc_scrub_metadata(
+	struct xfs_inode		*ip,
+	void				__user *arg)
+{
+	struct xfs_scrub_metadata	scrub;
+	int				error;
+
+	if (!capable(CAP_SYS_ADMIN))
+		return -EPERM;
+
+	if (copy_from_user(&scrub, arg, sizeof(scrub)))
+		return -EFAULT;
+
+	error = xfs_scrub_metadata(ip, &scrub);
+	if (error)
+		return error;
+
+	if (copy_to_user(arg, &scrub, sizeof(scrub)))
 		return -EFAULT;
 
 	return 0;
@@ -1769,6 +1801,88 @@ xfs_ioc_swapext(
 	return error;
 }
 
+static int
+xfs_ioc_getlabel(
+	struct xfs_mount	*mp,
+	char			__user *user_label)
+{
+	struct xfs_sb		*sbp = &mp->m_sb;
+	char			label[XFSLABEL_MAX + 1];
+
+	/* Paranoia */
+	BUILD_BUG_ON(sizeof(sbp->sb_fname) > FSLABEL_MAX);
+
+	/* 1 larger than sb_fname, so this ensures a trailing NUL char */
+	memset(label, 0, sizeof(label));
+	spin_lock(&mp->m_sb_lock);
+	strncpy(label, sbp->sb_fname, XFSLABEL_MAX);
+	spin_unlock(&mp->m_sb_lock);
+
+	if (copy_to_user(user_label, label, sizeof(label)))
+		return -EFAULT;
+	return 0;
+}
+
+static int
+xfs_ioc_setlabel(
+	struct file		*filp,
+	struct xfs_mount	*mp,
+	char			__user *newlabel)
+{
+	struct xfs_sb		*sbp = &mp->m_sb;
+	char			label[XFSLABEL_MAX + 1];
+	size_t			len;
+	int			error;
+
+	if (!capable(CAP_SYS_ADMIN))
+		return -EPERM;
+	/*
+	 * The generic ioctl allows up to FSLABEL_MAX chars, but XFS is much
+	 * smaller, at 12 bytes.  We copy one more to be sure we find the
+	 * (required) NULL character to test the incoming label length.
+	 * NB: The on disk label doesn't need to be null terminated.
+	 */
+	if (copy_from_user(label, newlabel, XFSLABEL_MAX + 1))
+		return -EFAULT;
+	len = strnlen(label, XFSLABEL_MAX + 1);
+	if (len > sizeof(sbp->sb_fname))
+		return -EINVAL;
+
+	error = mnt_want_write_file(filp);
+	if (error)
+		return error;
+
+	spin_lock(&mp->m_sb_lock);
+	memset(sbp->sb_fname, 0, sizeof(sbp->sb_fname));
+	memcpy(sbp->sb_fname, label, len);
+	spin_unlock(&mp->m_sb_lock);
+
+	/*
+	 * Now we do several things to satisfy userspace.
+	 * In addition to normal logging of the primary superblock, we also
+	 * immediately write these changes to sector zero for the primary, then
+	 * update all backup supers (as xfs_db does for a label change), then
+	 * invalidate the block device page cache.  This is so that any prior
+	 * buffered reads from userspace (i.e. from blkid) are invalidated,
+	 * and userspace will see the newly-written label.
+	 */
+	error = xfs_sync_sb_buf(mp);
+	if (error)
+		goto out;
+	/*
+	 * growfs also updates backup supers so lock against that.
+	 */
+	mutex_lock(&mp->m_growlock);
+	error = xfs_update_secondary_sbs(mp);
+	mutex_unlock(&mp->m_growlock);
+
+	invalidate_bdev(mp->m_ddev_targp->bt_bdev);
+
+out:
+	mnt_drop_write_file(filp);
+	return error;
+}
+
 /*
  * Note: some of the ioctl's return positive numbers as a
  * byte count indicating success, such as readlink_by_handle.
@@ -1792,6 +1906,10 @@ xfs_file_ioctl(
 	switch (cmd) {
 	case FITRIM:
 		return xfs_ioc_trim(mp, arg);
+	case FS_IOC_GETFSLABEL:
+		return xfs_ioc_getlabel(mp, arg);
+	case FS_IOC_SETFSLABEL:
+		return xfs_ioc_setlabel(filp, mp, arg);
 	case XFS_IOC_ALLOCSP:
 	case XFS_IOC_FREESP:
 	case XFS_IOC_RESVSP:
@@ -1864,13 +1982,14 @@ xfs_file_ioctl(
 
 	case XFS_IOC_GETBMAP:
 	case XFS_IOC_GETBMAPA:
-		return xfs_ioc_getbmap(filp, cmd, arg);
-
 	case XFS_IOC_GETBMAPX:
-		return xfs_ioc_getbmapx(ip, arg);
+		return xfs_ioc_getbmap(filp, cmd, arg);
 
 	case FS_IOC_GETFSMAP:
 		return xfs_ioc_getfsmap(ip, arg);
+
+	case XFS_IOC_SCRUB_METADATA:
+		return xfs_ioc_scrub_metadata(ip, arg);
 
 	case XFS_IOC_FD_TO_HANDLE:
 	case XFS_IOC_PATH_TO_HANDLE:

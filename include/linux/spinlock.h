@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __LINUX_SPINLOCK_H
 #define __LINUX_SPINLOCK_H
 
@@ -106,35 +107,47 @@ do {								\
 
 #define raw_spin_is_locked(lock)	arch_spin_is_locked(&(lock)->raw_lock)
 
-#ifdef CONFIG_GENERIC_LOCKBREAK
-#define raw_spin_is_contended(lock) ((lock)->break_lock)
-#else
-
 #ifdef arch_spin_is_contended
 #define raw_spin_is_contended(lock)	arch_spin_is_contended(&(lock)->raw_lock)
 #else
 #define raw_spin_is_contended(lock)	(((void)(lock), 0))
 #endif /*arch_spin_is_contended*/
-#endif
 
 /*
- * Despite its name it doesn't necessarily has to be a full barrier.
- * It should only guarantee that a STORE before the critical section
- * can not be reordered with LOADs and STOREs inside this section.
- * spin_lock() is the one-way barrier, this LOAD can not escape out
- * of the region. So the default implementation simply ensures that
- * a STORE can not move into the critical section, smp_wmb() should
- * serialize it with another STORE done by spin_lock().
+ * This barrier must provide two things:
+ *
+ *   - it must guarantee a STORE before the spin_lock() is ordered against a
+ *     LOAD after it, see the comments at its two usage sites.
+ *
+ *   - it must ensure the critical section is RCsc.
+ *
+ * The latter is important for cases where we observe values written by other
+ * CPUs in spin-loops, without barriers, while being subject to scheduling.
+ *
+ * CPU0			CPU1			CPU2
+ *
+ *			for (;;) {
+ *			  if (READ_ONCE(X))
+ *			    break;
+ *			}
+ * X=1
+ *			<sched-out>
+ *						<sched-in>
+ *						r = X;
+ *
+ * without transitivity it could be that CPU1 observes X!=0 breaks the loop,
+ * we get migrated and CPU2 sees X==0.
+ *
+ * Since most load-store architectures implement ACQUIRE with an smp_mb() after
+ * the LL/SC loop, they need no further barriers. Similarly all our TSO
+ * architectures imply an smp_mb() for each atomic instruction and equally don't
+ * need more.
+ *
+ * Architectures that can implement ACQUIRE better need to take care.
  */
-#ifndef smp_mb__before_spinlock
-#define smp_mb__before_spinlock()	smp_wmb()
+#ifndef smp_mb__after_spinlock
+#define smp_mb__after_spinlock()	do { } while (0)
 #endif
-
-/**
- * raw_spin_unlock_wait - wait until the spinlock gets unlocked
- * @lock: the spinlock in question.
- */
-#define raw_spin_unlock_wait(lock)	arch_spin_unlock_wait(&(lock)->raw_lock)
 
 #ifdef CONFIG_DEBUG_SPINLOCK
  extern void do_raw_spin_lock(raw_spinlock_t *lock) __acquires(lock);
@@ -147,6 +160,10 @@ static inline void do_raw_spin_lock(raw_spinlock_t *lock) __acquires(lock)
 	__acquire(lock);
 	arch_spin_lock(&lock->raw_lock);
 }
+
+#ifndef arch_spin_lock_flags
+#define arch_spin_lock_flags(lock, flags)	arch_spin_lock(lock)
+#endif
 
 static inline void
 do_raw_spin_lock_flags(raw_spinlock_t *lock, unsigned long *flags) __acquires(lock)
@@ -261,12 +278,6 @@ static inline void do_raw_spin_unlock(raw_spinlock_t *lock) __releases(lock)
 	1 : ({ local_irq_restore(flags); 0; }); \
 })
 
-/**
- * raw_spin_can_lock - would raw_spin_trylock() succeed?
- * @lock: the spinlock in question.
- */
-#define raw_spin_can_lock(lock)	(!raw_spin_is_locked(lock))
-
 /* Include rwlock functions */
 #include <linux/rwlock.h>
 
@@ -370,30 +381,23 @@ static __always_inline int spin_trylock_irq(spinlock_t *lock)
 })
 
 /**
- * spin_unlock_wait - Interpose between successive critical sections
- * @lock: the spinlock whose critical sections are to be interposed.
+ * spin_is_locked() - Check whether a spinlock is locked.
+ * @lock: Pointer to the spinlock.
  *
- * Semantically this is equivalent to a spin_lock() immediately
- * followed by a spin_unlock().  However, most architectures have
- * more efficient implementations in which the spin_unlock_wait()
- * cannot block concurrent lock acquisition, and in some cases
- * where spin_unlock_wait() does not write to the lock variable.
- * Nevertheless, spin_unlock_wait() can have high overhead, so if
- * you feel the need to use it, please check to see if there is
- * a better way to get your job done.
+ * This function is NOT required to provide any memory ordering
+ * guarantees; it could be used for debugging purposes or, when
+ * additional synchronization is needed, accompanied with other
+ * constructs (memory barriers) enforcing the synchronization.
  *
- * The ordering guarantees provided by spin_unlock_wait() are:
+ * Returns: 1 if @lock is locked, 0 otherwise.
  *
- * 1.  All accesses preceding the spin_unlock_wait() happen before
- *     any accesses in later critical sections for this same lock.
- * 2.  All accesses following the spin_unlock_wait() happen after
- *     any accesses in earlier critical sections for this same lock.
+ * Note that the function only tells you that the spinlock is
+ * seen to be locked, not that it is locked on your CPU.
+ *
+ * Further, on CONFIG_SMP=n builds with CONFIG_DEBUG_SPINLOCK=n,
+ * the return value is always 0 (see include/linux/spinlock_up.h).
+ * Therefore you should not rely heavily on the return value.
  */
-static __always_inline void spin_unlock_wait(spinlock_t *lock)
-{
-	raw_spin_unlock_wait(&lock->rlock);
-}
-
 static __always_inline int spin_is_locked(spinlock_t *lock)
 {
 	return raw_spin_is_locked(&lock->rlock);
@@ -402,11 +406,6 @@ static __always_inline int spin_is_locked(spinlock_t *lock)
 static __always_inline int spin_is_contended(spinlock_t *lock)
 {
 	return raw_spin_is_contended(&lock->rlock);
-}
-
-static __always_inline int spin_can_lock(spinlock_t *lock)
-{
-	return raw_spin_can_lock(&lock->rlock);
 }
 
 #define assert_spin_locked(lock)	assert_raw_spin_locked(&(lock)->rlock)
@@ -427,5 +426,16 @@ static __always_inline int spin_can_lock(spinlock_t *lock)
 extern int _atomic_dec_and_lock(atomic_t *atomic, spinlock_t *lock);
 #define atomic_dec_and_lock(atomic, lock) \
 		__cond_lock(lock, _atomic_dec_and_lock(atomic, lock))
+
+extern int _atomic_dec_and_lock_irqsave(atomic_t *atomic, spinlock_t *lock,
+					unsigned long *flags);
+#define atomic_dec_and_lock_irqsave(atomic, lock, flags) \
+		__cond_lock(lock, _atomic_dec_and_lock_irqsave(atomic, lock, &(flags)))
+
+int alloc_bucket_spinlocks(spinlock_t **locks, unsigned int *lock_mask,
+			   size_t max_size, unsigned int cpu_mult,
+			   gfp_t gfp);
+
+void free_bucket_spinlocks(spinlock_t *locks);
 
 #endif /* __LINUX_SPINLOCK_H */

@@ -1,18 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * drivers/staging/android/ion/ion_cma_heap.c
  *
  * Copyright (C) Linaro 2012
  * Author: <benjamin.gaignard@linaro.org> for ST-Ericsson.
- *
- * This software is licensed under the terms of the GNU General Public
- * License version 2, as published by the Free Software Foundation, and
- * may be copied, distributed, and modified under those terms.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
  */
 
 #include <linux/device.h>
@@ -21,6 +12,7 @@
 #include <linux/err.h>
 #include <linux/cma.h>
 #include <linux/scatterlist.h>
+#include <linux/highmem.h>
 
 #include "ion.h"
 
@@ -31,7 +23,6 @@ struct ion_cma_heap {
 
 #define to_cma_heap(x) container_of(x, struct ion_cma_heap, heap)
 
-
 /* ION CMA heap operations functions */
 static int ion_cma_allocate(struct ion_heap *heap, struct ion_buffer *buffer,
 			    unsigned long len,
@@ -40,13 +31,35 @@ static int ion_cma_allocate(struct ion_heap *heap, struct ion_buffer *buffer,
 	struct ion_cma_heap *cma_heap = to_cma_heap(heap);
 	struct sg_table *table;
 	struct page *pages;
+	unsigned long size = PAGE_ALIGN(len);
+	unsigned long nr_pages = size >> PAGE_SHIFT;
+	unsigned long align = get_order(size);
 	int ret;
 
-	pages = cma_alloc(cma_heap->cma, len, 0, GFP_KERNEL);
+	if (align > CONFIG_CMA_ALIGNMENT)
+		align = CONFIG_CMA_ALIGNMENT;
+
+	pages = cma_alloc(cma_heap->cma, nr_pages, align, GFP_KERNEL);
 	if (!pages)
 		return -ENOMEM;
 
-	table = kmalloc(sizeof(struct sg_table), GFP_KERNEL);
+	if (PageHighMem(pages)) {
+		unsigned long nr_clear_pages = nr_pages;
+		struct page *page = pages;
+
+		while (nr_clear_pages > 0) {
+			void *vaddr = kmap_atomic(page);
+
+			memset(vaddr, 0, PAGE_SIZE);
+			kunmap_atomic(vaddr);
+			page++;
+			nr_clear_pages--;
+		}
+	} else {
+		memset(page_address(pages), 0, size);
+	}
+
+	table = kmalloc(sizeof(*table), GFP_KERNEL);
 	if (!table)
 		goto err;
 
@@ -54,7 +67,7 @@ static int ion_cma_allocate(struct ion_heap *heap, struct ion_buffer *buffer,
 	if (ret)
 		goto free_mem;
 
-	sg_set_page(table->sgl, pages, len, 0);
+	sg_set_page(table->sgl, pages, size, 0);
 
 	buffer->priv_virt = pages;
 	buffer->sg_table = table;
@@ -63,7 +76,7 @@ static int ion_cma_allocate(struct ion_heap *heap, struct ion_buffer *buffer,
 free_mem:
 	kfree(table);
 err:
-	cma_release(cma_heap->cma, pages, buffer->size);
+	cma_release(cma_heap->cma, pages, nr_pages);
 	return -ENOMEM;
 }
 
@@ -71,9 +84,10 @@ static void ion_cma_free(struct ion_buffer *buffer)
 {
 	struct ion_cma_heap *cma_heap = to_cma_heap(buffer->heap);
 	struct page *pages = buffer->priv_virt;
+	unsigned long nr_pages = PAGE_ALIGN(buffer->size) >> PAGE_SHIFT;
 
 	/* release memory */
-	cma_release(cma_heap->cma, pages, buffer->size);
+	cma_release(cma_heap->cma, pages, nr_pages);
 	/* release sg table */
 	sg_free_table(buffer->sg_table);
 	kfree(buffer->sg_table);
@@ -106,7 +120,7 @@ static struct ion_heap *__ion_cma_heap_create(struct cma *cma)
 	return &cma_heap->heap;
 }
 
-int __ion_add_cma_heaps(struct cma *cma, void *data)
+static int __ion_add_cma_heaps(struct cma *cma, void *data)
 {
 	struct ion_heap *heap;
 

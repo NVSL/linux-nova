@@ -35,7 +35,7 @@ int jffs2_fsync(struct file *filp, loff_t start, loff_t end, int datasync)
 	struct jffs2_sb_info *c = JFFS2_SB_INFO(inode->i_sb);
 	int ret;
 
-	ret = filemap_write_and_wait_range(inode->i_mapping, start, end);
+	ret = file_write_and_wait_range(filp, start, end);
 	if (ret)
 		return ret;
 
@@ -308,7 +308,7 @@ static int jffs2_write_end(struct file *filp, struct address_space *mapping,
 			inode->i_size = pos + writtenlen;
 			inode->i_blocks = (inode->i_size + 511) >> 9;
 
-			inode->i_ctime = inode->i_mtime = ITIME(je32_to_cpu(ri->ctime));
+			inode->i_ctime = inode->i_mtime = timespec_to_timespec64(ITIME(je32_to_cpu(ri->ctime)));
 		}
 	}
 

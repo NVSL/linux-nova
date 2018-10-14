@@ -102,8 +102,9 @@ static int tpm2_load_context(struct tpm_chip *chip, u8 *buf,
 		 * TPM_RC_REFERENCE_H0 means the session has been
 		 * flushed outside the space
 		 */
-		rc = -ENOENT;
+		*handle = 0;
 		tpm_buf_destroy(&tbuf);
+		return -ENOENT;
 	} else if (rc > 0) {
 		dev_warn(&chip->dev, "%s: failed with a TPM error 0x%04X\n",
 			 __func__, rc);
@@ -242,7 +243,7 @@ static int tpm2_map_command(struct tpm_chip *chip, u32 cc, u8 *cmd)
 	struct tpm_space *space = &chip->work_space;
 	unsigned int nr_handles;
 	u32 attrs;
-	u32 *handle;
+	__be32 *handle;
 	int i;
 
 	i = tpm2_find_cc(chip, cc);
@@ -252,7 +253,7 @@ static int tpm2_map_command(struct tpm_chip *chip, u32 cc, u8 *cmd)
 	attrs = chip->cc_attrs_tbl[i];
 	nr_handles = (attrs >> TPM2_CC_ATTR_CHANDLES) & GENMASK(2, 0);
 
-	handle = (u32 *)&cmd[TPM_HEADER_SIZE];
+	handle = (__be32 *)&cmd[TPM_HEADER_SIZE];
 	for (i = 0; i < nr_handles; i++, handle++) {
 		if ((be32_to_cpu(*handle) & 0xFF000000) == TPM2_HT_TRANSIENT) {
 			if (!tpm2_map_to_phandle(space, handle))

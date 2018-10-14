@@ -110,6 +110,8 @@ int intel_digital_connector_atomic_check(struct drm_connector *conn,
 		to_intel_digital_connector_state(old_state);
 	struct drm_crtc_state *crtc_state;
 
+	intel_hdcp_atomic_check(conn, old_state, new_state);
+
 	if (!new_state->crtc)
 		return 0;
 
@@ -186,13 +188,14 @@ intel_crtc_duplicate_state(struct drm_crtc *crtc)
 /**
  * intel_crtc_destroy_state - destroy crtc state
  * @crtc: drm crtc
+ * @state: the state to destroy
  *
  * Destroys the crtc state (both common and Intel-specific) for the
  * specified crtc.
  */
 void
 intel_crtc_destroy_state(struct drm_crtc *crtc,
-			  struct drm_crtc_state *state)
+			 struct drm_crtc_state *state)
 {
 	drm_atomic_helper_crtc_destroy_state(crtc, state);
 }
@@ -200,7 +203,7 @@ intel_crtc_destroy_state(struct drm_crtc *crtc,
 /**
  * intel_atomic_setup_scalers() - setup scalers for crtc per staged requests
  * @dev_priv: i915 device
- * @crtc: intel crtc
+ * @intel_crtc: intel crtc
  * @crtc_state: incoming crtc_state to validate and setup scalers
  *
  * This function sets up scalers based on staged scaling requests for
@@ -224,6 +227,7 @@ int intel_atomic_setup_scalers(struct drm_i915_private *dev_priv,
 	struct intel_crtc_scaler_state *scaler_state =
 		&crtc_state->scaler_state;
 	struct drm_atomic_state *drm_state = crtc_state->base.state;
+	struct intel_atomic_state *intel_state = to_intel_atomic_state(drm_state);
 	int num_scalers_need;
 	int i, j;
 
@@ -301,8 +305,8 @@ int intel_atomic_setup_scalers(struct drm_i915_private *dev_priv,
 				continue;
 			}
 
-			plane_state = intel_atomic_get_existing_plane_state(drm_state,
-									    intel_plane);
+			plane_state = intel_atomic_get_new_plane_state(intel_state,
+								       intel_plane);
 			scaler_id = &plane_state->scaler_id;
 		}
 
@@ -325,8 +329,18 @@ int intel_atomic_setup_scalers(struct drm_i915_private *dev_priv,
 		}
 
 		/* set scaler mode */
-		if (IS_GEMINILAKE(dev_priv) || IS_CANNONLAKE(dev_priv)) {
-			scaler_state->scalers[*scaler_id].mode = 0;
+		if ((INTEL_GEN(dev_priv) >= 9) &&
+		    plane_state && plane_state->base.fb &&
+		    plane_state->base.fb->format->format ==
+		    DRM_FORMAT_NV12) {
+			if (INTEL_GEN(dev_priv) == 9 &&
+			    !IS_GEMINILAKE(dev_priv) &&
+			    !IS_SKYLAKE(dev_priv))
+				scaler_state->scalers[*scaler_id].mode =
+					SKL_PS_SCALER_MODE_NV12;
+			else
+				scaler_state->scalers[*scaler_id].mode =
+					PS_SCALER_MODE_PLANAR;
 		} else if (num_scalers_need == 1 && intel_crtc->pipe != PIPE_C) {
 			/*
 			 * when only 1 scaler is in use on either pipe A or B,

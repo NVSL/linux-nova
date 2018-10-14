@@ -178,15 +178,17 @@ extern "C" {
 #define DRM_FORMAT_MOD_VENDOR_NONE    0
 #define DRM_FORMAT_MOD_VENDOR_INTEL   0x01
 #define DRM_FORMAT_MOD_VENDOR_AMD     0x02
-#define DRM_FORMAT_MOD_VENDOR_NV      0x03
+#define DRM_FORMAT_MOD_VENDOR_NVIDIA  0x03
 #define DRM_FORMAT_MOD_VENDOR_SAMSUNG 0x04
 #define DRM_FORMAT_MOD_VENDOR_QCOM    0x05
 #define DRM_FORMAT_MOD_VENDOR_VIVANTE 0x06
 #define DRM_FORMAT_MOD_VENDOR_BROADCOM 0x07
 /* add more to the end as needed */
 
+#define DRM_FORMAT_RESERVED	      ((1ULL << 56) - 1)
+
 #define fourcc_mod_code(vendor, val) \
-	((((__u64)DRM_FORMAT_MOD_VENDOR_## vendor) << 56) | (val & 0x00ffffffffffffffULL))
+	((((__u64)DRM_FORMAT_MOD_VENDOR_## vendor) << 56) | ((val) & 0x00ffffffffffffffULL))
 
 /*
  * Format Modifier tokens:
@@ -195,6 +197,15 @@ extern "C" {
  * similar to the fourcc codes above. drm_fourcc.h is considered the
  * authoritative source for all of these.
  */
+
+/*
+ * Invalid Modifier
+ *
+ * This modifier can be used as a sentinel to terminate the format modifiers
+ * list, or to initialize a variable with an invalid modifier. It might also be
+ * used to report an error back to userspace for certain APIs.
+ */
+#define DRM_FORMAT_MOD_INVALID	fourcc_mod_code(NONE, DRM_FORMAT_RESERVED)
 
 /*
  * Linear Layout
@@ -253,6 +264,26 @@ extern "C" {
 #define I915_FORMAT_MOD_Yf_TILED fourcc_mod_code(INTEL, 3)
 
 /*
+ * Intel color control surface (CCS) for render compression
+ *
+ * The framebuffer format must be one of the 8:8:8:8 RGB formats.
+ * The main surface will be plane index 0 and must be Y/Yf-tiled,
+ * the CCS will be plane index 1.
+ *
+ * Each CCS tile matches a 1024x512 pixel area of the main surface.
+ * To match certain aspects of the 3D hardware the CCS is
+ * considered to be made up of normal 128Bx32 Y tiles, Thus
+ * the CCS pitch must be specified in multiples of 128 bytes.
+ *
+ * In reality the CCS tile appears to be a 64Bx64 Y tile, composed
+ * of QWORD (8 bytes) chunks instead of OWORD (16 bytes) chunks.
+ * But that fact is not relevant unless the memory is accessed
+ * directly.
+ */
+#define I915_FORMAT_MOD_Y_TILED_CCS	fourcc_mod_code(INTEL, 4)
+#define I915_FORMAT_MOD_Yf_TILED_CCS	fourcc_mod_code(INTEL, 5)
+
+/*
  * Tiled, NV12MT, grouped in 64 (pixels) x 32 (lines) -sized macroblocks
  *
  * Macroblocks are laid in a Z-shape, and each pixel data is following the
@@ -307,29 +338,17 @@ extern "C" {
  */
 #define DRM_FORMAT_MOD_VIVANTE_SPLIT_SUPER_TILED fourcc_mod_code(VIVANTE, 4)
 
-/* NVIDIA Tegra frame buffer modifiers */
-
-/*
- * Some modifiers take parameters, for example the number of vertical GOBs in
- * a block. Reserve the lower 32 bits for parameters
- */
-#define __fourcc_mod_tegra_mode_shift 32
-#define fourcc_mod_tegra_code(val, params) \
-	fourcc_mod_code(NV, ((((__u64)val) << __fourcc_mod_tegra_mode_shift) | params))
-#define fourcc_mod_tegra_mod(m) \
-	(m & ~((1ULL << __fourcc_mod_tegra_mode_shift) - 1))
-#define fourcc_mod_tegra_param(m) \
-	(m & ((1ULL << __fourcc_mod_tegra_mode_shift) - 1))
+/* NVIDIA frame buffer modifiers */
 
 /*
  * Tegra Tiled Layout, used by Tegra 2, 3 and 4.
  *
  * Pixels are arranged in simple tiles of 16 x 16 bytes.
  */
-#define NV_FORMAT_MOD_TEGRA_TILED fourcc_mod_tegra_code(1, 0)
+#define DRM_FORMAT_MOD_NVIDIA_TEGRA_TILED fourcc_mod_code(NVIDIA, 1)
 
 /*
- * Tegra 16Bx2 Block Linear layout, used by TK1/TX1
+ * 16Bx2 Block Linear layout, used by desktop GPUs, and Tegra K1 and later
  *
  * Pixels are arranged in 64x8 Groups Of Bytes (GOBs). GOBs are then stacked
  * vertically by a power of 2 (1 to 32 GOBs) to form a block.
@@ -349,7 +368,21 @@ extern "C" {
  * Chapter 20 "Pixel Memory Formats" of the Tegra X1 TRM describes this format
  * in full detail.
  */
-#define NV_FORMAT_MOD_TEGRA_16BX2_BLOCK(v) fourcc_mod_tegra_code(2, v)
+#define DRM_FORMAT_MOD_NVIDIA_16BX2_BLOCK(v) \
+	fourcc_mod_code(NVIDIA, 0x10 | ((v) & 0xf))
+
+#define DRM_FORMAT_MOD_NVIDIA_16BX2_BLOCK_ONE_GOB \
+	fourcc_mod_code(NVIDIA, 0x10)
+#define DRM_FORMAT_MOD_NVIDIA_16BX2_BLOCK_TWO_GOB \
+	fourcc_mod_code(NVIDIA, 0x11)
+#define DRM_FORMAT_MOD_NVIDIA_16BX2_BLOCK_FOUR_GOB \
+	fourcc_mod_code(NVIDIA, 0x12)
+#define DRM_FORMAT_MOD_NVIDIA_16BX2_BLOCK_EIGHT_GOB \
+	fourcc_mod_code(NVIDIA, 0x13)
+#define DRM_FORMAT_MOD_NVIDIA_16BX2_BLOCK_SIXTEEN_GOB \
+	fourcc_mod_code(NVIDIA, 0x14)
+#define DRM_FORMAT_MOD_NVIDIA_16BX2_BLOCK_THIRTYTWO_GOB \
+	fourcc_mod_code(NVIDIA, 0x15)
 
 /*
  * Broadcom VC4 "T" format

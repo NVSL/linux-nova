@@ -42,6 +42,7 @@ static u32 xive_provision_chip_count;
 static u32 xive_queue_shift;
 static u32 xive_pool_vps = XIVE_INVALID_VP;
 static struct kmem_cache *xive_provision_cache;
+static bool xive_has_single_esc;
 
 int xive_native_populate_irq_data(u32 hw_irq, struct xive_irq_data *data)
 {
@@ -81,6 +82,8 @@ int xive_native_populate_irq_data(u32 hw_irq, struct xive_irq_data *data)
 		pr_err("Failed to map EOI page for irq 0x%x\n", hw_irq);
 		return -ENOMEM;
 	}
+
+	data->hw_irq = hw_irq;
 
 	if (!data->trig_page)
 		return 0;
@@ -202,17 +205,12 @@ EXPORT_SYMBOL_GPL(xive_native_disable_queue);
 static int xive_native_setup_queue(unsigned int cpu, struct xive_cpu *xc, u8 prio)
 {
 	struct xive_q *q = &xc->queue[prio];
-	unsigned int alloc_order;
-	struct page *pages;
 	__be32 *qpage;
 
-	alloc_order = (xive_queue_shift > PAGE_SHIFT) ?
-		(xive_queue_shift - PAGE_SHIFT) : 0;
-	pages = alloc_pages_node(cpu_to_node(cpu), GFP_KERNEL, alloc_order);
-	if (!pages)
-		return -ENOMEM;
-	qpage = (__be32 *)page_address(pages);
-	memset(qpage, 0, 1 << xive_queue_shift);
+	qpage = xive_queue_page_alloc(cpu, xive_queue_shift);
+	if (IS_ERR(qpage))
+		return PTR_ERR(qpage);
+
 	return xive_native_configure_queue(get_hard_smp_processor_id(cpu),
 					   q, prio, qpage, xive_queue_shift, false);
 }
@@ -227,8 +225,7 @@ static void xive_native_cleanup_queue(unsigned int cpu, struct xive_cpu *xc, u8 
 	 * from an IPI and iounmap isn't safe
 	 */
 	__xive_native_disable_queue(get_hard_smp_processor_id(cpu), q, prio);
-	alloc_order = (xive_queue_shift > PAGE_SHIFT) ?
-		(xive_queue_shift - PAGE_SHIFT) : 0;
+	alloc_order = xive_alloc_order(xive_queue_shift);
 	free_pages((unsigned long)q->qpage, alloc_order);
 	q->qpage = NULL;
 }
@@ -344,7 +341,7 @@ static void xive_native_update_pending(struct xive_cpu *xc)
 	 * of the hypervisor interrupt (if any)
 	 */
 	cppr = ack & 0xff;
-	he = GETFIELD(TM_QW3_NSR_HE, (ack >> 8));
+	he = (ack >> 8) >> 6;
 	switch(he) {
 	case TM_QW3_NSR_HE_NONE: /* Nothing to see here */
 		break;
@@ -391,6 +388,10 @@ static void xive_native_setup_cpu(unsigned int cpu, struct xive_cpu *xc)
 
 	if (xive_pool_vps == XIVE_INVALID_VP)
 		return;
+
+	/* Check if pool VP already active, if it is, pull it */
+	if (in_be32(xive_tima + TM_QW2_HV_POOL + TM_WORD2) & TM_QW2W2_VP)
+		in_be64(xive_tima + TM_SPC_PULL_POOL_CTX);
 
 	/* Enable the pool VP */
 	vp = xive_pool_vps + cpu;
@@ -488,7 +489,7 @@ static bool xive_parse_provisioning(struct device_node *np)
 	if (rc == 0)
 		return true;
 
-	xive_provision_chips = kzalloc(4 * xive_provision_chip_count,
+	xive_provision_chips = kcalloc(4, xive_provision_chip_count,
 				       GFP_KERNEL);
 	if (WARN_ON(!xive_provision_chips))
 		return false;
@@ -515,13 +516,13 @@ static bool xive_parse_provisioning(struct device_node *np)
 static void xive_native_setup_pools(void)
 {
 	/* Allocate a pool big enough */
-	pr_debug("XIVE: Allocating VP block for pool size %d\n", nr_cpu_ids);
+	pr_debug("XIVE: Allocating VP block for pool size %u\n", nr_cpu_ids);
 
 	xive_pool_vps = xive_native_alloc_vp_block(nr_cpu_ids);
 	if (WARN_ON(xive_pool_vps == XIVE_INVALID_VP))
 		pr_err("XIVE: Failed to allocate pool VP, KVM might not function\n");
 
-	pr_debug("XIVE: Pool VPs allocated at 0x%x for %d max CPUs\n",
+	pr_debug("XIVE: Pool VPs allocated at 0x%x for %u max CPUs\n",
 		 xive_pool_vps, nr_cpu_ids);
 }
 
@@ -531,7 +532,7 @@ u32 xive_native_default_eq_shift(void)
 }
 EXPORT_SYMBOL_GPL(xive_native_default_eq_shift);
 
-bool xive_native_init(void)
+bool __init xive_native_init(void)
 {
 	struct device_node *np;
 	struct resource r;
@@ -551,7 +552,7 @@ bool xive_native_init(void)
 		pr_devel("not found !\n");
 		return false;
 	}
-	pr_devel("Found %s\n", np->full_name);
+	pr_devel("Found %pOF\n", np);
 
 	/* Resource 1 is HV window */
 	if (of_address_to_resource(np, 1, &r)) {
@@ -574,6 +575,10 @@ bool xive_native_init(void)
 		if (val == PAGE_SHIFT)
 			break;
 	}
+
+	/* Do we support single escalation */
+	if (of_get_property(np, "single-escalation-support", NULL) != NULL)
+		xive_has_single_esc = true;
 
 	/* Configure Thread Management areas for KVM */
 	for_each_possible_cpu(cpu)
@@ -671,12 +676,15 @@ void xive_native_free_vp_block(u32 vp_base)
 }
 EXPORT_SYMBOL_GPL(xive_native_free_vp_block);
 
-int xive_native_enable_vp(u32 vp_id)
+int xive_native_enable_vp(u32 vp_id, bool single_escalation)
 {
 	s64 rc;
+	u64 flags = OPAL_XIVE_VP_ENABLED;
 
+	if (single_escalation)
+		flags |= OPAL_XIVE_VP_SINGLE_ESCALATION;
 	for (;;) {
-		rc = opal_xive_set_vp_info(vp_id, OPAL_XIVE_VP_ENABLED, 0);
+		rc = opal_xive_set_vp_info(vp_id, flags, 0);
 		if (rc != OPAL_BUSY)
 			break;
 		msleep(1);
@@ -714,3 +722,9 @@ int xive_native_get_vp_info(u32 vp_id, u32 *out_cam_id, u32 *out_chip_id)
 	return 0;
 }
 EXPORT_SYMBOL_GPL(xive_native_get_vp_info);
+
+bool xive_native_has_single_escalation(void)
+{
+	return xive_has_single_esc;
+}
+EXPORT_SYMBOL_GPL(xive_native_has_single_escalation);

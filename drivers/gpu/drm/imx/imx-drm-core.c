@@ -24,6 +24,7 @@
 #include <drm/drm_fb_helper.h>
 #include <drm/drm_crtc_helper.h>
 #include <drm/drm_gem_cma_helper.h>
+#include <drm/drm_gem_framebuffer_helper.h>
 #include <drm/drm_fb_cma_helper.h>
 #include <drm/drm_plane_helper.h>
 #include <drm/drm_of.h>
@@ -37,7 +38,6 @@
 struct imx_drm_device {
 	struct drm_device			*drm;
 	unsigned int				pipes;
-	struct drm_fbdev_cma			*fbhelper;
 	struct drm_atomic_state			*state;
 };
 
@@ -45,13 +45,6 @@ struct imx_drm_device {
 static int legacyfb_depth = 16;
 module_param(legacyfb_depth, int, 0444);
 #endif
-
-static void imx_drm_driver_lastclose(struct drm_device *drm)
-{
-	struct imx_drm_device *imxdrm = drm->dev_private;
-
-	drm_fbdev_cma_restore_mode(imxdrm->fbhelper);
-}
 
 DEFINE_DRM_GEM_CMA_FOPS(imx_drm_driver_fops);
 
@@ -67,13 +60,6 @@ void imx_drm_encoder_destroy(struct drm_encoder *encoder)
 	drm_encoder_cleanup(encoder);
 }
 EXPORT_SYMBOL_GPL(imx_drm_encoder_destroy);
-
-static void imx_drm_output_poll_changed(struct drm_device *drm)
-{
-	struct imx_drm_device *imxdrm = drm->dev_private;
-
-	drm_fbdev_cma_hotplug_event(imxdrm->fbhelper);
-}
 
 static int imx_drm_atomic_check(struct drm_device *dev,
 				struct drm_atomic_state *state)
@@ -105,8 +91,8 @@ static int imx_drm_atomic_check(struct drm_device *dev,
 }
 
 static const struct drm_mode_config_funcs imx_drm_mode_config_funcs = {
-	.fb_create = drm_fb_cma_create,
-	.output_poll_changed = imx_drm_output_poll_changed,
+	.fb_create = drm_gem_fb_create,
+	.output_poll_changed = drm_fb_helper_output_poll_changed,
 	.atomic_check = imx_drm_atomic_check,
 	.atomic_commit = drm_atomic_helper_commit,
 };
@@ -115,7 +101,7 @@ static void imx_drm_atomic_commit_tail(struct drm_atomic_state *state)
 {
 	struct drm_device *dev = state->dev;
 	struct drm_plane *plane;
-	struct drm_plane_state *old_plane_state;
+	struct drm_plane_state *old_plane_state, *new_plane_state;
 	bool plane_disabling = false;
 	int i;
 
@@ -127,15 +113,22 @@ static void imx_drm_atomic_commit_tail(struct drm_atomic_state *state)
 
 	drm_atomic_helper_commit_modeset_enables(dev, state);
 
-	for_each_plane_in_state(state, plane, old_plane_state, i) {
-		if (drm_atomic_plane_disabling(old_plane_state, plane->state))
+	for_each_oldnew_plane_in_state(state, plane, old_plane_state, new_plane_state, i) {
+		if (drm_atomic_plane_disabling(old_plane_state, new_plane_state))
 			plane_disabling = true;
 	}
 
-	if (plane_disabling) {
-		drm_atomic_helper_wait_for_vblanks(dev, state);
+	/*
+	 * The flip done wait is only strictly required by imx-drm if a deferred
+	 * plane disable is in-flight. As the core requires blocking commits
+	 * to wait for the flip it is done here unconditionally. This keeps the
+	 * workitem around a bit longer than required for the majority of
+	 * non-blocking commits, but we accept that for the sake of simplicity.
+	 */
+	drm_atomic_helper_wait_for_flip_done(dev, state);
 
-		for_each_plane_in_state(state, plane, old_plane_state, i)
+	if (plane_disabling) {
+		for_each_old_plane_in_state(state, plane, old_plane_state, i)
 			ipu_plane_disable_deferred(plane);
 
 	}
@@ -178,12 +171,10 @@ static const struct drm_ioctl_desc imx_drm_ioctls[] = {
 static struct drm_driver imx_drm_driver = {
 	.driver_features	= DRIVER_MODESET | DRIVER_GEM | DRIVER_PRIME |
 				  DRIVER_ATOMIC,
-	.lastclose		= imx_drm_driver_lastclose,
+	.lastclose		= drm_fb_helper_lastclose,
 	.gem_free_object_unlocked = drm_gem_cma_free_object,
 	.gem_vm_ops		= &drm_gem_cma_vm_ops,
 	.dumb_create		= drm_gem_cma_dumb_create,
-	.dumb_map_offset	= drm_gem_cma_dumb_map_offset,
-	.dumb_destroy		= drm_gem_dumb_destroy,
 
 	.prime_handle_to_fd	= drm_gem_prime_handle_to_fd,
 	.prime_fd_to_handle	= drm_gem_prime_fd_to_handle,
@@ -266,6 +257,7 @@ static int imx_drm_bind(struct device *dev)
 	drm->mode_config.max_height = 4096;
 	drm->mode_config.funcs = &imx_drm_mode_config_funcs;
 	drm->mode_config.helper_private = &imx_drm_mode_config_helpers;
+	drm->mode_config.allow_fb_modifiers = true;
 
 	drm_mode_config_init(drm);
 
@@ -292,12 +284,9 @@ static int imx_drm_bind(struct device *dev)
 		dev_warn(dev, "Invalid legacyfb_depth.  Defaulting to 16bpp\n");
 		legacyfb_depth = 16;
 	}
-	imxdrm->fbhelper = drm_fbdev_cma_init(drm, legacyfb_depth, MAX_CRTC);
-	if (IS_ERR(imxdrm->fbhelper)) {
-		ret = PTR_ERR(imxdrm->fbhelper);
-		imxdrm->fbhelper = NULL;
+	ret = drm_fb_cma_fbdev_init(drm, legacyfb_depth, MAX_CRTC);
+	if (ret)
 		goto err_unbind;
-	}
 #endif
 
 	drm_kms_helper_poll_init(drm);
@@ -311,8 +300,7 @@ static int imx_drm_bind(struct device *dev)
 err_fbhelper:
 	drm_kms_helper_poll_fini(drm);
 #if IS_ENABLED(CONFIG_DRM_FBDEV_EMULATION)
-	if (imxdrm->fbhelper)
-		drm_fbdev_cma_fini(imxdrm->fbhelper);
+	drm_fb_cma_fbdev_fini(drm);
 err_unbind:
 #endif
 	component_unbind_all(drm->dev, drm);
@@ -327,14 +315,12 @@ err_unref:
 static void imx_drm_unbind(struct device *dev)
 {
 	struct drm_device *drm = dev_get_drvdata(dev);
-	struct imx_drm_device *imxdrm = drm->dev_private;
 
 	drm_dev_unregister(drm);
 
 	drm_kms_helper_poll_fini(drm);
 
-	if (imxdrm->fbhelper)
-		drm_fbdev_cma_fini(imxdrm->fbhelper);
+	drm_fb_cma_fbdev_fini(drm);
 
 	drm_mode_config_cleanup(drm);
 

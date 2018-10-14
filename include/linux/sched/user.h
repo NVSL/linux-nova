@@ -1,8 +1,10 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _LINUX_SCHED_USER_H
 #define _LINUX_SCHED_USER_H
 
 #include <linux/uidgid.h>
 #include <linux/atomic.h>
+#include <linux/ratelimit.h>
 
 struct key;
 
@@ -36,9 +38,13 @@ struct user_struct {
 	struct hlist_node uidhash_node;
 	kuid_t uid;
 
-#if defined(CONFIG_PERF_EVENTS) || defined(CONFIG_BPF_SYSCALL)
+#if defined(CONFIG_PERF_EVENTS) || defined(CONFIG_BPF_SYSCALL) || \
+    defined(CONFIG_NET)
 	atomic_long_t locked_vm;
 #endif
+
+	/* Miscellaneous per-user rate limit */
+	struct ratelimit_state ratelimit;
 };
 
 extern int uids_sysfs_init(void);

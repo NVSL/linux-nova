@@ -759,6 +759,16 @@ static int dcp_sha_digest(struct ahash_request *req)
 	return dcp_sha_finup(req);
 }
 
+static int dcp_sha_noimport(struct ahash_request *req, const void *in)
+{
+	return -ENOSYS;
+}
+
+static int dcp_sha_noexport(struct ahash_request *req, void *out)
+{
+	return -ENOSYS;
+}
+
 static int dcp_sha_cra_init(struct crypto_tfm *tfm)
 {
 	crypto_ahash_set_reqsize(__crypto_ahash_cast(tfm),
@@ -829,6 +839,8 @@ static struct ahash_alg dcp_sha1_alg = {
 	.final	= dcp_sha_final,
 	.finup	= dcp_sha_finup,
 	.digest	= dcp_sha_digest,
+	.import = dcp_sha_noimport,
+	.export = dcp_sha_noexport,
 	.halg	= {
 		.digestsize	= SHA1_DIGEST_SIZE,
 		.base		= {
@@ -853,6 +865,8 @@ static struct ahash_alg dcp_sha256_alg = {
 	.final	= dcp_sha_final,
 	.finup	= dcp_sha_finup,
 	.digest	= dcp_sha_digest,
+	.import = dcp_sha_noimport,
+	.export = dcp_sha_noexport,
 	.halg	= {
 		.digestsize	= SHA256_DIGEST_SIZE,
 		.base		= {
@@ -908,12 +922,16 @@ static int mxs_dcp_probe(struct platform_device *pdev)
 
 	iores = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	dcp_vmi_irq = platform_get_irq(pdev, 0);
-	if (dcp_vmi_irq < 0)
+	if (dcp_vmi_irq < 0) {
+		dev_err(dev, "Failed to get IRQ: (%d)!\n", dcp_vmi_irq);
 		return dcp_vmi_irq;
+	}
 
 	dcp_irq = platform_get_irq(pdev, 1);
-	if (dcp_irq < 0)
+	if (dcp_irq < 0) {
+		dev_err(dev, "Failed to get IRQ: (%d)!\n", dcp_irq);
 		return dcp_irq;
+	}
 
 	sdcp = devm_kzalloc(dev, sizeof(*sdcp), GFP_KERNEL);
 	if (!sdcp)

@@ -12,22 +12,22 @@ config NOP_TRACER
 config HAVE_FTRACE_NMI_ENTER
 	bool
 	help
-	  See Documentation/trace/ftrace-design.txt
+	  See Documentation/trace/ftrace-design.rst
 
 config HAVE_FUNCTION_TRACER
 	bool
 	help
-	  See Documentation/trace/ftrace-design.txt
+	  See Documentation/trace/ftrace-design.rst
 
 config HAVE_FUNCTION_GRAPH_TRACER
 	bool
 	help
-	  See Documentation/trace/ftrace-design.txt
+	  See Documentation/trace/ftrace-design.rst
 
 config HAVE_DYNAMIC_FTRACE
 	bool
 	help
-	  See Documentation/trace/ftrace-design.txt
+	  See Documentation/trace/ftrace-design.rst
 
 config HAVE_DYNAMIC_FTRACE_WITH_REGS
 	bool
@@ -35,12 +35,12 @@ config HAVE_DYNAMIC_FTRACE_WITH_REGS
 config HAVE_FTRACE_MCOUNT_RECORD
 	bool
 	help
-	  See Documentation/trace/ftrace-design.txt
+	  See Documentation/trace/ftrace-design.rst
 
 config HAVE_SYSCALL_TRACEPOINTS
 	bool
 	help
-	  See Documentation/trace/ftrace-design.txt
+	  See Documentation/trace/ftrace-design.rst
 
 config HAVE_FENTRY
 	bool
@@ -110,11 +110,7 @@ config GENERIC_TRACER
 #
 config TRACING_SUPPORT
 	bool
-	# PPC32 has no irqflags tracing support, but it can use most of the
-	# tracers anyway, they were tested to build and work. Note that new
-	# exceptions to this list aren't welcomed, better implement the
-	# irqflags tracing for your architecture.
-	depends on TRACE_IRQFLAGS_SUPPORT || PPC32
+	depends on TRACE_IRQFLAGS_SUPPORT
 	depends on STACKTRACE_SUPPORT
 	default y
 
@@ -159,6 +155,18 @@ config FUNCTION_GRAPH_TRACER
 	  the return value. This is done by setting the current return
 	  address on the current task structure into a stack of calls.
 
+
+config PREEMPTIRQ_EVENTS
+	bool "Enable trace events for preempt and irq disable/enable"
+	select TRACE_IRQFLAGS
+	depends on DEBUG_PREEMPT || !PROVE_LOCKING
+	depends on TRACING
+	default n
+	help
+	  Enable tracing of disable and enable events for preemption and irqs.
+	  For tracing preempt disable/enable events, DEBUG_PREEMPT must be
+	  enabled. For tracing irq disable/enable events, PROVE_LOCKING must
+	  be disabled.
 
 config IRQSOFF_TRACER
 	bool "Interrupts-off Latency Tracer"
@@ -224,7 +232,7 @@ config HWLAT_TRACER
 	select GENERIC_TRACER
 	help
 	 This tracer, when enabled will create one or more kernel threads,
-	 depening on what the cpumask file is set to, which each thread
+	 depending on what the cpumask file is set to, which each thread
 	 spinning in a loop looking for interruptions caused by
 	 something other than the kernel. For example, if a
 	 System Management Interrupt (SMI) takes a noticeable amount of
@@ -239,7 +247,7 @@ config HWLAT_TRACER
 				     iteration
 
 	 A kernel thread is created that will spin with interrupts disabled
-	 for "width" microseconds in every "widow" cycle. It will not spin
+	 for "width" microseconds in every "window" cycle. It will not spin
 	 for "window - width" microseconds, where the system can
 	 continue to operate.
 
@@ -343,7 +351,7 @@ config PROFILE_ANNOTATED_BRANCHES
 	  on if you need to profile the system's use of these macros.
 
 config PROFILE_ALL_BRANCHES
-	bool "Profile all if conditionals"
+	bool "Profile all if conditionals" if !FORTIFY_SOURCE
 	select TRACE_BRANCH_PROFILING
 	help
 	  This tracer profiles all branch conditions. Every if ()
@@ -440,7 +448,7 @@ config KPROBE_EVENTS
 	help
 	  This allows the user to add tracing events (similar to tracepoints)
 	  on the fly via the ftrace interface. See
-	  Documentation/trace/kprobetrace.txt for more details.
+	  Documentation/trace/kprobetrace.rst for more details.
 
 	  Those events can be inserted wherever kprobes can probe, and record
 	  various register and memory values.
@@ -518,6 +526,15 @@ config FUNCTION_PROFILER
 
 	  If in doubt, say N.
 
+config BPF_KPROBE_OVERRIDE
+	bool "Enable BPF programs to override a kprobed function"
+	depends on BPF_EVENTS
+	depends on FUNCTION_ERROR_INJECTION
+	default n
+	help
+	 Allows BPF to override the execution of a probed function and
+	 set a different return value.  This is used for error injection.
+
 config FTRACE_MCOUNT_RECORD
 	def_bool y
 	depends on DYNAMIC_FTRACE
@@ -558,7 +575,7 @@ config MMIOTRACE
 	  implementation and works via page faults. Tracing is disabled by
 	  default and can be enabled at run-time.
 
-	  See Documentation/trace/mmiotrace.txt.
+	  See Documentation/trace/mmiotrace.rst.
 	  If you are not helping to develop drivers, say N.
 
 config TRACING_MAP
@@ -585,7 +602,10 @@ config HIST_TRIGGERS
 	  event activity as an initial guide for further investigation
 	  using more advanced tools.
 
-	  See Documentation/trace/events.txt.
+	  Inter-event tracing of quantities such as latencies is also
+	  supported using hist triggers under this option.
+
+	  See Documentation/trace/histogram.txt.
 	  If in doubt, say N.
 
 config MMIOTRACE_TEST

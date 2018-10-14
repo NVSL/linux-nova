@@ -4,7 +4,7 @@
  * Copyright (C) 2008 Jochen Friedrich <jochen@scram.de>
  * based on a previous patch from Jon Smirl <jonsmirl@gmail.com>
  *
- * Copyright (C) 2013 Wolfram Sang <wsa@the-dreams.de>
+ * Copyright (C) 2013, 2018 Wolfram Sang <wsa@the-dreams.de>
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
@@ -22,66 +22,67 @@
 
 #include "i2c-core.h"
 
-static struct i2c_client *of_i2c_register_device(struct i2c_adapter *adap,
-						 struct device_node *node)
+int of_i2c_get_board_info(struct device *dev, struct device_node *node,
+			  struct i2c_board_info *info)
 {
-	struct i2c_client *result;
-	struct i2c_board_info info = {};
-	struct dev_archdata dev_ad = {};
-	const __be32 *addr_be;
 	u32 addr;
-	int len;
+	int ret;
 
-	dev_dbg(&adap->dev, "of_i2c: register %s\n", node->full_name);
+	memset(info, 0, sizeof(*info));
 
-	if (of_modalias_node(node, info.type, sizeof(info.type)) < 0) {
-		dev_err(&adap->dev, "of_i2c: modalias failure on %s\n",
-			node->full_name);
-		return ERR_PTR(-EINVAL);
+	if (of_modalias_node(node, info->type, sizeof(info->type)) < 0) {
+		dev_err(dev, "of_i2c: modalias failure on %pOF\n", node);
+		return -EINVAL;
 	}
 
-	addr_be = of_get_property(node, "reg", &len);
-	if (!addr_be || (len < sizeof(*addr_be))) {
-		dev_err(&adap->dev, "of_i2c: invalid reg on %s\n",
-			node->full_name);
-		return ERR_PTR(-EINVAL);
+	ret = of_property_read_u32(node, "reg", &addr);
+	if (ret) {
+		dev_err(dev, "of_i2c: invalid reg on %pOF\n", node);
+		return ret;
 	}
 
-	addr = be32_to_cpup(addr_be);
 	if (addr & I2C_TEN_BIT_ADDRESS) {
 		addr &= ~I2C_TEN_BIT_ADDRESS;
-		info.flags |= I2C_CLIENT_TEN;
+		info->flags |= I2C_CLIENT_TEN;
 	}
 
 	if (addr & I2C_OWN_SLAVE_ADDRESS) {
 		addr &= ~I2C_OWN_SLAVE_ADDRESS;
-		info.flags |= I2C_CLIENT_SLAVE;
+		info->flags |= I2C_CLIENT_SLAVE;
 	}
 
-	if (i2c_check_addr_validity(addr, info.flags)) {
-		dev_err(&adap->dev, "of_i2c: invalid addr=%x on %s\n",
-			addr, node->full_name);
-		return ERR_PTR(-EINVAL);
-	}
-
-	info.addr = addr;
-	info.of_node = of_node_get(node);
-	info.archdata = &dev_ad;
+	info->addr = addr;
+	info->of_node = node;
 
 	if (of_property_read_bool(node, "host-notify"))
-		info.flags |= I2C_CLIENT_HOST_NOTIFY;
+		info->flags |= I2C_CLIENT_HOST_NOTIFY;
 
 	if (of_get_property(node, "wakeup-source", NULL))
-		info.flags |= I2C_CLIENT_WAKE;
+		info->flags |= I2C_CLIENT_WAKE;
 
-	result = i2c_new_device(adap, &info);
-	if (result == NULL) {
-		dev_err(&adap->dev, "of_i2c: Failure registering %s\n",
-			node->full_name);
-		of_node_put(node);
+	return 0;
+}
+EXPORT_SYMBOL_GPL(of_i2c_get_board_info);
+
+static struct i2c_client *of_i2c_register_device(struct i2c_adapter *adap,
+						 struct device_node *node)
+{
+	struct i2c_client *client;
+	struct i2c_board_info info;
+	int ret;
+
+	dev_dbg(&adap->dev, "of_i2c: register %pOF\n", node);
+
+	ret = of_i2c_get_board_info(&adap->dev, node, &info);
+	if (ret)
+		return ERR_PTR(ret);
+
+	client = i2c_new_device(adap, &info);
+	if (!client) {
+		dev_err(&adap->dev, "of_i2c: Failure registering %pOF\n", node);
 		return ERR_PTR(-EINVAL);
 	}
-	return result;
+	return client;
 }
 
 void of_i2c_register_devices(struct i2c_adapter *adap)
@@ -105,9 +106,9 @@ void of_i2c_register_devices(struct i2c_adapter *adap)
 
 		client = of_i2c_register_device(adap, node);
 		if (IS_ERR(client)) {
-			dev_warn(&adap->dev,
-				 "Failed to create I2C device for %s\n",
-				 node->full_name);
+			dev_err(&adap->dev,
+				 "Failed to create I2C device for %pOF\n",
+				 node);
 			of_node_clear_flag(node, OF_POPULATED);
 		}
 	}
@@ -243,8 +244,8 @@ static int of_i2c_notify(struct notifier_block *nb, unsigned long action,
 		put_device(&adap->dev);
 
 		if (IS_ERR(client)) {
-			dev_err(&adap->dev, "failed to create client for '%s'\n",
-				 rd->dn->full_name);
+			dev_err(&adap->dev, "failed to create client for '%pOF'\n",
+				 rd->dn);
 			of_node_clear_flag(rd->dn, OF_POPULATED);
 			return notifier_from_errno(PTR_ERR(client));
 		}

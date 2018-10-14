@@ -104,6 +104,9 @@ static void brcmf_feat_iovar_int_get(struct brcmf_if *ifp,
 	u32 data;
 	int err;
 
+	/* we need to know firmware error */
+	ifp->fwil_fwerr = true;
+
 	err = brcmf_fil_iovar_int_get(ifp, name, &data);
 	if (err == 0) {
 		brcmf_dbg(INFO, "enabling feature: %s\n", brcmf_feat_names[id]);
@@ -112,6 +115,8 @@ static void brcmf_feat_iovar_int_get(struct brcmf_if *ifp,
 		brcmf_dbg(TRACE, "%s feature check failed: %d\n",
 			  brcmf_feat_names[id], err);
 	}
+
+	ifp->fwil_fwerr = false;
 }
 
 static void brcmf_feat_iovar_data_set(struct brcmf_if *ifp,
@@ -119,6 +124,9 @@ static void brcmf_feat_iovar_data_set(struct brcmf_if *ifp,
 				      const void *data, size_t len)
 {
 	int err;
+
+	/* we need to know firmware error */
+	ifp->fwil_fwerr = true;
 
 	err = brcmf_fil_iovar_data_set(ifp, name, data, len);
 	if (err != -BRCMF_FW_UNSUPPORTED) {
@@ -128,15 +136,23 @@ static void brcmf_feat_iovar_data_set(struct brcmf_if *ifp,
 		brcmf_dbg(TRACE, "%s feature check failed: %d\n",
 			  brcmf_feat_names[id], err);
 	}
+
+	ifp->fwil_fwerr = false;
 }
 
+#define MAX_CAPS_BUFFER_SIZE	512
 static void brcmf_feat_firmware_capabilities(struct brcmf_if *ifp)
 {
-	char caps[256];
+	char caps[MAX_CAPS_BUFFER_SIZE];
 	enum brcmf_feat_id id;
-	int i;
+	int i, err;
 
-	brcmf_fil_iovar_data_get(ifp, "cap", caps, sizeof(caps));
+	err = brcmf_fil_iovar_data_get(ifp, "cap", caps, sizeof(caps));
+	if (err) {
+		brcmf_err("could not get firmware cap (%d)\n", err);
+		return;
+	}
+
 	brcmf_dbg(INFO, "[ %s]\n", caps);
 
 	for (i = 0; i < ARRAY_SIZE(brcmf_fwcap_map); i++) {
@@ -149,6 +165,41 @@ static void brcmf_feat_firmware_capabilities(struct brcmf_if *ifp)
 	}
 }
 
+/**
+ * brcmf_feat_fwcap_debugfs_read() - expose firmware capabilities to debugfs.
+ *
+ * @seq: sequence for debugfs entry.
+ * @data: raw data pointer.
+ */
+static int brcmf_feat_fwcap_debugfs_read(struct seq_file *seq, void *data)
+{
+	struct brcmf_bus *bus_if = dev_get_drvdata(seq->private);
+	struct brcmf_if *ifp = brcmf_get_ifp(bus_if->drvr, 0);
+	char caps[MAX_CAPS_BUFFER_SIZE + 1] = { };
+	char *tmp;
+	int err;
+
+	err = brcmf_fil_iovar_data_get(ifp, "cap", caps, sizeof(caps));
+	if (err) {
+		brcmf_err("could not get firmware cap (%d)\n", err);
+		return err;
+	}
+
+	/* Put every capability in a new line */
+	for (tmp = caps; *tmp; tmp++) {
+		if (*tmp == ' ')
+			*tmp = '\n';
+	}
+
+	/* Usually there is a space at the end of capabilities string */
+	seq_printf(seq, "%s", caps);
+	/* So make sure we don't print two line breaks */
+	if (tmp > caps && *(tmp - 1) != '\n')
+		seq_printf(seq, "\n");
+
+	return 0;
+}
+
 void brcmf_feat_attach(struct brcmf_pub *drvr)
 {
 	struct brcmf_if *ifp = brcmf_get_ifp(drvr, 0);
@@ -159,7 +210,8 @@ void brcmf_feat_attach(struct brcmf_pub *drvr)
 
 	brcmf_feat_firmware_capabilities(ifp);
 	memset(&gscan_cfg, 0, sizeof(gscan_cfg));
-	if (drvr->bus_if->chip != BRCM_CC_43430_CHIP_ID)
+	if (drvr->bus_if->chip != BRCM_CC_43430_CHIP_ID &&
+	    drvr->bus_if->chip != BRCM_CC_4345_CHIP_ID)
 		brcmf_feat_iovar_data_set(ifp, BRCMF_FEAT_GSCAN,
 					  "pfn_gscan_cfg",
 					  &gscan_cfg, sizeof(gscan_cfg));
@@ -211,8 +263,12 @@ void brcmf_feat_attach(struct brcmf_pub *drvr)
 		/* no quirks */
 		break;
 	}
+}
 
+void brcmf_feat_debugfs_create(struct brcmf_pub *drvr)
+{
 	brcmf_debugfs_add_entry(drvr, "features", brcmf_feat_debugfs_read);
+	brcmf_debugfs_add_entry(drvr, "fwcap", brcmf_feat_fwcap_debugfs_read);
 }
 
 bool brcmf_feat_is_enabled(struct brcmf_if *ifp, enum brcmf_feat_id id)

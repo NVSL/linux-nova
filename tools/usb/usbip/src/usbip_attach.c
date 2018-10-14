@@ -99,29 +99,34 @@ static int import_device(int sockfd, struct usbip_usb_device *udev)
 	rc = usbip_vhci_driver_open();
 	if (rc < 0) {
 		err("open vhci_driver");
-		return -1;
+		goto err_out;
 	}
 
-	port = usbip_vhci_get_free_port(speed);
-	if (port < 0) {
-		err("no free port");
-		usbip_vhci_driver_close();
-		return -1;
-	}
+	do {
+		port = usbip_vhci_get_free_port(speed);
+		if (port < 0) {
+			err("no free port");
+			goto err_driver_close;
+		}
 
-	dbg("got free port %d", port);
+		dbg("got free port %d", port);
 
-	rc = usbip_vhci_attach_device(port, sockfd, udev->busnum,
-				      udev->devnum, udev->speed);
-	if (rc < 0) {
-		err("import device");
-		usbip_vhci_driver_close();
-		return -1;
-	}
+		rc = usbip_vhci_attach_device(port, sockfd, udev->busnum,
+					      udev->devnum, udev->speed);
+		if (rc < 0 && errno != EBUSY) {
+			err("import device");
+			goto err_driver_close;
+		}
+	} while (rc < 0);
 
 	usbip_vhci_driver_close();
 
 	return port;
+
+err_driver_close:
+	usbip_vhci_driver_close();
+err_out:
+	return -1;
 }
 
 static int query_import_device(int sockfd, char *busid)
@@ -130,6 +135,7 @@ static int query_import_device(int sockfd, char *busid)
 	struct op_import_request request;
 	struct op_import_reply   reply;
 	uint16_t code = OP_REP_IMPORT;
+	int status;
 
 	memset(&request, 0, sizeof(request));
 	memset(&reply, 0, sizeof(reply));
@@ -152,9 +158,10 @@ static int query_import_device(int sockfd, char *busid)
 	}
 
 	/* receive a reply */
-	rc = usbip_net_recv_op_common(sockfd, &code);
+	rc = usbip_net_recv_op_common(sockfd, &code, &status);
 	if (rc < 0) {
-		err("recv op_common");
+		err("Attach Request for %s failed - %s\n",
+		    busid, usbip_op_common_status_string(status));
 		return -1;
 	}
 
@@ -189,10 +196,8 @@ static int attach_device(char *host, char *busid)
 	}
 
 	rhport = query_import_device(sockfd, busid);
-	if (rhport < 0) {
-		err("query");
+	if (rhport < 0)
 		return -1;
-	}
 
 	close(sockfd);
 

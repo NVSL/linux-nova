@@ -1,23 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * RPA Virtual I/O device functions
  * Copyright (C) 2004 Linda Xie <lxie@us.ibm.com>
  *
  * All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or (at
- * your option) any later version.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, GOOD TITLE or
- * NON INFRINGEMENT.  See the GNU General Public License for more
- * details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  *
  * Send feedback to <lxie@us.ibm.com>
  *
@@ -122,8 +108,8 @@ int rpaphp_register_slot(struct slot *slot)
 	int retval;
 	int slotno = -1;
 
-	dbg("%s registering slot:path[%s] index[%x], name[%s] pdomain[%x] type[%d]\n",
-		__func__, slot->dn->full_name, slot->index, slot->name,
+	dbg("%s registering slot:path[%pOF] index[%x], name[%s] pdomain[%x] type[%d]\n",
+		__func__, slot->dn, slot->index, slot->name,
 		slot->power_domain, slot->type);
 
 	/* should not try to register the same slot twice */

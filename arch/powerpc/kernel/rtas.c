@@ -26,6 +26,7 @@
 #include <linux/memblock.h>
 #include <linux/slab.h>
 #include <linux/reboot.h>
+#include <linux/syscalls.h>
 
 #include <asm/prom.h>
 #include <asm/rtas.h>
@@ -78,7 +79,7 @@ static unsigned long lock_rtas(void)
 
 	local_irq_save(flags);
 	preempt_disable();
-	arch_spin_lock_flags(&rtas.lock, flags);
+	arch_spin_lock(&rtas.lock);
 	return flags;
 }
 
@@ -914,7 +915,7 @@ int rtas_online_cpus_mask(cpumask_var_t cpus)
 	if (ret) {
 		cpumask_var_t tmp_mask;
 
-		if (!alloc_cpumask_var(&tmp_mask, GFP_TEMPORARY))
+		if (!alloc_cpumask_var(&tmp_mask, GFP_KERNEL))
 			return ret;
 
 		/* Use tmp_mask to preserve cpus mask from first failure */
@@ -962,7 +963,7 @@ int rtas_ibm_suspend_me(u64 handle)
 		return -EIO;
 	}
 
-	if (!alloc_cpumask_var(&offline_mask, GFP_TEMPORARY))
+	if (!alloc_cpumask_var(&offline_mask, GFP_KERNEL))
 		return -ENOMEM;
 
 	atomic_set(&data.working, 0);
@@ -1050,7 +1051,7 @@ struct pseries_errorlog *get_pseries_errorlog(struct rtas_error_log *log,
 }
 
 /* We assume to be passed big endian arguments */
-asmlinkage int ppc_rtas(struct rtas_args __user *uargs)
+SYSCALL_DEFINE1(rtas, struct rtas_args __user *, uargs)
 {
 	struct rtas_args args;
 	unsigned long flags;

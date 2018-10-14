@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #include <linux/file.h>
 #include <linux/fs.h>
 #include <linux/fsnotify_backend.h>
@@ -76,7 +77,7 @@ static void inotify_fdinfo(struct seq_file *m, struct fsnotify_mark *mark)
 	struct inotify_inode_mark *inode_mark;
 	struct inode *inode;
 
-	if (!(mark->connector->flags & FSNOTIFY_OBJ_TYPE_INODE))
+	if (mark->connector->type != FSNOTIFY_OBJ_TYPE_INODE)
 		return;
 
 	inode_mark = container_of(mark, struct inotify_inode_mark, fsn_mark);
@@ -115,7 +116,7 @@ static void fanotify_fdinfo(struct seq_file *m, struct fsnotify_mark *mark)
 	if (mark->flags & FSNOTIFY_MARK_FLAG_IGNORED_SURV_MODIFY)
 		mflags |= FAN_MARK_IGNORED_SURV_MODIFY;
 
-	if (mark->connector->flags & FSNOTIFY_OBJ_TYPE_INODE) {
+	if (mark->connector->type == FSNOTIFY_OBJ_TYPE_INODE) {
 		inode = igrab(mark->connector->inode);
 		if (!inode)
 			return;
@@ -125,7 +126,7 @@ static void fanotify_fdinfo(struct seq_file *m, struct fsnotify_mark *mark)
 		show_mark_fhandle(m, inode);
 		seq_putc(m, '\n');
 		iput(inode);
-	} else if (mark->connector->flags & FSNOTIFY_OBJ_TYPE_VFSMOUNT) {
+	} else if (mark->connector->type == FSNOTIFY_OBJ_TYPE_VFSMOUNT) {
 		struct mount *mnt = real_mount(mark->connector->mnt);
 
 		seq_printf(m, "fanotify mnt_id:%x mflags:%x mask:%x ignored_mask:%x\n",
@@ -155,6 +156,9 @@ void fanotify_show_fdinfo(struct seq_file *m, struct file *f)
 
 	if (group->fanotify_data.max_marks == UINT_MAX)
 		flags |= FAN_UNLIMITED_MARKS;
+
+	if (group->fanotify_data.audit)
+		flags |= FAN_ENABLE_AUDIT;
 
 	seq_printf(m, "fanotify flags:%x event-flags:%x\n",
 		   flags, group->fanotify_data.f_flags);

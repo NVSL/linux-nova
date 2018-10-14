@@ -28,7 +28,7 @@
 
 #include <asm/fw/fw.h>
 #include <asm/mach-malta/malta-dtshim.h>
-#include <asm/mips-cm.h>
+#include <asm/mips-cps.h>
 #include <asm/mips-boards/generic.h>
 #include <asm/mips-boards/malta.h>
 #include <asm/mips-boards/maltaint.h>
@@ -47,31 +47,31 @@ static struct resource standard_io_resources[] = {
 		.name = "dma1",
 		.start = 0x00,
 		.end = 0x1f,
-		.flags = IORESOURCE_BUSY
+		.flags = IORESOURCE_IO | IORESOURCE_BUSY
 	},
 	{
 		.name = "timer",
 		.start = 0x40,
 		.end = 0x5f,
-		.flags = IORESOURCE_BUSY
+		.flags = IORESOURCE_IO | IORESOURCE_BUSY
 	},
 	{
 		.name = "keyboard",
 		.start = 0x60,
 		.end = 0x6f,
-		.flags = IORESOURCE_BUSY
+		.flags = IORESOURCE_IO | IORESOURCE_BUSY
 	},
 	{
 		.name = "dma page reg",
 		.start = 0x80,
 		.end = 0x8f,
-		.flags = IORESOURCE_BUSY
+		.flags = IORESOURCE_IO | IORESOURCE_BUSY
 	},
 	{
 		.name = "dma2",
 		.start = 0xc0,
 		.end = 0xdf,
-		.flags = IORESOURCE_BUSY
+		.flags = IORESOURCE_IO | IORESOURCE_BUSY
 	},
 };
 
@@ -128,7 +128,7 @@ static int __init plat_enable_iocoherency(void)
 				 BONITO_PCIMEMBASECFG_MEMBASE1_CACHED);
 			pr_info("Enabled Bonito IOBC coherency\n");
 		}
-	} else if (mips_cm_numiocu() != 0) {
+	} else if (mips_cps_numiocu(0) != 0) {
 		/* Nothing special needs to be done to enable coherency */
 		pr_info("CMP IOCU detected\n");
 		cfg = __raw_readl((u32 *)CKSEG1ADDR(ROCIT_CONFIG_GEN0));

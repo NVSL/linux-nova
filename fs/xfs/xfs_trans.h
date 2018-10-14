@@ -1,19 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2000-2002,2005 Silicon Graphics, Inc.
  * All Rights Reserved.
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it would be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write the Free Software Foundation,
- * Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  */
 #ifndef	__XFS_TRANS_H__
 #define	__XFS_TRANS_H__
@@ -27,7 +15,6 @@ struct xfs_efi_log_item;
 struct xfs_inode;
 struct xfs_item_ops;
 struct xfs_log_iovec;
-struct xfs_log_item_desc;
 struct xfs_mount;
 struct xfs_trans;
 struct xfs_trans_res;
@@ -43,13 +30,14 @@ struct xfs_bud_log_item;
 
 typedef struct xfs_log_item {
 	struct list_head		li_ail;		/* AIL pointers */
+	struct list_head		li_trans;	/* transaction list */
 	xfs_lsn_t			li_lsn;		/* last on-disk lsn */
-	struct xfs_log_item_desc	*li_desc;	/* ptr to current desc*/
 	struct xfs_mount		*li_mountp;	/* ptr to fs mount */
 	struct xfs_ail			*li_ailp;	/* ptr to AIL */
 	uint				li_type;	/* item type */
-	uint				li_flags;	/* misc flags */
-	struct xfs_log_item		*li_bio_list;	/* buffer item list */
+	unsigned long			li_flags;	/* misc flags */
+	struct xfs_buf			*li_buf;	/* real buffer pointer */
+	struct list_head		li_bio_list;	/* buffer item list */
 	void				(*li_cb)(struct xfs_buf *,
 						 struct xfs_log_item *);
 							/* buffer item iodone */
@@ -63,12 +51,21 @@ typedef struct xfs_log_item {
 	xfs_lsn_t			li_seq;		/* CIL commit seq */
 } xfs_log_item_t;
 
-#define	XFS_LI_IN_AIL	0x1
-#define XFS_LI_ABORTED	0x2
+/*
+ * li_flags use the (set/test/clear)_bit atomic interfaces because updates can
+ * race with each other and we don't want to have to use the AIL lock to
+ * serialise all updates.
+ */
+#define	XFS_LI_IN_AIL	0
+#define	XFS_LI_ABORTED	1
+#define	XFS_LI_FAILED	2
+#define	XFS_LI_DIRTY	3	/* log item dirty in transaction */
 
 #define XFS_LI_FLAGS \
-	{ XFS_LI_IN_AIL,	"IN_AIL" }, \
-	{ XFS_LI_ABORTED,	"ABORTED" }
+	{ (1 << XFS_LI_IN_AIL),		"IN_AIL" }, \
+	{ (1 << XFS_LI_ABORTED),	"ABORTED" }, \
+	{ (1 << XFS_LI_FAILED),		"FAILED" }, \
+	{ (1 << XFS_LI_DIRTY),		"DIRTY" }
 
 struct xfs_item_ops {
 	void (*iop_size)(xfs_log_item_t *, int *, int *);
@@ -79,6 +76,7 @@ struct xfs_item_ops {
 	void (*iop_unlock)(xfs_log_item_t *);
 	xfs_lsn_t (*iop_committed)(xfs_log_item_t *, xfs_lsn_t);
 	void (*iop_committing)(xfs_log_item_t *, xfs_lsn_t);
+	void (*iop_error)(xfs_log_item_t *, xfs_buf_t *);
 };
 
 void	xfs_log_item_init(struct xfs_mount *mp, struct xfs_log_item *item,
@@ -107,6 +105,7 @@ typedef struct xfs_trans {
 	struct xlog_ticket	*t_ticket;	/* log mgr ticket */
 	struct xfs_mount	*t_mountp;	/* ptr to fs mount struct */
 	struct xfs_dquot_acct   *t_dqinfo;	/* acctg info for dquots */
+	struct xfs_defer_ops	*t_agfl_dfops;	/* optional agfl fixup dfops */
 	unsigned int		t_flags;	/* misc flags */
 	int64_t			t_icount_delta;	/* superblock icount change */
 	int64_t			t_ifree_delta;	/* superblock ifree change */
@@ -208,12 +207,14 @@ void		xfs_trans_bhold_release(xfs_trans_t *, struct xfs_buf *);
 void		xfs_trans_binval(xfs_trans_t *, struct xfs_buf *);
 void		xfs_trans_inode_buf(xfs_trans_t *, struct xfs_buf *);
 void		xfs_trans_stale_inode_buf(xfs_trans_t *, struct xfs_buf *);
-void		xfs_trans_ordered_buf(xfs_trans_t *, struct xfs_buf *);
+bool		xfs_trans_ordered_buf(xfs_trans_t *, struct xfs_buf *);
 void		xfs_trans_dquot_buf(xfs_trans_t *, struct xfs_buf *, uint);
 void		xfs_trans_inode_alloc_buf(xfs_trans_t *, struct xfs_buf *);
 void		xfs_trans_ichgtime(struct xfs_trans *, struct xfs_inode *, int);
 void		xfs_trans_ijoin(struct xfs_trans *, struct xfs_inode *, uint);
-void		xfs_trans_log_buf(xfs_trans_t *, struct xfs_buf *, uint, uint);
+void		xfs_trans_log_buf(struct xfs_trans *, struct xfs_buf *, uint,
+				  uint);
+void		xfs_trans_dirty_buf(struct xfs_trans *, struct xfs_buf *);
 void		xfs_trans_log_inode(xfs_trans_t *, struct xfs_inode *, uint);
 
 void		xfs_extent_free_init_defer_op(void);
@@ -222,9 +223,11 @@ struct xfs_efd_log_item	*xfs_trans_get_efd(struct xfs_trans *,
 				  uint);
 int		xfs_trans_free_extent(struct xfs_trans *,
 				      struct xfs_efd_log_item *, xfs_fsblock_t,
-				      xfs_extlen_t, struct xfs_owner_info *);
+				      xfs_extlen_t, struct xfs_owner_info *,
+				      bool);
 int		xfs_trans_commit(struct xfs_trans *);
-int		xfs_trans_roll(struct xfs_trans **, struct xfs_inode *);
+int		xfs_trans_roll(struct xfs_trans **);
+int		xfs_trans_roll_inode(struct xfs_trans **, struct xfs_inode *);
 void		xfs_trans_cancel(xfs_trans_t *);
 int		xfs_trans_ail_init(struct xfs_mount *);
 void		xfs_trans_ail_destroy(struct xfs_mount *);
@@ -235,7 +238,6 @@ void		xfs_trans_buf_copy_type(struct xfs_buf *dst_bp,
 					struct xfs_buf *src_bp);
 
 extern kmem_zone_t	*xfs_trans_zone;
-extern kmem_zone_t	*xfs_log_item_desc_zone;
 
 /* rmap updates */
 enum xfs_rmap_intent_type;

@@ -8,6 +8,7 @@
  * Copyright(c) 2008 - 2014 Intel Corporation. All rights reserved.
  * Copyright(c) 2013 - 2015 Intel Mobile Communications GmbH
  * Copyright(c) 2016        Intel Deutschland GmbH
+ * Copyright(c) 2018 Intel Corporation
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of version 2 of the GNU General Public License as
@@ -35,6 +36,7 @@
  * Copyright(c) 2005 - 2014 Intel Corporation. All rights reserved.
  * Copyright(c) 2013 - 2015 Intel Mobile Communications GmbH
  * Copyright(c) 2016        Intel Deutschland GmbH
+ * Copyright(c) 2018 Intel Corporation
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -136,11 +138,6 @@ struct fw_img {
 	int num_sec;
 	bool is_dual_cpus;
 	u32 paging_mem_size;
-};
-
-struct iwl_sf_region {
-	u32 addr;
-	u32 size;
 };
 
 /*
@@ -246,6 +243,8 @@ enum iwl_fw_type {
  * @ucode_ver: ucode version from the ucode file
  * @fw_version: firmware version string
  * @img: ucode image like ucode_rt, ucode_init, ucode_wowlan.
+ * @iml_len: length of the image loader image
+ * @iml: image loader fw image
  * @ucode_capa: capabilities parsed from the ucode file.
  * @enhance_sensitivity_table: device can do enhanced sensitivity.
  * @init_evtlog_ptr: event log offset for init ucode.
@@ -257,7 +256,6 @@ enum iwl_fw_type {
  * @type: firmware type (&enum iwl_fw_type)
  * @cipher_scheme: optional external cipher scheme.
  * @human_readable: human readable version
- * @sdio_adma_addr: the default address to set for the ADMA in SDIO mode until
  *	we get the ALIVE from the uCode
  * @dbg_dest_tlv: points to the destination TLV for debug
  * @dbg_conf_tlv: array of pointers to configuration TLVs for debug
@@ -273,6 +271,8 @@ struct iwl_fw {
 
 	/* ucode images */
 	struct fw_img img[IWL_UCODE_TYPE_MAX];
+	size_t iml_len;
+	u8 *iml;
 
 	struct iwl_ucode_capabilities ucode_capa;
 	bool enhance_sensitivity_table;
@@ -290,9 +290,7 @@ struct iwl_fw {
 	struct iwl_fw_cipher_scheme cs[IWL_UCODE_MAX_CS];
 	u8 human_readable[FW_VER_HUMAN_READABLE_SZ];
 
-	u32 sdio_adma_addr;
-
-	struct iwl_fw_dbg_dest_tlv *dbg_dest_tlv;
+	struct iwl_fw_dbg_dest_tlv_v1 *dbg_dest_tlv;
 	struct iwl_fw_dbg_conf_tlv *dbg_conf_tlv[FW_DBG_CONF_MAX];
 	size_t dbg_conf_tlv_len[FW_DBG_CONF_MAX];
 	struct iwl_fw_dbg_trigger_tlv *dbg_trigger_tlv[FW_DBG_TRIGGER_MAX];

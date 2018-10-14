@@ -72,7 +72,7 @@ static u64 asus_wireless_method(acpi_handle handle, const char *method,
 		acpi_handle_err(handle,
 				"Failed to eval method %s, param %#x (%d)\n",
 				method, param, s);
-	acpi_handle_debug(handle, "%s returned %#x\n", method, (uint) ret);
+	acpi_handle_debug(handle, "%s returned %#llx\n", method, ret);
 	return ret;
 }
 
@@ -118,6 +118,7 @@ static void asus_wireless_notify(struct acpi_device *adev, u32 event)
 		return;
 	}
 	input_report_key(data->idev, KEY_RFKILL, 1);
+	input_sync(data->idev);
 	input_report_key(data->idev, KEY_RFKILL, 0);
 	input_sync(data->idev);
 }
@@ -177,8 +178,10 @@ static int asus_wireless_remove(struct acpi_device *adev)
 {
 	struct asus_wireless_data *data = acpi_driver_data(adev);
 
-	if (data->wq)
+	if (data->wq) {
+		devm_led_classdev_unregister(&adev->dev, &data->led);
 		destroy_workqueue(data->wq);
+	}
 	return 0;
 }
 

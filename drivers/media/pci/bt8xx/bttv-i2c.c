@@ -8,7 +8,7 @@
 			   & Marcus Metzler (mocm@thp.uni-koeln.de)
     (c) 1999-2003 Gerd Knorr <kraxel@bytesex.org>
 
-    (c) 2005 Mauro Carvalho Chehab <mchehab@infradead.org>
+    (c) 2005 Mauro Carvalho Chehab <mchehab@kernel.org>
 	- Multituner support and i2c address binding
 
     This program is free software; you can redistribute it and/or modify
@@ -97,7 +97,7 @@ static int bttv_bit_getsda(void *data)
 	return state;
 }
 
-static struct i2c_algo_bit_data bttv_i2c_algo_bit_template = {
+static const struct i2c_algo_bit_data bttv_i2c_algo_bit_template = {
 	.setsda  = bttv_bit_setsda,
 	.setscl  = bttv_bit_setscl,
 	.getsda  = bttv_bit_getsda,

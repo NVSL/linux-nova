@@ -437,7 +437,7 @@ int ide_cd_queue_pc(ide_drive_t *drive, const unsigned char *cmd,
 		bool delay = false;
 
 		rq = blk_get_request(drive->queue,
-			write ? REQ_OP_DRV_OUT : REQ_OP_DRV_IN,  __GFP_RECLAIM);
+			write ? REQ_OP_DRV_OUT : REQ_OP_DRV_IN, 0);
 		memcpy(scsi_req(rq)->cmd, cmd, BLK_MAX_CDB);
 		ide_req(rq)->type = ATA_PRIV_PC;
 		rq->rq_flags |= rq_flags;
@@ -712,7 +712,7 @@ static ide_startstop_t cdrom_start_rw(ide_drive_t *drive, struct request *rq)
 	struct request_queue *q = drive->queue;
 	int write = rq_data_dir(rq) == WRITE;
 	unsigned short sectors_per_frame =
-		queue_logical_block_size(q) >> SECTOR_BITS;
+		queue_logical_block_size(q) >> SECTOR_SHIFT;
 
 	ide_debug_log(IDE_DBG_RQ, "rq->cmd[0]: 0x%x, rq->cmd_flags: 0x%x, "
 				  "secs_per_frame: %u",
@@ -867,10 +867,15 @@ static void msf_from_bcd(struct atapi_msf *msf)
 int cdrom_check_status(ide_drive_t *drive, struct request_sense *sense)
 {
 	struct cdrom_info *info = drive->driver_data;
-	struct cdrom_device_info *cdi = &info->devinfo;
+	struct cdrom_device_info *cdi;
 	unsigned char cmd[BLK_MAX_CDB];
 
 	ide_debug_log(IDE_DBG_FUNC, "enter");
+
+	if (!info)
+		return -EIO;
+
+	cdi = &info->devinfo;
 
 	memset(cmd, 0, BLK_MAX_CDB);
 	cmd[0] = GPCMD_TEST_UNIT_READY;
@@ -914,7 +919,7 @@ static int cdrom_read_capacity(ide_drive_t *drive, unsigned long *capacity,
 	 * end up being bogus.
 	 */
 	blocklen = be32_to_cpu(capbuf.blocklen);
-	blocklen = (blocklen >> SECTOR_BITS) << SECTOR_BITS;
+	blocklen = (blocklen >> SECTOR_SHIFT) << SECTOR_SHIFT;
 	switch (blocklen) {
 	case 512:
 	case 1024:
@@ -930,7 +935,7 @@ static int cdrom_read_capacity(ide_drive_t *drive, unsigned long *capacity,
 	}
 
 	*capacity = 1 + be32_to_cpu(capbuf.lba);
-	*sectors_per_frame = blocklen >> SECTOR_BITS;
+	*sectors_per_frame = blocklen >> SECTOR_SHIFT;
 
 	ide_debug_log(IDE_DBG_PROBE, "cap: %lu, sectors_per_frame: %lu",
 				     *capacity, *sectors_per_frame);
@@ -1007,7 +1012,7 @@ int ide_cd_read_toc(ide_drive_t *drive, struct request_sense *sense)
 	drive->probed_capacity = toc->capacity * sectors_per_frame;
 
 	blk_queue_logical_block_size(drive->queue,
-				     sectors_per_frame << SECTOR_BITS);
+				     sectors_per_frame << SECTOR_SHIFT);
 
 	/* first read just the header, so we know how long the TOC is */
 	stat = cdrom_read_tocentry(drive, 0, 1, 0, (char *) &toc->hdr,
@@ -1328,7 +1333,7 @@ static int ide_cdrom_prep_fs(struct request_queue *q, struct request *rq)
 	unsigned long blocks = blk_rq_sectors(rq) / (hard_sect >> 9);
 	struct scsi_request *req = scsi_req(rq);
 
-	memset(req->cmd, 0, BLK_MAX_CDB);
+	q->initialize_rq_fn(rq);
 
 	if (rq_data_dir(rq) == READ)
 		req->cmd[0] = GPCMD_READ_10;
@@ -1421,21 +1426,8 @@ static int idecd_capacity_proc_show(struct seq_file *m, void *v)
 	return 0;
 }
 
-static int idecd_capacity_proc_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, idecd_capacity_proc_show, PDE_DATA(inode));
-}
-
-static const struct file_operations idecd_capacity_proc_fops = {
-	.owner		= THIS_MODULE,
-	.open		= idecd_capacity_proc_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= single_release,
-};
-
 static ide_proc_entry_t idecd_proc[] = {
-	{ "capacity", S_IFREG|S_IRUGO, &idecd_capacity_proc_fops },
+	{ "capacity", S_IFREG|S_IRUGO, idecd_capacity_proc_show },
 	{}
 };
 
@@ -1607,6 +1599,8 @@ static int idecd_open(struct block_device *bdev, fmode_t mode)
 {
 	struct cdrom_info *info;
 	int rc = -ENXIO;
+
+	check_disk_change(bdev);
 
 	mutex_lock(&ide_cd_mutex);
 	info = ide_cd_get(bdev->bd_disk);

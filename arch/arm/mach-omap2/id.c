@@ -657,12 +657,34 @@ void __init dra7xxx_check_revision(void)
 {
 	u32 idcode;
 	u16 hawkeye;
-	u8 rev;
+	u8 rev, package;
+	struct omap_die_id odi;
 
+	omap_get_die_id(&odi);
+	package = (odi.id_2 >> 16) & 0x3;
 	idcode = read_tap_reg(OMAP_TAP_IDCODE);
 	hawkeye = (idcode >> 12) & 0xffff;
 	rev = (idcode >> 28) & 0xff;
 	switch (hawkeye) {
+	case 0xbb50:
+		switch (rev) {
+		case 0:
+		default:
+			switch (package) {
+			case 0x2:
+				omap_revision = DRA762_ABZ_REV_ES1_0;
+				break;
+			case 0x3:
+				omap_revision = DRA762_ACD_REV_ES1_0;
+				break;
+			default:
+				omap_revision = DRA762_REV_ES1_0;
+				break;
+			}
+			break;
+		}
+		break;
+
 	case 0xb990:
 		switch (rev) {
 		case 0:
@@ -684,8 +706,11 @@ void __init dra7xxx_check_revision(void)
 			omap_revision = DRA722_REV_ES1_0;
 			break;
 		case 1:
-		default:
 			omap_revision = DRA722_REV_ES2_0;
+			break;
+		case 2:
+		default:
+			omap_revision = DRA722_REV_ES2_1;
 			break;
 		}
 		break;

@@ -165,10 +165,8 @@ static int elanfreq_cpu_init(struct cpufreq_policy *policy)
 		if (pos->frequency > max_freq)
 			pos->frequency = CPUFREQ_ENTRY_INVALID;
 
-	/* cpuinfo and default policy values */
-	policy->cpuinfo.transition_latency = CPUFREQ_ETERNAL;
-
-	return cpufreq_table_validate_and_show(policy, elanfreq_table);
+	policy->freq_table = elanfreq_table;
+	return 0;
 }
 
 
@@ -196,6 +194,7 @@ __setup("elanfreq=", elanfreq_setup);
 
 static struct cpufreq_driver elanfreq_driver = {
 	.get		= elanfreq_get_cpu_frequency,
+	.flags		= CPUFREQ_NO_AUTO_DYNAMIC_SWITCHING,
 	.verify		= cpufreq_generic_frequency_table_verify,
 	.target_index	= elanfreq_target,
 	.init		= elanfreq_cpu_init,

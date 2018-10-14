@@ -1,18 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright(C) 2015 Linaro Limited. All rights reserved.
  * Author: Mathieu Poirier <mathieu.poirier@linaro.org>
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License version 2 as published by
- * the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
- * You should have received a copy of the GNU General Public License along with
- * this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 #include <linux/pm_runtime.h>
@@ -1232,19 +1221,19 @@ static struct attribute *coresight_etm_attrs[] = {
 	NULL,
 };
 
-#define coresight_etm3x_simple_func(name, offset)			\
-	coresight_simple_func(struct etm_drvdata, NULL, name, offset)
+#define coresight_etm3x_reg(name, offset)			\
+	coresight_simple_reg32(struct etm_drvdata, name, offset)
 
-coresight_etm3x_simple_func(etmccr, ETMCCR);
-coresight_etm3x_simple_func(etmccer, ETMCCER);
-coresight_etm3x_simple_func(etmscr, ETMSCR);
-coresight_etm3x_simple_func(etmidr, ETMIDR);
-coresight_etm3x_simple_func(etmcr, ETMCR);
-coresight_etm3x_simple_func(etmtraceidr, ETMTRACEIDR);
-coresight_etm3x_simple_func(etmteevr, ETMTEEVR);
-coresight_etm3x_simple_func(etmtssvr, ETMTSSCR);
-coresight_etm3x_simple_func(etmtecr1, ETMTECR1);
-coresight_etm3x_simple_func(etmtecr2, ETMTECR2);
+coresight_etm3x_reg(etmccr, ETMCCR);
+coresight_etm3x_reg(etmccer, ETMCCER);
+coresight_etm3x_reg(etmscr, ETMSCR);
+coresight_etm3x_reg(etmidr, ETMIDR);
+coresight_etm3x_reg(etmcr, ETMCR);
+coresight_etm3x_reg(etmtraceidr, ETMTRACEIDR);
+coresight_etm3x_reg(etmteevr, ETMTEEVR);
+coresight_etm3x_reg(etmtssvr, ETMTSSCR);
+coresight_etm3x_reg(etmtecr1, ETMTECR1);
+coresight_etm3x_reg(etmtecr2, ETMTECR2);
 
 static struct attribute *coresight_etm_mgmt_attrs[] = {
 	&dev_attr_etmccr.attr,

@@ -43,7 +43,7 @@ struct srcu_struct {
 
 void srcu_drive_gp(struct work_struct *wp);
 
-#define __SRCU_STRUCT_INIT(name)					\
+#define __SRCU_STRUCT_INIT(name, __ignored)				\
 {									\
 	.srcu_wq = __SWAIT_QUEUE_HEAD_INITIALIZER(name.srcu_wq),	\
 	.srcu_cb_tail = &name.srcu_cb_head,				\
@@ -56,9 +56,9 @@ void srcu_drive_gp(struct work_struct *wp);
  * Tree SRCU, which needs some per-CPU data.
  */
 #define DEFINE_SRCU(name) \
-	struct srcu_struct name = __SRCU_STRUCT_INIT(name)
+	struct srcu_struct name = __SRCU_STRUCT_INIT(name, name)
 #define DEFINE_STATIC_SRCU(name) \
-	static struct srcu_struct name = __SRCU_STRUCT_INIT(name)
+	static struct srcu_struct name = __SRCU_STRUCT_INIT(name, name)
 
 void synchronize_srcu(struct srcu_struct *sp);
 
@@ -85,6 +85,19 @@ static inline void synchronize_srcu_expedited(struct srcu_struct *sp)
 static inline void srcu_barrier(struct srcu_struct *sp)
 {
 	synchronize_srcu(sp);
+}
+
+/* Defined here to avoid size increase for non-torture kernels. */
+static inline void srcu_torture_stats_print(struct srcu_struct *sp,
+					    char *tt, char *tf)
+{
+	int idx;
+
+	idx = READ_ONCE(sp->srcu_idx) & 0x1;
+	pr_alert("%s%s Tiny SRCU per-CPU(idx=%d): (%hd,%hd)\n",
+		 tt, tf, idx,
+		 READ_ONCE(sp->srcu_lock_nesting[!idx]),
+		 READ_ONCE(sp->srcu_lock_nesting[idx]));
 }
 
 #endif

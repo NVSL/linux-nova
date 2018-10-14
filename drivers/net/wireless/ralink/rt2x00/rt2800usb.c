@@ -43,7 +43,7 @@
  * Allow hardware encryption to be disabled.
  */
 static bool modparam_nohwcrypt;
-module_param_named(nohwcrypt, modparam_nohwcrypt, bool, S_IRUGO);
+module_param_named(nohwcrypt, modparam_nohwcrypt, bool, 0444);
 MODULE_PARM_DESC(nohwcrypt, "Disable hardware encryption.");
 
 static bool rt2800usb_hwcrypt_disabled(struct rt2x00_dev *rt2x00dev)
@@ -697,11 +697,20 @@ static void rt2800usb_fill_rxdone(struct queue_entry *entry,
 		 * stripped it from the frame. Signal this to mac80211.
 		 */
 		rxdesc->flags |= RX_FLAG_MMIC_STRIPPED;
-
-		if (rxdesc->cipher_status == RX_CRYPTO_SUCCESS)
+        
+		if (rxdesc->cipher_status == RX_CRYPTO_SUCCESS) {
 			rxdesc->flags |= RX_FLAG_DECRYPTED;
-		else if (rxdesc->cipher_status == RX_CRYPTO_FAIL_MIC)
+		} else if (rxdesc->cipher_status == RX_CRYPTO_FAIL_MIC) {
+			/*
+			 * In order to check the Michael Mic, the packet must have
+			 * been decrypted.  Mac80211 doesnt check the MMIC failure 
+			 * flag to initiate MMIC countermeasures if the decoded flag
+			 * has not been set.
+			 */
+			rxdesc->flags |= RX_FLAG_DECRYPTED;
+
 			rxdesc->flags |= RX_FLAG_MMIC_ERROR;
+		}
 	}
 
 	if (rt2x00_get_field32(word, RXD_W0_MY_BSS))
@@ -788,8 +797,8 @@ static const struct ieee80211_ops rt2800usb_mac80211_ops = {
 	.get_stats		= rt2x00mac_get_stats,
 	.get_key_seq		= rt2800_get_key_seq,
 	.set_rts_threshold	= rt2800_set_rts_threshold,
-	.sta_add		= rt2x00mac_sta_add,
-	.sta_remove		= rt2x00mac_sta_remove,
+	.sta_add		= rt2800_sta_add,
+	.sta_remove		= rt2800_sta_remove,
 	.bss_info_changed	= rt2x00mac_bss_info_changed,
 	.conf_tx		= rt2800_conf_tx,
 	.get_tsf		= rt2800_get_tsf,
@@ -849,8 +858,6 @@ static const struct rt2x00lib_ops rt2800usb_rt2x00_ops = {
 	.config_erp		= rt2800_config_erp,
 	.config_ant		= rt2800_config_ant,
 	.config			= rt2800_config,
-	.sta_add		= rt2800_sta_add,
-	.sta_remove		= rt2800_sta_remove,
 };
 
 static void rt2800usb_queue_init(struct data_queue *queue)
@@ -915,7 +922,7 @@ static const struct rt2x00_ops rt2800usb_ops = {
 /*
  * rt2800usb module information.
  */
-static struct usb_device_id rt2800usb_device_table[] = {
+static const struct usb_device_id rt2800usb_device_table[] = {
 	/* Abocom */
 	{ USB_DEVICE(0x07b8, 0x2870) },
 	{ USB_DEVICE(0x07b8, 0x2770) },

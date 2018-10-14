@@ -124,12 +124,12 @@ static int nova_get_nvmm_info(struct super_block *sb,
 	struct dax_device *dax_dev;
 	int ret;
 
-	ret = bdev_dax_supported(sb, PAGE_SIZE);
+	ret = bdev_dax_supported(sb->s_bdev, PAGE_SIZE);
 	nova_dbg_verbose("%s: dax_supported = %d; bdev->super=0x%p",
 			 __func__, ret, sb->s_bdev->bd_super);
-	if (ret) {
+	if (!ret) {
 		nova_err(sb, "device does not support DAX\n");
-		return ret;
+		return -EINVAL;
 	}
 
 	sbi->s_bdev = sb->s_bdev;
@@ -394,7 +394,7 @@ static struct nova_inode *nova_init(struct super_block *sb,
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_inode_update update;
 	u64 epoch_id;
-	timing_t init_time;
+	INIT_TIMING(init_time);
 
 	NOVA_START_TIMING(new_init_t, init_time);
 	nova_info("creating an empty nova of size %lu\n", size);
@@ -589,7 +589,7 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 	u32 random = 0;
 	int retval = -EINVAL;
 	int i;
-	timing_t mount_time;
+	INIT_TIMING(mount_time);
 
 	NOVA_START_TIMING(mount_t, mount_time);
 
@@ -695,6 +695,11 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 		nova_err(sb, "%s: Failed to parse nova command line options.",
 			 __func__);
 		goto out;
+	}
+
+	if (sbi->mount_snapshot) {
+		sb->s_flags |= MS_RDONLY;
+		nova_info("Snapshot: mount NOVA read-only\n");
 	}
 
 	if (nova_alloc_block_free_lists(sb)) {
@@ -1026,7 +1031,7 @@ static struct inode *nova_alloc_inode(struct super_block *sb)
 	if (!vi)
 		return NULL;
 
-	vi->vfs_inode.i_version = 1;
+	atomic64_set(&vi->vfs_inode.i_version, 1);
 
 	return &vi->vfs_inode;
 }
@@ -1187,7 +1192,7 @@ static const struct export_operations nova_export_ops = {
 static int __init init_nova_fs(void)
 {
 	int rc = 0;
-	timing_t init_time;
+	INIT_TIMING(init_time);
 
 	NOVA_START_TIMING(init_t, init_time);
 	if (arch_has_clwb())

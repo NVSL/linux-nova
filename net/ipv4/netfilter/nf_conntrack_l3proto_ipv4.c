@@ -63,13 +63,6 @@ static bool ipv4_invert_tuple(struct nf_conntrack_tuple *tuple,
 	return true;
 }
 
-static void ipv4_print_tuple(struct seq_file *s,
-			    const struct nf_conntrack_tuple *tuple)
-{
-	seq_printf(s, "src=%pI4 dst=%pI4 ",
-		   &tuple->src.u3.ip, &tuple->dst.u3.ip);
-}
-
 static int ipv4_get_l4proto(const struct sk_buff *skb, unsigned int nhoff,
 			    unsigned int *dataoff, u_int8_t *protonum)
 {
@@ -161,20 +154,27 @@ static unsigned int ipv4_conntrack_local(void *priv,
 					 struct sk_buff *skb,
 					 const struct nf_hook_state *state)
 {
-	/* root is playing with raw sockets. */
-	if (skb->len < sizeof(struct iphdr) ||
-	    ip_hdrlen(skb) < sizeof(struct iphdr))
-		return NF_ACCEPT;
+	if (ip_is_fragment(ip_hdr(skb))) { /* IP_NODEFRAG setsockopt set */
+		enum ip_conntrack_info ctinfo;
+		struct nf_conn *tmpl;
 
-	if (ip_is_fragment(ip_hdr(skb))) /* IP_NODEFRAG setsockopt set */
+		tmpl = nf_ct_get(skb, &ctinfo);
+		if (tmpl && nf_ct_is_template(tmpl)) {
+			/* when skipping ct, clear templates to avoid fooling
+			 * later targets/matches
+			 */
+			skb->_nfct = 0;
+			nf_ct_put(tmpl);
+		}
 		return NF_ACCEPT;
+	}
 
 	return nf_conntrack_in(state->net, PF_INET, state->hook, skb);
 }
 
 /* Connection tracking may drop packets, but never alters them, so
    make it the first hook. */
-static struct nf_hook_ops ipv4_conntrack_ops[] __read_mostly = {
+static const struct nf_hook_ops ipv4_conntrack_ops[] = {
 	{
 		.hook		= ipv4_conntrack_in,
 		.pf		= NFPROTO_IPV4,
@@ -225,15 +225,19 @@ getorigdst(struct sock *sk, int optval, void __user *user, int *len)
 	struct nf_conntrack_tuple tuple;
 
 	memset(&tuple, 0, sizeof(tuple));
+
+	lock_sock(sk);
 	tuple.src.u3.ip = inet->inet_rcv_saddr;
 	tuple.src.u.tcp.port = inet->inet_sport;
 	tuple.dst.u3.ip = inet->inet_daddr;
 	tuple.dst.u.tcp.port = inet->inet_dport;
 	tuple.src.l3num = PF_INET;
 	tuple.dst.protonum = sk->sk_protocol;
+	release_sock(sk);
 
 	/* We only do TCP and SCTP at the moment: is there a better way? */
-	if (sk->sk_protocol != IPPROTO_TCP && sk->sk_protocol != IPPROTO_SCTP) {
+	if (tuple.dst.protonum != IPPROTO_TCP &&
+	    tuple.dst.protonum != IPPROTO_SCTP) {
 		pr_debug("SO_ORIGINAL_DST: Not a TCP/SCTP socket\n");
 		return -ENOPROTOOPT;
 	}
@@ -303,11 +307,6 @@ static int ipv4_nlattr_to_tuple(struct nlattr *tb[],
 
 	return 0;
 }
-
-static int ipv4_nlattr_tuple_size(void)
-{
-	return nla_policy_len(ipv4_nla_policy, CTA_IP_MAX + 1);
-}
 #endif
 
 static struct nf_sockopt_ops so_getorigdst = {
@@ -356,18 +355,17 @@ static void ipv4_hooks_unregister(struct net *net)
 	mutex_unlock(&register_ipv4_hooks);
 }
 
-struct nf_conntrack_l3proto nf_conntrack_l3proto_ipv4 __read_mostly = {
+const struct nf_conntrack_l3proto nf_conntrack_l3proto_ipv4 = {
 	.l3proto	 = PF_INET,
-	.name		 = "ipv4",
 	.pkt_to_tuple	 = ipv4_pkt_to_tuple,
 	.invert_tuple	 = ipv4_invert_tuple,
-	.print_tuple	 = ipv4_print_tuple,
 	.get_l4proto	 = ipv4_get_l4proto,
 #if IS_ENABLED(CONFIG_NF_CT_NETLINK)
 	.tuple_to_nlattr = ipv4_tuple_to_nlattr,
-	.nlattr_tuple_size = ipv4_nlattr_tuple_size,
 	.nlattr_to_tuple = ipv4_nlattr_to_tuple,
 	.nla_policy	 = ipv4_nla_policy,
+	.nla_size	 = NLA_ALIGN(NLA_HDRLEN + sizeof(u32)) + /* CTA_IP_V4_SRC */
+			   NLA_ALIGN(NLA_HDRLEN + sizeof(u32)),  /* CTA_IP_V4_DST */
 #endif
 	.net_ns_get	 = ipv4_hooks_register,
 	.net_ns_put	 = ipv4_hooks_unregister,
@@ -381,7 +379,7 @@ MODULE_ALIAS("nf_conntrack-" __stringify(AF_INET));
 MODULE_ALIAS("ip_conntrack");
 MODULE_LICENSE("GPL");
 
-static struct nf_conntrack_l4proto *builtin_l4proto4[] = {
+static const struct nf_conntrack_l4proto * const builtin_l4proto4[] = {
 	&nf_conntrack_l4proto_tcp4,
 	&nf_conntrack_l4proto_udp4,
 	&nf_conntrack_l4proto_icmp,
@@ -398,24 +396,12 @@ static struct nf_conntrack_l4proto *builtin_l4proto4[] = {
 
 static int ipv4_net_init(struct net *net)
 {
-	int ret = 0;
-
-	ret = nf_ct_l4proto_pernet_register(net, builtin_l4proto4,
-					    ARRAY_SIZE(builtin_l4proto4));
-	if (ret < 0)
-		return ret;
-	ret = nf_ct_l3proto_pernet_register(net, &nf_conntrack_l3proto_ipv4);
-	if (ret < 0) {
-		pr_err("nf_conntrack_ipv4: pernet registration failed\n");
-		nf_ct_l4proto_pernet_unregister(net, builtin_l4proto4,
-						ARRAY_SIZE(builtin_l4proto4));
-	}
-	return ret;
+	return nf_ct_l4proto_pernet_register(net, builtin_l4proto4,
+					     ARRAY_SIZE(builtin_l4proto4));
 }
 
 static void ipv4_net_exit(struct net *net)
 {
-	nf_ct_l3proto_pernet_unregister(net, &nf_conntrack_l3proto_ipv4);
 	nf_ct_l4proto_pernet_unregister(net, builtin_l4proto4,
 					ARRAY_SIZE(builtin_l4proto4));
 }
@@ -433,6 +419,11 @@ static int __init nf_conntrack_l3proto_ipv4_init(void)
 
 	need_conntrack();
 
+#if IS_ENABLED(CONFIG_NF_CT_NETLINK)
+	if (WARN_ON(nla_policy_len(ipv4_nla_policy, CTA_IP_MAX + 1) !=
+	    nf_conntrack_l3proto_ipv4.nla_size))
+		return -EINVAL;
+#endif
 	ret = nf_register_sockopt(&so_getorigdst);
 	if (ret < 0) {
 		pr_err("Unable to register netfilter socket option\n");

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  *  linux/fs/fcntl.c
  *
@@ -22,10 +23,10 @@
 #include <linux/rcupdate.h>
 #include <linux/pid_namespace.h>
 #include <linux/user_namespace.h>
-#include <linux/shmem_fs.h>
+#include <linux/memfd.h>
 #include <linux/compat.h>
 
-#include <asm/poll.h>
+#include <linux/poll.h>
 #include <asm/siginfo.h>
 #include <linux/uaccess.h>
 
@@ -417,7 +418,7 @@ static long do_fcntl(int fd, unsigned int cmd, unsigned long arg,
 		break;
 	case F_ADD_SEALS:
 	case F_GET_SEALS:
-		err = shmem_fcntl(filp, cmd, arg);
+		err = memfd_fcntl(filp, cmd, arg);
 		break;
 	case F_GET_RW_HINT:
 	case F_SET_RW_HINT:
@@ -562,6 +563,9 @@ static int put_compat_flock64(const struct flock *kfl, struct compat_flock64 __u
 {
 	struct compat_flock64 fl;
 
+	BUILD_BUG_ON(sizeof(kfl->l_start) > sizeof(ufl->l_start));
+	BUILD_BUG_ON(sizeof(kfl->l_len) > sizeof(ufl->l_len));
+
 	memset(&fl, 0, sizeof(struct compat_flock64));
 	copy_flock_fields(&fl, kfl);
 	if (copy_to_user(ufl, &fl, sizeof(struct compat_flock64)))
@@ -603,8 +607,8 @@ static int fixup_compat_flock(struct flock *flock)
 	return 0;
 }
 
-COMPAT_SYSCALL_DEFINE3(fcntl64, unsigned int, fd, unsigned int, cmd,
-		       compat_ulong_t, arg)
+static long do_compat_fcntl64(unsigned int fd, unsigned int cmd,
+			     compat_ulong_t arg)
 {
 	struct fd f = fdget_raw(fd);
 	struct flock flock;
@@ -631,9 +635,8 @@ COMPAT_SYSCALL_DEFINE3(fcntl64, unsigned int, fd, unsigned int, cmd,
 		if (err)
 			break;
 		err = fixup_compat_flock(&flock);
-		if (err)
-			return err;
-		err = put_compat_flock(&flock, compat_ptr(arg));
+		if (!err)
+			err = put_compat_flock(&flock, compat_ptr(arg));
 		break;
 	case F_GETLK64:
 	case F_OFD_GETLK:
@@ -641,12 +644,8 @@ COMPAT_SYSCALL_DEFINE3(fcntl64, unsigned int, fd, unsigned int, cmd,
 		if (err)
 			break;
 		err = fcntl_getlk(f.file, convert_fcntl_cmd(cmd), &flock);
-		if (err)
-			break;
-		err = fixup_compat_flock(&flock);
-		if (err)
-			return err;
-		err = put_compat_flock64(&flock, compat_ptr(arg));
+		if (!err)
+			err = put_compat_flock64(&flock, compat_ptr(arg));
 		break;
 	case F_SETLK:
 	case F_SETLKW:
@@ -673,6 +672,12 @@ out_put:
 	return err;
 }
 
+COMPAT_SYSCALL_DEFINE3(fcntl64, unsigned int, fd, unsigned int, cmd,
+		       compat_ulong_t, arg)
+{
+	return do_compat_fcntl64(fd, cmd, arg);
+}
+
 COMPAT_SYSCALL_DEFINE3(fcntl, unsigned int, fd, unsigned int, cmd,
 		       compat_ulong_t, arg)
 {
@@ -685,19 +690,19 @@ COMPAT_SYSCALL_DEFINE3(fcntl, unsigned int, fd, unsigned int, cmd,
 	case F_OFD_SETLKW:
 		return -EINVAL;
 	}
-	return compat_sys_fcntl64(fd, cmd, arg);
+	return do_compat_fcntl64(fd, cmd, arg);
 }
 #endif
 
 /* Table to convert sigio signal codes into poll band bitmaps */
 
-static const long band_table[NSIGPOLL] = {
-	POLLIN | POLLRDNORM,			/* POLL_IN */
-	POLLOUT | POLLWRNORM | POLLWRBAND,	/* POLL_OUT */
-	POLLIN | POLLRDNORM | POLLMSG,		/* POLL_MSG */
-	POLLERR,				/* POLL_ERR */
-	POLLPRI | POLLRDBAND,			/* POLL_PRI */
-	POLLHUP | POLLERR			/* POLL_HUP */
+static const __poll_t band_table[NSIGPOLL] = {
+	EPOLLIN | EPOLLRDNORM,			/* POLL_IN */
+	EPOLLOUT | EPOLLWRNORM | EPOLLWRBAND,	/* POLL_OUT */
+	EPOLLIN | EPOLLRDNORM | EPOLLMSG,		/* POLL_MSG */
+	EPOLLERR,				/* POLL_ERR */
+	EPOLLPRI | EPOLLRDBAND,			/* POLL_PRI */
+	EPOLLHUP | EPOLLERR			/* POLL_HUP */
 };
 
 static inline int sigio_perm(struct task_struct *p,
@@ -724,7 +729,7 @@ static void send_sigio_to_task(struct task_struct *p,
 	 * F_SETSIG can change ->signum lockless in parallel, make
 	 * sure we read it once and use the same value throughout.
 	 */
-	int signum = ACCESS_ONCE(fown->signum);
+	int signum = READ_ONCE(fown->signum);
 
 	if (!sigio_perm(p, fown, signum))
 		return;
@@ -738,17 +743,29 @@ static void send_sigio_to_task(struct task_struct *p,
 			   delivered even if we can't queue.  Failure to
 			   queue in this case _should_ be reported; we fall
 			   back to SIGIO in that case. --sct */
+			clear_siginfo(&si);
 			si.si_signo = signum;
 			si.si_errno = 0;
 		        si.si_code  = reason;
+			/*
+			 * Posix definies POLL_IN and friends to be signal
+			 * specific si_codes for SIG_POLL.  Linux extended
+			 * these si_codes to other signals in a way that is
+			 * ambiguous if other signals also have signal
+			 * specific si_codes.  In that case use SI_SIGIO instead
+			 * to remove the ambiguity.
+			 */
+			if ((signum != SIGPOLL) && sig_specific_sicodes(signum))
+				si.si_code = SI_SIGIO;
+
 			/* Make sure we are called with one of the POLL_*
 			   reasons, otherwise we could leak kernel stack into
 			   userspace.  */
-			BUG_ON((reason & __SI_MASK) != __SI_POLL);
+			BUG_ON((reason < POLL_IN) || ((reason - POLL_IN) >= NSIGPOLL));
 			if (reason - POLL_IN >= NSIGPOLL)
 				si.si_band  = ~0L;
 			else
-				si.si_band = band_table[reason - POLL_IN];
+				si.si_band = mangle_poll(band_table[reason - POLL_IN]);
 			si.si_fd    = fd;
 			if (!do_send_sig_info(signum, &si, p, group))
 				break;
@@ -854,9 +871,9 @@ int fasync_remove_entry(struct file *filp, struct fasync_struct **fapp)
 		if (fa->fa_file != filp)
 			continue;
 
-		spin_lock_irq(&fa->fa_lock);
+		write_lock_irq(&fa->fa_lock);
 		fa->fa_file = NULL;
-		spin_unlock_irq(&fa->fa_lock);
+		write_unlock_irq(&fa->fa_lock);
 
 		*fp = fa->fa_next;
 		call_rcu(&fa->fa_rcu, fasync_free_rcu);
@@ -901,13 +918,13 @@ struct fasync_struct *fasync_insert_entry(int fd, struct file *filp, struct fasy
 		if (fa->fa_file != filp)
 			continue;
 
-		spin_lock_irq(&fa->fa_lock);
+		write_lock_irq(&fa->fa_lock);
 		fa->fa_fd = fd;
-		spin_unlock_irq(&fa->fa_lock);
+		write_unlock_irq(&fa->fa_lock);
 		goto out;
 	}
 
-	spin_lock_init(&new->fa_lock);
+	rwlock_init(&new->fa_lock);
 	new->magic = FASYNC_MAGIC;
 	new->fa_file = filp;
 	new->fa_fd = fd;
@@ -970,14 +987,13 @@ static void kill_fasync_rcu(struct fasync_struct *fa, int sig, int band)
 {
 	while (fa) {
 		struct fown_struct *fown;
-		unsigned long flags;
 
 		if (fa->magic != FASYNC_MAGIC) {
 			printk(KERN_ERR "kill_fasync: bad magic number in "
 			       "fasync_struct!\n");
 			return;
 		}
-		spin_lock_irqsave(&fa->fa_lock, flags);
+		read_lock(&fa->fa_lock);
 		if (fa->fa_file) {
 			fown = &fa->fa_file->f_owner;
 			/* Don't send SIGURG to processes which have not set a
@@ -986,7 +1002,7 @@ static void kill_fasync_rcu(struct fasync_struct *fa, int sig, int band)
 			if (!(sig == SIGURG && fown->signum == 0))
 				send_sigio(fown, fa->fa_fd, band);
 		}
-		spin_unlock_irqrestore(&fa->fa_lock, flags);
+		read_unlock(&fa->fa_lock);
 		fa = rcu_dereference(fa->fa_next);
 	}
 }

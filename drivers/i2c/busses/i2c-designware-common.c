@@ -21,6 +21,7 @@
  * ----------------------------------------------------------------------------
  *
  */
+#include <linux/clk.h>
 #include <linux/delay.h>
 #include <linux/export.h>
 #include <linux/errno.h>
@@ -148,18 +149,17 @@ u32 i2c_dw_scl_lcnt(u32 ic_clk, u32 tLOW, u32 tf, int offset)
 	return ((ic_clk * (tLOW + tf) + 500000) / 1000000) - 1 + offset;
 }
 
-void __i2c_dw_enable(struct dw_i2c_dev *dev, bool enable)
-{
-	dw_writel(dev, enable, DW_IC_ENABLE);
-}
-
-void __i2c_dw_enable_and_wait(struct dw_i2c_dev *dev, bool enable)
+void __i2c_dw_disable(struct dw_i2c_dev *dev)
 {
 	int timeout = 100;
 
 	do {
-		__i2c_dw_enable(dev, enable);
-		if ((dw_readl(dev, DW_IC_ENABLE_STATUS) & 1) == enable)
+		__i2c_dw_disable_nowait(dev);
+		/*
+		 * The enable status register may be unimplemented, but
+		 * in that case this test reads zero and exits the loop.
+		 */
+		if ((dw_readl(dev, DW_IC_ENABLE_STATUS) & 1) == 0)
 			return;
 
 		/*
@@ -170,8 +170,7 @@ void __i2c_dw_enable_and_wait(struct dw_i2c_dev *dev, bool enable)
 		usleep_range(25, 250);
 	} while (timeout--);
 
-	dev_warn(dev->dev, "timeout in %sabling adapter\n",
-		 enable ? "en" : "dis");
+	dev_warn(dev->dev, "timeout in disabling adapter\n");
 }
 
 unsigned long i2c_dw_clk_rate(struct dw_i2c_dev *dev)
@@ -184,6 +183,19 @@ unsigned long i2c_dw_clk_rate(struct dw_i2c_dev *dev)
 		return 0;
 	return dev->get_clk_rate_khz(dev);
 }
+
+int i2c_dw_prepare_clk(struct dw_i2c_dev *dev, bool prepare)
+{
+	if (IS_ERR(dev->clk))
+		return PTR_ERR(dev->clk);
+
+	if (prepare)
+		return clk_prepare_enable(dev->clk);
+
+	clk_disable_unprepare(dev->clk);
+	return 0;
+}
+EXPORT_SYMBOL_GPL(i2c_dw_prepare_clk);
 
 int i2c_dw_acquire_lock(struct dw_i2c_dev *dev)
 {
@@ -217,7 +229,11 @@ int i2c_dw_wait_bus_not_busy(struct dw_i2c_dev *dev)
 	while (dw_readl(dev, DW_IC_STATUS) & DW_IC_STATUS_ACTIVITY) {
 		if (timeout <= 0) {
 			dev_warn(dev->dev, "timeout waiting for bus ready\n");
-			return -ETIMEDOUT;
+			i2c_recover_bus(&dev->adapter);
+
+			if (dw_readl(dev, DW_IC_STATUS) & DW_IC_STATUS_ACTIVITY)
+				return -ETIMEDOUT;
+			return 0;
 		}
 		timeout--;
 		usleep_range(1000, 1100);
@@ -259,7 +275,7 @@ u32 i2c_dw_func(struct i2c_adapter *adap)
 void i2c_dw_disable(struct dw_i2c_dev *dev)
 {
 	/* Disable controller */
-	__i2c_dw_enable_and_wait(dev, false);
+	__i2c_dw_disable(dev);
 
 	/* Disable all interupts */
 	dw_writel(dev, 0, DW_IC_INTR_MASK);

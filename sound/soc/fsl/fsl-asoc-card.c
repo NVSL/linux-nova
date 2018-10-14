@@ -91,9 +91,9 @@ struct fsl_asoc_card_priv {
 	struct cpu_priv cpu_priv;
 	struct snd_soc_card card;
 	u32 sample_rate;
-	u32 sample_format;
+	snd_pcm_format_t sample_format;
 	u32 asrc_rate;
-	u32 asrc_format;
+	snd_pcm_format_t asrc_format;
 	u32 dai_fmt;
 	char name[32];
 };
@@ -166,7 +166,7 @@ static int fsl_asoc_card_hw_params(struct snd_pcm_substream *substream,
 	ret = snd_soc_dai_set_sysclk(rtd->cpu_dai, cpu_priv->sysclk_id[tx],
 				     cpu_priv->sysclk_freq[tx],
 				     cpu_priv->sysclk_dir[tx]);
-	if (ret) {
+	if (ret && ret != -ENOTSUPP) {
 		dev_err(dev, "failed to set sysclk for cpu dai\n");
 		return ret;
 	}
@@ -174,7 +174,7 @@ static int fsl_asoc_card_hw_params(struct snd_pcm_substream *substream,
 	if (cpu_priv->slot_width) {
 		ret = snd_soc_dai_set_tdm_slot(rtd->cpu_dai, 0x3, 0x3, 2,
 					       cpu_priv->slot_width);
-		if (ret) {
+		if (ret && ret != -ENOTSUPP) {
 			dev_err(dev, "failed to set TDM slot for cpu dai\n");
 			return ret;
 		}
@@ -199,7 +199,7 @@ static int be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 
 	mask = hw_param_mask(params, SNDRV_PCM_HW_PARAM_FORMAT);
 	snd_mask_none(mask);
-	snd_mask_set(mask, priv->asrc_format);
+	snd_mask_set(mask, (__force int)priv->asrc_format);
 
 	return 0;
 }
@@ -270,7 +270,7 @@ static int fsl_asoc_card_set_bias_level(struct snd_soc_card *card,
 
 		ret = snd_soc_dai_set_sysclk(codec_dai, codec_priv->fll_id,
 					     pll_out, SND_SOC_CLOCK_IN);
-		if (ret) {
+		if (ret && ret != -ENOTSUPP) {
 			dev_err(dev, "failed to set SYSCLK: %d\n", ret);
 			return ret;
 		}
@@ -283,7 +283,7 @@ static int fsl_asoc_card_set_bias_level(struct snd_soc_card *card,
 		ret = snd_soc_dai_set_sysclk(codec_dai, codec_priv->mclk_id,
 					     codec_priv->mclk_freq,
 					     SND_SOC_CLOCK_IN);
-		if (ret) {
+		if (ret && ret != -ENOTSUPP) {
 			dev_err(dev, "failed to switch away from FLL: %d\n", ret);
 			return ret;
 		}
@@ -442,8 +442,8 @@ static int fsl_asoc_card_late_probe(struct snd_soc_card *card)
 
 	if (fsl_asoc_card_is_ac97(priv)) {
 #if IS_ENABLED(CONFIG_SND_AC97_CODEC)
-		struct snd_soc_codec *codec = rtd->codec;
-		struct snd_ac97 *ac97 = snd_soc_codec_get_drvdata(codec);
+		struct snd_soc_component *component = rtd->codec_dai->component;
+		struct snd_ac97 *ac97 = snd_soc_component_get_drvdata(component);
 
 		/*
 		 * Use slots 3/4 for S/PDIF so SSI won't try to enable
@@ -459,7 +459,7 @@ static int fsl_asoc_card_late_probe(struct snd_soc_card *card)
 
 	ret = snd_soc_dai_set_sysclk(codec_dai, codec_priv->mclk_id,
 				     codec_priv->mclk_freq, SND_SOC_CLOCK_IN);
-	if (ret) {
+	if (ret && ret != -ENOTSUPP) {
 		dev_err(dev, "failed to set sysclk in %s\n", __func__);
 		return ret;
 	}
@@ -639,6 +639,10 @@ static int fsl_asoc_card_probe(struct platform_device *pdev)
 				devm_kasprintf(&pdev->dev, GFP_KERNEL,
 					       "ac97-codec.%u",
 					       (unsigned int)idx);
+		if (!priv->dai_link[0].codec_name) {
+			ret = -ENOMEM;
+			goto asrc_fail;
+		}
 	}
 
 	priv->dai_link[0].platform_of_node = cpu_np;
@@ -683,7 +687,7 @@ static int fsl_asoc_card_probe(struct platform_device *pdev)
 	snd_soc_card_set_drvdata(&priv->card, priv);
 
 	ret = devm_snd_soc_register_card(&pdev->dev, &priv->card);
-	if (ret)
+	if (ret && ret != -EPROBE_DEFER)
 		dev_err(&pdev->dev, "snd_soc_register_card failed (%d)\n", ret);
 
 asrc_fail:

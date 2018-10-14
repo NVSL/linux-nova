@@ -24,9 +24,11 @@
 #include <linux/kernel.h>
 #include <linux/clk.h>
 #include <linux/slab.h>
+#include <linux/module.h>
 #include <linux/of_device.h>
 #include <linux/platform_device.h>
 #include <linux/mmc/host.h>
+#include <linux/mmc/slot-gpio.h>
 #include <linux/mfd/tmio.h>
 #include <linux/sh_dma.h>
 #include <linux/delay.h>
@@ -37,26 +39,14 @@
 #include "renesas_sdhi.h"
 #include "tmio_mmc.h"
 
-#define EXT_ACC           0xe4
+#define HOST_MODE		0xe4
 
 #define SDHI_VER_GEN2_SDR50	0x490c
+#define SDHI_VER_RZ_A1		0x820b
 /* very old datasheets said 0x490c for SDR104, too. They are wrong! */
 #define SDHI_VER_GEN2_SDR104	0xcb0d
 #define SDHI_VER_GEN3_SD	0xcc10
 #define SDHI_VER_GEN3_SDMMC	0xcd10
-
-#define host_to_priv(host) \
-	container_of((host)->pdata, struct renesas_sdhi, mmc_data)
-
-struct renesas_sdhi {
-	struct clk *clk;
-	struct clk *clk_cd;
-	struct tmio_mmc_data mmc_data;
-	struct tmio_mmc_dma dma_priv;
-	struct pinctrl *pinctrl;
-	struct pinctrl_state *pins_default, *pins_uhs;
-	void __iomem *scc_ctl;
-};
 
 static void renesas_sdhi_sdbuf_width(struct tmio_mmc_host *host, int width)
 {
@@ -87,7 +77,7 @@ static void renesas_sdhi_sdbuf_width(struct tmio_mmc_host *host, int width)
 		return;
 	}
 
-	sd_ctrl_write16(host, EXT_ACC, val);
+	sd_ctrl_write16(host, HOST_MODE, val);
 }
 
 static int renesas_sdhi_clk_enable(struct tmio_mmc_host *host)
@@ -279,7 +269,7 @@ static unsigned int renesas_sdhi_init_tuning(struct tmio_mmc_host *host)
 		       ~SH_MOBILE_SDHI_SCC_RVSCNTL_RVSEN &
 		       sd_scc_read32(host, priv, SH_MOBILE_SDHI_SCC_RVSCNTL));
 
-	sd_scc_write32(host, priv, SH_MOBILE_SDHI_SCC_DT2FF, host->scc_tappos);
+	sd_scc_write32(host, priv, SH_MOBILE_SDHI_SCC_DT2FF, priv->scc_tappos);
 
 	/* Read TAPNUM */
 	return (sd_scc_read32(host, priv, SH_MOBILE_SDHI_SCC_DTCNTL) >>
@@ -398,12 +388,14 @@ static void renesas_sdhi_hw_reset(struct tmio_mmc_host *host)
 		       sd_scc_read32(host, priv, SH_MOBILE_SDHI_SCC_RVSCNTL));
 }
 
-static int renesas_sdhi_wait_idle(struct tmio_mmc_host *host)
+static int renesas_sdhi_wait_idle(struct tmio_mmc_host *host, u32 bit)
 {
 	int timeout = 1000;
+	/* CBSY is set when busy, SCLKDIVEN is cleared when busy */
+	u32 wait_state = (bit == TMIO_STAT_CMD_BUSY ? TMIO_STAT_CMD_BUSY : 0);
 
-	while (--timeout && !(sd_ctrl_read16_and_16_as_32(host, CTL_STATUS)
-			      & TMIO_STAT_SCLKDIVEN))
+	while (--timeout && (sd_ctrl_read16_and_16_as_32(host, CTL_STATUS)
+			      & bit) == wait_state)
 		udelay(1);
 
 	if (!timeout) {
@@ -416,17 +408,22 @@ static int renesas_sdhi_wait_idle(struct tmio_mmc_host *host)
 
 static int renesas_sdhi_write16_hook(struct tmio_mmc_host *host, int addr)
 {
+	u32 bit = TMIO_STAT_SCLKDIVEN;
+
 	switch (addr) {
 	case CTL_SD_CMD:
 	case CTL_STOP_INTERNAL_ACTION:
 	case CTL_XFER_BLK_COUNT:
-	case CTL_SD_CARD_CLK_CTL:
 	case CTL_SD_XFER_LEN:
 	case CTL_SD_MEM_CARD_OPT:
 	case CTL_TRANSACTION_CTL:
 	case CTL_DMA_ENABLE:
-	case EXT_ACC:
-		return renesas_sdhi_wait_idle(host);
+	case HOST_MODE:
+		if (host->pdata->flags & TMIO_MMC_HAVE_CBSY)
+			bit = TMIO_STAT_CMD_BUSY;
+		/* fallthrough */
+	case CTL_SD_CARD_CLK_CTL:
+		return renesas_sdhi_wait_idle(host, bit);
 	}
 
 	return 0;
@@ -452,10 +449,11 @@ static int renesas_sdhi_multi_io_quirk(struct mmc_card *card,
 
 static void renesas_sdhi_enable_dma(struct tmio_mmc_host *host, bool enable)
 {
-	sd_ctrl_write16(host, CTL_DMA_ENABLE, enable ? 2 : 0);
+	/* Iff regs are 8 byte apart, sdbuf is 64 bit. Otherwise always 32. */
+	int width = (host->bus_shift == 2) ? 64 : 32;
 
-	/* enable 32bit access if DMA mode if possibile */
-	renesas_sdhi_sdbuf_width(host, enable ? 32 : 16);
+	sd_ctrl_write16(host, CTL_DMA_ENABLE, enable ? DMA_ENABLE_DMASDRW : 0);
+	renesas_sdhi_sdbuf_width(host, enable ? width : 16);
 }
 
 int renesas_sdhi_probe(struct platform_device *pdev,
@@ -488,7 +486,7 @@ int renesas_sdhi_probe(struct platform_device *pdev,
 	if (IS_ERR(priv->clk)) {
 		ret = PTR_ERR(priv->clk);
 		dev_err(&pdev->dev, "cannot get clock: %d\n", ret);
-		goto eprobe;
+		return ret;
 	}
 
 	/*
@@ -514,11 +512,9 @@ int renesas_sdhi_probe(struct platform_device *pdev,
 						"state_uhs");
 	}
 
-	host = tmio_mmc_host_alloc(pdev);
-	if (!host) {
-		ret = -ENOMEM;
-		goto eprobe;
-	}
+	host = tmio_mmc_host_alloc(pdev, mmc_data);
+	if (IS_ERR(host))
+		return PTR_ERR(host);
 
 	if (of_data) {
 		mmc_data->flags |= of_data->tmio_flags;
@@ -526,22 +522,28 @@ int renesas_sdhi_probe(struct platform_device *pdev,
 		mmc_data->capabilities |= of_data->capabilities;
 		mmc_data->capabilities2 |= of_data->capabilities2;
 		mmc_data->dma_rx_offset = of_data->dma_rx_offset;
+		mmc_data->max_blk_count = of_data->max_blk_count;
+		mmc_data->max_segs = of_data->max_segs;
 		dma_priv->dma_buswidth = of_data->dma_buswidth;
 		host->bus_shift = of_data->bus_shift;
 	}
 
-	host->dma		= dma_priv;
 	host->write16_hook	= renesas_sdhi_write16_hook;
 	host->clk_enable	= renesas_sdhi_clk_enable;
 	host->clk_update	= renesas_sdhi_clk_update;
 	host->clk_disable	= renesas_sdhi_clk_disable;
 	host->multi_io_quirk	= renesas_sdhi_multi_io_quirk;
+	host->dma_ops		= dma_ops;
+
+	/* For some SoC, we disable internal WP. GPIO may override this */
+	if (mmc_can_gpio_ro(host->mmc))
+		mmc_data->capabilities2 &= ~MMC_CAP2_NO_WRITE_PROTECT;
 
 	/* SDR speeds are only available on Gen2+ */
 	if (mmc_data->flags & TMIO_MMC_MIN_RCAR2) {
 		/* card_busy caused issues on r8a73a4 (pre-Gen2) CD-less SDHI */
-		host->card_busy	= renesas_sdhi_card_busy;
-		host->start_signal_voltage_switch =
+		host->ops.card_busy = renesas_sdhi_card_busy;
+		host->ops.start_signal_voltage_switch =
 			renesas_sdhi_start_signal_voltage_switch;
 	}
 
@@ -575,9 +577,17 @@ int renesas_sdhi_probe(struct platform_device *pdev,
 	/* All SDHI have SDIO status bits which must be 1 */
 	mmc_data->flags |= TMIO_MMC_SDIO_STATUS_SETBITS;
 
-	ret = tmio_mmc_host_probe(host, mmc_data, dma_ops);
-	if (ret < 0)
+	ret = renesas_sdhi_clk_enable(host);
+	if (ret)
 		goto efree;
+
+	ret = tmio_mmc_host_probe(host);
+	if (ret < 0)
+		goto edisclk;
+
+	/* One Gen2 SDHI incarnation does NOT have a CBSY bit */
+	if (sd_ctrl_read16(host, CTL_VERSION) == SDHI_VER_GEN2_SDR50)
+		mmc_data->flags &= ~TMIO_MMC_HAVE_CBSY;
 
 	/* Enable tuning iff we have an SCC and a supported mode */
 	if (of_data && of_data->scc_offset &&
@@ -591,7 +601,7 @@ int renesas_sdhi_probe(struct platform_device *pdev,
 		for (i = 0; i < of_data->taps_num; i++) {
 			if (taps[i].clk_rate == 0 ||
 			    taps[i].clk_rate == host->mmc->f_max) {
-				host->scc_tappos = taps->tap;
+				priv->scc_tappos = taps->tap;
 				hit = true;
 				break;
 			}
@@ -635,20 +645,24 @@ int renesas_sdhi_probe(struct platform_device *pdev,
 
 eirq:
 	tmio_mmc_host_remove(host);
+edisclk:
+	renesas_sdhi_clk_disable(host);
 efree:
 	tmio_mmc_host_free(host);
-eprobe:
+
 	return ret;
 }
 EXPORT_SYMBOL_GPL(renesas_sdhi_probe);
 
 int renesas_sdhi_remove(struct platform_device *pdev)
 {
-	struct mmc_host *mmc = platform_get_drvdata(pdev);
-	struct tmio_mmc_host *host = mmc_priv(mmc);
+	struct tmio_mmc_host *host = platform_get_drvdata(pdev);
 
 	tmio_mmc_host_remove(host);
+	renesas_sdhi_clk_disable(host);
 
 	return 0;
 }
 EXPORT_SYMBOL_GPL(renesas_sdhi_remove);
+
+MODULE_LICENSE("GPL v2");

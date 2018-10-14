@@ -1,25 +1,13 @@
-/*
- * MXC GPIO support. (c) 2008 Daniel Mack <daniel@caiaq.de>
- * Copyright 2008 Juergen Beisert, kernel@pengutronix.de
- *
- * Based on code from Freescale Semiconductor,
- * Authors: Daniel Mack, Juergen Beisert.
- * Copyright (C) 2004-2010 Freescale Semiconductor, Inc. All Rights Reserved.
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version 2
- * of the License, or (at your option) any later version.
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
- */
+// SPDX-License-Identifier: GPL-2.0+
+//
+// MXC GPIO support. (c) 2008 Daniel Mack <daniel@caiaq.de>
+// Copyright 2008 Juergen Beisert, kernel@pengutronix.de
+//
+// Based on code from Freescale Semiconductor,
+// Authors: Daniel Mack, Juergen Beisert.
+// Copyright (C) 2004-2010 Freescale Semiconductor, Inc. All Rights Reserved.
 
+#include <linux/clk.h>
 #include <linux/err.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
@@ -30,8 +18,6 @@
 #include <linux/platform_device.h>
 #include <linux/slab.h>
 #include <linux/gpio/driver.h>
-/* FIXME: for gpio_get_value() replace this with direct register read */
-#include <linux/gpio.h>
 #include <linux/of.h>
 #include <linux/of_device.h>
 #include <linux/bug.h>
@@ -62,10 +48,12 @@ struct mxc_gpio_hwdata {
 struct mxc_gpio_port {
 	struct list_head node;
 	void __iomem *base;
+	struct clk *clk;
 	int irq;
 	int irq_high;
 	struct irq_domain *domain;
 	struct gpio_chip gc;
+	struct device *dev;
 	u32 both_edges;
 };
 
@@ -173,7 +161,6 @@ static int gpio_set_irq_type(struct irq_data *d, u32 type)
 	struct mxc_gpio_port *port = gc->private;
 	u32 bit, val;
 	u32 gpio_idx = d->hwirq;
-	u32 gpio = port->gc.base + gpio_idx;
 	int edge;
 	void __iomem *reg = port->base;
 
@@ -189,13 +176,13 @@ static int gpio_set_irq_type(struct irq_data *d, u32 type)
 		if (GPIO_EDGE_SEL >= 0) {
 			edge = GPIO_INT_BOTH_EDGES;
 		} else {
-			val = gpio_get_value(gpio);
+			val = port->gc.get(&port->gc, gpio_idx);
 			if (val) {
 				edge = GPIO_INT_LOW_LEV;
-				pr_debug("mxc: set GPIO %d to low trigger\n", gpio);
+				pr_debug("mxc: set GPIO %d to low trigger\n", gpio_idx);
 			} else {
 				edge = GPIO_INT_HIGH_LEV;
-				pr_debug("mxc: set GPIO %d to high trigger\n", gpio);
+				pr_debug("mxc: set GPIO %d to high trigger\n", gpio_idx);
 			}
 			port->both_edges |= 1 << gpio_idx;
 		}
@@ -324,29 +311,31 @@ static int gpio_set_wake_irq(struct irq_data *d, u32 enable)
 	struct irq_chip_generic *gc = irq_data_get_irq_chip_data(d);
 	struct mxc_gpio_port *port = gc->private;
 	u32 gpio_idx = d->hwirq;
+	int ret;
 
 	if (enable) {
 		if (port->irq_high && (gpio_idx >= 16))
-			enable_irq_wake(port->irq_high);
+			ret = enable_irq_wake(port->irq_high);
 		else
-			enable_irq_wake(port->irq);
+			ret = enable_irq_wake(port->irq);
 	} else {
 		if (port->irq_high && (gpio_idx >= 16))
-			disable_irq_wake(port->irq_high);
+			ret = disable_irq_wake(port->irq_high);
 		else
-			disable_irq_wake(port->irq);
+			ret = disable_irq_wake(port->irq);
 	}
 
-	return 0;
+	return ret;
 }
 
 static int mxc_gpio_init_gc(struct mxc_gpio_port *port, int irq_base)
 {
 	struct irq_chip_generic *gc;
 	struct irq_chip_type *ct;
+	int rv;
 
-	gc = irq_alloc_generic_chip("gpio-mxc", 1, irq_base,
-				    port->base, handle_level_irq);
+	gc = devm_irq_alloc_generic_chip(port->dev, "gpio-mxc", 1, irq_base,
+					 port->base, handle_level_irq);
 	if (!gc)
 		return -ENOMEM;
 	gc->private = port;
@@ -361,10 +350,11 @@ static int mxc_gpio_init_gc(struct mxc_gpio_port *port, int irq_base)
 	ct->regs.ack = GPIO_ISR;
 	ct->regs.mask = GPIO_IMR;
 
-	irq_setup_generic_chip(gc, IRQ_MSK(32), IRQ_GC_INIT_NESTED_LOCK,
-			       IRQ_NOREQUEST, 0);
+	rv = devm_irq_setup_generic_chip(port->dev, gc, IRQ_MSK(32),
+					 IRQ_GC_INIT_NESTED_LOCK,
+					 IRQ_NOREQUEST, 0);
 
-	return 0;
+	return rv;
 }
 
 static void mxc_gpio_get_hw(struct platform_device *pdev)
@@ -418,6 +408,8 @@ static int mxc_gpio_probe(struct platform_device *pdev)
 	if (!port)
 		return -ENOMEM;
 
+	port->dev = &pdev->dev;
+
 	iores = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	port->base = devm_ioremap_resource(&pdev->dev, iores);
 	if (IS_ERR(port->base))
@@ -430,6 +422,17 @@ static int mxc_gpio_probe(struct platform_device *pdev)
 	port->irq = platform_get_irq(pdev, 0);
 	if (port->irq < 0)
 		return port->irq;
+
+	/* the controller clock is optional */
+	port->clk = devm_clk_get(&pdev->dev, NULL);
+	if (IS_ERR(port->clk))
+		port->clk = NULL;
+
+	err = clk_prepare_enable(port->clk);
+	if (err) {
+		dev_err(&pdev->dev, "Unable to enable clock.\n");
+		return err;
+	}
 
 	/* disable the interrupt and clear the status */
 	writel(0, port->base + GPIO_IMR);
@@ -499,6 +502,7 @@ static int mxc_gpio_probe(struct platform_device *pdev)
 out_irqdomain_remove:
 	irq_domain_remove(port->domain);
 out_bgio:
+	clk_disable_unprepare(port->clk);
 	dev_info(&pdev->dev, "%s failed with errno %d\n", __func__, err);
 	return err;
 }
@@ -507,6 +511,7 @@ static struct platform_driver mxc_gpio_driver = {
 	.driver		= {
 		.name	= "gpio-mxc",
 		.of_match_table = mxc_gpio_dt_ids,
+		.suppress_bind_attrs = true,
 	},
 	.probe		= mxc_gpio_probe,
 	.id_table	= mxc_gpio_devtype,

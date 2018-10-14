@@ -68,15 +68,6 @@ enum {
 	NCSI_MODE_MAX
 };
 
-enum {
-	NCSI_FILTER_BASE	= 0,
-	NCSI_FILTER_VLAN	= 0,
-	NCSI_FILTER_UC,
-	NCSI_FILTER_MC,
-	NCSI_FILTER_MIXED,
-	NCSI_FILTER_MAX
-};
-
 struct ncsi_channel_version {
 	u32 version;		/* Supported BCD encoded NCSI version */
 	u32 alpha2;		/* Supported BCD encoded NCSI version */
@@ -98,11 +89,18 @@ struct ncsi_channel_mode {
 	u32 data[8];	/* Data entries                */
 };
 
-struct ncsi_channel_filter {
-	u32 index;	/* Index of channel filters          */
-	u32 total;	/* Total entries in the filter table */
-	u64 bitmap;	/* Bitmap of valid entries           */
-	u32 data[];	/* Data for the valid entries        */
+struct ncsi_channel_mac_filter {
+	u8	n_uc;
+	u8	n_mc;
+	u8	n_mixed;
+	u64	bitmap;
+	unsigned char	*addrs;
+};
+
+struct ncsi_channel_vlan_filter {
+	u8	n_vids;
+	u64	bitmap;
+	u16	*vids;
 };
 
 struct ncsi_channel_stats {
@@ -180,12 +178,15 @@ struct ncsi_channel {
 #define NCSI_CHANNEL_INACTIVE		1
 #define NCSI_CHANNEL_ACTIVE		2
 #define NCSI_CHANNEL_INVISIBLE		3
+	bool                        reconfigure_needed;
 	spinlock_t                  lock;	/* Protect filters etc */
 	struct ncsi_package         *package;
 	struct ncsi_channel_version version;
 	struct ncsi_channel_cap	    caps[NCSI_CAP_MAX];
 	struct ncsi_channel_mode    modes[NCSI_MODE_MAX];
-	struct ncsi_channel_filter  *filters[NCSI_FILTER_MAX];
+	/* Filtering Settings */
+	struct ncsi_channel_mac_filter	mac_filter;
+	struct ncsi_channel_vlan_filter	vlan_filter;
 	struct ncsi_channel_stats   stats;
 	struct {
 		struct timer_list   timer;
@@ -235,6 +236,9 @@ enum {
 	ncsi_dev_state_probe_dp,
 	ncsi_dev_state_config_sp	= 0x0301,
 	ncsi_dev_state_config_cis,
+	ncsi_dev_state_config_clear_vids,
+	ncsi_dev_state_config_svf,
+	ncsi_dev_state_config_ev,
 	ncsi_dev_state_config_sma,
 	ncsi_dev_state_config_ebf,
 #if IS_ENABLED(CONFIG_IPV6)
@@ -253,6 +257,12 @@ enum {
 	ncsi_dev_state_suspend_done
 };
 
+struct vlan_vid {
+	struct list_head list;
+	__be16 proto;
+	u16 vid;
+};
+
 struct ncsi_dev_priv {
 	struct ncsi_dev     ndev;            /* Associated NCSI device     */
 	unsigned int        flags;           /* NCSI device flags          */
@@ -266,6 +276,8 @@ struct ncsi_dev_priv {
 	unsigned int        package_num;     /* Number of packages         */
 	struct list_head    packages;        /* List of packages           */
 	struct ncsi_channel *hot_channel;    /* Channel was ever active    */
+	struct ncsi_package *force_package;  /* Force a specific package   */
+	struct ncsi_channel *force_channel;  /* Force a specific channel   */
 	struct ncsi_request requests[256];   /* Request table              */
 	unsigned int        request_id;      /* Last used request ID       */
 #define NCSI_REQ_START_IDX	1
@@ -276,6 +288,8 @@ struct ncsi_dev_priv {
 	struct work_struct  work;            /* For channel management     */
 	struct packet_type  ptype;           /* NCSI packet Rx handler     */
 	struct list_head    node;            /* Form NCSI device list      */
+#define NCSI_MAX_VLAN_VIDS	15
+	struct list_head    vlan_vids;       /* List of active VLAN IDs */
 };
 
 struct ncsi_cmd_arg {
@@ -306,9 +320,6 @@ extern spinlock_t ncsi_dev_lock;
 	list_for_each_entry_rcu(nc, &np->channels, node)
 
 /* Resources */
-int ncsi_find_filter(struct ncsi_channel *nc, int table, void *data);
-int ncsi_add_filter(struct ncsi_channel *nc, int table, void *data);
-int ncsi_remove_filter(struct ncsi_channel *nc, int table, int index);
 void ncsi_start_channel_monitor(struct ncsi_channel *nc);
 void ncsi_stop_channel_monitor(struct ncsi_channel *nc);
 struct ncsi_channel *ncsi_find_channel(struct ncsi_package *np,

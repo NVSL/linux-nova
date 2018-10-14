@@ -1,8 +1,9 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * zfcp device driver
  * debug feature declarations
  *
- * Copyright IBM Corp. 2008, 2016
+ * Copyright IBM Corp. 2008, 2017
  */
 
 #ifndef ZFCP_DBF_H
@@ -204,16 +205,17 @@ enum zfcp_dbf_scsi_id {
  * @id: unique number of recovery record type
  * @tag: identifier string specifying the location of initiation
  * @scsi_id: scsi device id
- * @scsi_lun: scsi device logical unit number
+ * @scsi_lun: scsi device logical unit number, low part of 64 bit, old 32 bit
  * @scsi_result: scsi result
  * @scsi_retries: current retry number of scsi request
  * @scsi_allowed: allowed retries
- * @fcp_rsp_info: FCP response info
+ * @fcp_rsp_info: FCP response info code
  * @scsi_opcode: scsi opcode
  * @fsf_req_id: request id of fsf request
  * @host_scribble: LLD specific data attached to SCSI request
- * @pl_len: length of paload stored as zfcp_dbf_pay
- * @fsf_rsp: response for fsf request
+ * @pl_len: length of payload stored as zfcp_dbf_pay
+ * @fcp_rsp: response for FCP request
+ * @scsi_lun_64_hi: scsi device logical unit number, high part of 64 bit
  */
 struct zfcp_dbf_scsi {
 	u8 id;
@@ -230,6 +232,7 @@ struct zfcp_dbf_scsi {
 	u64 host_scribble;
 	u16 pl_len;
 	struct fcp_resp_with_ext fcp_rsp;
+	u32 scsi_lun_64_hi;
 } __packed;
 
 /**
@@ -299,7 +302,7 @@ bool zfcp_dbf_hba_fsf_resp_suppress(struct zfcp_fsf_req *req)
 
 	if (qtcb->prefix.qtcb_type != FSF_IO_COMMAND)
 		return false; /* not an FCP response */
-	fcp_rsp = (struct fcp_resp *)&qtcb->bottom.io.fcp_rsp;
+	fcp_rsp = &qtcb->bottom.io.fcp_rsp.iu.resp;
 	rsp_flags = fcp_rsp->fr_flags;
 	fr_status = fcp_rsp->fr_status;
 	return (fsf_stat == FSF_FCP_RSP_AVAILABLE) &&
@@ -323,7 +326,11 @@ void zfcp_dbf_hba_fsf_response(struct zfcp_fsf_req *req)
 {
 	struct fsf_qtcb *qtcb = req->qtcb;
 
-	if ((qtcb->prefix.prot_status != FSF_PROT_GOOD) &&
+	if (unlikely(req->status & (ZFCP_STATUS_FSFREQ_DISMISSED |
+				    ZFCP_STATUS_FSFREQ_ERROR))) {
+		zfcp_dbf_hba_fsf_resp("fs_rerr", 3, req);
+
+	} else if ((qtcb->prefix.prot_status != FSF_PROT_GOOD) &&
 	    (qtcb->prefix.prot_status != FSF_PROT_FSF_STATUS_PRESENTED)) {
 		zfcp_dbf_hba_fsf_resp("fs_perr", 1, req);
 
@@ -352,7 +359,7 @@ void _zfcp_dbf_scsi(char *tag, int level, struct scsi_cmnd *scmd,
 					scmd->device->host->hostdata[0];
 
 	if (debug_level_enabled(adapter->dbf->scsi, level))
-		zfcp_dbf_scsi(tag, level, scmd, req);
+		zfcp_dbf_scsi_common(tag, level, scmd->device, scmd, req);
 }
 
 /**
@@ -395,15 +402,23 @@ void zfcp_dbf_scsi_abort(char *tag, struct scsi_cmnd *scmd,
 }
 
 /**
- * zfcp_dbf_scsi_devreset - trace event for Logical Unit or Target Reset
- * @tag: tag indicating success or failure of reset operation
- * @scmnd: SCSI command which caused this error recovery
- * @flag: indicates type of reset (Target Reset, Logical Unit Reset)
+ * zfcp_dbf_scsi_devreset() - Trace event for Logical Unit or Target Reset.
+ * @tag: Tag indicating success or failure of reset operation.
+ * @sdev: Pointer to SCSI device as context for this event.
+ * @flag: Indicates type of reset (Target Reset, Logical Unit Reset).
+ * @fsf_req: Pointer to FSF request representing the TMF, or NULL.
  */
 static inline
-void zfcp_dbf_scsi_devreset(char *tag, struct scsi_cmnd *scmnd, u8 flag)
+void zfcp_dbf_scsi_devreset(char *tag, struct scsi_device *sdev, u8 flag,
+			    struct zfcp_fsf_req *fsf_req)
 {
+	struct zfcp_adapter *adapter = (struct zfcp_adapter *)
+					sdev->host->hostdata[0];
 	char tmp_tag[ZFCP_DBF_TAG_LEN];
+	static int const level = 1;
+
+	if (unlikely(!debug_level_enabled(adapter->dbf->scsi, level)))
+		return;
 
 	if (flag == FCP_TMF_TGT_RESET)
 		memcpy(tmp_tag, "tr_", 3);
@@ -411,7 +426,7 @@ void zfcp_dbf_scsi_devreset(char *tag, struct scsi_cmnd *scmnd, u8 flag)
 		memcpy(tmp_tag, "lr_", 3);
 
 	memcpy(&tmp_tag[3], tag, 4);
-	_zfcp_dbf_scsi(tmp_tag, 1, scmnd, NULL);
+	zfcp_dbf_scsi_common(tmp_tag, level, sdev, NULL, fsf_req);
 }
 
 /**

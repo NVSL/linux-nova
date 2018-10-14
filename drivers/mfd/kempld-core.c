@@ -458,7 +458,7 @@ static int kempld_probe(struct platform_device *pdev)
 		return -EINVAL;
 
 	pld->io_base = devm_ioport_map(dev, ioport->start,
-					ioport->end - ioport->start);
+					resource_size(ioport));
 	if (!pld->io_base)
 		return -ENOMEM;
 
@@ -494,7 +494,7 @@ static struct platform_driver kempld_driver = {
 	.remove		= kempld_remove,
 };
 
-static struct dmi_system_id kempld_dmi_table[] __initdata = {
+static const struct dmi_system_id kempld_dmi_table[] __initconst = {
 	{
 		.ident = "BBD6",
 		.matches = {

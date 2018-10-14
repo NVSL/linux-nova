@@ -1,20 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2014 Marvell Technology Group Ltd.
  *
  * Alexandre Belloni <alexandre.belloni@free-electrons.com>
  * Sebastian Hesselbarth <sebastian.hesselbarth@gmail.com>
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
- * You should have received a copy of the GNU General Public License along with
- * this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 #include <linux/clk.h>
@@ -295,8 +284,7 @@ static void __init berlin2q_clock_setup(struct device_node *np)
 	struct clk_hw **hws;
 	int n, ret;
 
-	clk_data = kzalloc(sizeof(*clk_data) +
-			   sizeof(*clk_data->hws) * MAX_CLKS, GFP_KERNEL);
+	clk_data = kzalloc(struct_size(clk_data, hws, MAX_CLKS), GFP_KERNEL);
 	if (!clk_data)
 		return;
 	clk_data->num = MAX_CLKS;
@@ -304,14 +292,14 @@ static void __init berlin2q_clock_setup(struct device_node *np)
 
 	gbase = of_iomap(parent_np, 0);
 	if (!gbase) {
-		pr_err("%s: Unable to map global base\n", np->full_name);
+		pr_err("%pOF: Unable to map global base\n", np);
 		return;
 	}
 
 	/* BG2Q CPU PLL is not part of global registers */
 	cpupll_base = of_iomap(parent_np, 1);
 	if (!cpupll_base) {
-		pr_err("%s: Unable to map cpupll base\n", np->full_name);
+		pr_err("%pOF: Unable to map cpupll base\n", np);
 		iounmap(gbase);
 		return;
 	}
@@ -376,8 +364,7 @@ static void __init berlin2q_clock_setup(struct device_node *np)
 		if (!IS_ERR(hws[n]))
 			continue;
 
-		pr_err("%s: Unable to register leaf clock %d\n",
-		       np->full_name, n);
+		pr_err("%pOF: Unable to register leaf clock %d\n", np, n);
 		goto bg2q_fail;
 	}
 

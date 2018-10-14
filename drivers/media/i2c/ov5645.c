@@ -80,6 +80,8 @@ struct ov5645_mode_info {
 	u32 height;
 	const struct reg_value *data;
 	u32 data_size;
+	u32 pixel_clock;
+	u32 link_freq;
 };
 
 struct ov5645 {
@@ -99,6 +101,8 @@ struct ov5645 {
 	const struct ov5645_mode_info *current_mode;
 
 	struct v4l2_ctrl_handler ctrls;
+	struct v4l2_ctrl *pixel_clock;
+	struct v4l2_ctrl *link_freq;
 
 	/* Cached register values */
 	u8 aec_pk_manual;
@@ -505,24 +509,35 @@ static const struct reg_value ov5645_setting_full[] = {
 	{ 0x4202, 0x00 }
 };
 
+static const s64 link_freq[] = {
+	222880000,
+	334320000
+};
+
 static const struct ov5645_mode_info ov5645_mode_info_data[] = {
 	{
 		.width = 1280,
 		.height = 960,
 		.data = ov5645_setting_sxga,
-		.data_size = ARRAY_SIZE(ov5645_setting_sxga)
+		.data_size = ARRAY_SIZE(ov5645_setting_sxga),
+		.pixel_clock = 111440000,
+		.link_freq = 0 /* an index in link_freq[] */
 	},
 	{
 		.width = 1920,
 		.height = 1080,
 		.data = ov5645_setting_1080p,
-		.data_size = ARRAY_SIZE(ov5645_setting_1080p)
+		.data_size = ARRAY_SIZE(ov5645_setting_1080p),
+		.pixel_clock = 167160000,
+		.link_freq = 1 /* an index in link_freq[] */
 	},
 	{
 		.width = 2592,
 		.height = 1944,
 		.data = ov5645_setting_full,
-		.data_size = ARRAY_SIZE(ov5645_setting_full)
+		.data_size = ARRAY_SIZE(ov5645_setting_full),
+		.pixel_clock = 167160000,
+		.link_freq = 1 /* an index in link_freq[] */
 	},
 };
 
@@ -585,11 +600,13 @@ static int ov5645_write_reg(struct ov5645 *ov5645, u16 reg, u8 val)
 	regbuf[2] = val;
 
 	ret = i2c_master_send(ov5645->i2c_client, regbuf, 3);
-	if (ret < 0)
+	if (ret < 0) {
 		dev_err(ov5645->dev, "%s: write reg error %d: reg=%x, val=%x\n",
 			__func__, ret, reg, val);
+		return ret;
+	}
 
-	return ret;
+	return 0;
 }
 
 static int ov5645_read_reg(struct ov5645 *ov5645, u16 reg, u8 *val)
@@ -944,23 +961,6 @@ __ov5645_get_pad_crop(struct ov5645 *ov5645, struct v4l2_subdev_pad_config *cfg,
 	}
 }
 
-static const struct ov5645_mode_info *
-ov5645_find_nearest_mode(unsigned int width, unsigned int height)
-{
-	int i;
-
-	for (i = ARRAY_SIZE(ov5645_mode_info_data) - 1; i >= 0; i--) {
-		if (ov5645_mode_info_data[i].width <= width &&
-		    ov5645_mode_info_data[i].height <= height)
-			break;
-	}
-
-	if (i < 0)
-		i = 0;
-
-	return &ov5645_mode_info_data[i];
-}
-
 static int ov5645_set_format(struct v4l2_subdev *sd,
 			     struct v4l2_subdev_pad_config *cfg,
 			     struct v4l2_subdev_format *format)
@@ -969,17 +969,32 @@ static int ov5645_set_format(struct v4l2_subdev *sd,
 	struct v4l2_mbus_framefmt *__format;
 	struct v4l2_rect *__crop;
 	const struct ov5645_mode_info *new_mode;
+	int ret;
 
 	__crop = __ov5645_get_pad_crop(ov5645, cfg, format->pad,
 			format->which);
 
-	new_mode = ov5645_find_nearest_mode(format->format.width,
-					    format->format.height);
+	new_mode = v4l2_find_nearest_size(ov5645_mode_info_data,
+			       ARRAY_SIZE(ov5645_mode_info_data),
+			       width, height,
+			       format->format.width, format->format.height);
+
 	__crop->width = new_mode->width;
 	__crop->height = new_mode->height;
 
-	if (format->which == V4L2_SUBDEV_FORMAT_ACTIVE)
+	if (format->which == V4L2_SUBDEV_FORMAT_ACTIVE) {
+		ret = v4l2_ctrl_s_ctrl_int64(ov5645->pixel_clock,
+					     new_mode->pixel_clock);
+		if (ret < 0)
+			return ret;
+
+		ret = v4l2_ctrl_s_ctrl(ov5645->link_freq,
+				       new_mode->link_freq);
+		if (ret < 0)
+			return ret;
+
 		ov5645->current_mode = new_mode;
+	}
 
 	__format = __ov5645_get_pad_format(ov5645, cfg, format->pad,
 			format->which);
@@ -1104,12 +1119,13 @@ static int ov5645_probe(struct i2c_client *client,
 
 	ret = v4l2_fwnode_endpoint_parse(of_fwnode_handle(endpoint),
 					 &ov5645->ep);
+
+	of_node_put(endpoint);
+
 	if (ret < 0) {
 		dev_err(dev, "parsing endpoint node failed\n");
 		return ret;
 	}
-
-	of_node_put(endpoint);
 
 	if (ov5645->ep.bus_type != V4L2_MBUS_CSI2) {
 		dev_err(dev, "invalid bus type, must be CSI2\n");
@@ -1197,7 +1213,7 @@ static int ov5645_probe(struct i2c_client *client,
 
 	mutex_init(&ov5645->power_lock);
 
-	v4l2_ctrl_handler_init(&ov5645->ctrls, 7);
+	v4l2_ctrl_handler_init(&ov5645->ctrls, 9);
 	v4l2_ctrl_new_std(&ov5645->ctrls, &ov5645_ctrl_ops,
 			  V4L2_CID_SATURATION, -4, 4, 1, 0);
 	v4l2_ctrl_new_std(&ov5645->ctrls, &ov5645_ctrl_ops,
@@ -1215,6 +1231,17 @@ static int ov5645_probe(struct i2c_client *client,
 				     V4L2_CID_TEST_PATTERN,
 				     ARRAY_SIZE(ov5645_test_pattern_menu) - 1,
 				     0, 0, ov5645_test_pattern_menu);
+	ov5645->pixel_clock = v4l2_ctrl_new_std(&ov5645->ctrls,
+						&ov5645_ctrl_ops,
+						V4L2_CID_PIXEL_RATE,
+						1, INT_MAX, 1, 1);
+	ov5645->link_freq = v4l2_ctrl_new_int_menu(&ov5645->ctrls,
+						   &ov5645_ctrl_ops,
+						   V4L2_CID_LINK_FREQ,
+						   ARRAY_SIZE(link_freq) - 1,
+						   0, link_freq);
+	if (ov5645->link_freq)
+		ov5645->link_freq->flags |= V4L2_CTRL_FLAG_READ_ONLY;
 
 	ov5645->sd.ctrl_handler = &ov5645->ctrls;
 
@@ -1229,6 +1256,7 @@ static int ov5645_probe(struct i2c_client *client,
 	ov5645->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
 	ov5645->pad.flags = MEDIA_PAD_FL_SOURCE;
 	ov5645->sd.dev = &client->dev;
+	ov5645->sd.entity.function = MEDIA_ENT_F_CAM_SENSOR;
 
 	ret = media_entity_pads_init(&ov5645->sd.entity, 1, &ov5645->pad);
 	if (ret < 0) {

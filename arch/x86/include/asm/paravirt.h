@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _ASM_X86_PARAVIRT_H
 #define _ASM_X86_PARAVIRT_H
 /* Various instructions on x86 need to be replaced for
@@ -6,6 +7,7 @@
 #ifdef CONFIG_PARAVIRT
 #include <asm/pgtable_types.h>
 #include <asm/asm.h>
+#include <asm/nospec-branch.h>
 
 #include <asm/paravirt_types.h>
 
@@ -15,10 +17,9 @@
 #include <linux/cpumask.h>
 #include <asm/frame.h>
 
-static inline void load_sp0(struct tss_struct *tss,
-			     struct thread_struct *thread)
+static inline void load_sp0(unsigned long sp0)
 {
-	PVOP_VCALL2(pv_cpu_ops.load_sp0, tss, thread);
+	PVOP_VCALL1(pv_cpu_ops.load_sp0, sp0);
 }
 
 /* The paravirtualized CPUID instruction. */
@@ -69,11 +70,6 @@ static inline unsigned long __read_cr3(void)
 static inline void write_cr3(unsigned long x)
 {
 	PVOP_VCALL1(pv_mmu_ops.write_cr3, x);
-}
-
-static inline unsigned long __read_cr4(void)
-{
-	return PVOP_CALL0(unsigned long, pv_cpu_ops.read_cr4);
 }
 
 static inline void __write_cr4(unsigned long x)
@@ -228,10 +224,6 @@ static inline void set_ldt(const void *addr, unsigned entries)
 {
 	PVOP_VCALL2(pv_cpu_ops.set_ldt, addr, entries);
 }
-static inline void store_idt(struct desc_ptr *dtr)
-{
-	PVOP_VCALL1(pv_cpu_ops.store_idt, dtr);
-}
 static inline unsigned long paravirt_store_tr(void)
 {
 	return PVOP_CALL0(unsigned long, pv_cpu_ops.store_tr);
@@ -306,9 +298,9 @@ static inline void __flush_tlb_global(void)
 {
 	PVOP_VCALL0(pv_mmu_ops.flush_tlb_kernel);
 }
-static inline void __flush_tlb_single(unsigned long addr)
+static inline void __flush_tlb_one_user(unsigned long addr)
 {
-	PVOP_VCALL1(pv_mmu_ops.flush_tlb_single, addr);
+	PVOP_VCALL1(pv_mmu_ops.flush_tlb_one_user, addr);
 }
 
 static inline void flush_tlb_others(const struct cpumask *cpumask,
@@ -363,12 +355,6 @@ static inline void paravirt_alloc_p4d(struct mm_struct *mm, unsigned long pfn)
 static inline void paravirt_release_p4d(unsigned long pfn)
 {
 	PVOP_VCALL1(pv_mmu_ops.release_p4d, pfn);
-}
-
-static inline void pte_update(struct mm_struct *mm, unsigned long addr,
-			      pte_t *ptep)
-{
-	PVOP_VCALL3(pv_mmu_ops.pte_update, mm, addr, ptep);
 }
 
 static inline pte_t __pte(pteval_t val)
@@ -470,28 +456,6 @@ static inline void set_pte_at(struct mm_struct *mm, unsigned long addr,
 		pv_mmu_ops.set_pte_at(mm, addr, ptep, pte);
 	else
 		PVOP_VCALL4(pv_mmu_ops.set_pte_at, mm, addr, ptep, pte.pte);
-}
-
-static inline void set_pmd_at(struct mm_struct *mm, unsigned long addr,
-			      pmd_t *pmdp, pmd_t pmd)
-{
-	if (sizeof(pmdval_t) > sizeof(long))
-		/* 5 arg words */
-		pv_mmu_ops.set_pmd_at(mm, addr, pmdp, pmd);
-	else
-		PVOP_VCALL4(pv_mmu_ops.set_pmd_at, mm, addr, pmdp,
-			    native_pmd_val(pmd));
-}
-
-static inline void set_pud_at(struct mm_struct *mm, unsigned long addr,
-			      pud_t *pudp, pud_t pud)
-{
-	if (sizeof(pudval_t) > sizeof(long))
-		/* 5 arg words */
-		pv_mmu_ops.set_pud_at(mm, addr, pudp, pud);
-	else
-		PVOP_VCALL4(pv_mmu_ops.set_pud_at, mm, addr, pudp,
-			    native_pud_val(pud));
 }
 
 static inline void set_pmd(pmd_t *pmdp, pmd_t pmd)
@@ -604,17 +568,22 @@ static inline p4dval_t p4d_val(p4d_t p4d)
 	return PVOP_CALLEE1(p4dval_t, pv_mmu_ops.p4d_val, p4d.p4d);
 }
 
-static inline void set_pgd(pgd_t *pgdp, pgd_t pgd)
+static inline void __set_pgd(pgd_t *pgdp, pgd_t pgd)
 {
-	pgdval_t val = native_pgd_val(pgd);
-
-	PVOP_VCALL2(pv_mmu_ops.set_pgd, pgdp, val);
+	PVOP_VCALL2(pv_mmu_ops.set_pgd, pgdp, native_pgd_val(pgd));
 }
 
-static inline void pgd_clear(pgd_t *pgdp)
-{
-	set_pgd(pgdp, __pgd(0));
-}
+#define set_pgd(pgdp, pgdval) do {					\
+	if (pgtable_l5_enabled())						\
+		__set_pgd(pgdp, pgdval);				\
+	else								\
+		set_p4d((p4d_t *)(pgdp), (p4d_t) { (pgdval).pgd });	\
+} while (0)
+
+#define pgd_clear(pgdp) do {						\
+	if (pgtable_l5_enabled())						\
+		set_pgd(pgdp, __pgd(0));				\
+} while (0)
 
 #endif  /* CONFIG_PGTABLE_LEVELS == 5 */
 
@@ -916,23 +885,27 @@ extern void default_banner(void);
 
 #define INTERRUPT_RETURN						\
 	PARA_SITE(PARA_PATCH(pv_cpu_ops, PV_CPU_iret), CLBR_NONE,	\
-		  jmp PARA_INDIRECT(pv_cpu_ops+PV_CPU_iret))
+		  ANNOTATE_RETPOLINE_SAFE;					\
+		  jmp PARA_INDIRECT(pv_cpu_ops+PV_CPU_iret);)
 
 #define DISABLE_INTERRUPTS(clobbers)					\
 	PARA_SITE(PARA_PATCH(pv_irq_ops, PV_IRQ_irq_disable), clobbers, \
 		  PV_SAVE_REGS(clobbers | CLBR_CALLEE_SAVE);		\
+		  ANNOTATE_RETPOLINE_SAFE;					\
 		  call PARA_INDIRECT(pv_irq_ops+PV_IRQ_irq_disable);	\
 		  PV_RESTORE_REGS(clobbers | CLBR_CALLEE_SAVE);)
 
 #define ENABLE_INTERRUPTS(clobbers)					\
 	PARA_SITE(PARA_PATCH(pv_irq_ops, PV_IRQ_irq_enable), clobbers,	\
 		  PV_SAVE_REGS(clobbers | CLBR_CALLEE_SAVE);		\
+		  ANNOTATE_RETPOLINE_SAFE;					\
 		  call PARA_INDIRECT(pv_irq_ops+PV_IRQ_irq_enable);	\
 		  PV_RESTORE_REGS(clobbers | CLBR_CALLEE_SAVE);)
 
 #ifdef CONFIG_X86_32
 #define GET_CR0_INTO_EAX				\
 	push %ecx; push %edx;				\
+	ANNOTATE_RETPOLINE_SAFE;				\
 	call PARA_INDIRECT(pv_cpu_ops+PV_CPU_read_cr0);	\
 	pop %edx; pop %ecx
 #else	/* !CONFIG_X86_32 */
@@ -954,21 +927,29 @@ extern void default_banner(void);
  */
 #define SWAPGS								\
 	PARA_SITE(PARA_PATCH(pv_cpu_ops, PV_CPU_swapgs), CLBR_NONE,	\
-		  call PARA_INDIRECT(pv_cpu_ops+PV_CPU_swapgs)		\
+		  ANNOTATE_RETPOLINE_SAFE;					\
+		  call PARA_INDIRECT(pv_cpu_ops+PV_CPU_swapgs);		\
 		 )
 
 #define GET_CR2_INTO_RAX				\
-	call PARA_INDIRECT(pv_mmu_ops+PV_MMU_read_cr2)
-
-#define PARAVIRT_ADJUST_EXCEPTION_FRAME					\
-	PARA_SITE(PARA_PATCH(pv_irq_ops, PV_IRQ_adjust_exception_frame), \
-		  CLBR_NONE,						\
-		  call PARA_INDIRECT(pv_irq_ops+PV_IRQ_adjust_exception_frame))
+	ANNOTATE_RETPOLINE_SAFE;				\
+	call PARA_INDIRECT(pv_mmu_ops+PV_MMU_read_cr2);
 
 #define USERGS_SYSRET64							\
 	PARA_SITE(PARA_PATCH(pv_cpu_ops, PV_CPU_usergs_sysret64),	\
 		  CLBR_NONE,						\
-		  jmp PARA_INDIRECT(pv_cpu_ops+PV_CPU_usergs_sysret64))
+		  ANNOTATE_RETPOLINE_SAFE;					\
+		  jmp PARA_INDIRECT(pv_cpu_ops+PV_CPU_usergs_sysret64);)
+
+#ifdef CONFIG_DEBUG_ENTRY
+#define SAVE_FLAGS(clobbers)                                        \
+	PARA_SITE(PARA_PATCH(pv_irq_ops, PV_IRQ_save_fl), clobbers, \
+		  PV_SAVE_REGS(clobbers | CLBR_CALLEE_SAVE);        \
+		  ANNOTATE_RETPOLINE_SAFE;				    \
+		  call PARA_INDIRECT(pv_irq_ops+PV_IRQ_save_fl);    \
+		  PV_RESTORE_REGS(clobbers | CLBR_CALLEE_SAVE);)
+#endif
+
 #endif	/* CONFIG_X86_32 */
 
 #endif /* __ASSEMBLY__ */

@@ -23,6 +23,7 @@ enum axp20x_variants {
 	AXP803_ID,
 	AXP806_ID,
 	AXP809_ID,
+	AXP813_ID,
 	NR_AXP20X_VARIANTS,
 };
 
@@ -129,6 +130,9 @@ enum axp20x_variants {
 #define AXP803_DCDC5_V_OUT		0x24
 #define AXP803_DCDC6_V_OUT		0x25
 #define AXP803_DCDC_FREQ_CTRL		0x3b
+
+/* Other DCDC regulator control registers are the same as AXP803 */
+#define AXP813_DCDC7_V_OUT		0x26
 
 /* Interrupt */
 #define AXP152_IRQ1_EN			0x40
@@ -262,6 +266,8 @@ enum axp20x_variants {
 #define AXP288_RT_BATT_V_H		0xa0
 #define AXP288_RT_BATT_V_L		0xa1
 
+#define AXP813_ADC_RATE			0x85
+
 /* Fuel Gauge */
 #define AXP288_FG_RDC1_REG          0xba
 #define AXP288_FG_RDC0_REG          0xbb
@@ -385,6 +391,34 @@ enum {
 	AXP803_LDO_IO0,
 	AXP803_LDO_IO1,
 	AXP803_REG_ID_MAX,
+};
+
+enum {
+	AXP813_DCDC1 = 0,
+	AXP813_DCDC2,
+	AXP813_DCDC3,
+	AXP813_DCDC4,
+	AXP813_DCDC5,
+	AXP813_DCDC6,
+	AXP813_DCDC7,
+	AXP813_ALDO1,
+	AXP813_ALDO2,
+	AXP813_ALDO3,
+	AXP813_DLDO1,
+	AXP813_DLDO2,
+	AXP813_DLDO3,
+	AXP813_DLDO4,
+	AXP813_ELDO1,
+	AXP813_ELDO2,
+	AXP813_ELDO3,
+	AXP813_FLDO1,
+	AXP813_FLDO2,
+	AXP813_FLDO3,
+	AXP813_RTC_LDO,
+	AXP813_LDO_IO0,
+	AXP813_LDO_IO1,
+	AXP813_SW,
+	AXP813_REG_ID_MAX,
 };
 
 /* IRQs */
@@ -558,11 +592,11 @@ enum axp806_irqs {
 	AXP806_IRQ_DCDCC_V_LOW,
 	AXP806_IRQ_DCDCD_V_LOW,
 	AXP806_IRQ_DCDCE_V_LOW,
-	AXP806_IRQ_PWROK_LONG,
-	AXP806_IRQ_PWROK_SHORT,
+	AXP806_IRQ_POK_LONG,
+	AXP806_IRQ_POK_SHORT,
 	AXP806_IRQ_WAKEUP,
-	AXP806_IRQ_PWROK_FALL,
-	AXP806_IRQ_PWROK_RISE,
+	AXP806_IRQ_POK_FALL,
+	AXP806_IRQ_POK_RISE,
 };
 
 enum axp809_irqs {
@@ -608,14 +642,9 @@ struct axp20x_dev {
 	struct regmap_irq_chip_data	*regmap_irqc;
 	long				variant;
 	int                             nr_cells;
-	struct mfd_cell                 *cells;
+	const struct mfd_cell           *cells;
 	const struct regmap_config	*regmap_cfg;
 	const struct regmap_irq_chip	*regmap_irq_chip;
-};
-
-struct axp288_extcon_pdata {
-	/* GPIO pin control to switch D+/D- lines b/w PMIC and SOC */
-	struct gpio_desc *gpio_mux_cntl;
 };
 
 /* generic helper function for reading 9-16 bit wide regs */

@@ -32,7 +32,7 @@
 #define USB_VENDER_ID_REALTEK		0x0bda
 
 /* DID_USB_v916_20130116 */
-static struct usb_device_id rtw_usb_id_tbl[] = {
+static const struct usb_device_id rtw_usb_id_tbl[] = {
 	/*=== Realtek demoboard ===*/
 	{USB_DEVICE(USB_VENDER_ID_REALTEK, 0x8179)}, /* 8188EUS */
 	{USB_DEVICE(USB_VENDER_ID_REALTEK, 0x0179)}, /* 8188ETV */
@@ -333,7 +333,7 @@ static struct adapter *rtw_usb_if1_init(struct dvobj_priv *dvobj,
 	struct net_device *pmondev;
 	int status = _FAIL;
 
-	padapter = (struct adapter *)vzalloc(sizeof(*padapter));
+	padapter = vzalloc(sizeof(*padapter));
 	if (padapter == NULL)
 		goto exit;
 	padapter->dvobj = dvobj;

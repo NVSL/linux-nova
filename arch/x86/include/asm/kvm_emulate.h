@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /******************************************************************************
  * x86_emulate.h
  *
@@ -106,11 +107,12 @@ struct x86_emulate_ops {
 	 *  @addr:  [IN ] Linear address from which to read.
 	 *  @val:   [OUT] Value read from memory, zero-extended to 'u_long'.
 	 *  @bytes: [IN ] Number of bytes to read from memory.
+	 *  @system:[IN ] Whether the access is forced to be at CPL0.
 	 */
 	int (*read_std)(struct x86_emulate_ctxt *ctxt,
 			unsigned long addr, void *val,
 			unsigned int bytes,
-			struct x86_exception *fault);
+			struct x86_exception *fault, bool system);
 
 	/*
 	 * read_phys: Read bytes of standard (non-emulated/special) memory.
@@ -128,10 +130,11 @@ struct x86_emulate_ops {
 	 *  @addr:  [IN ] Linear address to which to write.
 	 *  @val:   [OUT] Value write to memory, zero-extended to 'u_long'.
 	 *  @bytes: [IN ] Number of bytes to write to memory.
+	 *  @system:[IN ] Whether the access is forced to be at CPL0.
 	 */
 	int (*write_std)(struct x86_emulate_ctxt *ctxt,
 			 unsigned long addr, void *val, unsigned int bytes,
-			 struct x86_exception *fault);
+			 struct x86_exception *fault, bool system);
 	/*
 	 * fetch: Read bytes of standard (non-emulated/special) memory.
 	 *        Used for instruction fetch.
@@ -213,18 +216,18 @@ struct x86_emulate_ops {
 	void (*halt)(struct x86_emulate_ctxt *ctxt);
 	void (*wbinvd)(struct x86_emulate_ctxt *ctxt);
 	int (*fix_hypercall)(struct x86_emulate_ctxt *ctxt);
-	void (*get_fpu)(struct x86_emulate_ctxt *ctxt); /* disables preempt */
-	void (*put_fpu)(struct x86_emulate_ctxt *ctxt); /* reenables preempt */
 	int (*intercept)(struct x86_emulate_ctxt *ctxt,
 			 struct x86_instruction_info *info,
 			 enum x86_intercept_stage stage);
 
-	void (*get_cpuid)(struct x86_emulate_ctxt *ctxt,
-			  u32 *eax, u32 *ebx, u32 *ecx, u32 *edx);
+	bool (*get_cpuid)(struct x86_emulate_ctxt *ctxt, u32 *eax, u32 *ebx,
+			  u32 *ecx, u32 *edx, bool check_limit);
 	void (*set_nmi_mask)(struct x86_emulate_ctxt *ctxt, bool masked);
 
 	unsigned (*get_hflags)(struct x86_emulate_ctxt *ctxt);
 	void (*set_hflags)(struct x86_emulate_ctxt *ctxt, unsigned hflags);
+	int (*pre_leave_smm)(struct x86_emulate_ctxt *ctxt, u64 smbase);
+
 };
 
 typedef u32 __attribute__((vector_size(16))) sse128_t;

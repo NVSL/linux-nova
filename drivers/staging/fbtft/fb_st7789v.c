@@ -1,17 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * FB driver for the ST7789V LCD Controller
  *
  * Copyright (C) 2015 Dennis Menschel
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
  */
 
 #include <linux/bitops.h>
@@ -189,7 +180,7 @@ static int set_gamma(struct fbtft_par *par, u32 *curves)
 	 * The masks are the same for both positive and negative voltage
 	 * gamma curves.
 	 */
-	const u8 gamma_par_mask[] = {
+	static const u8 gamma_par_mask[] = {
 		0xFF, /* V63[3:0], V0[3:0]*/
 		0x3F, /* V1[5:0] */
 		0x3F, /* V2[5:0] */

@@ -73,10 +73,10 @@ socket_match(const struct sk_buff *skb, struct xt_action_param *par,
 		 * if XT_SOCKET_TRANSPARENT is used
 		 */
 		if (info->flags & XT_SOCKET_TRANSPARENT)
-			transparent = nf_sk_is_transparent(sk);
+			transparent = inet_sk_transparent(sk);
 
 		if (info->flags & XT_SOCKET_RESTORESKMARK && !wildcard &&
-		    transparent)
+		    transparent && sk_fullsock(sk))
 			pskb->mark = sk->sk_mark;
 
 		if (sk != skb->sk)
@@ -130,10 +130,10 @@ socket_mt6_v1_v2_v3(const struct sk_buff *skb, struct xt_action_param *par)
 		 * if XT_SOCKET_TRANSPARENT is used
 		 */
 		if (info->flags & XT_SOCKET_TRANSPARENT)
-			transparent = nf_sk_is_transparent(sk);
+			transparent = inet_sk_transparent(sk);
 
 		if (info->flags & XT_SOCKET_RESTORESKMARK && !wildcard &&
-		    transparent)
+		    transparent && sk_fullsock(sk))
 			pskb->mark = sk->sk_mark;
 
 		if (sk != skb->sk)
@@ -171,7 +171,8 @@ static int socket_mt_v1_check(const struct xt_mtchk_param *par)
 		return err;
 
 	if (info->flags & ~XT_SOCKET_FLAGS_V1) {
-		pr_info("unknown flags 0x%x\n", info->flags & ~XT_SOCKET_FLAGS_V1);
+		pr_info_ratelimited("unknown flags 0x%x\n",
+				    info->flags & ~XT_SOCKET_FLAGS_V1);
 		return -EINVAL;
 	}
 	return 0;
@@ -187,7 +188,8 @@ static int socket_mt_v2_check(const struct xt_mtchk_param *par)
 		return err;
 
 	if (info->flags & ~XT_SOCKET_FLAGS_V2) {
-		pr_info("unknown flags 0x%x\n", info->flags & ~XT_SOCKET_FLAGS_V2);
+		pr_info_ratelimited("unknown flags 0x%x\n",
+				    info->flags & ~XT_SOCKET_FLAGS_V2);
 		return -EINVAL;
 	}
 	return 0;
@@ -203,8 +205,8 @@ static int socket_mt_v3_check(const struct xt_mtchk_param *par)
 	if (err)
 		return err;
 	if (info->flags & ~XT_SOCKET_FLAGS_V3) {
-		pr_info("unknown flags 0x%x\n",
-			info->flags & ~XT_SOCKET_FLAGS_V3);
+		pr_info_ratelimited("unknown flags 0x%x\n",
+				    info->flags & ~XT_SOCKET_FLAGS_V3);
 		return -EINVAL;
 	}
 	return 0;

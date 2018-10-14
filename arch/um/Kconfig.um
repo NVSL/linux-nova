@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0
 config STATIC_LINK
 	bool "Force a static link"
 	default n
@@ -20,6 +21,7 @@ config LD_SCRIPT_DYN
 	bool
 	default y
 	depends on !LD_SCRIPT_STATIC
+        select MODULE_REL_CRCS if MODVERSIONS
 
 source "fs/Kconfig.binfmt"
 
@@ -78,7 +80,7 @@ config MAGIC_SYSRQ
 	  On UML, this is accomplished by sending a "sysrq" command with
 	  mconsole, followed by the letter for the requested command.
 
-	  The keys are documented in <file:Documentation/sysrq.txt>. Don't say Y
+	  The keys are documented in <file:Documentation/admin-guide/sysrq.rst>. Don't say Y
 	  unless you really know what this hack does.
 
 config KERNEL_STACK_ORDER

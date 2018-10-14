@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0
 #
 # sparc/Makefile
 #
@@ -38,7 +39,7 @@ else
 # sparc64
 #
 
-CHECKFLAGS    += -D__sparc__ -D__sparc_v9__ -D__arch64__ -m64
+CHECKFLAGS    += -D__sparc__ -D__sparc_v9__ -D__arch64__
 LDFLAGS       := -m elf64_sparc
 export BITS   := 64
 UTS_MACHINE   := sparc64
@@ -79,6 +80,10 @@ install:
 
 archclean:
 	$(Q)$(MAKE) $(clean)=$(boot)
+
+PHONY += vdso_install
+vdso_install:
+	$(Q)$(MAKE) $(build)=arch/sparc/vdso $@
 
 # This is the image used for packaging
 KBUILD_IMAGE := $(boot)/zImage

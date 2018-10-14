@@ -42,7 +42,7 @@
 #include "cifs_debug.h"
 #include "cifs_fs_sb.h"
 #include "fscache.h"
-
+#include "smbdirect.h"
 
 static inline int cifs_convert_flags(unsigned int flags)
 {
@@ -223,6 +223,13 @@ cifs_nt_open(char *full_path, struct inode *inode, struct cifs_sb_info *cifs_sb,
 
 	if (backup_cred(cifs_sb))
 		create_options |= CREATE_OPEN_BACKUP_INTENT;
+
+	/* O_SYNC also has bit for O_DSYNC so following check picks up either */
+	if (f_flags & O_SYNC)
+		create_options |= CREATE_WRITE_THROUGH;
+
+	if (f_flags & O_DIRECT)
+		create_options |= CREATE_NO_BUFFER;
 
 	oparms.tcon = tcon;
 	oparms.cifs_sb = cifs_sb;
@@ -1102,8 +1109,10 @@ cifs_push_mandatory_locks(struct cifsFileInfo *cfile)
 	struct cifs_tcon *tcon;
 	unsigned int num, max_num, max_buf;
 	LOCKING_ANDX_RANGE *buf, *cur;
-	int types[] = {LOCKING_ANDX_LARGE_FILES,
-		       LOCKING_ANDX_SHARED_LOCK | LOCKING_ANDX_LARGE_FILES};
+	static const int types[] = {
+		LOCKING_ANDX_LARGE_FILES,
+		LOCKING_ANDX_SHARED_LOCK | LOCKING_ANDX_LARGE_FILES
+	};
 	int i;
 
 	xid = get_xid();
@@ -1434,8 +1443,10 @@ cifs_unlock_range(struct cifsFileInfo *cfile, struct file_lock *flock,
 		  unsigned int xid)
 {
 	int rc = 0, stored_rc;
-	int types[] = {LOCKING_ANDX_LARGE_FILES,
-		       LOCKING_ANDX_SHARED_LOCK | LOCKING_ANDX_LARGE_FILES};
+	static const int types[] = {
+		LOCKING_ANDX_LARGE_FILES,
+		LOCKING_ANDX_SHARED_LOCK | LOCKING_ANDX_LARGE_FILES
+	};
 	unsigned int i;
 	unsigned int max_num, num, max_buf;
 	LOCKING_ANDX_RANGE *buf, *cur;
@@ -1952,8 +1963,6 @@ wdata_alloc_and_fillpages(pgoff_t tofind, struct address_space *mapping,
 			  pgoff_t end, pgoff_t *index,
 			  unsigned int *found_pages)
 {
-	unsigned int nr_pages;
-	struct page **pages;
 	struct cifs_writedata *wdata;
 
 	wdata = cifs_writedata_alloc((unsigned int)tofind,
@@ -1961,23 +1970,8 @@ wdata_alloc_and_fillpages(pgoff_t tofind, struct address_space *mapping,
 	if (!wdata)
 		return NULL;
 
-	/*
-	 * find_get_pages_tag seems to return a max of 256 on each
-	 * iteration, so we must call it several times in order to
-	 * fill the array or the wsize is effectively limited to
-	 * 256 * PAGE_SIZE.
-	 */
-	*found_pages = 0;
-	pages = wdata->pages;
-	do {
-		nr_pages = find_get_pages_tag(mapping, index,
-					      PAGECACHE_TAG_DIRTY, tofind,
-					      pages);
-		*found_pages += nr_pages;
-		tofind -= nr_pages;
-		pages += nr_pages;
-	} while (nr_pages && tofind && *index <= end);
-
+	*found_pages = find_get_pages_range_tag(mapping, index, end,
+				PAGECACHE_TAG_DIRTY, tofind, wdata->pages);
 	return wdata;
 }
 
@@ -1993,11 +1987,10 @@ wdata_prepare_pages(struct cifs_writedata *wdata, unsigned int found_pages,
 	for (i = 0; i < found_pages; i++) {
 		page = wdata->pages[i];
 		/*
-		 * At this point we hold neither mapping->tree_lock nor
-		 * lock on the page itself: the page may be truncated or
-		 * invalidated (changing page->mapping to NULL), or even
-		 * swizzled back from swapper_space to tmpfs file
-		 * mapping
+		 * At this point we hold neither the i_pages lock nor the
+		 * page lock: the page may be truncated or invalidated
+		 * (changing page->mapping to NULL), or even swizzled
+		 * back from swapper_space to tmpfs file mapping
 		 */
 
 		if (nr_pages == 0)
@@ -2329,7 +2322,7 @@ int cifs_strict_fsync(struct file *file, loff_t start, loff_t end,
 	struct inode *inode = file_inode(file);
 	struct cifs_sb_info *cifs_sb = CIFS_SB(inode->i_sb);
 
-	rc = filemap_write_and_wait_range(inode->i_mapping, start, end);
+	rc = file_write_and_wait_range(file, start, end);
 	if (rc)
 		return rc;
 	inode_lock(inode);
@@ -2371,7 +2364,7 @@ int cifs_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 	struct cifs_sb_info *cifs_sb = CIFS_FILE_SB(file);
 	struct inode *inode = file->f_mapping->host;
 
-	rc = filemap_write_and_wait_range(inode->i_mapping, start, end);
+	rc = file_write_and_wait_range(file, start, end);
 	if (rc)
 		return rc;
 	inode_lock(inode);
@@ -2887,13 +2880,13 @@ out:
 }
 
 static struct cifs_readdata *
-cifs_readdata_alloc(unsigned int nr_pages, work_func_t complete)
+cifs_readdata_direct_alloc(struct page **pages, work_func_t complete)
 {
 	struct cifs_readdata *rdata;
 
-	rdata = kzalloc(sizeof(*rdata) + (sizeof(struct page *) * nr_pages),
-			GFP_KERNEL);
+	rdata = kzalloc(sizeof(*rdata), GFP_KERNEL);
 	if (rdata != NULL) {
+		rdata->pages = pages;
 		kref_init(&rdata->refcount);
 		INIT_LIST_HEAD(&rdata->list);
 		init_completion(&rdata->done);
@@ -2903,15 +2896,37 @@ cifs_readdata_alloc(unsigned int nr_pages, work_func_t complete)
 	return rdata;
 }
 
+static struct cifs_readdata *
+cifs_readdata_alloc(unsigned int nr_pages, work_func_t complete)
+{
+	struct page **pages =
+		kcalloc(nr_pages, sizeof(struct page *), GFP_KERNEL);
+	struct cifs_readdata *ret = NULL;
+
+	if (pages) {
+		ret = cifs_readdata_direct_alloc(pages, complete);
+		if (!ret)
+			kfree(pages);
+	}
+
+	return ret;
+}
+
 void
 cifs_readdata_release(struct kref *refcount)
 {
 	struct cifs_readdata *rdata = container_of(refcount,
 					struct cifs_readdata, refcount);
-
+#ifdef CONFIG_CIFS_SMB_DIRECT
+	if (rdata->mr) {
+		smbd_deregister_mr(rdata->mr);
+		rdata->mr = NULL;
+	}
+#endif
 	if (rdata->cfile)
 		cifsFileInfo_put(rdata->cfile);
 
+	kvfree(rdata->pages);
 	kfree(rdata);
 }
 
@@ -3011,12 +3026,20 @@ uncached_fill_pages(struct TCP_Server_Info *server,
 	int result = 0;
 	unsigned int i;
 	unsigned int nr_pages = rdata->nr_pages;
+	unsigned int page_offset = rdata->page_offset;
 
 	rdata->got_bytes = 0;
 	rdata->tailsz = PAGE_SIZE;
 	for (i = 0; i < nr_pages; i++) {
 		struct page *page = rdata->pages[i];
 		size_t n;
+		unsigned int segment_size = rdata->pagesz;
+
+		if (i == 0)
+			segment_size -= page_offset;
+		else
+			page_offset = 0;
+
 
 		if (len <= 0) {
 			/* no need to hold page hostage */
@@ -3025,20 +3048,25 @@ uncached_fill_pages(struct TCP_Server_Info *server,
 			put_page(page);
 			continue;
 		}
+
 		n = len;
-		if (len >= PAGE_SIZE) {
+		if (len >= segment_size)
 			/* enough data to fill the page */
-			n = PAGE_SIZE;
-			len -= n;
-		} else {
-			zero_user(page, len, PAGE_SIZE - len);
-			rdata->tailsz = len;
-			len = 0;
-		}
-		if (iter)
-			result = copy_page_from_iter(page, 0, n, iter);
+			n = segment_size;
 		else
-			result = cifs_read_page_from_socket(server, page, n);
+			rdata->tailsz = len;
+		len -= n;
+
+		if (iter)
+			result = copy_page_from_iter(
+					page, page_offset, n, iter);
+#ifdef CONFIG_CIFS_SMB_DIRECT
+		else if (rdata->mr)
+			result = n;
+#endif
+		else
+			result = cifs_read_page_from_socket(
+					server, page, page_offset, n);
 		if (result < 0)
 			break;
 
@@ -3111,6 +3139,7 @@ cifs_send_async_read(loff_t offset, size_t len, struct cifsFileInfo *open_file,
 		rdata->bytes = cur_len;
 		rdata->pid = pid;
 		rdata->pagesz = PAGE_SIZE;
+		rdata->tailsz = PAGE_SIZE;
 		rdata->read_into_pages = cifs_uncached_read_into_pages;
 		rdata->copy_into_pages = cifs_uncached_copy_into_pages;
 		rdata->credits = credits;
@@ -3460,7 +3489,7 @@ cifs_read(struct file *file, char *read_data, size_t read_size, loff_t *offset)
  * If the page is mmap'ed into a process' page tables, then we need to make
  * sure that it doesn't change while being written back.
  */
-static int
+static vm_fault_t
 cifs_page_mkwrite(struct vm_fault *vmf)
 {
 	struct page *page = vmf->page;
@@ -3477,20 +3506,18 @@ static const struct vm_operations_struct cifs_file_vm_ops = {
 
 int cifs_file_strict_mmap(struct file *file, struct vm_area_struct *vma)
 {
-	int rc, xid;
+	int xid, rc = 0;
 	struct inode *inode = file_inode(file);
 
 	xid = get_xid();
 
-	if (!CIFS_CACHE_READ(CIFS_I(inode))) {
+	if (!CIFS_CACHE_READ(CIFS_I(inode)))
 		rc = cifs_zap_mapping(inode);
-		if (rc)
-			return rc;
-	}
-
-	rc = generic_file_mmap(file, vma);
-	if (rc == 0)
+	if (!rc)
+		rc = generic_file_mmap(file, vma);
+	if (!rc)
 		vma->vm_ops = &cifs_file_vm_ops;
+
 	free_xid(xid);
 	return rc;
 }
@@ -3500,16 +3527,16 @@ int cifs_file_mmap(struct file *file, struct vm_area_struct *vma)
 	int rc, xid;
 
 	xid = get_xid();
+
 	rc = cifs_revalidate_file(file);
-	if (rc) {
+	if (rc)
 		cifs_dbg(FYI, "Validation prior to mmap failed, error=%d\n",
 			 rc);
-		free_xid(xid);
-		return rc;
-	}
-	rc = generic_file_mmap(file, vma);
-	if (rc == 0)
+	if (!rc)
+		rc = generic_file_mmap(file, vma);
+	if (!rc)
 		vma->vm_ops = &cifs_file_vm_ops;
+
 	free_xid(xid);
 	return rc;
 }
@@ -3557,6 +3584,7 @@ readpages_fill_pages(struct TCP_Server_Info *server,
 	u64 eof;
 	pgoff_t eof_index;
 	unsigned int nr_pages = rdata->nr_pages;
+	unsigned int page_offset = rdata->page_offset;
 
 	/* determine the eof that the server (probably) has */
 	eof = CIFS_I(rdata->mapping->host)->server_eof;
@@ -3567,13 +3595,21 @@ readpages_fill_pages(struct TCP_Server_Info *server,
 	rdata->tailsz = PAGE_SIZE;
 	for (i = 0; i < nr_pages; i++) {
 		struct page *page = rdata->pages[i];
-		size_t n = PAGE_SIZE;
+		unsigned int to_read = rdata->pagesz;
+		size_t n;
 
-		if (len >= PAGE_SIZE) {
-			len -= PAGE_SIZE;
+		if (i == 0)
+			to_read -= page_offset;
+		else
+			page_offset = 0;
+
+		n = to_read;
+
+		if (len >= to_read) {
+			len -= to_read;
 		} else if (len > 0) {
 			/* enough for partial page, fill and zero the rest */
-			zero_user(page, len, PAGE_SIZE - len);
+			zero_user(page, len + page_offset, to_read - len);
 			n = rdata->tailsz = len;
 			len = 0;
 		} else if (page->index > eof_index) {
@@ -3605,9 +3641,15 @@ readpages_fill_pages(struct TCP_Server_Info *server,
 		}
 
 		if (iter)
-			result = copy_page_from_iter(page, 0, n, iter);
+			result = copy_page_from_iter(
+					page, page_offset, n, iter);
+#ifdef CONFIG_CIFS_SMB_DIRECT
+		else if (rdata->mr)
+			result = n;
+#endif
 		else
-			result = cifs_read_page_from_socket(server, page, n);
+			result = cifs_read_page_from_socket(
+					server, page, page_offset, n);
 		if (result < 0)
 			break;
 
@@ -3786,6 +3828,7 @@ static int cifs_readpages(struct file *file, struct address_space *mapping,
 		rdata->bytes = bytes;
 		rdata->pid = pid;
 		rdata->pagesz = PAGE_SIZE;
+		rdata->tailsz = PAGE_SIZE;
 		rdata->read_into_pages = cifs_readpages_read_into_pages;
 		rdata->copy_into_pages = cifs_readpages_copy_into_pages;
 		rdata->credits = credits;

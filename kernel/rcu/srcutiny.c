@@ -33,6 +33,8 @@
 #include "rcu_segcblist.h"
 #include "rcu.h"
 
+int rcu_scheduler_active __read_mostly;
+
 static int init_srcu_struct_fields(struct srcu_struct *sp)
 {
 	sp->srcu_lock_nesting[0] = 0;
@@ -84,16 +86,19 @@ EXPORT_SYMBOL_GPL(init_srcu_struct);
  * Must invoke this after you are finished using a given srcu_struct that
  * was initialized via init_srcu_struct(), else you leak memory.
  */
-void cleanup_srcu_struct(struct srcu_struct *sp)
+void _cleanup_srcu_struct(struct srcu_struct *sp, bool quiesced)
 {
 	WARN_ON(sp->srcu_lock_nesting[0] || sp->srcu_lock_nesting[1]);
-	flush_work(&sp->srcu_work);
+	if (quiesced)
+		WARN_ON(work_pending(&sp->srcu_work));
+	else
+		flush_work(&sp->srcu_work);
 	WARN_ON(sp->srcu_gp_running);
 	WARN_ON(sp->srcu_gp_waiting);
 	WARN_ON(sp->srcu_cb_head);
 	WARN_ON(&sp->srcu_cb_head != sp->srcu_cb_tail);
 }
-EXPORT_SYMBOL_GPL(cleanup_srcu_struct);
+EXPORT_SYMBOL_GPL(_cleanup_srcu_struct);
 
 /*
  * Removes the count for the old reader from the appropriate element of
@@ -193,3 +198,9 @@ void synchronize_srcu(struct srcu_struct *sp)
 	destroy_rcu_head_on_stack(&rs.head);
 }
 EXPORT_SYMBOL_GPL(synchronize_srcu);
+
+/* Lockdep diagnostics.  */
+void __init rcu_scheduler_starting(void)
+{
+	rcu_scheduler_active = RCU_SCHEDULER_RUNNING;
+}

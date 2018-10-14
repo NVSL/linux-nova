@@ -299,8 +299,6 @@ static void irq_save_context(void)
 	if (soc_is_dra7xx())
 		return;
 
-	if (!sar_base)
-		sar_base = omap4_get_sar_ram_base();
 	if (wakeupgen_ops && wakeupgen_ops->save_context)
 		wakeupgen_ops->save_context();
 }
@@ -522,13 +520,13 @@ static int __init wakeupgen_init(struct device_node *node,
 	u32 val;
 
 	if (!parent) {
-		pr_err("%s: no parent, giving up\n", node->full_name);
+		pr_err("%pOF: no parent, giving up\n", node);
 		return -ENODEV;
 	}
 
 	parent_domain = irq_find_host(parent);
 	if (!parent_domain) {
-		pr_err("%s: unable to obtain parent domain\n", node->full_name);
+		pr_err("%pOF: unable to obtain parent domain\n", node);
 		return -ENXIO;
 	}
 	/* Not supported on OMAP4 ES1.0 silicon */
@@ -597,6 +595,8 @@ static int __init wakeupgen_init(struct device_node *node,
 
 	irq_hotplug_init();
 	irq_pm_init();
+
+	sar_base = omap4_get_sar_ram_base();
 
 	return 0;
 }

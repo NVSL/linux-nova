@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * ceph_fs.h - Ceph constants and data types to share between kernel and
  * user space.
@@ -133,6 +134,7 @@ struct ceph_dir_layout {
 #define CEPH_MSG_CLIENT_LEASE           0x311
 #define CEPH_MSG_CLIENT_SNAP            0x312
 #define CEPH_MSG_CLIENT_CAPRELEASE      0x313
+#define CEPH_MSG_CLIENT_QUOTA           0x314
 
 /* pool ops */
 #define CEPH_MSG_POOLOP_REPLY           48
@@ -167,6 +169,8 @@ struct ceph_mon_request_header {
 struct ceph_mon_statfs {
 	struct ceph_mon_request_header monhdr;
 	struct ceph_fsid fsid;
+	__u8 contains_data_pool;
+	__le64 data_pool;
 } __attribute__ ((packed));
 
 struct ceph_statfs {
@@ -624,6 +628,7 @@ int ceph_flags_to_mode(int flags);
 				 CEPH_CAP_XATTR_SHARED)
 #define CEPH_STAT_CAP_INLINE_DATA (CEPH_CAP_FILE_SHARED | \
 				   CEPH_CAP_FILE_RD)
+#define CEPH_STAT_RSTAT CEPH_CAP_FILE_WREXTEND
 
 #define CEPH_CAP_ANY_SHARED (CEPH_CAP_AUTH_SHARED |			\
 			      CEPH_CAP_LINK_SHARED |			\
@@ -669,7 +674,9 @@ enum {
 extern const char *ceph_cap_op_name(int op);
 
 /* flags field in client cap messages (version >= 10) */
-#define CEPH_CLIENT_CAPS_SYNC	(0x1)
+#define CEPH_CLIENT_CAPS_SYNC			(1<<0)
+#define CEPH_CLIENT_CAPS_NO_CAPSNAP		(1<<1)
+#define CEPH_CLIENT_CAPS_PENDING_CAPSNAP	(1<<2);
 
 /*
  * caps message, used for capability callbacks, acks, requests, etc.
@@ -801,5 +808,21 @@ struct ceph_mds_snap_realm {
 	__le32 num_prior_parent_snaps;
 } __attribute__ ((packed));
 /* followed by my snap list, then prior parent snap list */
+
+/*
+ * quotas
+ */
+struct ceph_mds_quota {
+	__le64 ino;		/* ino */
+	struct ceph_timespec rctime;
+	__le64 rbytes;		/* dir stats */
+	__le64 rfiles;
+	__le64 rsubdirs;
+	__u8 struct_v;		/* compat */
+	__u8 struct_compat;
+	__le32 struct_len;
+	__le64 max_bytes;	/* quota max. bytes */
+	__le64 max_files;	/* quota max. files */
+} __attribute__ ((packed));
 
 #endif

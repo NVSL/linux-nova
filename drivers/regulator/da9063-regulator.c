@@ -681,8 +681,8 @@ static struct da9063_regulators_pdata *da9063_parse_regulators_dt(
 	if (!pdata)
 		return ERR_PTR(-ENOMEM);
 
-	pdata->regulator_data = devm_kzalloc(&pdev->dev,
-					num * sizeof(*pdata->regulator_data),
+	pdata->regulator_data = devm_kcalloc(&pdev->dev,
+					num, sizeof(*pdata->regulator_data),
 					GFP_KERNEL);
 	if (!pdata->regulator_data)
 		return ERR_PTR(-ENOMEM);
@@ -736,7 +736,7 @@ static int da9063_regulator_probe(struct platform_device *pdev)
 	if (IS_ERR(regl_pdata) || regl_pdata->n_regulators == 0) {
 		dev_err(&pdev->dev,
 			"No regulators defined for the platform\n");
-		return PTR_ERR(regl_pdata);
+		return -ENODEV;
 	}
 
 	/* Find regulators set for particular device model */

@@ -1864,20 +1864,6 @@ static int sba_proc_info(struct seq_file *m, void *p)
 }
 
 static int
-sba_proc_open(struct inode *i, struct file *f)
-{
-	return single_open(f, &sba_proc_info, NULL);
-}
-
-static const struct file_operations sba_proc_fops = {
-	.owner = THIS_MODULE,
-	.open = sba_proc_open,
-	.read = seq_read,
-	.llseek = seq_lseek,
-	.release = single_release,
-};
-
-static int
 sba_proc_bitmap_info(struct seq_file *m, void *p)
 {
 	struct sba_device *sba_dev = sba_list;
@@ -1889,23 +1875,9 @@ sba_proc_bitmap_info(struct seq_file *m, void *p)
 
 	return 0;
 }
-
-static int
-sba_proc_bitmap_open(struct inode *i, struct file *f)
-{
-	return single_open(f, &sba_proc_bitmap_info, NULL);
-}
-
-static const struct file_operations sba_proc_bitmap_fops = {
-	.owner = THIS_MODULE,
-	.open = sba_proc_bitmap_open,
-	.read = seq_read,
-	.llseek = seq_lseek,
-	.release = single_release,
-};
 #endif /* CONFIG_PROC_FS */
 
-static struct parisc_device_id sba_tbl[] = {
+static const struct parisc_device_id sba_tbl[] __initconst = {
 	{ HPHW_IOA, HVERSION_REV_ANY_ID, ASTRO_RUNWAY_PORT, 0xb },
 	{ HPHW_BCPORT, HVERSION_REV_ANY_ID, IKE_MERCED_PORT, 0xc },
 	{ HPHW_BCPORT, HVERSION_REV_ANY_ID, REO_MERCED_PORT, 0xc },
@@ -1916,7 +1888,7 @@ static struct parisc_device_id sba_tbl[] = {
 
 static int sba_driver_callback(struct parisc_device *);
 
-static struct parisc_driver sba_driver = {
+static struct parisc_driver sba_driver __refdata = {
 	.name =		MODULE_NAME,
 	.id_table =	sba_tbl,
 	.probe =	sba_driver_callback,
@@ -1927,7 +1899,7 @@ static struct parisc_driver sba_driver = {
 ** If so, initialize the chip and tell other partners in crime they
 ** have work to do.
 */
-static int sba_driver_callback(struct parisc_device *dev)
+static int __init sba_driver_callback(struct parisc_device *dev)
 {
 	struct sba_device *sba_dev;
 	u32 func_class;
@@ -2014,11 +1986,9 @@ static int sba_driver_callback(struct parisc_device *dev)
 		break;
 	}
 
-	proc_create("sba_iommu", 0, root, &sba_proc_fops);
-	proc_create("sba_iommu-bitmap", 0, root, &sba_proc_bitmap_fops);
+	proc_create_single("sba_iommu", 0, root, sba_proc_info);
+	proc_create_single("sba_iommu-bitmap", 0, root, sba_proc_bitmap_info);
 #endif
-
-	parisc_has_iommu();
 	return 0;
 }
 

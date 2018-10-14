@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __LINUX_NETLINK_H
 #define __LINUX_NETLINK_H
 
@@ -16,9 +17,6 @@ static inline struct nlmsghdr *nlmsg_hdr(const struct sk_buff *skb)
 }
 
 enum netlink_skb_flags {
-	NETLINK_SKB_MMAPED	= 0x1,	/* Packet data is mmaped */
-	NETLINK_SKB_TX		= 0x2,	/* Packet was sent by userspace */
-	NETLINK_SKB_DELIVERED	= 0x4,	/* Packet was delivered */
 	NETLINK_SKB_DST		= 0x8,	/* Dst set in sendto or sendmsg */
 };
 
@@ -87,7 +85,7 @@ struct netlink_ext_ack {
  * to the lack of an output buffer.)
  */
 #define NL_SET_ERR_MSG(extack, msg) do {		\
-	static const char __msg[] = (msg);		\
+	static const char __msg[] = msg;		\
 	struct netlink_ext_ack *__extack = (extack);	\
 							\
 	if (__extack)					\
@@ -103,7 +101,7 @@ struct netlink_ext_ack {
 } while (0)
 
 #define NL_SET_ERR_MSG_ATTR(extack, attr, msg) do {	\
-	static const char __msg[] = (msg);		\
+	static const char __msg[] = msg;		\
 	struct netlink_ext_ack *__extack = (extack);	\
 							\
 	if (__extack) {					\

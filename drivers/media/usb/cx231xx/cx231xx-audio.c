@@ -403,10 +403,10 @@ static int snd_pcm_alloc_vmalloc_buffer(struct snd_pcm_substream *subs,
 	return 0;
 }
 
-static struct snd_pcm_hardware snd_cx231xx_hw_capture = {
-	.info = SNDRV_PCM_INFO_BLOCK_TRANSFER 	|
-	    SNDRV_PCM_INFO_MMAP 		|
-	    SNDRV_PCM_INFO_INTERLEAVED 		|
+static const struct snd_pcm_hardware snd_cx231xx_hw_capture = {
+	.info = SNDRV_PCM_INFO_BLOCK_TRANSFER	|
+	    SNDRV_PCM_INFO_MMAP			|
+	    SNDRV_PCM_INFO_INTERLEAVED		|
 	    SNDRV_PCM_INFO_MMAP_VALID,
 
 	.formats = SNDRV_PCM_FMTBIT_S16_LE,
@@ -710,7 +710,7 @@ static int cx231xx_audio_init(struct cx231xx *dev)
 	dev_info(dev->dev,
 		"audio EndPoint Addr 0x%x, Alternate settings: %i\n",
 		adev->end_point_addr, adev->num_alt);
-	adev->alt_max_pkt_size = kmalloc(32 * adev->num_alt, GFP_KERNEL);
+	adev->alt_max_pkt_size = kmalloc_array(32, adev->num_alt, GFP_KERNEL);
 	if (!adev->alt_max_pkt_size) {
 		err = -ENOMEM;
 		goto err_free_card;

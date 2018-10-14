@@ -88,6 +88,8 @@ static int dsi_mgr_setup_components(int id)
 
 		msm_dsi_phy_set_usecase(msm_dsi->phy, MSM_DSI_PHY_STANDALONE);
 		src_pll = msm_dsi_phy_get_pll(msm_dsi->phy);
+		if (IS_ERR(src_pll))
+			return PTR_ERR(src_pll);
 		ret = msm_dsi_host_set_src_pll(msm_dsi->host, src_pll);
 	} else if (!other_dsi) {
 		ret = 0;
@@ -116,6 +118,8 @@ static int dsi_mgr_setup_components(int id)
 		msm_dsi_phy_set_usecase(clk_slave_dsi->phy,
 					MSM_DSI_PHY_SLAVE);
 		src_pll = msm_dsi_phy_get_pll(clk_master_dsi->phy);
+		if (IS_ERR(src_pll))
+			return PTR_ERR(src_pll);
 		ret = msm_dsi_host_set_src_pll(msm_dsi->host, src_pll);
 		if (ret)
 			return ret;
@@ -626,7 +630,6 @@ static void dsi_mgr_bridge_mode_set(struct drm_bridge *bridge,
 }
 
 static const struct drm_connector_funcs dsi_mgr_connector_funcs = {
-	.dpms = drm_atomic_helper_connector_dpms,
 	.detect = dsi_mgr_connector_detect,
 	.fill_modes = drm_helper_probe_single_connector_modes,
 	.destroy = dsi_mgr_connector_destroy,
@@ -859,7 +862,7 @@ int msm_dsi_manager_register(struct msm_dsi *msm_dsi)
 	int id = msm_dsi->id;
 	int ret;
 
-	if (id > DSI_MAX) {
+	if (id >= DSI_MAX) {
 		pr_err("%s: invalid id %d\n", __func__, id);
 		return -EINVAL;
 	}

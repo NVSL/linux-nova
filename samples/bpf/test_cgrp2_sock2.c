@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /* eBPF example program:
  *
  * - Loads eBPF program
@@ -18,8 +19,9 @@
 #include <fcntl.h>
 #include <net/if.h>
 #include <linux/bpf.h>
+#include <bpf/bpf.h>
 
-#include "libbpf.h"
+#include "bpf_insn.h"
 #include "bpf_load.h"
 
 static int usage(const char *argv0)

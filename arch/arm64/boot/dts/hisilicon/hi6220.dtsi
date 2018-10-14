@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * dts file for Hisilicon Hi6220 SoC
  *
@@ -87,8 +88,6 @@
 			next-level-cache = <&CLUSTER0_L2>;
 			clocks = <&stub_clock 0>;
 			operating-points-v2 = <&cpu_opp_table>;
-			cooling-min-level = <4>;
-			cooling-max-level = <0>;
 			#cooling-cells = <2>; /* min followed by max */
 			cpu-idle-states = <&CPU_SLEEP &CLUSTER_SLEEP>;
 			dynamic-power-coefficient = <311>;
@@ -259,6 +258,12 @@
 		pm_ctrl: pm_ctrl@f7032000 {
 			compatible = "hisilicon,hi6220-pmctrl", "syscon";
 			reg = <0x0 0xf7032000 0x0 0x1000>;
+			#clock-cells = <1>;
+		};
+
+		acpu_sctrl: acpu_sctrl@f6504000 {
+			compatible = "hisilicon,hi6220-acpu-sctrl", "syscon";
+			reg = <0x0 0xf6504000 0x0 0x1000>;
 			#clock-cells = <1>;
 		};
 
@@ -755,7 +760,8 @@
 			dr_mode = "otg";
 			g-rx-fifo-size = <512>;
 			g-np-tx-fifo-size = <128>;
-			g-tx-fifo-size = <128 128 128 128 128 128>;
+			g-tx-fifo-size = <128 128 128 128 128 128 128 128
+					   16  16  16  16  16  16  16>;
 			interrupts = <0 77 0x4>;
 		};
 
@@ -807,6 +813,14 @@
 			pinctrl-names = "default", "idle";
 			pinctrl-0 = <&sdio_pmx_func &sdio_clk_cfg_func &sdio_cfg_func>;
 			pinctrl-1 = <&sdio_pmx_idle &sdio_clk_cfg_idle &sdio_cfg_idle>;
+		};
+
+		watchdog0: watchdog@f8005000 {
+			compatible = "arm,sp805-wdt", "arm,primecell";
+			reg = <0x0 0xf8005000 0x0 0x1000>;
+			interrupts = <GIC_SPI 13 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&ao_ctrl HI6220_WDT0_PCLK>;
+			clock-names = "apb_pclk";
 		};
 
 		tsensor: tsensor@0,f7030700 {
@@ -979,3 +993,5 @@
 		};
 	};
 };
+
+#include "hi6220-coresight.dtsi"

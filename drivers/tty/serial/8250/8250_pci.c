@@ -1,13 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  *  Probe module for 8250/16550-type PCI serial ports.
  *
  *  Based on drivers/char/serial.c, by Linus Torvalds, Theodore Ts'o.
  *
  *  Copyright (C) 2001 Russell King, All Rights Reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License.
  */
 #undef DEBUG
 #include <linux/module.h>
@@ -1548,7 +1545,7 @@ static int skip_tx_en_setup(struct serial_private *priv,
 			const struct pciserial_board *board,
 			struct uart_8250_port *port, int idx)
 {
-	port->port.flags |= UPF_NO_TXEN_TEST;
+	port->port.quirks |= UPQ_NO_TXEN_TEST;
 	dev_dbg(&priv->dev->dev,
 		"serial8250: skipping TxEn test for device [%04x:%04x] subsystem [%04x:%04x]\n",
 		priv->dev->vendor, priv->dev->device,
@@ -1687,9 +1684,6 @@ pci_wch_ch38x_setup(struct serial_private *priv,
 #define PCI_VENDOR_ID_ASIX		0x9710
 #define PCI_DEVICE_ID_BROADCOM_TRUMANAGE 0x160a
 #define PCI_DEVICE_ID_AMCC_ADDIDATA_APCI7800 0x818e
-
-#define PCI_VENDOR_ID_SUNIX		0x1fd4
-#define PCI_DEVICE_ID_SUNIX_1999	0x1999
 
 #define PCIE_VENDOR_ID_WCH		0x1c00
 #define PCIE_DEVICE_ID_WCH_CH382_2S1P	0x3250
@@ -3345,9 +3339,7 @@ static const struct pci_device_id blacklist[] = {
 	/* multi-io cards handled by parport_serial */
 	{ PCI_DEVICE(0x4348, 0x7053), }, /* WCH CH353 2S1P */
 	{ PCI_DEVICE(0x4348, 0x5053), }, /* WCH CH353 1S1P */
-	{ PCI_DEVICE(0x4348, 0x7173), }, /* WCH CH355 4S */
 	{ PCI_DEVICE(0x1c00, 0x3250), }, /* WCH CH382 2S1P */
-	{ PCI_DEVICE(0x1c00, 0x3470), }, /* WCH CH384 4S */
 
 	/* Moxa Smartio MUE boards handled by 8250_moxa */
 	{ PCI_VDEVICE(MOXA, 0x1024), },
@@ -3368,6 +3360,7 @@ static const struct pci_device_id blacklist[] = {
 	{ PCI_VDEVICE(INTEL, 0x081c), },
 	{ PCI_VDEVICE(INTEL, 0x081d), },
 	{ PCI_VDEVICE(INTEL, 0x1191), },
+	{ PCI_VDEVICE(INTEL, 0x18d8), },
 	{ PCI_VDEVICE(INTEL, 0x19d8), },
 
 	/* Intel platforms with DesignWare UART */
@@ -3384,28 +3377,24 @@ static const struct pci_device_id blacklist[] = {
 	{ PCI_VDEVICE(COMMTECH, PCI_ANY_ID), },
 };
 
-/*
- * Given a complete unknown PCI device, try to use some heuristics to
- * guess what the configuration might be, based on the pitiful PCI
- * serial specs.  Returns 0 on success, 1 on failure.
- */
-static int
-serial_pci_guess_board(struct pci_dev *dev, struct pciserial_board *board)
+static int serial_pci_is_class_communication(struct pci_dev *dev)
 {
-	const struct pci_device_id *bldev;
-	int num_iomem, num_port, first_port = -1, i;
-
 	/*
 	 * If it is not a communications device or the programming
 	 * interface is greater than 6, give up.
-	 *
-	 * (Should we try to make guesses for multiport serial devices
-	 * later?)
 	 */
 	if ((((dev->class >> 8) != PCI_CLASS_COMMUNICATION_SERIAL) &&
+	     ((dev->class >> 8) != PCI_CLASS_COMMUNICATION_MULTISERIAL) &&
 	     ((dev->class >> 8) != PCI_CLASS_COMMUNICATION_MODEM)) ||
 	    (dev->class & 0xff) > 6)
 		return -ENODEV;
+
+	return 0;
+}
+
+static int serial_pci_is_blacklisted(struct pci_dev *dev)
+{
+	const struct pci_device_id *bldev;
 
 	/*
 	 * Do not access blacklisted devices that are known not to
@@ -3418,6 +3407,25 @@ serial_pci_guess_board(struct pci_dev *dev, struct pciserial_board *board)
 		    dev->device == bldev->device)
 			return -ENODEV;
 	}
+
+	return 0;
+}
+
+/*
+ * Given a complete unknown PCI device, try to use some heuristics to
+ * guess what the configuration might be, based on the pitiful PCI
+ * serial specs.  Returns 0 on success, -ENODEV on failure.
+ */
+static int
+serial_pci_guess_board(struct pci_dev *dev, struct pciserial_board *board)
+{
+	int num_iomem, num_port, first_port = -1, i;
+
+	/*
+	 * Should we try to make guesses for multiport serial devices later?
+	 */
+	if ((dev->class >> 8) == PCI_CLASS_COMMUNICATION_MULTISERIAL)
+		return -ENODEV;
 
 	num_iomem = num_port = 0;
 	for (i = 0; i < PCI_NUM_BAR_RESOURCES; i++) {
@@ -3639,6 +3647,14 @@ pciserial_init_one(struct pci_dev *dev, const struct pci_device_id *ent)
 
 	board = &pci_boards[ent->driver_data];
 
+	rc = serial_pci_is_class_communication(dev);
+	if (rc)
+		return rc;
+
+	rc = serial_pci_is_blacklisted(dev);
+	if (rc)
+		return rc;
+
 	rc = pcim_enable_device(dev);
 	pci_save_state(dev);
 	if (rc)
@@ -3723,7 +3739,7 @@ static int pciserial_resume_one(struct device *dev)
 static SIMPLE_DEV_PM_OPS(pciserial_pm_ops, pciserial_suspend_one,
 			 pciserial_resume_one);
 
-static struct pci_device_id serial_pci_tbl[] = {
+static const struct pci_device_id serial_pci_tbl[] = {
 	/* Advantech use PCI_DEVICE_ID_ADVANTECH_PCI3620 (0x3620) as 'PCI_SUBVENDOR_ID' */
 	{	PCI_VENDOR_ID_ADVANTECH, PCI_DEVICE_ID_ADVANTECH_PCI3620,
 		PCI_DEVICE_ID_ADVANTECH_PCI3620, 0x0001, 0, 0,
@@ -4682,6 +4698,17 @@ static struct pci_device_id serial_pci_tbl[] = {
 		PCI_ANY_ID, PCI_ANY_ID, 0, 0,    /* 135a.0dc0 */
 		pbn_b2_4_115200 },
 	/*
+	 * BrainBoxes UC-260
+	 */
+	{	PCI_VENDOR_ID_INTASHIELD, 0x0D21,
+		PCI_ANY_ID, PCI_ANY_ID,
+		PCI_CLASS_COMMUNICATION_MULTISERIAL << 8, 0xffff00,
+		pbn_b2_4_115200 },
+	{	PCI_VENDOR_ID_INTASHIELD, 0x0E34,
+		PCI_ANY_ID, PCI_ANY_ID,
+		 PCI_CLASS_COMMUNICATION_MULTISERIAL << 8, 0xffff00,
+		pbn_b2_4_115200 },
+	/*
 	 * Perle PCI-RAS cards
 	 */
 	{       PCI_VENDOR_ID_PLX, PCI_DEVICE_ID_PLX_9030,
@@ -5117,6 +5144,9 @@ static struct pci_device_id serial_pci_tbl[] = {
 	/* MKS Tenta SCOM-080x serial cards */
 	{ PCI_DEVICE(0x1601, 0x0800), .driver_data = pbn_b0_4_1250000 },
 	{ PCI_DEVICE(0x1601, 0xa801), .driver_data = pbn_b0_4_1250000 },
+
+	/* Amazon PCI serial device */
+	{ PCI_DEVICE(0x1d0f, 0x8250), .driver_data = pbn_b0_1_115200 },
 
 	/*
 	 * These entries match devices with class COMMUNICATION_SERIAL,

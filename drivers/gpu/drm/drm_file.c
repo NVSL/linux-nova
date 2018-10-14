@@ -75,7 +75,7 @@ DEFINE_MUTEX(drm_global_mutex);
  * for drivers which use the CMA GEM helpers it's drm_gem_cma_mmap().
  *
  * No other file operations are supported by the DRM userspace API. Overall the
- * following is an example #file_operations structure::
+ * following is an example &file_operations structure::
  *
  *     static const example_drm_fops = {
  *             .owner = THIS_MODULE,
@@ -92,6 +92,11 @@ DEFINE_MUTEX(drm_global_mutex);
  * For plain GEM based drivers there is the DEFINE_DRM_GEM_FOPS() macro, and for
  * CMA based drivers there is the DEFINE_DRM_GEM_CMA_FOPS() macro to make this
  * simpler.
+ *
+ * The driver's &file_operations must be stored in &drm_driver.fops.
+ *
+ * For driver-private IOCTL handling see the more detailed discussion in
+ * :ref:`IOCTL support in the userland interfaces chapter<drm_driver_ioctl>`.
  */
 
 static int drm_open_helper(struct file *filp, struct drm_minor *minor);
@@ -207,6 +212,7 @@ static int drm_open_helper(struct file *filp, struct drm_minor *minor)
 		return -ENOMEM;
 
 	filp->private_data = priv;
+	filp->f_mode |= FMODE_UNSIGNED_OFFSET;
 	priv->filp = filp;
 	priv->pid = get_pid(task_pid(current));
 	priv->minor = minor;
@@ -431,7 +437,7 @@ int drm_release(struct inode *inode, struct file *filp)
 
 	if (!--dev->open_count) {
 		drm_lastclose(dev);
-		if (drm_device_is_unplugged(dev))
+		if (drm_dev_is_unplugged(dev))
 			drm_put_dev(dev);
 	}
 	mutex_unlock(&drm_global_mutex);
@@ -554,15 +560,15 @@ EXPORT_SYMBOL(drm_read);
  *
  * Mask of POLL flags indicating the current status of the file.
  */
-unsigned int drm_poll(struct file *filp, struct poll_table_struct *wait)
+__poll_t drm_poll(struct file *filp, struct poll_table_struct *wait)
 {
 	struct drm_file *file_priv = filp->private_data;
-	unsigned int mask = 0;
+	__poll_t mask = 0;
 
 	poll_wait(filp, &file_priv->event_wait, wait);
 
 	if (!list_empty(&file_priv->event_list))
-		mask |= POLLIN | POLLRDNORM;
+		mask |= EPOLLIN | EPOLLRDNORM;
 
 	return mask;
 }

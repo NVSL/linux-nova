@@ -1,45 +1,11 @@
+// SPDX-License-Identifier: BSD-3-Clause OR GPL-2.0
 /******************************************************************************
  *
  * Module Name: tbxface - ACPI table-oriented external interfaces
  *
+ * Copyright (C) 2000 - 2018, Intel Corp.
+ *
  *****************************************************************************/
-
-/*
- * Copyright (C) 2000 - 2017, Intel Corp.
- * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions, and the following disclaimer,
- *    without modification.
- * 2. Redistributions in binary form must reproduce at minimum a disclaimer
- *    substantially similar to the "NO WARRANTY" disclaimer below
- *    ("Disclaimer") and any redistribution must be conditioned upon
- *    including a substantially similar Disclaimer requirement for further
- *    binary redistribution.
- * 3. Neither the names of the above-listed copyright holders nor the names
- *    of any contributors may be used to endorse or promote products derived
- *    from this software without specific prior written permission.
- *
- * Alternatively, this software may be distributed under the terms of the
- * GNU General Public License ("GPL") version 2 as published by the Free
- * Software Foundation.
- *
- * NO WARRANTY
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTIBILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * HOLDERS OR CONTRIBUTORS BE LIABLE FOR SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
- * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
- * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
- * IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGES.
- */
 
 #define EXPORT_ACPI_INTERFACES
 
@@ -167,17 +133,23 @@ ACPI_EXPORT_SYMBOL_INIT(acpi_initialize_tables)
 acpi_status ACPI_INIT_FUNCTION acpi_reallocate_root_table(void)
 {
 	acpi_status status;
-	u32 i;
+	struct acpi_table_desc *table_desc;
+	u32 i, j;
 
 	ACPI_FUNCTION_TRACE(acpi_reallocate_root_table);
 
 	/*
-	 * Only reallocate the root table if the host provided a static buffer
-	 * for the table array in the call to acpi_initialize_tables.
+	 * If there are tables unverified, it is required to reallocate the
+	 * root table list to clean up invalid table entries. Otherwise only
+	 * reallocate the root table list if the host provided a static buffer
+	 * for the table array in the call to acpi_initialize_tables().
 	 */
-	if (acpi_gbl_root_table_list.flags & ACPI_ROOT_ORIGIN_ALLOCATED) {
+	if ((acpi_gbl_root_table_list.flags & ACPI_ROOT_ORIGIN_ALLOCATED) &&
+	    acpi_gbl_enable_table_validation) {
 		return_ACPI_STATUS(AE_SUPPORT);
 	}
+
+	(void)acpi_ut_acquire_mutex(ACPI_MTX_TABLES);
 
 	/*
 	 * Ensure OS early boot logic, which is required by some hosts. If the
@@ -186,17 +158,39 @@ acpi_status ACPI_INIT_FUNCTION acpi_reallocate_root_table(void)
 	 * early stage.
 	 */
 	for (i = 0; i < acpi_gbl_root_table_list.current_table_count; ++i) {
-		if (acpi_gbl_root_table_list.tables[i].pointer) {
+		table_desc = &acpi_gbl_root_table_list.tables[i];
+		if (table_desc->pointer) {
 			ACPI_ERROR((AE_INFO,
 				    "Table [%4.4s] is not invalidated during early boot stage",
-				    acpi_gbl_root_table_list.tables[i].
-				    signature.ascii));
+				    table_desc->signature.ascii));
+		}
+	}
+
+	if (!acpi_gbl_enable_table_validation) {
+		/*
+		 * Now it's safe to do full table validation. We can do deferred
+		 * table initilization here once the flag is set.
+		 */
+		acpi_gbl_enable_table_validation = TRUE;
+		for (i = 0; i < acpi_gbl_root_table_list.current_table_count;
+		     ++i) {
+			table_desc = &acpi_gbl_root_table_list.tables[i];
+			if (!(table_desc->flags & ACPI_TABLE_IS_VERIFIED)) {
+				status =
+				    acpi_tb_verify_temp_table(table_desc, NULL,
+							      &j);
+				if (ACPI_FAILURE(status)) {
+					acpi_tb_uninstall_table(table_desc);
+				}
+			}
 		}
 	}
 
 	acpi_gbl_root_table_list.flags |= ACPI_ROOT_ALLOW_RESIZE;
-
 	status = acpi_tb_resize_root_table_list();
+	acpi_gbl_root_table_list.flags |= ACPI_ROOT_ORIGIN_ALLOCATED;
+
+	(void)acpi_ut_release_mutex(ACPI_MTX_TABLES);
 	return_ACPI_STATUS(status);
 }
 
@@ -368,6 +362,10 @@ void acpi_put_table(struct acpi_table_header *table)
 	struct acpi_table_desc *table_desc;
 
 	ACPI_FUNCTION_TRACE(acpi_put_table);
+
+	if (!table) {
+		return_VOID;
+	}
 
 	(void)acpi_ut_acquire_mutex(ACPI_MTX_TABLES);
 

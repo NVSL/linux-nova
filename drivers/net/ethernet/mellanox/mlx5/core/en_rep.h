@@ -38,6 +38,7 @@
 #include "eswitch.h"
 #include "en.h"
 
+#ifdef CONFIG_MLX5_ESWITCH
 struct mlx5e_neigh_update_table {
 	struct rhashtable       neigh_ht;
 	/* Save the neigh hash entries in a list in addition to the hash table
@@ -55,7 +56,17 @@ struct mlx5e_neigh_update_table {
 struct mlx5e_rep_priv {
 	struct mlx5_eswitch_rep *rep;
 	struct mlx5e_neigh_update_table neigh_update;
+	struct net_device      *netdev;
+	struct mlx5_flow_handle *vport_rx_rule;
+	struct list_head       vport_sqs_list;
+	struct rhashtable      tc_ht; /* valid for uplink rep */
 };
+
+static inline
+struct mlx5e_rep_priv *mlx5e_rep_to_rep_priv(struct mlx5_eswitch_rep *rep)
+{
+	return (struct mlx5e_rep_priv *)rep->rep_if[REP_ETH].priv;
+}
 
 struct mlx5e_neigh {
 	struct net_device *dev;
@@ -123,6 +134,12 @@ struct mlx5e_encap_entry {
 	int encap_size;
 };
 
+struct mlx5e_rep_sq {
+	struct mlx5_flow_handle	*send_to_vport_rule;
+	struct list_head	 list;
+};
+
+void *mlx5e_alloc_nic_rep_priv(struct mlx5_core_dev *mdev);
 void mlx5e_register_vport_reps(struct mlx5e_priv *priv);
 void mlx5e_unregister_vport_reps(struct mlx5e_priv *priv);
 bool mlx5e_is_uplink_rep(struct mlx5e_priv *priv);
@@ -141,5 +158,12 @@ void mlx5e_rep_encap_entry_detach(struct mlx5e_priv *priv,
 				  struct mlx5e_encap_entry *e);
 
 void mlx5e_rep_queue_neigh_stats_work(struct mlx5e_priv *priv);
+#else /* CONFIG_MLX5_ESWITCH */
+static inline void mlx5e_register_vport_reps(struct mlx5e_priv *priv) {}
+static inline void mlx5e_unregister_vport_reps(struct mlx5e_priv *priv) {}
+static inline bool mlx5e_is_uplink_rep(struct mlx5e_priv *priv) { return false; }
+static inline int mlx5e_add_sqs_fwd_rules(struct mlx5e_priv *priv) { return 0; }
+static inline void mlx5e_remove_sqs_fwd_rules(struct mlx5e_priv *priv) {}
+#endif
 
 #endif /* __MLX5E_REP_H__ */

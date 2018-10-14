@@ -130,19 +130,20 @@ out:
 	return err;
 }
 
-static int __mlx4_en_setup_tc(struct net_device *dev, u32 handle,
-			      u32 chain_index, __be16 proto,
-			      struct tc_to_netdev *tc)
+static int __mlx4_en_setup_tc(struct net_device *dev, enum tc_setup_type type,
+			      void *type_data)
 {
-	if (tc->type != TC_SETUP_MQPRIO)
+	struct tc_mqprio_qopt *mqprio = type_data;
+
+	if (type != TC_SETUP_QDISC_MQPRIO)
+		return -EOPNOTSUPP;
+
+	if (mqprio->num_tc && mqprio->num_tc != MLX4_EN_NUM_UP_HIGH)
 		return -EINVAL;
 
-	if (tc->mqprio->num_tc && tc->mqprio->num_tc != MLX4_EN_NUM_UP_HIGH)
-		return -EINVAL;
+	mqprio->hw = TC_MQPRIO_HW_OFFLOAD_TCS;
 
-	tc->mqprio->hw = TC_MQPRIO_HW_OFFLOAD_TCS;
-
-	return mlx4_en_alloc_tx_queue_per_tc(dev, tc->mqprio->num_tc);
+	return mlx4_en_alloc_tx_queue_per_tc(dev, mqprio->num_tc);
 }
 
 #ifdef CONFIG_RFS_ACCEL
@@ -651,7 +652,8 @@ static int mlx4_en_get_qp(struct mlx4_en_priv *priv)
 		return 0;
 	}
 
-	err = mlx4_qp_reserve_range(dev, 1, 1, qpn, MLX4_RESERVE_A0_QP);
+	err = mlx4_qp_reserve_range(dev, 1, 1, qpn, MLX4_RESERVE_A0_QP,
+				    MLX4_RES_USAGE_DRIVER);
 	en_dbg(DRV, priv, "Reserved qp %d\n", *qpn);
 	if (err) {
 		en_err(priv, "Failed to reserve qp for mac registration\n");
@@ -731,6 +733,21 @@ static int mlx4_en_replace_mac(struct mlx4_en_priv *priv, int qpn,
 	return __mlx4_replace_mac(dev, priv->port, qpn, new_mac_u64);
 }
 
+static void mlx4_en_update_user_mac(struct mlx4_en_priv *priv,
+				    unsigned char new_mac[ETH_ALEN + 2])
+{
+	struct mlx4_en_dev *mdev = priv->mdev;
+	int err;
+
+	if (!(mdev->dev->caps.flags2 & MLX4_DEV_CAP_FLAG2_USER_MAC_EN))
+		return;
+
+	err = mlx4_SET_PORT_user_mac(mdev->dev, priv->port, new_mac);
+	if (err)
+		en_err(priv, "Failed to pass user MAC(%pM) to Firmware for port %d, with error %d\n",
+		       new_mac, priv->port, err);
+}
+
 static int mlx4_en_do_set_mac(struct mlx4_en_priv *priv,
 			      unsigned char new_mac[ETH_ALEN + 2])
 {
@@ -765,8 +782,12 @@ static int mlx4_en_set_mac(struct net_device *dev, void *addr)
 	mutex_lock(&mdev->state_lock);
 	memcpy(new_mac, saddr->sa_data, ETH_ALEN);
 	err = mlx4_en_do_set_mac(priv, new_mac);
-	if (!err)
-		memcpy(dev->dev_addr, saddr->sa_data, ETH_ALEN);
+	if (err)
+		goto out;
+
+	memcpy(dev->dev_addr, saddr->sa_data, ETH_ALEN);
+	mlx4_en_update_user_mac(priv, new_mac);
+out:
 	mutex_unlock(&mdev->state_lock);
 
 	return err;
@@ -1731,6 +1752,7 @@ int mlx4_en_start_port(struct net_device *dev)
 				mlx4_en_arm_cq(priv, cq);
 
 			} else {
+				mlx4_en_init_tx_xdp_ring_descs(priv, tx_ring);
 				mlx4_en_init_recycle_ring(priv, i);
 				/* XDP TX CQ should never be armed */
 			}
@@ -2150,8 +2172,9 @@ static int mlx4_en_alloc_resources(struct mlx4_en_priv *priv)
 
 		if (mlx4_en_create_rx_ring(priv, &priv->rx_ring[i],
 					   prof->rx_ring_size, priv->stride,
-					   node))
+					   node, i))
 			goto err;
+
 	}
 
 #ifdef CONFIG_RFS_ACCEL
@@ -2206,13 +2229,15 @@ static int mlx4_en_copy_priv(struct mlx4_en_priv *dst,
 		if (!dst->tx_ring_num[t])
 			continue;
 
-		dst->tx_ring[t] = kzalloc(sizeof(struct mlx4_en_tx_ring *) *
-					  MAX_TX_RINGS, GFP_KERNEL);
+		dst->tx_ring[t] = kcalloc(MAX_TX_RINGS,
+					  sizeof(struct mlx4_en_tx_ring *),
+					  GFP_KERNEL);
 		if (!dst->tx_ring[t])
 			goto err_free_tx;
 
-		dst->tx_cq[t] = kzalloc(sizeof(struct mlx4_en_cq *) *
-					MAX_TX_RINGS, GFP_KERNEL);
+		dst->tx_cq[t] = kcalloc(MAX_TX_RINGS,
+					sizeof(struct mlx4_en_cq *),
+					GFP_KERNEL);
 		if (!dst->tx_cq[t]) {
 			kfree(dst->tx_ring[t]);
 			goto err_free_tx;
@@ -2894,7 +2919,7 @@ static u32 mlx4_xdp_query(struct net_device *dev)
 	return prog_id;
 }
 
-static int mlx4_xdp(struct net_device *dev, struct netdev_xdp *xdp)
+static int mlx4_xdp(struct net_device *dev, struct netdev_bpf *xdp)
 {
 	switch (xdp->command) {
 	case XDP_SETUP_PROG:
@@ -2936,7 +2961,7 @@ static const struct net_device_ops mlx4_netdev_ops = {
 	.ndo_udp_tunnel_del	= mlx4_en_del_vxlan_port,
 	.ndo_features_check	= mlx4_en_features_check,
 	.ndo_set_tx_maxrate	= mlx4_en_set_tx_maxrate,
-	.ndo_xdp		= mlx4_xdp,
+	.ndo_bpf		= mlx4_xdp,
 };
 
 static const struct net_device_ops mlx4_netdev_ops_master = {
@@ -2973,7 +2998,7 @@ static const struct net_device_ops mlx4_netdev_ops_master = {
 	.ndo_udp_tunnel_del	= mlx4_en_del_vxlan_port,
 	.ndo_features_check	= mlx4_en_features_check,
 	.ndo_set_tx_maxrate	= mlx4_en_set_tx_maxrate,
-	.ndo_xdp		= mlx4_xdp,
+	.ndo_bpf		= mlx4_xdp,
 };
 
 struct mlx4_en_bond {
@@ -3233,6 +3258,10 @@ void mlx4_en_set_stats_bitmap(struct mlx4_dev *dev,
 
 	bitmap_set(stats_bitmap->bitmap, last_i, NUM_XDP_STATS);
 	last_i += NUM_XDP_STATS;
+
+	if (!mlx4_is_slave(dev))
+		bitmap_set(stats_bitmap->bitmap, last_i, NUM_PHY_STATS);
+	last_i += NUM_PHY_STATS;
 }
 
 int mlx4_en_init_netdev(struct mlx4_en_dev *mdev, int port,
@@ -3284,7 +3313,7 @@ int mlx4_en_init_netdev(struct mlx4_en_dev *mdev, int port,
 	priv->pflags = MLX4_EN_PRIV_FLAGS_BLUEFLAME;
 	priv->ctrl_flags = cpu_to_be32(MLX4_WQE_CTRL_CQ_UPDATE |
 			MLX4_WQE_CTRL_SOLICITED);
-	priv->num_tx_rings_p_up = mdev->profile.num_tx_rings_p_up;
+	priv->num_tx_rings_p_up = mdev->profile.max_num_tx_rings_p_up;
 	priv->tx_work_limit = MLX4_EN_DEFAULT_TX_WORK;
 	netdev_rss_key_fill(priv->rss_key, sizeof(priv->rss_key));
 
@@ -3293,16 +3322,17 @@ int mlx4_en_init_netdev(struct mlx4_en_dev *mdev, int port,
 		if (!priv->tx_ring_num[t])
 			continue;
 
-		priv->tx_ring[t] = kzalloc(sizeof(struct mlx4_en_tx_ring *) *
-					   MAX_TX_RINGS, GFP_KERNEL);
+		priv->tx_ring[t] = kcalloc(MAX_TX_RINGS,
+					   sizeof(struct mlx4_en_tx_ring *),
+					   GFP_KERNEL);
 		if (!priv->tx_ring[t]) {
 			err = -ENOMEM;
-			goto err_free_tx;
+			goto out;
 		}
-		priv->tx_cq[t] = kzalloc(sizeof(struct mlx4_en_cq *) *
-					 MAX_TX_RINGS, GFP_KERNEL);
+		priv->tx_cq[t] = kcalloc(MAX_TX_RINGS,
+					 sizeof(struct mlx4_en_cq *),
+					 GFP_KERNEL);
 		if (!priv->tx_cq[t]) {
-			kfree(priv->tx_ring[t]);
 			err = -ENOMEM;
 			goto out;
 		}
@@ -3314,6 +3344,13 @@ int mlx4_en_init_netdev(struct mlx4_en_dev *mdev, int port,
 	priv->msg_enable = MLX4_EN_MSG_LEVEL;
 #ifdef CONFIG_MLX4_EN_DCB
 	if (!mlx4_is_slave(priv->mdev->dev)) {
+		u8 prio;
+
+		for (prio = 0; prio < IEEE_8021QAZ_MAX_TCS; ++prio) {
+			priv->ets.prio_tc[prio] = prio;
+			priv->ets.tc_tsa[prio]  = IEEE_8021QAZ_TSA_VENDOR;
+		}
+
 		priv->dcbx_cap = DCB_CAP_DCBX_VER_CEE | DCB_CAP_DCBX_HOST |
 			DCB_CAP_DCBX_VER_IEEE;
 		priv->flags |= MLX4_EN_DCB_ENABLED;
@@ -3548,11 +3585,6 @@ int mlx4_en_init_netdev(struct mlx4_en_dev *mdev, int port,
 
 	return 0;
 
-err_free_tx:
-	while (t--) {
-		kfree(priv->tx_ring[t]);
-		kfree(priv->tx_cq[t]);
-	}
 out:
 	mlx4_en_destroy_netdev(dev);
 	return err;
@@ -3599,10 +3631,6 @@ int mlx4_en_reset_config(struct net_device *dev,
 		port_up = 1;
 		mlx4_en_stop_port(dev, 1);
 	}
-
-	en_warn(priv, "Changing device configuration rx filter(%x) rx vlan(%x)\n",
-		ts_config.rx_filter,
-		!!(features & NETIF_F_HW_VLAN_CTAG_RX));
 
 	mlx4_en_safe_replace_resources(priv, tmp);
 

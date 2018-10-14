@@ -74,6 +74,8 @@ static struct cpg_core_clk r8a7795_core_clks[] __initdata = {
 	DEF_FIXED(".sdsrc",     CLK_SDSRC,         CLK_PLL1_DIV2,  2, 1),
 
 	/* Core Clock Outputs */
+	DEF_BASE("z",           R8A7795_CLK_Z,     CLK_TYPE_GEN3_Z, CLK_PLL0),
+	DEF_BASE("z2",          R8A7795_CLK_Z2,    CLK_TYPE_GEN3_Z2, CLK_PLL2),
 	DEF_FIXED("ztr",        R8A7795_CLK_ZTR,   CLK_PLL1_DIV2,  6, 1),
 	DEF_FIXED("ztrd2",      R8A7795_CLK_ZTRD2, CLK_PLL1_DIV2, 12, 1),
 	DEF_FIXED("zt",         R8A7795_CLK_ZT,    CLK_PLL1_DIV2,  4, 1),
@@ -149,7 +151,7 @@ static struct mssr_mod_clk r8a7795_mod_clks[] __initdata = {
 	DEF_MOD("usb-dmac1",		 331,	R8A7795_CLK_S3D1),
 	DEF_MOD("rwdt",			 402,	R8A7795_CLK_R),
 	DEF_MOD("intc-ex",		 407,	R8A7795_CLK_CP),
-	DEF_MOD("intc-ap",		 408,	R8A7795_CLK_S3D1),
+	DEF_MOD("intc-ap",		 408,	R8A7795_CLK_S0D3),
 	DEF_MOD("audmac1",		 501,	R8A7795_CLK_S0D3),
 	DEF_MOD("audmac0",		 502,	R8A7795_CLK_S0D3),
 	DEF_MOD("drif7",		 508,	R8A7795_CLK_S3D2),
@@ -305,23 +307,23 @@ static const unsigned int r8a7795_crit_mod_clks[] __initconst = {
 					 (((md) & BIT(17)) >> 17))
 
 static const struct rcar_gen3_cpg_pll_config cpg_pll_configs[16] __initconst = {
-	/* EXTAL div	PLL1 mult	PLL3 mult */
-	{ 1,		192,		192,	},
-	{ 1,		192,		128,	},
-	{ 0, /* Prohibited setting */		},
-	{ 1,		192,		192,	},
-	{ 1,		160,		160,	},
-	{ 1,		160,		106,	},
-	{ 0, /* Prohibited setting */		},
-	{ 1,		160,		160,	},
-	{ 1,		128,		128,	},
-	{ 1,		128,		84,	},
-	{ 0, /* Prohibited setting */		},
-	{ 1,		128,		128,	},
-	{ 2,		192,		192,	},
-	{ 2,		192,		128,	},
-	{ 0, /* Prohibited setting */		},
-	{ 2,		192,		192,	},
+	/* EXTAL div	PLL1 mult/div	PLL3 mult/div */
+	{ 1,		192,	1,	192,	1,	},
+	{ 1,		192,	1,	128,	1,	},
+	{ 0, /* Prohibited setting */			},
+	{ 1,		192,	1,	192,	1,	},
+	{ 1,		160,	1,	160,	1,	},
+	{ 1,		160,	1,	106,	1,	},
+	{ 0, /* Prohibited setting */			},
+	{ 1,		160,	1,	160,	1,	},
+	{ 1,		128,	1,	128,	1,	},
+	{ 1,		128,	1,	84,	1,	},
+	{ 0, /* Prohibited setting */			},
+	{ 1,		128,	1,	128,	1,	},
+	{ 2,		192,	1,	192,	1,	},
+	{ 2,		192,	1,	128,	1,	},
+	{ 0, /* Prohibited setting */			},
+	{ 2,		192,	1,	192,	1,	},
 };
 
 static const struct soc_device_attribute r8a7795es1[] __initconst = {
@@ -348,6 +350,7 @@ static const struct mssr_mod_reparent r8a7795es1_mod_reparent[] __initconst = {
 	{ MOD_CLK_ID(217), R8A7795_CLK_S3D1 },	/* SYS-DMAC2 */
 	{ MOD_CLK_ID(218), R8A7795_CLK_S3D1 },	/* SYS-DMAC1 */
 	{ MOD_CLK_ID(219), R8A7795_CLK_S3D1 },	/* SYS-DMAC0 */
+	{ MOD_CLK_ID(408), R8A7795_CLK_S3D1 },	/* INTC-AP */
 	{ MOD_CLK_ID(501), R8A7795_CLK_S3D1 },	/* AUDMAC1 */
 	{ MOD_CLK_ID(502), R8A7795_CLK_S3D1 },	/* AUDMAC0 */
 	{ MOD_CLK_ID(523), R8A7795_CLK_S3D4 },	/* PWM */

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  *  linux/fs/nfs/file.c
  *
@@ -7,7 +8,6 @@
 #include <linux/file.h>
 #include <linux/falloc.h>
 #include <linux/nfs_fs.h>
-#include <uapi/linux/btrfs.h>	/* BTRFS_IOC_CLONE/BTRFS_IOC_CLONE_RANGE */
 #include "delegation.h"
 #include "internal.h"
 #include "iostat.h"

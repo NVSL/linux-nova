@@ -49,6 +49,7 @@
 #define RCFW_COMM_SIZE			0x104
 
 #define RCFW_DBR_PCI_BAR_REGION		2
+#define RCFW_DBR_BASE_PAGE_SHIFT	12
 
 #define RCFW_CMD_PREP(req, CMD, cmd_flags)				\
 	do {								\
@@ -148,6 +149,11 @@ struct bnxt_qplib_rcfw_sbuf {
 	u32 size;
 };
 
+struct bnxt_qplib_qp_node {
+	u32 qp_id;              /* QP id */
+	void *qp_handle;        /* ptr to qplib_qp */
+};
+
 /* RCFW Communication Channels */
 struct bnxt_qplib_rcfw {
 	struct pci_dev		*pdev;
@@ -157,11 +163,12 @@ struct bnxt_qplib_rcfw {
 	unsigned long		*cmdq_bitmap;
 	u32			bmap_size;
 	unsigned long		flags;
-#define FIRMWARE_INITIALIZED_FLAG	1
-#define FIRMWARE_FIRST_FLAG		BIT(31)
+#define FIRMWARE_INITIALIZED_FLAG	0
+#define FIRMWARE_FIRST_FLAG		31
+#define FIRMWARE_TIMED_OUT		3
 	wait_queue_head_t	waitq;
 	int			(*aeq_handler)(struct bnxt_qplib_rcfw *,
-					       struct creq_func_event *);
+					       void *, void *);
 	u32			seq_num;
 
 	/* Bar region info */
@@ -181,19 +188,23 @@ struct bnxt_qplib_rcfw {
 	/* Actual Cmd and Resp Queues */
 	struct bnxt_qplib_hwq	cmdq;
 	struct bnxt_qplib_crsq	*crsqe_tbl;
+	int qp_tbl_size;
+	struct bnxt_qplib_qp_node *qp_tbl;
 };
 
 void bnxt_qplib_free_rcfw_channel(struct bnxt_qplib_rcfw *rcfw);
 int bnxt_qplib_alloc_rcfw_channel(struct pci_dev *pdev,
-				  struct bnxt_qplib_rcfw *rcfw);
+				  struct bnxt_qplib_rcfw *rcfw, int qp_tbl_sz);
+void bnxt_qplib_rcfw_stop_irq(struct bnxt_qplib_rcfw *rcfw, bool kill);
 void bnxt_qplib_disable_rcfw_channel(struct bnxt_qplib_rcfw *rcfw);
+int bnxt_qplib_rcfw_start_irq(struct bnxt_qplib_rcfw *rcfw, int msix_vector,
+			      bool need_init);
 int bnxt_qplib_enable_rcfw_channel(struct pci_dev *pdev,
 				   struct bnxt_qplib_rcfw *rcfw,
 				   int msix_vector,
 				   int cp_bar_reg_off, int virt_fn,
-				   int (*aeq_handler)
-					(struct bnxt_qplib_rcfw *,
-					 struct creq_func_event *));
+				   int (*aeq_handler)(struct bnxt_qplib_rcfw *,
+						      void *aeqe, void *obj));
 
 struct bnxt_qplib_rcfw_sbuf *bnxt_qplib_rcfw_alloc_sbuf(
 				struct bnxt_qplib_rcfw *rcfw,
@@ -207,4 +218,5 @@ int bnxt_qplib_rcfw_send_message(struct bnxt_qplib_rcfw *rcfw,
 int bnxt_qplib_deinit_rcfw(struct bnxt_qplib_rcfw *rcfw);
 int bnxt_qplib_init_rcfw(struct bnxt_qplib_rcfw *rcfw,
 			 struct bnxt_qplib_ctx *ctx, int is_virtfn);
+void bnxt_qplib_mark_qp_error(void *qp_handle);
 #endif /* __BNXT_QPLIB_RCFW_H__ */

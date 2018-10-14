@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #include <inttypes.h>
 #include <unistd.h>
 #include <sys/syscall.h>
@@ -131,7 +132,7 @@ static int synth_all(struct machine *machine)
 {
 	return perf_event__synthesize_threads(NULL,
 					      perf_event__process,
-					      machine, 0, 500);
+					      machine, 0, 500, 1);
 }
 
 static int synth_process(struct machine *machine)
@@ -187,9 +188,8 @@ static int mmap_events(synth_cb synth)
 
 		pr_debug("looking for map %p\n", td->map);
 
-		thread__find_addr_map(thread,
-				      PERF_RECORD_MISC_USER, MAP__FUNCTION,
-				      (unsigned long) (td->map + 1), &al);
+		thread__find_map(thread, PERF_RECORD_MISC_USER,
+				 (unsigned long) (td->map + 1), &al);
 
 		thread__put(thread);
 
@@ -217,11 +217,11 @@ static int mmap_events(synth_cb synth)
  *   perf_event__synthesize_threads    (global)
  *
  * We test we can find all memory maps via:
- *   thread__find_addr_map
+ *   thread__find_map
  *
  * by using all thread objects.
  */
-int test__mmap_thread_lookup(int subtest __maybe_unused)
+int test__mmap_thread_lookup(struct test *test __maybe_unused, int subtest __maybe_unused)
 {
 	/* perf_event__synthesize_threads synthesize */
 	TEST_ASSERT_VAL("failed with sythesizing all",

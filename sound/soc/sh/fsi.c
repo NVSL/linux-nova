@@ -1710,7 +1710,7 @@ static const struct snd_soc_dai_ops fsi_dai_ops = {
  *		pcm ops
  */
 
-static struct snd_pcm_hardware fsi_pcm_hardware = {
+static const struct snd_pcm_hardware fsi_pcm_hardware = {
 	.info =		SNDRV_PCM_INFO_INTERLEAVED	|
 			SNDRV_PCM_INFO_MMAP		|
 			SNDRV_PCM_INFO_MMAP_VALID,
@@ -1755,7 +1755,7 @@ static snd_pcm_uframes_t fsi_pointer(struct snd_pcm_substream *substream)
 	return fsi_sample2frame(fsi, io->buff_sample_pos);
 }
 
-static struct snd_pcm_ops fsi_pcm_ops = {
+static const struct snd_pcm_ops fsi_pcm_ops = {
 	.open		= fsi_pcm_open,
 	.ioctl		= snd_pcm_lib_ioctl,
 	.hw_params	= fsi_hw_params,
@@ -1764,7 +1764,7 @@ static struct snd_pcm_ops fsi_pcm_ops = {
 };
 
 /*
- *		snd_soc_platform
+ *		snd_soc_component
  */
 
 #define PREALLOC_BUFFER		(32 * 1024)
@@ -1818,13 +1818,10 @@ static struct snd_soc_dai_driver fsi_soc_dai[] = {
 	},
 };
 
-static struct snd_soc_platform_driver fsi_soc_platform = {
-	.ops		= &fsi_pcm_ops,
-	.pcm_new	= fsi_pcm_new,
-};
-
 static const struct snd_soc_component_driver fsi_soc_component = {
 	.name		= "fsi",
+	.ops		= &fsi_pcm_ops,
+	.pcm_new	= fsi_pcm_new,
 };
 
 /*
@@ -1932,14 +1929,9 @@ static int fsi_probe(struct platform_device *pdev)
 
 	core = NULL;
 	if (np) {
-		const struct of_device_id *of_id;
-
-		of_id = of_match_device(fsi_of_match, &pdev->dev);
-		if (of_id) {
-			core = of_id->data;
-			fsi_of_parse("fsia", np, &info.port_a, &pdev->dev);
-			fsi_of_parse("fsib", np, &info.port_b, &pdev->dev);
-		}
+		core = of_device_get_match_data(&pdev->dev);
+		fsi_of_parse("fsia", np, &info.port_a, &pdev->dev);
+		fsi_of_parse("fsib", np, &info.port_b, &pdev->dev);
 	} else {
 		const struct platform_device_id	*id_entry = pdev->id_entry;
 		if (id_entry)
@@ -1962,10 +1954,8 @@ static int fsi_probe(struct platform_device *pdev)
 	}
 
 	master = devm_kzalloc(&pdev->dev, sizeof(*master), GFP_KERNEL);
-	if (!master) {
-		dev_err(&pdev->dev, "Could not allocate master\n");
+	if (!master)
 		return -ENOMEM;
-	}
 
 	master->base = devm_ioremap_nocache(&pdev->dev,
 					    res->start, resource_size(res));
@@ -2014,23 +2004,15 @@ static int fsi_probe(struct platform_device *pdev)
 		goto exit_fsib;
 	}
 
-	ret = snd_soc_register_platform(&pdev->dev, &fsi_soc_platform);
-	if (ret < 0) {
-		dev_err(&pdev->dev, "cannot snd soc register\n");
-		goto exit_fsib;
-	}
-
-	ret = snd_soc_register_component(&pdev->dev, &fsi_soc_component,
+	ret = devm_snd_soc_register_component(&pdev->dev, &fsi_soc_component,
 				    fsi_soc_dai, ARRAY_SIZE(fsi_soc_dai));
 	if (ret < 0) {
 		dev_err(&pdev->dev, "cannot snd component register\n");
-		goto exit_snd_soc;
+		goto exit_fsib;
 	}
 
 	return ret;
 
-exit_snd_soc:
-	snd_soc_unregister_platform(&pdev->dev);
 exit_fsib:
 	pm_runtime_disable(&pdev->dev);
 	fsi_stream_remove(&master->fsib);
@@ -2047,9 +2029,6 @@ static int fsi_remove(struct platform_device *pdev)
 	master = dev_get_drvdata(&pdev->dev);
 
 	pm_runtime_disable(&pdev->dev);
-
-	snd_soc_unregister_component(&pdev->dev);
-	snd_soc_unregister_platform(&pdev->dev);
 
 	fsi_stream_remove(&master->fsia);
 	fsi_stream_remove(&master->fsib);
@@ -2109,7 +2088,7 @@ static int fsi_resume(struct device *dev)
 	return 0;
 }
 
-static struct dev_pm_ops fsi_pm_ops = {
+static const struct dev_pm_ops fsi_pm_ops = {
 	.suspend		= fsi_suspend,
 	.resume			= fsi_resume,
 };

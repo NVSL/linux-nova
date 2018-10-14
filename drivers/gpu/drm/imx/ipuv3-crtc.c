@@ -50,7 +50,8 @@ static inline struct ipu_crtc *to_ipu_crtc(struct drm_crtc *crtc)
 	return container_of(crtc, struct ipu_crtc, base);
 }
 
-static void ipu_crtc_enable(struct drm_crtc *crtc)
+static void ipu_crtc_atomic_enable(struct drm_crtc *crtc,
+				   struct drm_crtc_state *old_state)
 {
 	struct ipu_crtc *ipu_crtc = to_ipu_crtc(crtc);
 	struct ipu_soc *ipu = dev_get_drvdata(ipu_crtc->dev->parent);
@@ -114,7 +115,7 @@ static void imx_drm_crtc_reset(struct drm_crtc *crtc)
 
 	if (crtc->state) {
 		if (crtc->state->mode_blob)
-			drm_property_unreference_blob(crtc->state->mode_blob);
+			drm_property_blob_put(crtc->state->mode_blob);
 
 		state = to_imx_crtc_state(crtc->state);
 		memset(state, 0, sizeof(*state));
@@ -224,7 +225,11 @@ static void ipu_crtc_atomic_begin(struct drm_crtc *crtc,
 				  struct drm_crtc_state *old_crtc_state)
 {
 	drm_crtc_vblank_on(crtc);
+}
 
+static void ipu_crtc_atomic_flush(struct drm_crtc *crtc,
+				  struct drm_crtc_state *old_crtc_state)
+{
 	spin_lock_irq(&crtc->dev->event_lock);
 	if (crtc->state->event) {
 		WARN_ON(drm_crtc_vblank_get(crtc));
@@ -292,8 +297,9 @@ static const struct drm_crtc_helper_funcs ipu_helper_funcs = {
 	.mode_set_nofb = ipu_crtc_mode_set_nofb,
 	.atomic_check = ipu_crtc_atomic_check,
 	.atomic_begin = ipu_crtc_atomic_begin,
+	.atomic_flush = ipu_crtc_atomic_flush,
 	.atomic_disable = ipu_crtc_atomic_disable,
-	.enable = ipu_crtc_enable,
+	.atomic_enable = ipu_crtc_atomic_enable,
 };
 
 static void ipu_put_resources(struct ipu_crtc *ipu_crtc)

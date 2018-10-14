@@ -1556,14 +1556,16 @@ static int ite_probe(struct pnp_dev *pdev, const struct pnp_device_id
 
 	/* set up ir-core props */
 	rdev->priv = itdev;
-	rdev->allowed_protocols = RC_BIT_ALL_IR_DECODER;
+	rdev->allowed_protocols = RC_PROTO_BIT_ALL_IR_DECODER;
 	rdev->open = ite_open;
 	rdev->close = ite_close;
 	rdev->s_idle = ite_s_idle;
 	rdev->s_rx_carrier_range = ite_set_rx_carrier_range;
-	rdev->min_timeout = ITE_MIN_IDLE_TIMEOUT;
-	rdev->max_timeout = ITE_MAX_IDLE_TIMEOUT;
-	rdev->timeout = ITE_IDLE_TIMEOUT;
+	/* FIFO threshold is 17 bytes, so 17 * 8 samples minimum */
+	rdev->min_timeout = 17 * 8 * ITE_BAUDRATE_DIVISOR *
+			    itdev->params.sample_period;
+	rdev->timeout = IR_DEFAULT_TIMEOUT;
+	rdev->max_timeout = 10 * IR_DEFAULT_TIMEOUT;
 	rdev->rx_resolution = ITE_BAUDRATE_DIVISOR *
 				itdev->params.sample_period;
 	rdev->tx_resolution = ITE_BAUDRATE_DIVISOR *
@@ -1576,7 +1578,7 @@ static int ite_probe(struct pnp_dev *pdev, const struct pnp_device_id
 		rdev->s_tx_duty_cycle = ite_set_tx_duty_cycle;
 	}
 
-	rdev->input_name = dev_desc->model;
+	rdev->device_name = dev_desc->model;
 	rdev->input_id.bustype = BUS_HOST;
 	rdev->input_id.vendor = PCI_VENDOR_ID_ITE;
 	rdev->input_id.product = 0;

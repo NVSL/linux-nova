@@ -1,17 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (c) 1996, 2003 VIA Networking Technologies, Inc.
  * All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
  *
  * File: rf.c
  *
@@ -611,7 +601,7 @@ int vnt_rf_write_embedded(struct vnt_private *priv, u32 data)
 	reg_data[3] = (u8)(data >> 24);
 
 	vnt_control_out(priv, MESSAGE_TYPE_WRITE_IFRF,
-				0, 0, ARRAY_SIZE(reg_data), reg_data);
+			0, 0, ARRAY_SIZE(reg_data), reg_data);
 
 	return true;
 }
@@ -643,9 +633,9 @@ int vnt_rf_setpower(struct vnt_private *priv, u32 rate, u32 channel)
 	case RATE_48M:
 	case RATE_54M:
 		if (channel > CB_MAX_CHANNEL_24G)
-			power = priv->ofdm_a_pwr_tbl[channel-15];
+			power = priv->ofdm_a_pwr_tbl[channel - 15];
 		else
-			power = priv->ofdm_pwr_tbl[channel-1];
+			power = priv->ofdm_pwr_tbl[channel - 1];
 		break;
 	}
 

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Shared Memory Communications over RDMA (SMC-R) and RoCE
  *
@@ -18,7 +19,6 @@
 #include "smc.h"
 #include "smc_core.h"
 
-#define SMC_WR_MAX_CQE 32768	/* max. # of completion queue elements */
 #define SMC_WR_BUF_CNT 16	/* # of ctrl buffers per link */
 
 #define SMC_WR_TX_WAIT_FREE_SLOT_TIME	(10 * HZ)
@@ -92,8 +92,6 @@ int smc_wr_tx_put_slot(struct smc_link *link,
 int smc_wr_tx_send(struct smc_link *link,
 		   struct smc_wr_tx_pend_priv *wr_pend_priv);
 void smc_wr_tx_cq_handler(struct ib_cq *ib_cq, void *cq_context);
-bool smc_wr_tx_has_pending(struct smc_link *link, u8 wr_rx_hdr_type,
-			   smc_wr_tx_filter filter, unsigned long data);
 void smc_wr_tx_dismiss_slots(struct smc_link *lnk, u8 wr_rx_hdr_type,
 			     smc_wr_tx_filter filter,
 			     smc_wr_tx_dismisser dismisser,
@@ -102,5 +100,6 @@ void smc_wr_tx_dismiss_slots(struct smc_link *lnk, u8 wr_rx_hdr_type,
 int smc_wr_rx_register_handler(struct smc_wr_rx_handler *handler);
 int smc_wr_rx_post_init(struct smc_link *link);
 void smc_wr_rx_cq_handler(struct ib_cq *ib_cq, void *cq_context);
+int smc_wr_reg_send(struct smc_link *link, struct ib_mr *mr);
 
 #endif /* SMC_WR_H */

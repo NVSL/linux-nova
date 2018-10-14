@@ -1,7 +1,7 @@
 /*
  * AMD Cryptographic Coprocessor (CCP) SHA crypto API support
  *
- * Copyright (C) 2013,2016 Advanced Micro Devices, Inc.
+ * Copyright (C) 2013,2017 Advanced Micro Devices, Inc.
  *
  * Author: Tom Lendacky <thomas.lendacky@amd.com>
  * Author: Gary R Hook <gary.hook@amd.com>
@@ -47,7 +47,7 @@ static int ccp_sha_complete(struct crypto_async_request *async_req, int ret)
 	}
 
 	/* Update result area if supplied */
-	if (req->result)
+	if (req->result && rctx->final)
 		memcpy(req->result, rctx->ctx, digest_size);
 
 e_free:

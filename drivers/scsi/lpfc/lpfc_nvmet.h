@@ -1,7 +1,7 @@
 /*******************************************************************
  * This file is part of the Emulex Linux Device Driver for         *
  * Fibre Channel Host Bus Adapters.                                *
- * Copyright (C) 2017 Broadcom. All Rights Reserved. The term      *
+ * Copyright (C) 2017-2018 Broadcom. All Rights Reserved. The term *
  * “Broadcom” refers to Broadcom Limited and/or its subsidiaries.  *
  * Copyright (C) 2004-2016 Emulex.  All rights reserved.           *
  * EMULEX and SLI are trademarks of Emulex.                        *
@@ -22,8 +22,14 @@
  ********************************************************************/
 
 #define LPFC_NVMET_DEFAULT_SEGS		(64 + 1)	/* 256K IOs */
-#define LPFC_NVMET_RQE_DEF_COUNT	512
-#define LPFC_NVMET_SUCCESS_LEN	12
+#define LPFC_NVMET_RQE_MIN_POST		128
+#define LPFC_NVMET_RQE_DEF_POST		512
+#define LPFC_NVMET_RQE_DEF_COUNT	2048
+#define LPFC_NVMET_SUCCESS_LEN		12
+
+#define LPFC_NVMET_MRQ_OFF		0xffff
+#define LPFC_NVMET_MRQ_AUTO		0
+#define LPFC_NVMET_MRQ_MAX		16
 
 /* Used for NVME Target */
 struct lpfc_nvmet_tgtport {
@@ -43,6 +49,8 @@ struct lpfc_nvmet_tgtport {
 
 	/* Stats counters - lpfc_nvmet_xmt_ls_rsp_cmp */
 	atomic_t xmt_ls_rsp_error;
+	atomic_t xmt_ls_rsp_aborted;
+	atomic_t xmt_ls_rsp_xb_set;
 	atomic_t xmt_ls_rsp_cmpl;
 
 	/* Stats counters - lpfc_nvmet_unsol_fcp_buffer */
@@ -60,19 +68,39 @@ struct lpfc_nvmet_tgtport {
 	atomic_t xmt_fcp_rsp;
 
 	/* Stats counters - lpfc_nvmet_xmt_fcp_op_cmp */
+	atomic_t xmt_fcp_rsp_xb_set;
 	atomic_t xmt_fcp_rsp_cmpl;
 	atomic_t xmt_fcp_rsp_error;
+	atomic_t xmt_fcp_rsp_aborted;
 	atomic_t xmt_fcp_rsp_drop;
 
-
 	/* Stats counters - lpfc_nvmet_xmt_fcp_abort */
+	atomic_t xmt_fcp_xri_abort_cqe;
 	atomic_t xmt_fcp_abort;
 	atomic_t xmt_fcp_abort_cmpl;
 	atomic_t xmt_abort_sol;
 	atomic_t xmt_abort_unsol;
 	atomic_t xmt_abort_rsp;
 	atomic_t xmt_abort_rsp_error;
+
+	/* Stats counters - defer IO */
+	atomic_t defer_ctx;
+	atomic_t defer_fod;
+	atomic_t defer_wqfull;
 };
+
+struct lpfc_nvmet_ctx_info {
+	struct list_head nvmet_ctx_list;
+	spinlock_t	nvmet_ctx_list_lock; /* lock per CPU */
+	struct lpfc_nvmet_ctx_info *nvmet_ctx_next_cpu;
+	struct lpfc_nvmet_ctx_info *nvmet_ctx_start_cpu;
+	uint16_t	nvmet_ctx_list_cnt;
+	char pad[16];  /* pad to a cache-line */
+};
+
+/* This retrieves the context info associated with the specified cpu / mrq */
+#define lpfc_get_ctx_list(phba, cpu, mrq)  \
+	(phba->sli4_hba.nvmet_ctx_info + ((cpu * phba->cfg_nvmet_mrq) + mrq))
 
 struct lpfc_nvmet_rcv_ctx {
 	union {
@@ -92,6 +120,7 @@ struct lpfc_nvmet_rcv_ctx {
 	uint16_t size;
 	uint16_t entry_cnt;
 	uint16_t cpu;
+	uint16_t idx;
 	uint16_t state;
 	/* States */
 #define LPFC_NVMET_STE_LS_RCV		1
@@ -108,6 +137,7 @@ struct lpfc_nvmet_rcv_ctx {
 #define LPFC_NVMET_XBUSY		0x4  /* XB bit set on IO cmpl */
 #define LPFC_NVMET_CTX_RLS		0x8  /* ctx free requested */
 #define LPFC_NVMET_ABTS_RCV		0x10  /* ABTS received on exchange */
+#define LPFC_NVMET_DEFER_WQFULL		0x40  /* Waiting on a free WQE */
 	struct rqb_dmabuf *rqb_buffer;
 	struct lpfc_nvmet_ctxbuf *ctxbuf;
 

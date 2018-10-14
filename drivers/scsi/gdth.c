@@ -2354,7 +2354,7 @@ static int gdth_internal_cache_cmd(gdth_ha_str *ha, Scsi_Cmnd *scp)
         inq.resp_aenc = 2;
         inq.add_length= 32;
         strcpy(inq.vendor,ha->oem_name);
-        sprintf(inq.product,"Host Drive  #%02d",t);
+        snprintf(inq.product, sizeof(inq.product), "Host Drive  #%02d",t);
         strcpy(inq.revision,"   ");
         gdth_copy_internal_data(ha, scp, (char*)&inq, sizeof(gdth_inq_data));
         break;
@@ -3705,7 +3705,7 @@ static void gdth_log_event(gdth_evt_data *dvr, char *buffer)
 #ifdef GDTH_STATISTICS
 static u8	gdth_timer_running;
 
-static void gdth_timeout(unsigned long data)
+static void gdth_timeout(struct timer_list *unused)
 {
     u32 i;
     Scsi_Cmnd *nscp;
@@ -3743,8 +3743,6 @@ static void gdth_timer_init(void)
 	gdth_timer_running = 1;
 	TRACE2(("gdth_detect(): Initializing timer !\n"));
 	gdth_timer.expires = jiffies + HZ;
-	gdth_timer.data = 0L;
-	gdth_timer.function = gdth_timeout;
 	add_timer(&gdth_timer);
 }
 #else
@@ -3884,7 +3882,7 @@ static enum blk_eh_timer_return gdth_timed_out(struct scsi_cmnd *scp)
 	struct gdth_cmndinfo *cmndinfo = gdth_cmnd_priv(scp);
 	u8 b, t;
 	unsigned long flags;
-	enum blk_eh_timer_return retval = BLK_EH_NOT_HANDLED;
+	enum blk_eh_timer_return retval = BLK_EH_DONE;
 
 	TRACE(("%s() cmd 0x%x\n", scp->cmnd[0], __func__));
 	b = scp->device->channel;
@@ -5165,7 +5163,7 @@ static int __init gdth_init(void)
 	/* initializations */
 	gdth_polling = TRUE;
 	gdth_clear_events();
-	init_timer(&gdth_timer);
+	timer_setup(&gdth_timer, gdth_timeout, 0);
 
 	/* As default we do not probe for EISA or ISA controllers */
 	if (probe_eisa_isa) {

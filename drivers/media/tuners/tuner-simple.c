@@ -53,7 +53,7 @@ MODULE_PARM_DESC(dtv_input, "specify dtv rf input, 0 for autoselect");
 /* tv tuner system standard selection for Philips FQ1216ME
    this value takes the low bits of control byte 2
    from datasheet "1999 Nov 16" (supersedes "1999 Mar 23")
-     standard 		BG	DK	I	L	L`
+     standard		BG	DK	I	L	L`
      picture carrier	38.90	38.90	38.90	38.90	33.95
      colour		34.47	34.47	34.47	34.47	38.38
      sound 1		33.40	32.40	32.90	32.40	40.45
@@ -846,7 +846,7 @@ static u32 simple_dvb_configure(struct dvb_frontend *fe, u8 *buf,
 	/* This function returns the tuned frequency on success, 0 on error */
 	struct tuner_simple_priv *priv = fe->tuner_priv;
 	struct tunertype *tun = priv->tun;
-	static struct tuner_params *t_params;
+	struct tuner_params *t_params;
 	u8 config, cb;
 	u32 div;
 	int ret;

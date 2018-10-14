@@ -522,6 +522,7 @@ static struct lpc_ich_info lpc_chipset_info[] = {
 		.name = "Avoton SoC",
 		.iTCO_version = 3,
 		.gpio_version = AVOTON_GPIO,
+		.spi_type = INTEL_SPI_BYT,
 	},
 	[LPC_BAYTRAIL] = {
 		.name = "Bay Trail SoC",
@@ -1119,17 +1120,7 @@ static int lpc_ich_init_spi(struct pci_dev *dev)
 			res->start = spi_base + SPIBASE_LPT;
 			res->end = res->start + SPIBASE_LPT_SZ - 1;
 
-			/*
-			 * Try to make the flash chip writeable now by
-			 * setting BCR_WPD. It it fails we tell the driver
-			 * that it can only read the chip.
-			 */
 			pci_read_config_dword(dev, BCR, &bcr);
-			if (!(bcr & BCR_WPD)) {
-				bcr |= BCR_WPD;
-				pci_write_config_dword(dev, BCR, bcr);
-				pci_read_config_dword(dev, BCR, &bcr);
-			}
 			info->writeable = !!(bcr & BCR_WPD);
 		}
 		break;
@@ -1152,11 +1143,6 @@ static int lpc_ich_init_spi(struct pci_dev *dev)
 			res->end = res->start + SPIBASE_APL_SZ - 1;
 
 			pci_bus_read_config_dword(bus, spi, BCR, &bcr);
-			if (!(bcr & BCR_WPD)) {
-				bcr |= BCR_WPD;
-				pci_bus_write_config_dword(bus, spi, BCR, bcr);
-				pci_bus_read_config_dword(bus, spi, BCR, &bcr);
-			}
 			info->writeable = !!(bcr & BCR_WPD);
 		}
 

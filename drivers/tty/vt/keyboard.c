@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Written for linux by Johan Myreen as a translation from
  * the assembly version by Linus (with diacriticals added)
@@ -243,14 +244,14 @@ static int kd_sound_helper(struct input_handle *handle, void *data)
 	return 0;
 }
 
-static void kd_nosound(unsigned long ignored)
+static void kd_nosound(struct timer_list *unused)
 {
 	static unsigned int zero;
 
 	input_handler_for_each_handle(&kbd_handler, &zero, kd_sound_helper);
 }
 
-static DEFINE_TIMER(kd_mksound_timer, kd_nosound, 0, 0);
+static DEFINE_TIMER(kd_mksound_timer, kd_nosound);
 
 void kd_mksound(unsigned int hz, unsigned int ticks)
 {
@@ -1623,7 +1624,7 @@ int vt_do_diacrit(unsigned int cmd, void __user *udp, int perm)
 		struct kbdiacr *dia;
 		int i;
 
-		dia = kmalloc(MAX_DIACR * sizeof(struct kbdiacr),
+		dia = kmalloc_array(MAX_DIACR, sizeof(struct kbdiacr),
 								GFP_KERNEL);
 		if (!dia)
 			return -ENOMEM;
@@ -1656,7 +1657,7 @@ int vt_do_diacrit(unsigned int cmd, void __user *udp, int perm)
 		struct kbdiacrsuc __user *a = udp;
 		void *buf;
 
-		buf = kmalloc(MAX_DIACR * sizeof(struct kbdiacruc),
+		buf = kmalloc_array(MAX_DIACR, sizeof(struct kbdiacruc),
 								GFP_KERNEL);
 		if (buf == NULL)
 			return -ENOMEM;

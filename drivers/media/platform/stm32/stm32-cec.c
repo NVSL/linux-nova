@@ -1,11 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * STM32 CEC driver
  * Copyright (C) STMicroelectronics SA 2017
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
  */
 
 #include <linux/clk.h>
@@ -246,9 +243,7 @@ static const struct regmap_config stm32_cec_regmap_cfg = {
 
 static int stm32_cec_probe(struct platform_device *pdev)
 {
-	u32 caps = CEC_CAP_LOG_ADDRS | CEC_CAP_PASSTHROUGH |
-		   CEC_CAP_TRANSMIT | CEC_CAP_RC | CEC_CAP_PHYS_ADDR |
-		   CEC_MODE_MONITOR_ALL;
+	u32 caps = CEC_CAP_DEFAULTS | CEC_CAP_PHYS_ADDR | CEC_MODE_MONITOR_ALL;
 	struct resource *res;
 	struct stm32_cec *cec;
 	void __iomem *mmio;

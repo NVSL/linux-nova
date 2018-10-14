@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Assorted bcache debug code
  *
@@ -16,7 +17,7 @@
 #include <linux/random.h>
 #include <linux/seq_file.h>
 
-static struct dentry *debug;
+struct dentry *bcache_debug;
 
 #ifdef CONFIG_BCACHE_DEBUG
 
@@ -49,7 +50,7 @@ void bch_btree_verify(struct btree *b)
 	v->keys.ops = b->keys.ops;
 
 	bio = bch_bbio_alloc(b->c);
-	bio->bi_bdev		= PTR_CACHE(b->c, &b->key, 0)->bdev;
+	bio_set_dev(bio, PTR_CACHE(b->c, &b->key, 0)->bdev);
 	bio->bi_iter.bi_sector	= PTR_OFFSET(&b->key, 0);
 	bio->bi_iter.bi_size	= KEY_SIZE(&v->key) << 9;
 	bio->bi_opf		= REQ_OP_READ | REQ_META;
@@ -105,7 +106,6 @@ void bch_btree_verify(struct btree *b)
 
 void bch_data_verify(struct cached_dev *dc, struct bio *bio)
 {
-	char name[BDEVNAME_SIZE];
 	struct bio *check;
 	struct bio_vec bv, cbv;
 	struct bvec_iter iter, citer = { 0 };
@@ -115,7 +115,7 @@ void bch_data_verify(struct cached_dev *dc, struct bio *bio)
 		return;
 	check->bi_opf = REQ_OP_READ;
 
-	if (bio_alloc_pages(check, GFP_NOIO))
+	if (bch_bio_alloc_pages(check, GFP_NOIO))
 		goto out_put;
 
 	submit_bio_wait(check);
@@ -133,7 +133,7 @@ void bch_data_verify(struct cached_dev *dc, struct bio *bio)
 					bv.bv_len),
 				 dc->disk.c,
 				 "verify failed at dev %s sector %llu",
-				 bdevname(dc->bdev, name),
+				 dc->backing_dev_name,
 				 (uint64_t) bio->bi_iter.bi_sector);
 
 		kunmap_atomic(p1);
@@ -231,11 +231,11 @@ static const struct file_operations cache_set_debug_ops = {
 
 void bch_debug_init_cache_set(struct cache_set *c)
 {
-	if (!IS_ERR_OR_NULL(debug)) {
+	if (!IS_ERR_OR_NULL(bcache_debug)) {
 		char name[50];
 		snprintf(name, 50, "bcache-%pU", c->sb.set_uuid);
 
-		c->debug = debugfs_create_file(name, 0400, debug, c,
+		c->debug = debugfs_create_file(name, 0400, bcache_debug, c,
 					       &cache_set_debug_ops);
 	}
 }
@@ -244,14 +244,15 @@ void bch_debug_init_cache_set(struct cache_set *c)
 
 void bch_debug_exit(void)
 {
-	if (!IS_ERR_OR_NULL(debug))
-		debugfs_remove_recursive(debug);
+	if (!IS_ERR_OR_NULL(bcache_debug))
+		debugfs_remove_recursive(bcache_debug);
 }
 
 int __init bch_debug_init(struct kobject *kobj)
 {
-	int ret = 0;
+	if (!IS_ENABLED(CONFIG_DEBUG_FS))
+		return 0;
 
-	debug = debugfs_create_dir("bcache", NULL);
-	return ret;
+	bcache_debug = debugfs_create_dir("bcache", NULL);
+	return IS_ERR_OR_NULL(bcache_debug);
 }

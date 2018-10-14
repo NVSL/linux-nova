@@ -1,8 +1,8 @@
+# SPDX-License-Identifier: GPL-2.0
 #
 # Makefile for the kernel DVB frontend device drivers.
 #
 
-ccflags-y += -I$(srctree)/drivers/media/dvb-core/
 ccflags-y += -I$(srctree)/drivers/media/tuners/
 
 # FIXME: RTL2832 SDR driver uses power management directly from USB IF driver
@@ -110,6 +110,9 @@ obj-$(CONFIG_DVB_CXD2820R) += cxd2820r.o
 obj-$(CONFIG_DVB_CXD2841ER) += cxd2841er.o
 obj-$(CONFIG_DVB_DRXK) += drxk.o
 obj-$(CONFIG_DVB_TDA18271C2DD) += tda18271c2dd.o
+obj-$(CONFIG_DVB_STV0910) += stv0910.o
+obj-$(CONFIG_DVB_STV6111) += stv6111.o
+obj-$(CONFIG_DVB_MXL5XX) += mxl5xx.o
 obj-$(CONFIG_DVB_SI2165) += si2165.o
 obj-$(CONFIG_DVB_A8293) += a8293.o
 obj-$(CONFIG_DVB_SP2) += sp2.o
@@ -126,3 +129,5 @@ obj-$(CONFIG_DVB_HORUS3A) += horus3a.o
 obj-$(CONFIG_DVB_ASCOT2E) += ascot2e.o
 obj-$(CONFIG_DVB_HELENE) += helene.o
 obj-$(CONFIG_DVB_ZD1301_DEMOD) += zd1301_demod.o
+obj-$(CONFIG_DVB_CXD2099) += cxd2099.o
+obj-$(CONFIG_DVB_CXD2880) += cxd2880/

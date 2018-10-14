@@ -1,15 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Intel Management Engine Interface (Intel MEI) Linux driver
  * Copyright (c) 2015, Intel Corporation.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
- * more details.
  */
 
 #include <linux/module.h>
@@ -526,12 +518,11 @@ static ssize_t mei_dbgfs_read_state(struct file *file, char __user *ubuf,
 				    size_t cnt, loff_t *ppos)
 {
 	struct mei_wdt *wdt = file->private_data;
-	const size_t bufsz = 32;
-	char buf[bufsz];
+	char buf[32];
 	ssize_t pos;
 
-	pos = scnprintf(buf, bufsz, "state: %s\n",
-			 mei_wdt_state_str(wdt->state));
+	pos = scnprintf(buf, sizeof(buf), "state: %s\n",
+			mei_wdt_state_str(wdt->state));
 
 	return simple_read_from_buffer(ubuf, cnt, ppos, buf, pos);
 }
@@ -670,7 +661,7 @@ static int mei_wdt_remove(struct mei_cl_device *cldev)
 #define MEI_UUID_WD UUID_LE(0x05B79A6F, 0x4628, 0x4D7F, \
 			    0x89, 0x9D, 0xA9, 0x15, 0x14, 0xCB, 0x32, 0xAB)
 
-static struct mei_cl_device_id mei_wdt_tbl[] = {
+static const struct mei_cl_device_id mei_wdt_tbl[] = {
 	{ .uuid = MEI_UUID_WD, .version = MEI_CL_VERSION_ANY },
 	/* required last entry */
 	{ }
@@ -688,5 +679,5 @@ static struct mei_cl_driver mei_wdt_driver = {
 module_mei_cl_driver(mei_wdt_driver);
 
 MODULE_AUTHOR("Intel Corporation");
-MODULE_LICENSE("GPL");
+MODULE_LICENSE("GPL v2");
 MODULE_DESCRIPTION("Device driver for Intel MEI iAMT watchdog");

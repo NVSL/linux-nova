@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _TPM_DEV_H
 #define _TPM_DEV_H
 
@@ -7,7 +8,7 @@ struct file_priv {
 	struct tpm_chip *chip;
 
 	/* Data passed to and from the tpm via the read/write calls */
-	atomic_t data_pending;
+	size_t data_pending;
 	struct mutex buffer_mutex;
 
 	struct timer_list user_read_timer;      /* user needs to claim result */

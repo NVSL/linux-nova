@@ -32,6 +32,7 @@
 #include <linux/skbuff.h>
 
 #include <net/sock.h>
+#include <net/xdp.h>
 
 #include "vhost.h"
 
@@ -43,6 +44,12 @@ MODULE_PARM_DESC(experimental_zcopytx, "Enable Zero Copy TX;"
 /* Max number of bytes transferred before requeueing the job.
  * Using this limit prevents one virtqueue from starving others. */
 #define VHOST_NET_WEIGHT 0x80000
+
+/* Max number of packets transferred before requeueing the job.
+ * Using this limit prevents one virtqueue from starving others with small
+ * pkts.
+ */
+#define VHOST_NET_PKT_WEIGHT 256
 
 /* MAX number of TX used buffers for outstanding zerocopy */
 #define VHOST_MAX_PEND 128
@@ -89,7 +96,7 @@ struct vhost_net_ubuf_ref {
 
 #define VHOST_RX_BATCH 64
 struct vhost_net_buf {
-	struct sk_buff **queue;
+	void **queue;
 	int tail;
 	int head;
 };
@@ -101,14 +108,16 @@ struct vhost_net_virtqueue {
 	/* vhost zerocopy support fields below: */
 	/* last used idx for outstanding DMA zerocopy buffers */
 	int upend_idx;
-	/* first used idx for DMA done zerocopy buffers */
+	/* For TX, first used idx for DMA done zerocopy buffers
+	 * For RX, number of batched heads
+	 */
 	int done_idx;
 	/* an array of userspace buffers info */
 	struct ubuf_info *ubuf_info;
 	/* Reference counting for outstanding ubufs.
 	 * Protected by vq mutex. Writers must also take device mutex. */
 	struct vhost_net_ubuf_ref *ubufs;
-	struct skb_array *rx_array;
+	struct ptr_ring *rx_ring;
 	struct vhost_net_buf rxq;
 };
 
@@ -158,7 +167,7 @@ static int vhost_net_buf_produce(struct vhost_net_virtqueue *nvq)
 	struct vhost_net_buf *rxq = &nvq->rxq;
 
 	rxq->head = 0;
-	rxq->tail = skb_array_consume_batched(nvq->rx_array, rxq->queue,
+	rxq->tail = ptr_ring_consume_batched(nvq->rx_ring, rxq->queue,
 					      VHOST_RX_BATCH);
 	return rxq->tail;
 }
@@ -167,11 +176,23 @@ static void vhost_net_buf_unproduce(struct vhost_net_virtqueue *nvq)
 {
 	struct vhost_net_buf *rxq = &nvq->rxq;
 
-	if (nvq->rx_array && !vhost_net_buf_is_empty(rxq)) {
-		skb_array_unconsume(nvq->rx_array, rxq->queue + rxq->head,
-				    vhost_net_buf_get_size(rxq));
+	if (nvq->rx_ring && !vhost_net_buf_is_empty(rxq)) {
+		ptr_ring_unconsume(nvq->rx_ring, rxq->queue + rxq->head,
+				   vhost_net_buf_get_size(rxq),
+				   tun_ptr_free);
 		rxq->head = rxq->tail = 0;
 	}
+}
+
+static int vhost_net_buf_peek_len(void *ptr)
+{
+	if (tun_is_xdp_frame(ptr)) {
+		struct xdp_frame *xdpf = tun_ptr_to_xdp(ptr);
+
+		return xdpf->len;
+	}
+
+	return __skb_array_len_with_tag(ptr);
 }
 
 static int vhost_net_buf_peek(struct vhost_net_virtqueue *nvq)
@@ -185,7 +206,7 @@ static int vhost_net_buf_peek(struct vhost_net_virtqueue *nvq)
 		return 0;
 
 out:
-	return __skb_array_len_with_tag(vhost_net_buf_get_ptr(rxq));
+	return vhost_net_buf_peek_len(vhost_net_buf_get_ptr(rxq));
 }
 
 static void vhost_net_buf_init(struct vhost_net_buf *rxq)
@@ -253,8 +274,10 @@ static int vhost_net_set_ubuf_info(struct vhost_net *n)
 		zcopy = vhost_net_zcopy_mask & (0x1 << i);
 		if (!zcopy)
 			continue;
-		n->vqs[i].ubuf_info = kmalloc(sizeof(*n->vqs[i].ubuf_info) *
-					      UIO_MAXIOV, GFP_KERNEL);
+		n->vqs[i].ubuf_info =
+			kmalloc_array(UIO_MAXIOV,
+				      sizeof(*n->vqs[i].ubuf_info),
+				      GFP_KERNEL);
 		if  (!n->vqs[i].ubuf_info)
 			goto err;
 	}
@@ -436,8 +459,8 @@ static bool vhost_exceeds_maxpend(struct vhost_net *net)
 	struct vhost_net_virtqueue *nvq = &net->vqs[VHOST_NET_VQ_TX];
 	struct vhost_virtqueue *vq = &nvq->vq;
 
-	return (nvq->upend_idx + vq->num - VHOST_MAX_PEND) % UIO_MAXIOV
-		== nvq->done_idx;
+	return (nvq->upend_idx + UIO_MAXIOV - nvq->done_idx) % UIO_MAXIOV >
+	       min_t(unsigned int, VHOST_MAX_PEND, vq->num >> 2);
 }
 
 /* Expects to be always run from workqueue - which acts as
@@ -461,6 +484,7 @@ static void handle_tx(struct vhost_net *net)
 	struct socket *sock;
 	struct vhost_net_ubuf_ref *uninitialized_var(ubufs);
 	bool zcopy, zcopy_used;
+	int sent_pkts = 0;
 
 	mutex_lock(&vq->mutex);
 	sock = vq->private_data;
@@ -471,6 +495,7 @@ static void handle_tx(struct vhost_net *net)
 		goto out;
 
 	vhost_disable_notify(&net->dev, vq);
+	vhost_net_disable_vq(net, vq);
 
 	hdr_size = nvq->vhost_hlen;
 	zcopy = nvq->ubufs;
@@ -480,11 +505,6 @@ static void handle_tx(struct vhost_net *net)
 		if (zcopy)
 			vhost_zerocopy_signal_used(net, vq);
 
-		/* If more outstanding DMAs, queue the work.
-		 * Handle upend_idx wrap around
-		 */
-		if (unlikely(vhost_exceeds_maxpend(net)))
-			break;
 
 		head = vhost_net_tx_get_vq_desc(net, vq, vq->iov,
 						ARRAY_SIZE(vq->iov),
@@ -519,8 +539,7 @@ static void handle_tx(struct vhost_net *net)
 		len = msg_data_left(&msg);
 
 		zcopy_used = zcopy && len >= VHOST_GOODCOPY_LEN
-				   && (nvq->upend_idx + 1) % UIO_MAXIOV !=
-				      nvq->done_idx
+				   && !vhost_exceeds_maxpend(net)
 				   && vhost_net_tx_select_zcopy(net);
 
 		/* use msg_control to pass vhost zerocopy ubuf info to skb */
@@ -533,6 +552,7 @@ static void handle_tx(struct vhost_net *net)
 			ubuf->callback = vhost_zerocopy_callback;
 			ubuf->ctx = nvq->ubufs;
 			ubuf->desc = nvq->upend_idx;
+			refcount_set(&ubuf->refcnt, 1);
 			msg.msg_control = ubuf;
 			msg.msg_controllen = sizeof(ubuf);
 			ubufs = nvq->ubufs;
@@ -561,6 +581,7 @@ static void handle_tx(struct vhost_net *net)
 					% UIO_MAXIOV;
 			}
 			vhost_discard_vq_desc(vq, 1);
+			vhost_net_enable_vq(net, vq);
 			break;
 		}
 		if (err != len)
@@ -571,7 +592,8 @@ static void handle_tx(struct vhost_net *net)
 		else
 			vhost_zerocopy_signal_used(net, vq);
 		vhost_net_tx_packet(net);
-		if (unlikely(total_len >= VHOST_NET_WEIGHT)) {
+		if (unlikely(total_len >= VHOST_NET_WEIGHT) ||
+		    unlikely(++sent_pkts >= VHOST_NET_PKT_WEIGHT)) {
 			vhost_poll_queue(&vq->poll);
 			break;
 		}
@@ -586,7 +608,7 @@ static int peek_head_len(struct vhost_net_virtqueue *rvq, struct sock *sk)
 	int len = 0;
 	unsigned long flags;
 
-	if (rvq->rx_array)
+	if (rvq->rx_ring)
 		return vhost_net_buf_peek(rvq);
 
 	spin_lock_irqsave(&sk->sk_receive_queue.lock, flags);
@@ -611,6 +633,18 @@ static int sk_has_rx_data(struct sock *sk)
 	return skb_queue_empty(&sk->sk_receive_queue);
 }
 
+static void vhost_rx_signal_used(struct vhost_net_virtqueue *nvq)
+{
+	struct vhost_virtqueue *vq = &nvq->vq;
+	struct vhost_dev *dev = vq->dev;
+
+	if (!nvq->done_idx)
+		return;
+
+	vhost_add_used_and_signal_n(dev, vq, vq->heads, nvq->done_idx);
+	nvq->done_idx = 0;
+}
+
 static int vhost_net_rx_peek_head_len(struct vhost_net *net, struct sock *sk)
 {
 	struct vhost_net_virtqueue *rvq = &net->vqs[VHOST_NET_VQ_RX];
@@ -620,8 +654,10 @@ static int vhost_net_rx_peek_head_len(struct vhost_net *net, struct sock *sk)
 	int len = peek_head_len(rvq, sk);
 
 	if (!len && vq->busyloop_timeout) {
+		/* Flush batched heads first */
+		vhost_rx_signal_used(rvq);
 		/* Both tx vq and rx socket were polled here */
-		mutex_lock(&vq->mutex);
+		mutex_lock_nested(&vq->mutex, 1);
 		vhost_disable_notify(&net->dev, vq);
 
 		preempt_disable();
@@ -634,8 +670,13 @@ static int vhost_net_rx_peek_head_len(struct vhost_net *net, struct sock *sk)
 
 		preempt_enable();
 
-		if (vhost_enable_notify(&net->dev, vq))
+		if (!vhost_vq_avail_empty(&net->dev, vq))
 			vhost_poll_queue(&vq->poll);
+		else if (unlikely(vhost_enable_notify(&net->dev, vq))) {
+			vhost_disable_notify(&net->dev, vq);
+			vhost_poll_queue(&vq->poll);
+		}
+
 		mutex_unlock(&vq->mutex);
 
 		len = peek_head_len(rvq, sk);
@@ -748,8 +789,9 @@ static void handle_rx(struct vhost_net *net)
 	struct socket *sock;
 	struct iov_iter fixup;
 	__virtio16 num_buffers;
+	int recv_pkts = 0;
 
-	mutex_lock(&vq->mutex);
+	mutex_lock_nested(&vq->mutex, 0);
 	sock = vq->private_data;
 	if (!sock)
 		goto out;
@@ -770,22 +812,12 @@ static void handle_rx(struct vhost_net *net)
 	while ((sock_len = vhost_net_rx_peek_head_len(net, sock->sk))) {
 		sock_len += sock_hlen;
 		vhost_len = sock_len + vhost_hlen;
-		headcount = get_rx_bufs(vq, vq->heads, vhost_len,
-					&in, vq_log, &log,
+		headcount = get_rx_bufs(vq, vq->heads + nvq->done_idx,
+					vhost_len, &in, vq_log, &log,
 					likely(mergeable) ? UIO_MAXIOV : 1);
 		/* On error, stop handling until the next kick. */
 		if (unlikely(headcount < 0))
 			goto out;
-		if (nvq->rx_array)
-			msg.msg_control = vhost_net_buf_consume(&nvq->rxq);
-		/* On overrun, truncate and discard */
-		if (unlikely(headcount > UIO_MAXIOV)) {
-			iov_iter_init(&msg.msg_iter, READ, vq->iov, 1, 1);
-			err = sock->ops->recvmsg(sock, &msg,
-						 1, MSG_DONTWAIT | MSG_TRUNC);
-			pr_debug("Discarded rx packet: len %zd\n", sock_len);
-			continue;
-		}
 		/* OK, now we need to know about added descriptors. */
 		if (!headcount) {
 			if (unlikely(vhost_enable_notify(&net->dev, vq))) {
@@ -797,6 +829,16 @@ static void handle_rx(struct vhost_net *net)
 			/* Nothing new?  Wait for eventfd to tell us
 			 * they refilled. */
 			goto out;
+		}
+		if (nvq->rx_ring)
+			msg.msg_control = vhost_net_buf_consume(&nvq->rxq);
+		/* On overrun, truncate and discard */
+		if (unlikely(headcount > UIO_MAXIOV)) {
+			iov_iter_init(&msg.msg_iter, READ, vq->iov, 1, 1);
+			err = sock->ops->recvmsg(sock, &msg,
+						 1, MSG_DONTWAIT | MSG_TRUNC);
+			pr_debug("Discarded rx packet: len %zd\n", sock_len);
+			continue;
 		}
 		/* We don't need to be notified again. */
 		iov_iter_init(&msg.msg_iter, READ, vq->iov, in, vhost_len);
@@ -842,18 +884,21 @@ static void handle_rx(struct vhost_net *net)
 			vhost_discard_vq_desc(vq, headcount);
 			goto out;
 		}
-		vhost_add_used_and_signal_n(&net->dev, vq, vq->heads,
-					    headcount);
+		nvq->done_idx += headcount;
+		if (nvq->done_idx > VHOST_RX_BATCH)
+			vhost_rx_signal_used(nvq);
 		if (unlikely(vq_log))
 			vhost_log_write(vq, vq_log, log, vhost_len);
 		total_len += vhost_len;
-		if (unlikely(total_len >= VHOST_NET_WEIGHT)) {
+		if (unlikely(total_len >= VHOST_NET_WEIGHT) ||
+		    unlikely(++recv_pkts >= VHOST_NET_PKT_WEIGHT)) {
 			vhost_poll_queue(&vq->poll);
 			goto out;
 		}
 	}
 	vhost_net_enable_vq(net, vq);
 out:
+	vhost_rx_signal_used(nvq);
 	mutex_unlock(&vq->mutex);
 }
 
@@ -894,19 +939,19 @@ static int vhost_net_open(struct inode *inode, struct file *f)
 	struct vhost_net *n;
 	struct vhost_dev *dev;
 	struct vhost_virtqueue **vqs;
-	struct sk_buff **queue;
+	void **queue;
 	int i;
 
 	n = kvmalloc(sizeof *n, GFP_KERNEL | __GFP_RETRY_MAYFAIL);
 	if (!n)
 		return -ENOMEM;
-	vqs = kmalloc(VHOST_NET_VQ_MAX * sizeof(*vqs), GFP_KERNEL);
+	vqs = kmalloc_array(VHOST_NET_VQ_MAX, sizeof(*vqs), GFP_KERNEL);
 	if (!vqs) {
 		kvfree(n);
 		return -ENOMEM;
 	}
 
-	queue = kmalloc_array(VHOST_RX_BATCH, sizeof(struct sk_buff *),
+	queue = kmalloc_array(VHOST_RX_BATCH, sizeof(void *),
 			      GFP_KERNEL);
 	if (!queue) {
 		kfree(vqs);
@@ -927,12 +972,13 @@ static int vhost_net_open(struct inode *inode, struct file *f)
 		n->vqs[i].done_idx = 0;
 		n->vqs[i].vhost_hlen = 0;
 		n->vqs[i].sock_hlen = 0;
+		n->vqs[i].rx_ring = NULL;
 		vhost_net_buf_init(&n->vqs[i].rxq);
 	}
 	vhost_dev_init(dev, vqs, VHOST_NET_VQ_MAX);
 
-	vhost_poll_init(n->poll + VHOST_NET_VQ_TX, handle_tx_net, POLLOUT, dev);
-	vhost_poll_init(n->poll + VHOST_NET_VQ_RX, handle_rx_net, POLLIN, dev);
+	vhost_poll_init(n->poll + VHOST_NET_VQ_TX, handle_tx_net, EPOLLOUT, dev);
+	vhost_poll_init(n->poll + VHOST_NET_VQ_RX, handle_rx_net, EPOLLIN, dev);
 
 	f->private_data = n;
 
@@ -951,6 +997,7 @@ static struct socket *vhost_net_stop_vq(struct vhost_net *n,
 	vhost_net_disable_vq(n, vq);
 	vq->private_data = NULL;
 	vhost_net_buf_unproduce(nvq);
+	nvq->rx_ring = NULL;
 	mutex_unlock(&vq->mutex);
 	return sock;
 }
@@ -994,7 +1041,7 @@ static int vhost_net_release(struct inode *inode, struct file *f)
 	vhost_net_stop(n, &tx_sock, &rx_sock);
 	vhost_net_flush(n);
 	vhost_dev_stop(&n->dev);
-	vhost_dev_cleanup(&n->dev, false);
+	vhost_dev_cleanup(&n->dev);
 	vhost_net_vq_reset(n);
 	if (tx_sock)
 		sockfd_put(tx_sock);
@@ -1017,7 +1064,7 @@ static struct socket *get_raw_socket(int fd)
 		struct sockaddr_ll sa;
 		char  buf[MAX_ADDR_LEN];
 	} uaddr;
-	int uaddr_len = sizeof uaddr, r;
+	int r;
 	struct socket *sock = sockfd_lookup(fd, &r);
 
 	if (!sock)
@@ -1029,9 +1076,8 @@ static struct socket *get_raw_socket(int fd)
 		goto err;
 	}
 
-	r = sock->ops->getname(sock, (struct sockaddr *)&uaddr.sa,
-			       &uaddr_len, 0);
-	if (r)
+	r = sock->ops->getname(sock, (struct sockaddr *)&uaddr.sa, 0);
+	if (r < 0)
 		goto err;
 
 	if (uaddr.sa.sll_family != AF_PACKET) {
@@ -1044,23 +1090,23 @@ err:
 	return ERR_PTR(r);
 }
 
-static struct skb_array *get_tap_skb_array(int fd)
+static struct ptr_ring *get_tap_ptr_ring(int fd)
 {
-	struct skb_array *array;
+	struct ptr_ring *ring;
 	struct file *file = fget(fd);
 
 	if (!file)
 		return NULL;
-	array = tun_get_skb_array(file);
-	if (!IS_ERR(array))
+	ring = tun_get_tx_ring(file);
+	if (!IS_ERR(ring))
 		goto out;
-	array = tap_get_skb_array(file);
-	if (!IS_ERR(array))
+	ring = tap_get_ptr_ring(file);
+	if (!IS_ERR(ring))
 		goto out;
-	array = NULL;
+	ring = NULL;
 out:
 	fput(file);
-	return array;
+	return ring;
 }
 
 static struct socket *get_tap_socket(int fd)
@@ -1140,14 +1186,14 @@ static long vhost_net_set_backend(struct vhost_net *n, unsigned index, int fd)
 		vhost_net_disable_vq(n, vq);
 		vq->private_data = sock;
 		vhost_net_buf_unproduce(nvq);
-		if (index == VHOST_NET_VQ_RX)
-			nvq->rx_array = get_tap_skb_array(fd);
 		r = vhost_vq_init_access(vq);
 		if (r)
 			goto err_used;
 		r = vhost_net_enable_vq(n, vq);
 		if (r)
 			goto err_used;
+		if (index == VHOST_NET_VQ_RX)
+			nvq->rx_ring = get_tap_ptr_ring(fd);
 
 		oldubufs = nvq->ubufs;
 		nvq->ubufs = ubufs;
@@ -1180,7 +1226,8 @@ err_used:
 	if (ubufs)
 		vhost_net_ubuf_put_wait_and_free(ubufs);
 err_ubufs:
-	sockfd_put(sock);
+	if (sock)
+		sockfd_put(sock);
 err_vq:
 	mutex_unlock(&vq->mutex);
 err:
@@ -1206,6 +1253,7 @@ static long vhost_net_reset_owner(struct vhost_net *n)
 	}
 	vhost_net_stop(n, &tx_sock, &rx_sock);
 	vhost_net_flush(n);
+	vhost_dev_stop(&n->dev);
 	vhost_dev_reset_owner(&n->dev, umem);
 	vhost_net_vq_reset(n);
 done:
@@ -1351,7 +1399,7 @@ static ssize_t vhost_net_chr_write_iter(struct kiocb *iocb,
 	return vhost_chr_write_iter(dev, from);
 }
 
-static unsigned int vhost_net_chr_poll(struct file *file, poll_table *wait)
+static __poll_t vhost_net_chr_poll(struct file *file, poll_table *wait)
 {
 	struct vhost_net *n = file->private_data;
 	struct vhost_dev *dev = &n->dev;

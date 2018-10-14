@@ -41,6 +41,7 @@ struct exynos_dp_device {
 	struct device              *dev;
 
 	struct videomode           vm;
+	struct analogix_dp_device *adp;
 	struct analogix_dp_plat_data plat_data;
 };
 
@@ -155,20 +156,13 @@ static int exynos_dp_bind(struct device *dev, struct device *master, void *data)
 	struct exynos_dp_device *dp = dev_get_drvdata(dev);
 	struct drm_encoder *encoder = &dp->encoder;
 	struct drm_device *drm_dev = data;
-	int pipe, ret;
-
-	/*
-	 * Just like the probe function said, we don't need the
-	 * device drvrate anymore, we should leave the charge to
-	 * analogix dp driver, set the device drvdata to NULL.
-	 */
-	dev_set_drvdata(dev, NULL);
+	int ret;
 
 	dp->dev = dev;
 	dp->drm_dev = drm_dev;
 
 	dp->plat_data.dev_type = EXYNOS_DP;
-	dp->plat_data.power_on = exynos_dp_poweron;
+	dp->plat_data.power_on_start = exynos_dp_poweron;
 	dp->plat_data.power_off = exynos_dp_poweroff;
 	dp->plat_data.attach = exynos_dp_bridge_attach;
 	dp->plat_data.get_modes = exynos_dp_get_modes;
@@ -179,29 +173,33 @@ static int exynos_dp_bind(struct device *dev, struct device *master, void *data)
 			return ret;
 	}
 
-	pipe = exynos_drm_crtc_get_pipe_from_type(drm_dev,
-						  EXYNOS_DISPLAY_TYPE_LCD);
-	if (pipe < 0)
-		return pipe;
-
-	encoder->possible_crtcs = 1 << pipe;
-
-	DRM_DEBUG_KMS("possible_crtcs = 0x%x\n", encoder->possible_crtcs);
-
 	drm_encoder_init(drm_dev, encoder, &exynos_dp_encoder_funcs,
 			 DRM_MODE_ENCODER_TMDS, NULL);
 
 	drm_encoder_helper_add(encoder, &exynos_dp_encoder_helper_funcs);
 
+	ret = exynos_drm_set_possible_crtcs(encoder, EXYNOS_DISPLAY_TYPE_LCD);
+	if (ret < 0)
+		return ret;
+
 	dp->plat_data.encoder = encoder;
 
-	return analogix_dp_bind(dev, dp->drm_dev, &dp->plat_data);
+	dp->adp = analogix_dp_bind(dev, dp->drm_dev, &dp->plat_data);
+	if (IS_ERR(dp->adp)) {
+		dp->encoder.funcs->destroy(&dp->encoder);
+		return PTR_ERR(dp->adp);
+	}
+
+	return 0;
 }
 
 static void exynos_dp_unbind(struct device *dev, struct device *master,
 			     void *data)
 {
-	return analogix_dp_unbind(dev, master, data);
+	struct exynos_dp_device *dp = dev_get_drvdata(dev);
+
+	analogix_dp_unbind(dp->adp);
+	dp->encoder.funcs->destroy(&dp->encoder);
 }
 
 static const struct component_ops exynos_dp_ops = {
@@ -246,6 +244,7 @@ static int exynos_dp_probe(struct platform_device *pdev)
 
 	/* The remote port can be either a panel or a bridge */
 	dp->plat_data.panel = panel;
+	dp->plat_data.skip_connector = !!bridge;
 	dp->ptn_bridge = bridge;
 
 out:
@@ -262,12 +261,16 @@ static int exynos_dp_remove(struct platform_device *pdev)
 #ifdef CONFIG_PM
 static int exynos_dp_suspend(struct device *dev)
 {
-	return analogix_dp_suspend(dev);
+	struct exynos_dp_device *dp = dev_get_drvdata(dev);
+
+	return analogix_dp_suspend(dp->adp);
 }
 
 static int exynos_dp_resume(struct device *dev)
 {
-	return analogix_dp_resume(dev);
+	struct exynos_dp_device *dp = dev_get_drvdata(dev);
+
+	return analogix_dp_resume(dp->adp);
 }
 #endif
 

@@ -267,7 +267,7 @@ static int vimc_sca_s_stream(struct v4l2_subdev *sd, int enable)
 	return 0;
 }
 
-static struct v4l2_subdev_video_ops vimc_sca_video_ops = {
+static const struct v4l2_subdev_video_ops vimc_sca_video_ops = {
 	.s_stream = vimc_sca_s_stream,
 };
 
@@ -395,7 +395,7 @@ static int vimc_sca_comp_bind(struct device *comp, struct device *master,
 	/* Initialize ved and sd */
 	ret = vimc_ent_sd_register(&vsca->ved, &vsca->sd, v4l2_dev,
 				   pdata->entity_name,
-				   MEDIA_ENT_F_ATV_DECODER, 2,
+				   MEDIA_ENT_F_PROC_VIDEO_SCALER, 2,
 				   (const unsigned long[2]) {MEDIA_PAD_FL_SINK,
 				   MEDIA_PAD_FL_SOURCE},
 				   &vimc_sca_ops);

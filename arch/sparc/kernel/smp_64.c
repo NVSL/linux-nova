@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /* smp.c: Sparc64 SMP support.
  *
  * Copyright (C) 1997, 2007, 2008 David S. Miller (davem@davemloft.net)
@@ -73,6 +74,9 @@ EXPORT_SYMBOL(cpu_core_sib_map);
 EXPORT_SYMBOL(cpu_core_sib_cache_map);
 
 static cpumask_t smp_commenced_mask;
+
+static DEFINE_PER_CPU(bool, poke);
+static bool cpu_poke;
 
 void smp_info(struct seq_file *m)
 {
@@ -925,9 +929,9 @@ static inline void __local_flush_dcache_page(struct page *page)
 #ifdef DCACHE_ALIASING_POSSIBLE
 	__flush_dcache_page(page_address(page),
 			    ((tlb_type == spitfire) &&
-			     page_mapping(page) != NULL));
+			     page_mapping_file(page) != NULL));
 #else
-	if (page_mapping(page) != NULL &&
+	if (page_mapping_file(page) != NULL &&
 	    tlb_type == spitfire)
 		__flush_icache_page(__pa(page_address(page)));
 #endif
@@ -954,7 +958,7 @@ void smp_flush_dcache_page_impl(struct page *page, int cpu)
 
 		if (tlb_type == spitfire) {
 			data0 = ((u64)&xcall_flush_dcache_page_spitfire);
-			if (page_mapping(page) != NULL)
+			if (page_mapping_file(page) != NULL)
 				data0 |= ((u64)1 << 32);
 		} else if (tlb_type == cheetah || tlb_type == cheetah_plus) {
 #ifdef DCACHE_ALIASING_POSSIBLE
@@ -990,7 +994,7 @@ void flush_dcache_page_all(struct mm_struct *mm, struct page *page)
 	pg_addr = page_address(page);
 	if (tlb_type == spitfire) {
 		data0 = ((u64)&xcall_flush_dcache_page_spitfire);
-		if (page_mapping(page) != NULL)
+		if (page_mapping_file(page) != NULL)
 			data0 |= ((u64)1 << 32);
 	} else if (tlb_type == cheetah || tlb_type == cheetah_plus) {
 #ifdef DCACHE_ALIASING_POSSIBLE
@@ -1439,15 +1443,86 @@ void __init smp_cpus_done(unsigned int max_cpus)
 {
 }
 
+static void send_cpu_ipi(int cpu)
+{
+	xcall_deliver((u64) &xcall_receive_signal,
+			0, 0, cpumask_of(cpu));
+}
+
+void scheduler_poke(void)
+{
+	if (!cpu_poke)
+		return;
+
+	if (!__this_cpu_read(poke))
+		return;
+
+	__this_cpu_write(poke, false);
+	set_softint(1 << PIL_SMP_RECEIVE_SIGNAL);
+}
+
+static unsigned long send_cpu_poke(int cpu)
+{
+	unsigned long hv_err;
+
+	per_cpu(poke, cpu) = true;
+	hv_err = sun4v_cpu_poke(cpu);
+	if (hv_err != HV_EOK) {
+		per_cpu(poke, cpu) = false;
+		pr_err_ratelimited("%s: sun4v_cpu_poke() fails err=%lu\n",
+				    __func__, hv_err);
+	}
+
+	return hv_err;
+}
+
 void smp_send_reschedule(int cpu)
 {
 	if (cpu == smp_processor_id()) {
 		WARN_ON_ONCE(preemptible());
 		set_softint(1 << PIL_SMP_RECEIVE_SIGNAL);
-	} else {
-		xcall_deliver((u64) &xcall_receive_signal,
-			      0, 0, cpumask_of(cpu));
+		return;
 	}
+
+	/* Use cpu poke to resume idle cpu if supported. */
+	if (cpu_poke && idle_cpu(cpu)) {
+		unsigned long ret;
+
+		ret = send_cpu_poke(cpu);
+		if (ret == HV_EOK)
+			return;
+	}
+
+	/* Use IPI in following cases:
+	 * - cpu poke not supported
+	 * - cpu not idle
+	 * - send_cpu_poke() returns with error
+	 */
+	send_cpu_ipi(cpu);
+}
+
+void smp_init_cpu_poke(void)
+{
+	unsigned long major;
+	unsigned long minor;
+	int ret;
+
+	if (tlb_type != hypervisor)
+		return;
+
+	ret = sun4v_hvapi_get(HV_GRP_CORE, &major, &minor);
+	if (ret) {
+		pr_debug("HV_GRP_CORE is not registered\n");
+		return;
+	}
+
+	if (major == 1 && minor >= 6) {
+		/* CPU POKE is registered. */
+		cpu_poke = true;
+		return;
+	}
+
+	pr_debug("CPU_POKE not supported\n");
 }
 
 void __irq_entry smp_receive_signal_client(int irq, struct pt_regs *regs)

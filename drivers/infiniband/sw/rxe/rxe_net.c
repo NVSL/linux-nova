@@ -82,7 +82,7 @@ struct rxe_dev *get_rxe_by_name(const char *name)
 }
 
 
-struct rxe_recv_sockets recv_sockets;
+static struct rxe_recv_sockets recv_sockets;
 
 struct device *rxe_dma_device(struct rxe_dev *rxe)
 {
@@ -182,16 +182,44 @@ static struct dst_entry *rxe_find_route6(struct net_device *ndev,
 
 #endif
 
+/*
+ * Derive the net_device from the av.
+ * For physical devices, this will just return rxe->ndev.
+ * But for VLAN devices, it will return the vlan dev.
+ * Caller should dev_put() the returned net_device.
+ */
+static struct net_device *rxe_netdev_from_av(struct rxe_dev *rxe,
+					     int port_num,
+					     struct rxe_av *av)
+{
+	union ib_gid gid;
+	struct ib_gid_attr attr;
+	struct net_device *ndev = rxe->ndev;
+
+	if (ib_get_cached_gid(&rxe->ib_dev, port_num, av->grh.sgid_index,
+			      &gid, &attr) == 0 &&
+	    attr.ndev && attr.ndev != ndev)
+		ndev = attr.ndev;
+	else
+		/* Only to ensure that caller may call dev_put() */
+		dev_hold(ndev);
+
+	return ndev;
+}
+
 static struct dst_entry *rxe_find_route(struct rxe_dev *rxe,
 					struct rxe_qp *qp,
 					struct rxe_av *av)
 {
 	struct dst_entry *dst = NULL;
+	struct net_device *ndev;
+
+	ndev = rxe_netdev_from_av(rxe, qp->attr.port_num, av);
 
 	if (qp_type(qp) == IB_QPT_RC)
 		dst = sk_dst_get(qp->sk->sk);
 
-	if (!dst || !(dst->obsolete && dst->ops->check(dst, 0))) {
+	if (!dst || !dst_check(dst, qp->dst_cookie)) {
 		if (dst)
 			dst_release(dst);
 
@@ -201,17 +229,23 @@ static struct dst_entry *rxe_find_route(struct rxe_dev *rxe,
 
 			saddr = &av->sgid_addr._sockaddr_in.sin_addr;
 			daddr = &av->dgid_addr._sockaddr_in.sin_addr;
-			dst = rxe_find_route4(rxe->ndev, saddr, daddr);
+			dst = rxe_find_route4(ndev, saddr, daddr);
 		} else if (av->network_type == RDMA_NETWORK_IPV6) {
 			struct in6_addr *saddr6;
 			struct in6_addr *daddr6;
 
 			saddr6 = &av->sgid_addr._sockaddr_in6.sin6_addr;
 			daddr6 = &av->dgid_addr._sockaddr_in6.sin6_addr;
-			dst = rxe_find_route6(rxe->ndev, saddr6, daddr6);
+			dst = rxe_find_route6(ndev, saddr6, daddr6);
+#if IS_ENABLED(CONFIG_IPV6)
+			if (dst)
+				qp->dst_cookie =
+					rt6_get_cookie((struct rt6_info *)dst);
+#endif
 		}
 	}
 
+	dev_put(ndev);
 	return dst;
 }
 
@@ -219,9 +253,14 @@ static int rxe_udp_encap_recv(struct sock *sk, struct sk_buff *skb)
 {
 	struct udphdr *udph;
 	struct net_device *ndev = skb->dev;
+	struct net_device *rdev = ndev;
 	struct rxe_dev *rxe = net_to_rxe(ndev);
 	struct rxe_pkt_info *pkt = SKB_TO_PKT(skb);
 
+	if (!rxe && is_vlan_dev(rdev)) {
+		rdev = vlan_dev_real_dev(ndev);
+		rxe = net_to_rxe(rdev);
+	}
 	if (!rxe)
 		goto drop;
 
@@ -237,9 +276,12 @@ static int rxe_udp_encap_recv(struct sock *sk, struct sk_buff *skb)
 	pkt->mask = RXE_GRH_MASK;
 	pkt->paylen = be16_to_cpu(udph->len) - sizeof(*udph);
 
-	return rxe_rcv(skb);
+	rxe_rcv(skb);
+
+	return 0;
 drop:
 	kfree_skb(skb);
+
 	return 0;
 }
 
@@ -276,7 +318,7 @@ static struct socket *rxe_setup_udp_tunnel(struct net *net, __be16 port,
 	return sock;
 }
 
-void rxe_release_udp_tunnel(struct socket *sk)
+static void rxe_release_udp_tunnel(struct socket *sk)
 {
 	if (sk)
 		udp_tunnel_sock_release(sk);
@@ -337,7 +379,7 @@ static void prepare_ipv6_hdr(struct dst_entry *dst, struct sk_buff *skb,
 	memset(&(IPCB(skb)->opt), 0, sizeof(IPCB(skb)->opt));
 	IPCB(skb)->flags &= ~(IPSKB_XFRM_TUNNEL_SIZE | IPSKB_XFRM_TRANSFORMED
 			    | IPSKB_REROUTED);
-	skb_dst_set(skb, dst);
+	skb_dst_set(skb, dst_clone(dst));
 
 	__skb_push(skb, sizeof(*ip6h));
 	skb_reset_network_header(skb);
@@ -388,7 +430,7 @@ static int prepare6(struct rxe_dev *rxe, struct rxe_pkt_info *pkt,
 		    struct sk_buff *skb, struct rxe_av *av)
 {
 	struct rxe_qp *qp = pkt->qp;
-	struct dst_entry *dst = NULL;
+	struct dst_entry *dst;
 	struct in6_addr *saddr = &av->sgid_addr._sockaddr_in6.sin6_addr;
 	struct in6_addr *daddr = &av->dgid_addr._sockaddr_in6.sin6_addr;
 
@@ -445,28 +487,28 @@ static void rxe_skb_tx_dtor(struct sk_buff *skb)
 	rxe_drop_ref(qp);
 }
 
-int rxe_send(struct rxe_dev *rxe, struct rxe_pkt_info *pkt, struct sk_buff *skb)
+int rxe_send(struct rxe_pkt_info *pkt, struct sk_buff *skb)
 {
-	struct sk_buff *nskb;
 	struct rxe_av *av;
 	int err;
 
 	av = rxe_get_av(pkt);
 
-	nskb = skb_clone(skb, GFP_ATOMIC);
-	if (!nskb)
-		return -ENOMEM;
+	skb->destructor = rxe_skb_tx_dtor;
+	skb->sk = pkt->qp->sk->sk;
 
-	nskb->destructor = rxe_skb_tx_dtor;
-	nskb->sk = pkt->qp->sk->sk;
+	rxe_add_ref(pkt->qp);
+	atomic_inc(&pkt->qp->skb_out);
 
 	if (av->network_type == RDMA_NETWORK_IPV4) {
-		err = ip_local_out(dev_net(skb_dst(skb)->dev), nskb->sk, nskb);
+		err = ip_local_out(dev_net(skb_dst(skb)->dev), skb->sk, skb);
 	} else if (av->network_type == RDMA_NETWORK_IPV6) {
-		err = ip6_local_out(dev_net(skb_dst(skb)->dev), nskb->sk, nskb);
+		err = ip6_local_out(dev_net(skb_dst(skb)->dev), skb->sk, skb);
 	} else {
 		pr_err("Unknown layer 3 protocol: %d\n", av->network_type);
-		kfree_skb(nskb);
+		atomic_dec(&pkt->qp->skb_out);
+		rxe_drop_ref(pkt->qp);
+		kfree_skb(skb);
 		return -EINVAL;
 	}
 
@@ -475,16 +517,12 @@ int rxe_send(struct rxe_dev *rxe, struct rxe_pkt_info *pkt, struct sk_buff *skb)
 		return -EAGAIN;
 	}
 
-	rxe_add_ref(pkt->qp);
-	atomic_inc(&pkt->qp->skb_out);
-	kfree_skb(skb);
-
 	return 0;
 }
 
-int rxe_loopback(struct sk_buff *skb)
+void rxe_loopback(struct sk_buff *skb)
 {
-	return rxe_rcv(skb);
+	rxe_rcv(skb);
 }
 
 static inline int addr_same(struct rxe_dev *rxe, struct rxe_av *av)
@@ -497,6 +535,10 @@ struct sk_buff *rxe_init_packet(struct rxe_dev *rxe, struct rxe_av *av,
 {
 	unsigned int hdr_len;
 	struct sk_buff *skb;
+	struct net_device *ndev;
+	const int port_num = 1;
+
+	ndev = rxe_netdev_from_av(rxe, port_num, av);
 
 	if (av->network_type == RDMA_NETWORK_IPV4)
 		hdr_len = ETH_HLEN + sizeof(struct udphdr) +
@@ -505,26 +547,28 @@ struct sk_buff *rxe_init_packet(struct rxe_dev *rxe, struct rxe_av *av,
 		hdr_len = ETH_HLEN + sizeof(struct udphdr) +
 			sizeof(struct ipv6hdr);
 
-	skb = alloc_skb(paylen + hdr_len + LL_RESERVED_SPACE(rxe->ndev),
+	skb = alloc_skb(paylen + hdr_len + LL_RESERVED_SPACE(ndev),
 			GFP_ATOMIC);
-	if (unlikely(!skb))
+
+	if (unlikely(!skb)) {
+		dev_put(ndev);
 		return NULL;
+	}
 
 	skb_reserve(skb, hdr_len + LL_RESERVED_SPACE(rxe->ndev));
 
-	skb->dev	= rxe->ndev;
+	skb->dev	= ndev;
 	if (av->network_type == RDMA_NETWORK_IPV4)
 		skb->protocol = htons(ETH_P_IP);
 	else
 		skb->protocol = htons(ETH_P_IPV6);
 
 	pkt->rxe	= rxe;
-	pkt->port_num	= 1;
-	pkt->hdr	= skb_put(skb, paylen);
+	pkt->port_num	= port_num;
+	pkt->hdr	= skb_put_zero(skb, paylen);
 	pkt->mask	|= RXE_GRH_MASK;
 
-	memset(pkt->hdr, 0, paylen);
-
+	dev_put(ndev);
 	return skb;
 }
 
@@ -579,7 +623,6 @@ void rxe_remove_all(void)
 	}
 	spin_unlock_bh(&dev_list_lock);
 }
-EXPORT_SYMBOL(rxe_remove_all);
 
 static void rxe_port_event(struct rxe_dev *rxe,
 			   enum ib_event_type event)
@@ -644,8 +687,13 @@ static int rxe_notify(struct notifier_block *not_blk,
 		pr_info("%s changed mtu to %d\n", ndev->name, ndev->mtu);
 		rxe_set_mtu(rxe, ndev->mtu);
 		break;
-	case NETDEV_REBOOT:
 	case NETDEV_CHANGE:
+		if (netif_running(ndev) && netif_carrier_ok(ndev))
+			rxe_port_up(rxe);
+		else
+			rxe_port_down(rxe);
+		break;
+	case NETDEV_REBOOT:
 	case NETDEV_GOING_DOWN:
 	case NETDEV_CHANGEADDR:
 	case NETDEV_CHANGENAME:
@@ -659,7 +707,7 @@ out:
 	return NOTIFY_OK;
 }
 
-struct notifier_block rxe_net_notifier = {
+static struct notifier_block rxe_net_notifier = {
 	.notifier_call = rxe_notify,
 };
 

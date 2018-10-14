@@ -1,6 +1,8 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __PERF_HEADER_H
 #define __PERF_HEADER_H
 
+#include <linux/stddef.h>
 #include <linux/perf_event.h>
 #include <sys/types.h>
 #include <stdbool.h>
@@ -8,6 +10,7 @@
 #include <linux/types.h>
 #include "event.h"
 #include "env.h"
+#include "pmu.h"
 
 enum {
 	HEADER_RESERVED		= 0,	/* always cleared */
@@ -33,6 +36,8 @@ enum {
 	HEADER_AUXTRACE,
 	HEADER_STAT,
 	HEADER_CACHE,
+	HEADER_SAMPLE_TIME,
+	HEADER_MEM_TOPOLOGY,
 	HEADER_LAST_FEATURE,
 	HEADER_FEAT_BITS	= 256,
 };
@@ -101,6 +106,20 @@ int perf_header__process_sections(struct perf_header *header, int fd,
 
 int perf_header__fprintf_info(struct perf_session *s, FILE *fp, bool full);
 
+int perf_event__synthesize_features(struct perf_tool *tool,
+				    struct perf_session *session,
+				    struct perf_evlist *evlist,
+				    perf_event__handler_t process);
+
+int perf_event__synthesize_extra_attr(struct perf_tool *tool,
+				      struct perf_evlist *evsel_list,
+				      perf_event__handler_t process,
+				      bool is_pipe);
+
+int perf_event__process_feature(struct perf_tool *tool,
+				union perf_event *event,
+				struct perf_session *session);
+
 int perf_event__synthesize_attr(struct perf_tool *tool,
 				struct perf_event_attr *attr, u32 ids, u64 *id,
 				perf_event__handler_t process);
@@ -144,12 +163,18 @@ bool is_perf_magic(u64 magic);
 
 #define NAME_ALIGN 64
 
-int write_padded(int fd, const void *bf, size_t count, size_t count_aligned);
+struct feat_fd;
+
+int do_write(struct feat_fd *fd, const void *buf, size_t size);
+
+int write_padded(struct feat_fd *fd, const void *bf,
+		 size_t count, size_t count_aligned);
 
 /*
  * arch specific callback
  */
 int get_cpuid(char *buffer, size_t sz);
 
-char *get_cpuid_str(void);
+char *get_cpuid_str(struct perf_pmu *pmu __maybe_unused);
+int strcmp_cpuid_str(const char *s1, const char *s2);
 #endif /* __PERF_HEADER_H */

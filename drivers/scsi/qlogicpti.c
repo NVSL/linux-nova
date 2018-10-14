@@ -1283,7 +1283,7 @@ static struct scsi_host_template qpti_template = {
 	.queuecommand		= qlogicpti_queuecommand,
 	.slave_configure	= qlogicpti_slave_configure,
 	.eh_abort_handler	= qlogicpti_abort,
-	.eh_bus_reset_handler	= qlogicpti_reset,
+	.eh_host_reset_handler	= qlogicpti_reset,
 	.can_queue		= QLOGICPTI_REQ_QUEUE_LEN,
 	.this_id		= 7,
 	.sg_tablesize		= QLOGICPTI_MAX_SG(QLOGICPTI_REQ_QUEUE_LEN),
@@ -1385,15 +1385,15 @@ fail_unmap_queues:
 			  qpti->req_cpu, qpti->req_dvma);
 #undef QSIZE
 
+fail_free_irq:
+	free_irq(qpti->irq, qpti);
+
 fail_unmap_regs:
 	of_iounmap(&op->resource[0], qpti->qregs,
 		   resource_size(&op->resource[0]));
 	if (qpti->is_pti)
 		of_iounmap(&op->resource[0], qpti->sreg,
 			   sizeof(unsigned char));
-
-fail_free_irq:
-	free_irq(qpti->irq, qpti);
 
 fail_unlink:
 	scsi_host_put(host);

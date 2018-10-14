@@ -130,7 +130,7 @@ int nilfs_segbuf_extend_payload(struct nilfs_segment_buffer *segbuf,
 }
 
 int nilfs_segbuf_reset(struct nilfs_segment_buffer *segbuf, unsigned int flags,
-		       time_t ctime, __u64 cno)
+		       time64_t ctime, __u64 cno)
 {
 	int err;
 
@@ -400,7 +400,7 @@ static struct bio *nilfs_alloc_seg_bio(struct the_nilfs *nilfs, sector_t start,
 			bio = bio_alloc(GFP_NOIO, nr_vecs);
 	}
 	if (likely(bio)) {
-		bio->bi_bdev = nilfs->ns_bdev;
+		bio_set_dev(bio, nilfs->ns_bdev);
 		bio->bi_iter.bi_sector =
 			start << (nilfs->ns_blocksize_bits - 9);
 	}

@@ -1,57 +1,7 @@
+/* SPDX-License-Identifier: (GPL-2.0 OR BSD-3-Clause) */
 /*
- * This file is provided under a dual BSD/GPLv2 license.  When using or
- * redistributing this file, you may do so under either license.
- *
- * GPL LICENSE SUMMARY
- *
  * Copyright (c) 2016 AmLogic, Inc.
  * Author: Michael Turquette <mturquette@baylibre.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
- * The full GNU General Public License is included in this distribution
- * in the file called COPYING
- *
- * BSD LICENSE
- *
- * Copyright (c) 2016 BayLibre, Inc.
- * Author: Michael Turquette <mturquette@baylibre.com>
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- *   * Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
- *   * Redistributions in binary form must reproduce the above copyright
- *     notice, this list of conditions and the following disclaimer in
- *     the documentation and/or other materials provided with the
- *     distribution.
- *   * Neither the name of Intel Corporation nor the names of its
- *     contributors may be used to endorse or promote products derived
- *     from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 #ifndef __GXBB_H
@@ -167,130 +117,51 @@
  * CLKID index values
  *
  * These indices are entirely contrived and do not map onto the hardware.
- * Migrate them out of this header and into the DT header file when they need
- * to be exposed to client nodes in DT: include/dt-bindings/clock/gxbb-clkc.h
+ * It has now been decided to expose everything by default in the DT header:
+ * include/dt-bindings/clock/gxbb-clkc.h. Only the clocks ids we don't want
+ * to expose, such as the internal muxes and dividers of composite clocks,
+ * will remain defined here.
  */
-#define CLKID_SYS_PLL		  0
 /* ID 1 is unused (it was used by the non-existing CLKID_CPUCLK before) */
-/* CLKID_HDMI_PLL */
-#define CLKID_FIXED_PLL		  3
-/* CLKID_FCLK_DIV2 */
-/* CLKID_FCLK_DIV3 */
-/* CLKID_FCLK_DIV4 */
-#define CLKID_FCLK_DIV5		  7
-#define CLKID_FCLK_DIV7		  8
-/* CLKID_GP0_PLL */
 #define CLKID_MPEG_SEL		  10
 #define CLKID_MPEG_DIV		  11
-/* CLKID_CLK81 */
-#define CLKID_MPLL0		  13
-#define CLKID_MPLL1		  14
-/* CLKID_MPLL2 */
-#define CLKID_DDR		  16
-#define CLKID_DOS		  17
-#define CLKID_ISA		  18
-#define CLKID_PL301		  19
-#define CLKID_PERIPHS		  20
-/* CLKID_SPICC */
-/* CLKID_I2C */
-/* #define CLKID_SAR_ADC */
-#define CLKID_SMART_CARD	  24
-/* CLKID_RNG0 */
-/* CLKID_UART0 */
-#define CLKID_SDHC		  27
-#define CLKID_STREAM		  28
-#define CLKID_ASYNC_FIFO	  29
-#define CLKID_SDIO		  30
-#define CLKID_ABUF		  31
-#define CLKID_HIU_IFACE		  32
-#define CLKID_ASSIST_MISC	  33
-/* CLKID_SPI */
-#define CLKID_I2S_SPDIF		  35
-/* CLKID_ETH */
-#define CLKID_DEMUX		  37
-/* CLKID_AIU_GLUE */
-/* CLKID_IEC958 */
-/* CLKID_I2S_OUT */
-#define CLKID_AMCLK		  41
-#define CLKID_AIFIFO2		  42
-#define CLKID_MIXER		  43
-/* CLKID_MIXER_IFACE */
-#define CLKID_ADC		  45
-#define CLKID_BLKMV		  46
-/* CLKID_AIU */
-/* CLKID_UART1 */
-#define CLKID_G2D		  49
-/* CLKID_USB0 */
-/* CLKID_USB1 */
-#define CLKID_RESET		  52
-#define CLKID_NAND		  53
-#define CLKID_DOS_PARSER	  54
-/* CLKID_USB */
-#define CLKID_VDIN1		  56
-#define CLKID_AHB_ARB0		  57
-#define CLKID_EFUSE		  58
-#define CLKID_BOOT_ROM		  59
-#define CLKID_AHB_DATA_BUS	  60
-#define CLKID_AHB_CTRL_BUS	  61
-#define CLKID_HDMI_INTR_SYNC	  62
-/* CLKID_HDMI_PCLK */
-/* CLKID_USB1_DDR_BRIDGE */
-/* CLKID_USB0_DDR_BRIDGE */
-#define CLKID_MMC_PCLK		  66
-#define CLKID_DVIN		  67
-/* CLKID_UART2 */
-/* #define CLKID_SANA */
-#define CLKID_VPU_INTR		  70
-#define CLKID_SEC_AHB_AHB3_BRIDGE 71
-#define CLKID_CLK81_A53		  72
-#define CLKID_VCLK2_VENCI0	  73
-#define CLKID_VCLK2_VENCI1	  74
-#define CLKID_VCLK2_VENCP0	  75
-#define CLKID_VCLK2_VENCP1	  76
-/* CLKID_GCLK_VENCI_INT0 */
-#define CLKID_GCLK_VENCI_INT	  78
-#define CLKID_DAC_CLK		  79
-/* CLKID_AOCLK_GATE */
-/* CLKID_IEC958_GATE */
-#define CLKID_ENC480P		  82
-#define CLKID_RNG1		  83
-#define CLKID_GCLK_VENCI_INT1	  84
-#define CLKID_VCLK2_VENCLMCC	  85
-#define CLKID_VCLK2_VENCL	  86
-#define CLKID_VCLK_OTHER	  87
-#define CLKID_EDP		  88
-#define CLKID_AO_MEDIA_CPU	  89
-#define CLKID_AO_AHB_SRAM	  90
-#define CLKID_AO_AHB_BUS	  91
-#define CLKID_AO_IFACE		  92
-/* CLKID_AO_I2C */
-/* CLKID_SD_EMMC_A */
-/* CLKID_SD_EMMC_B */
-/* CLKID_SD_EMMC_C */
-/* CLKID_SAR_ADC_CLK */
-/* CLKID_SAR_ADC_SEL */
 #define CLKID_SAR_ADC_DIV	  99
-/* CLKID_MALI_0_SEL */
-#define CLKID_MALI_0_DIV	 101
-/* CLKID_MALI_0	*/
-/* CLKID_MALI_1_SEL */
-#define CLKID_MALI_1_DIV	 104
-/* CLKID_MALI_1	*/
-/* CLKID_MALI	*/
-/* CLKID_CTS_AMCLK */
+#define CLKID_MALI_0_DIV	  101
+#define CLKID_MALI_1_DIV	  104
 #define CLKID_CTS_AMCLK_SEL	  108
 #define CLKID_CTS_AMCLK_DIV	  109
-/* CLKID_CTS_MCLK_I958 */
 #define CLKID_CTS_MCLK_I958_SEL	  111
 #define CLKID_CTS_MCLK_I958_DIV	  112
-/* CLKID_CTS_I958 */
-#define CLKID_32K_CLK		  114
 #define CLKID_32K_CLK_SEL	  115
 #define CLKID_32K_CLK_DIV	  116
+#define CLKID_SD_EMMC_A_CLK0_SEL  117
+#define CLKID_SD_EMMC_A_CLK0_DIV  118
+#define CLKID_SD_EMMC_B_CLK0_SEL  120
+#define CLKID_SD_EMMC_B_CLK0_DIV  121
+#define CLKID_SD_EMMC_C_CLK0_SEL  123
+#define CLKID_SD_EMMC_C_CLK0_DIV  124
+#define CLKID_VPU_0_DIV		  127
+#define CLKID_VPU_1_DIV		  130
+#define CLKID_VAPB_0_DIV	  134
+#define CLKID_VAPB_1_DIV	  137
+#define CLKID_HDMI_PLL_PRE_MULT	  141
+#define CLKID_MPLL0_DIV		  142
+#define CLKID_MPLL1_DIV		  143
+#define CLKID_MPLL2_DIV		  144
+#define CLKID_MPLL_PREDIV	  145
+#define CLKID_FCLK_DIV2_DIV	  146
+#define CLKID_FCLK_DIV3_DIV	  147
+#define CLKID_FCLK_DIV4_DIV	  148
+#define CLKID_FCLK_DIV5_DIV	  149
+#define CLKID_FCLK_DIV7_DIV	  150
+#define CLKID_VDEC_1_SEL	  151
+#define CLKID_VDEC_1_DIV	  152
+#define CLKID_VDEC_HEVC_SEL	  154
+#define CLKID_VDEC_HEVC_DIV	  155
 
-#define NR_CLKS			  117
+#define NR_CLKS			  157
 
-/* include the CLKIDs that have been made part of the stable DT binding */
+/* include the CLKIDs that have been made part of the DT binding */
 #include <dt-bindings/clock/gxbb-clkc.h>
 
 #endif /* __GXBB_H */

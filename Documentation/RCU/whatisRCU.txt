@@ -1,3 +1,5 @@
+What is RCU?  --  "Read, Copy, Update"
+
 Please note that the "What is RCU?" LWN series is an excellent place
 to start learning about RCU:
 
@@ -600,8 +602,7 @@ don't forget about them when submitting patches making use of RCU!]
 
 	#define rcu_dereference(p) \
 	({ \
-		typeof(p) _________p1 = p; \
-		smp_read_barrier_depends(); \
+		typeof(p) _________p1 = READ_ONCE(p); \
 		(_________p1); \
 	})
 
@@ -890,6 +891,8 @@ SRCU:	Critical sections	Grace period		Barrier
 	srcu_read_lock_held
 
 SRCU:	Initialization/cleanup
+	DEFINE_SRCU
+	DEFINE_STATIC_SRCU
 	init_srcu_struct
 	cleanup_srcu_struct
 
@@ -913,7 +916,8 @@ a.	Will readers need to block?  If so, you need SRCU.
 b.	What about the -rt patchset?  If readers would need to block
 	in an non-rt kernel, you need SRCU.  If readers would block
 	in a -rt kernel, but not in a non-rt kernel, SRCU is not
-	necessary.
+	necessary.  (The -rt patchset turns spinlocks into sleeplocks,
+	hence this distinction.)
 
 c.	Do you need to treat NMI handlers, hardirq handlers,
 	and code segments with preemption disabled (whether

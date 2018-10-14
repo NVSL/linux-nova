@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * NewportMedia WiFi chipset driver test tools - wilc-debug
  * Copyright (c) 2012 NewportMedia Inc.
@@ -12,8 +13,6 @@
 #if defined(WILC_DEBUGFS)
 #include <linux/module.h>
 #include <linux/debugfs.h>
-#include <linux/poll.h>
-#include <linux/sched.h>
 
 #include "wilc_wlan_if.h"
 

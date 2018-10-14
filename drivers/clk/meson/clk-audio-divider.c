@@ -1,18 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2017 AmLogic, Inc.
  * Author: Jerome Brunet <jbrunet@baylibre.com>
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
- * You should have received a copy of the GNU General Public License along with
- * this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 /*
@@ -28,8 +17,11 @@
 #include <linux/clk-provider.h>
 #include "clkc.h"
 
-#define to_meson_clk_audio_divider(_hw) container_of(_hw, \
-				struct meson_clk_audio_divider, hw)
+static inline struct meson_clk_audio_div_data *
+meson_clk_audio_div_data(struct clk_regmap *clk)
+{
+	return (struct meson_clk_audio_div_data *)clk->data;
+}
 
 static int _div_round(unsigned long parent_rate, unsigned long rate,
 		      unsigned long flags)
@@ -45,15 +37,9 @@ static int _get_val(unsigned long parent_rate, unsigned long rate)
 	return DIV_ROUND_UP_ULL((u64)parent_rate, rate) - 1;
 }
 
-static int _valid_divider(struct clk_hw *hw, int divider)
+static int _valid_divider(unsigned int width, int divider)
 {
-	struct meson_clk_audio_divider *adiv =
-		to_meson_clk_audio_divider(hw);
-	int max_divider;
-	u8 width;
-
-	width = adiv->div.width;
-	max_divider = 1 << width;
+	int max_divider = 1 << width;
 
 	return clamp(divider, 1, max_divider);
 }
@@ -61,14 +47,11 @@ static int _valid_divider(struct clk_hw *hw, int divider)
 static unsigned long audio_divider_recalc_rate(struct clk_hw *hw,
 					       unsigned long parent_rate)
 {
-	struct meson_clk_audio_divider *adiv =
-		to_meson_clk_audio_divider(hw);
-	struct parm *p;
-	unsigned long reg, divider;
+	struct clk_regmap *clk = to_clk_regmap(hw);
+	struct meson_clk_audio_div_data *adiv = meson_clk_audio_div_data(clk);
+	unsigned long divider;
 
-	p = &adiv->div;
-	reg = readl(adiv->base + p->reg_off);
-	divider = PARM_GET(p->width, p->shift, reg) + 1;
+	divider = meson_parm_read(clk->map, &adiv->div) + 1;
 
 	return DIV_ROUND_UP_ULL((u64)parent_rate, divider);
 }
@@ -77,14 +60,14 @@ static long audio_divider_round_rate(struct clk_hw *hw,
 				     unsigned long rate,
 				     unsigned long *parent_rate)
 {
-	struct meson_clk_audio_divider *adiv =
-		to_meson_clk_audio_divider(hw);
+	struct clk_regmap *clk = to_clk_regmap(hw);
+	struct meson_clk_audio_div_data *adiv = meson_clk_audio_div_data(clk);
 	unsigned long max_prate;
 	int divider;
 
 	if (!(clk_hw_get_flags(hw) & CLK_SET_RATE_PARENT)) {
 		divider = _div_round(*parent_rate, rate, adiv->flags);
-		divider = _valid_divider(hw, divider);
+		divider = _valid_divider(adiv->div.width, divider);
 		return DIV_ROUND_UP_ULL((u64)*parent_rate, divider);
 	}
 
@@ -93,7 +76,7 @@ static long audio_divider_round_rate(struct clk_hw *hw,
 
 	/* Get the corresponding rounded down divider */
 	divider = max_prate / rate;
-	divider = _valid_divider(hw, divider);
+	divider = _valid_divider(adiv->div.width, divider);
 
 	/* Get actual rate of the parent */
 	*parent_rate = clk_hw_round_rate(clk_hw_get_parent(hw),
@@ -106,28 +89,11 @@ static int audio_divider_set_rate(struct clk_hw *hw,
 				  unsigned long rate,
 				  unsigned long parent_rate)
 {
-	struct meson_clk_audio_divider *adiv =
-		to_meson_clk_audio_divider(hw);
-	struct parm *p;
-	unsigned long reg, flags = 0;
-	int val;
+	struct clk_regmap *clk = to_clk_regmap(hw);
+	struct meson_clk_audio_div_data *adiv = meson_clk_audio_div_data(clk);
+	int val = _get_val(parent_rate, rate);
 
-	val = _get_val(parent_rate, rate);
-
-	if (adiv->lock)
-		spin_lock_irqsave(adiv->lock, flags);
-	else
-		__acquire(adiv->lock);
-
-	p = &adiv->div;
-	reg = readl(adiv->base + p->reg_off);
-	reg = PARM_SET(p->width, p->shift, reg, val);
-	writel(reg, adiv->base + p->reg_off);
-
-	if (adiv->lock)
-		spin_unlock_irqrestore(adiv->lock, flags);
-	else
-		__release(adiv->lock);
+	meson_parm_write(clk->map, &adiv->div, val);
 
 	return 0;
 }
