@@ -54,7 +54,6 @@ static inline int nova_update_journal_entry_csum(struct super_block *sb,
 			 - sizeof(__le32)));
 
 	entry->csum = cpu_to_le32(crc);
-	nova_flush_buffer(entry, sizeof(struct nova_lite_journal_entry), 0);
 	return 0;
 }
 
@@ -284,6 +283,30 @@ static u64 nova_append_dentry_journal(struct super_block *sb,
 	return curr_p;
 }
 
+void nova_flush_journal_in_batch(struct super_block *sb, 
+	u64 head, u64 tail)
+{
+	void *journal_entry;
+
+	/* flush journal log entries in batch */
+	if (head < tail) {
+		journal_entry = nova_get_block(sb, head);
+		nova_flush_buffer(journal_entry, tail - head, 0);
+
+	} else {    // circular
+		// head to end
+		journal_entry = nova_get_block(sb, head);
+		nova_flush_buffer(journal_entry,
+			PAGE_SIZE - (head & ~PAGE_MASK), 0);
+
+		// start to tail
+		journal_entry = nova_get_block(sb, tail);
+		nova_flush_buffer((void*)((u64)journal_entry & PAGE_MASK),
+			tail & ~PAGE_MASK, 0);
+	}
+	PERSISTENT_BARRIER();
+}
+
 /* Journaled transactions for inode creation */
 u64 nova_create_inode_transaction(struct super_block *sb,
 	struct inode *inode, struct inode *dir, int cpu,
@@ -305,6 +328,7 @@ u64 nova_create_inode_transaction(struct super_block *sb,
 	temp = nova_append_inode_journal(sb, temp, dir,
 					new_inode, invalidate, 1);
 
+	nova_flush_journal_in_batch(sb, pair->journal_head, temp);
 	pair->journal_tail = temp;
 	nova_flush_buffer(&pair->journal_head, CACHELINE_SIZE, 1);
 
@@ -347,6 +371,7 @@ u64 nova_create_rename_transaction(struct super_block *sb,
 	if (father_entry)
 		temp = nova_append_dentry_journal(sb, temp, father_entry);
 
+	nova_flush_journal_in_batch(sb, pair->journal_head, temp);
 	pair->journal_tail = temp;
 	nova_flush_buffer(&pair->journal_head, CACHELINE_SIZE, 1);
 
@@ -378,7 +403,7 @@ u64 nova_create_logentry_transaction(struct super_block *sb,
 		temp = nova_append_entry_journal(sb, temp,
 						(char *)entry + i * 8);
 	}
-
+	nova_flush_journal_in_batch(sb, pair->journal_head, temp);
 	pair->journal_tail = temp;
 	nova_flush_buffer(&pair->journal_head, CACHELINE_SIZE, 1);
 
