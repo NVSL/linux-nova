@@ -179,7 +179,7 @@ static loff_t nova_max_size(int bits)
 
 enum {
 	Opt_bpi, Opt_init, Opt_snapshot, Opt_mode, Opt_uid,
-	Opt_gid, Opt_dax, Opt_inplace, Opt_wprotect,
+	Opt_gid, Opt_dax, Opt_data_cow, Opt_wprotect,
 	Opt_err_cont, Opt_err_panic, Opt_err_ro,
 	Opt_dbgmask, Opt_err
 };
@@ -192,7 +192,7 @@ static const match_table_t tokens = {
 	{ Opt_uid,	     "uid=%u"		  },
 	{ Opt_gid,	     "gid=%u"		  },
 	{ Opt_dax,	     "dax"		  },
-	{ Opt_inplace,	     "inplace"		  },
+	{ Opt_data_cow,	     "data_cow"		  },
 	{ Opt_wprotect,	     "wprotect"		  },
 	{ Opt_err_cont,	     "errors=continue"	  },
 	{ Opt_err_panic,     "errors=panic"	  },
@@ -274,9 +274,9 @@ static int nova_parse_options(char *options, struct nova_sb_info *sbi,
 		case Opt_dax:
 			set_opt(sbi->s_mount_opt, DAX);
 			break;
-		case Opt_inplace:
-			set_opt(sbi->s_mount_opt, INPLACE);
-			nova_info("Enable inplace updates\n");
+		case Opt_data_cow:
+			set_opt(sbi->s_mount_opt, DATA_COW);
+			nova_info("Enable copy-on-write updates\n");
 			break;
 		case Opt_wprotect:
 			if (remount)

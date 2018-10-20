@@ -868,10 +868,10 @@ static ssize_t nova_dax_file_write(struct file *filp, const char __user *buf,
 	struct address_space *mapping = filp->f_mapping;
 	struct inode *inode = mapping->host;
 
-	if (test_opt(inode->i_sb, INPLACE))
-		return nova_inplace_file_write(filp, buf, len, ppos);
-	else
+	if (test_opt(inode->i_sb, DATA_COW))
 		return nova_cow_file_write(filp, buf, len, ppos);
+	else
+		return nova_inplace_file_write(filp, buf, len, ppos);
 }
 
 static ssize_t do_nova_dax_file_write(struct file *filp, const char __user *buf,
@@ -880,10 +880,10 @@ static ssize_t do_nova_dax_file_write(struct file *filp, const char __user *buf,
 	struct address_space *mapping = filp->f_mapping;
 	struct inode *inode = mapping->host;
 
-	if (test_opt(inode->i_sb, INPLACE))
-		return do_nova_inplace_file_write(filp, buf, len, ppos);
-	else
+	if (test_opt(inode->i_sb, DATA_COW))
 		return do_nova_cow_file_write(filp, buf, len, ppos);
+	else
+		return do_nova_inplace_file_write(filp, buf, len, ppos);
 }
 
 

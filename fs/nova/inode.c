@@ -518,7 +518,7 @@ static int nova_read_inode(struct super_block *sb, struct inode *inode,
 	switch (inode->i_mode & S_IFMT) {
 	case S_IFREG:
 		inode->i_op = &nova_file_inode_operations;
-		if (test_opt(inode->i_sb, INPLACE) && wprotect == 0)
+		if (!test_opt(inode->i_sb, DATA_COW) && wprotect == 0)
 			inode->i_fop = &nova_dax_file_operations;
 		else
 			inode->i_fop = &nova_wrap_file_operations;
@@ -1103,7 +1103,7 @@ struct inode *nova_new_vfs_inode(enum nova_new_inode_type type,
 	case TYPE_CREATE:
 		inode->i_op = &nova_file_inode_operations;
 		inode->i_mapping->a_ops = &nova_aops_dax;
-		if (test_opt(inode->i_sb, INPLACE) && wprotect == 0)
+		if (!test_opt(inode->i_sb, DATA_COW) && wprotect == 0)
 			inode->i_fop = &nova_dax_file_operations;
 		else
 			inode->i_fop = &nova_wrap_file_operations;
