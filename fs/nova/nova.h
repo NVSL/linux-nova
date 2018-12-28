@@ -191,6 +191,8 @@ extern int MIGRATION_DOWN_PMEM_PERC;
 extern int MIGRATION_IDEAL_PERC;
 extern int VPMEM_MAX_PAGES_QTR;
 extern int BDEV_OPT_SIZE_BIT;
+extern unsigned int SYNC_BIT;
+extern unsigned int SEQ_BIT;
 
 #ifndef MODE_FIXED_BDEV
 extern int TIER_BDEV_HIGH;

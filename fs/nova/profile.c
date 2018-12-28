@@ -2,9 +2,12 @@
 #include "nova.h"
 #include "bdev.h"
 
-#define SYNC_BIT        20
-#define SEQ_BIT         2
+// #define SYNC_BIT        20
+// #define SEQ_BIT         2
 #define RESET_BIT       36  /* 64 seconds */
+
+unsigned int SYNC_BIT = SYNC_BIT_INIT;
+unsigned int SEQ_BIT = SEQ_BIT_INIT;
 
 inline int most_sig_lbit(unsigned long v) {
     int r = 0;

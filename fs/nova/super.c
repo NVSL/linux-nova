@@ -310,7 +310,8 @@ static loff_t nova_max_size(int bits)
 
 enum {
 	Opt_bpi, Opt_init, Opt_snapshot, Opt_mode, Opt_uid,
-	Opt_gid, Opt_blocksize, Opt_wprotect, Opt_bdev, Opt_bsize, Opt_osb, Opt_psize, Opt_vsize,
+	Opt_gid, Opt_blocksize, Opt_wprotect, Opt_bdev, Opt_bsize, Opt_osb, 
+	Opt_syncb, Opt_seqb, Opt_psize, Opt_vsize,
 	Opt_err_cont, Opt_err_panic, Opt_err_ro,
 	Opt_dbgmask, Opt_err
 };
@@ -324,8 +325,10 @@ static const match_table_t tokens = {
 	{ Opt_gid,	     "gid=%u"		  },
 	{ Opt_wprotect,	     "wprotect"		  },
 	{ Opt_bdev,	     "bdev=%s"		  },
-	{ Opt_bsize,	     "bsize=%u"		  },
+	{ Opt_bsize,     "bsize=%u"		  },
 	{ Opt_osb,	     "osb=%u"		  },
+	{ Opt_syncb,	 "syncb=%u"		  },
+	{ Opt_seqb,	     "seqb=%u"		  },
 	{ Opt_psize,	     "psize=%u"		  },
 	{ Opt_vsize,	     "vsize=%u"		  },
 	{ Opt_err_cont,	     "errors=continue"	  },
@@ -355,6 +358,18 @@ static int nova_parse_tiering_options(struct nova_sb_info *sbi, char *options)
 			continue;
 
 		token = match_token(p, tokens, args);
+		if(token == Opt_syncb) {
+			if (match_int(&args[0], &input)){
+				return -EINVAL;
+			}
+			SYNC_BIT = (unsigned int) input;
+		}
+		if(token == Opt_seqb) {
+			if (match_int(&args[0], &input)){
+				return -EINVAL;
+			}
+			SEQ_BIT = (unsigned int) input;
+		}
 		if(token == Opt_psize) {
 			if (match_int(&args[0], &input)){
 				return -EINVAL;
@@ -484,6 +499,10 @@ static int nova_parse_options(char *options, struct nova_sb_info *sbi,
 		case Opt_bsize:
 			break;
 		case Opt_osb:
+			break;
+		case Opt_syncb:
+			break;
+		case Opt_seqb:
 			break;
 		case Opt_dbgmask:
 			if (match_int(&args[0], &option))
