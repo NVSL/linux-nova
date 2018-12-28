@@ -211,7 +211,7 @@ static int nova_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 	#endif
 
 	#ifdef MODE_FORE_ALLOC
-		nova_prof_judge_sync(file);
+		nova_prof_judge_sync(sb, file);
 	#endif
 
 	if (datasync)
@@ -1030,6 +1030,9 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 			pmem_used = nova_pmem_used(sbi); 
 			pmem_total = sbi->num_blocks; 
 			if ( (pmem_used + (1<<PMEM_LOG_RES_BIT)) + (pmem_total>>3)  > pmem_total ) write_tier = TIER_BDEV_LOW;
+			#ifdef MODE_KEEP_STAT_ACCU
+				sbi->stat->seq_hit++;
+			#endif
 			goto pout;
 		}
 	
@@ -1037,6 +1040,9 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 		nova_sih_increase_wcount(sb, sih, len);
 		if (nova_sih_is_sync(sih)) {
 			write_tier = TIER_PMEM;
+			#ifdef MODE_KEEP_STAT_ACCU
+				sbi->stat->seq_hit++;
+			#endif
 			goto pout;
 		}
 
@@ -1046,16 +1052,25 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 		// Hot and replacing
 		if (exact) {
 			write_tier = TIER_PMEM;
+			#ifdef MODE_KEEP_STAT_ACCU
+				sbi->stat->seq_hit++;
+			#endif
 			goto pout;
 		}
 
 		if (len < (1<<(BDEV_OPT_SIZE_BIT+PAGE_SHIFT)) ) {
 			write_tier = TIER_PMEM;
+			#ifdef MODE_KEEP_STAT_ACCU
+				sbi->stat->seq_hit++;
+			#endif
 			goto pout;
 		}
 
 		if (!nova_prof_judge_seq(seq_count)) {
 			write_tier = TIER_PMEM;
+			#ifdef MODE_KEEP_STAT_ACCU
+				sbi->stat->seq_hit++;
+			#endif
 			goto pout;
 		}
 

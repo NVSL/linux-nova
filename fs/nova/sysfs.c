@@ -247,6 +247,9 @@ static int nova_seq_ts_show(struct seq_file *seq, void *v)
 	seq_printf(seq, "[TNOVA] BIOWRITE %lu BIOREAD %lu\n",
 		sbi->stat->biowrite, sbi->stat->bioread);
 
+	seq_printf(seq, "[TNOVA] SYNCHIT %lu SYNCMISS %lu SEQHIT %lu SEQMISS %lu\n",
+		sbi->stat->sync_hit, sbi->stat->sync_miss, sbi->stat->seq_hit, sbi->stat->seq_miss);
+
 	seq_printf(seq, "----------------------------------------------------------------------\n");
 	seq_printf(seq, "                          [PMEM free lists]\n");
 	seq_printf(seq, "|Tier|CPU|  Start  |   End   |  Used  | Cached |  Free  | Total |Node|\n");

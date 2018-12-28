@@ -107,6 +107,7 @@ struct nova_inode_info_header {
 	int ltier;				/* lowest tier */
 	struct list_head lru_list[BDEV_COUNT_MAX+1];
     struct rw_semaphore mig_sem;
+	bool synced;
 	int do_sync;			/* lowest tier */
 	unsigned long do_sync_start;
 	unsigned long do_sync_end;

@@ -16,6 +16,11 @@ struct tiering_stat {
 	unsigned long biowrite;
 	unsigned long bioread;
 
+	unsigned long sync_hit;
+	unsigned long sync_miss;
+	unsigned long seq_hit;
+	unsigned long seq_miss;
+
 	bool should_migrate_log;
 
 	bool pgcache_large;

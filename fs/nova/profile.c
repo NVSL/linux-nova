@@ -41,10 +41,19 @@ inline bool nova_sih_is_sync(struct nova_inode_info_header *sih) {
     else return false;
 }
 
-inline bool nova_sih_judge_sync(struct nova_inode_info_header *sih) {
+inline bool nova_sih_judge_sync(struct nova_sb_info *sbi, struct nova_inode_info_header *sih) {
     if ((sih->wcount & ((1UL << 63) - 1)) >> SYNC_BIT > 0) {
         #ifdef DEBUG_PROF_SYNC
             nova_info("Inode sih %lu is async (%lx).\n", sih->ino, sih->wcount);
+        #endif
+        #ifdef MODE_KEEP_STAT_ACCU
+            if (sih->synced) {
+                if (nova_sih_is_sync(sih)) sbi->stat->sync_miss++;
+                else sbi->stat->sync_hit++;
+            }
+            else {
+                sih->synced = true;
+            }
         #endif
         sih->wcount = 0;
         return false;
@@ -52,16 +61,26 @@ inline bool nova_sih_judge_sync(struct nova_inode_info_header *sih) {
     else {        
         #ifdef DEBUG_PROF_SYNC
             nova_info("Inode sih %lu is sync (%lx).\n", sih->ino, sih->wcount);
-        #endif        
+        #endif
+        #ifdef MODE_KEEP_STAT_ACCU
+            if (sih->synced) {
+                if (nova_sih_is_sync(sih)) sbi->stat->sync_hit++;
+                else sbi->stat->sync_miss++;
+            }
+            else {
+                sih->synced = true;
+            }
+        #endif
         sih->wcount = 1UL << 63;
         return true;
     }
 }
 
 // Judge and reset wcount
-inline bool nova_prof_judge_sync(struct file *file) {
+inline bool nova_prof_judge_sync(struct super_block *sb, struct file *file) {
+	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_inode_info *si = NOVA_I(file->f_mapping->host);
-	return nova_sih_judge_sync(&si->header);
+	return nova_sih_judge_sync(sbi, &si->header);
 }
 
 // Profiler module #2
@@ -82,6 +101,7 @@ bool is_entry_time_in(struct super_block *sb, struct nova_file_write_entry *entr
 
 unsigned int nova_get_prev_seq_count(struct super_block *sb, struct nova_inode_info_header *sih, 
     unsigned long pgoff, int num_pages, bool *exact) {
+	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_file_write_entry *entry;
     entry = nova_find_next_entry_lockfree(sb, sih, pgoff);
     *exact = false;
@@ -99,6 +119,10 @@ tail:
     if (is_entry_time_out(sb, entry)) return 0;
     if (entry->pgoff <= pgoff + num_pages/2 && entry->pgoff + entry->num_pages >= pgoff + num_pages) 
         return entry->seq_count + 1;
+
+    #ifdef MODE_KEEP_STAT_ACCU
+        if (entry->seq_count!=0) sbi->stat->seq_miss++;
+    #endif
     return 0;
 }
 
