@@ -1024,6 +1024,10 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	#ifdef MODE_FORE_ALLOC
 		write_tier = TIER_PMEM;
 
+		#ifdef MODE_KEEP_STAT_ACCU
+			seq_count = nova_get_prev_seq_count(sb, sih, start_blk, num_blocks, &exact);
+		#endif
+
 		if (i_size_read(inode) >= (1<<PMEM_LARGE_FILE_SIZE_BIT) && 
 			i_size_read(inode) >= (sbi->stat->pmem_free<<PAGE_SHIFT) ){ 
 			//&& len == (1<<PAGE_SHIFT) ) {
@@ -1031,7 +1035,8 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 			pmem_total = sbi->num_blocks; 
 			if ( (pmem_used + (1<<PMEM_LOG_RES_BIT)) + (pmem_total>>3)  > pmem_total ) write_tier = TIER_BDEV_LOW;
 			#ifdef MODE_KEEP_STAT_ACCU
-				sbi->stat->seq_hit++;
+				if (!nova_prof_judge_seq(seq_count)) sbi->stat->seq_hit++;
+				else sbi->stat->seq_miss++;
 			#endif
 			goto pout;
 		}
@@ -1040,9 +1045,6 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 		nova_sih_increase_wcount(sb, sih, len);
 		if (nova_sih_is_sync(sih)) {
 			write_tier = TIER_PMEM;
-			#ifdef MODE_KEEP_STAT_ACCU
-				sbi->stat->seq_hit++;
-			#endif
 			goto pout;
 		}
 
@@ -1053,7 +1055,8 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 		if (exact) {
 			write_tier = TIER_PMEM;
 			#ifdef MODE_KEEP_STAT_ACCU
-				sbi->stat->seq_hit++;
+				if (!nova_prof_judge_seq(seq_count)) sbi->stat->seq_hit++;
+				else sbi->stat->seq_miss++;
 			#endif
 			goto pout;
 		}
@@ -1061,7 +1064,8 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 		if (len < (1<<(BDEV_OPT_SIZE_BIT+PAGE_SHIFT)) ) {
 			write_tier = TIER_PMEM;
 			#ifdef MODE_KEEP_STAT_ACCU
-				sbi->stat->seq_hit++;
+				if (!nova_prof_judge_seq(seq_count)) sbi->stat->seq_hit++;
+				else sbi->stat->seq_miss++;
 			#endif
 			goto pout;
 		}
@@ -1072,6 +1076,11 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 				sbi->stat->seq_hit++;
 			#endif
 			goto pout;
+		}
+		else {
+			#ifdef MODE_KEEP_STAT_ACCU
+				sbi->stat->seq_miss++;
+			#endif
 		}
 
 		// nova_info("p %d b %d\n",pgc_tier_free_order(0),pgc_tier_free_order(1));
