@@ -153,7 +153,7 @@ static inline gfp_t current_gfp_context(gfp_t flags)
 {
 	/*
 	 * NOIO implies both NOIO and NOFS and it is a weaker context
-	 * so always make sure it makes precendence
+	 * so always make sure it makes precedence
 	 */
 	if (unlikely(current->flags & PF_MEMALLOC_NOIO))
 		flags &= ~(__GFP_IO | __GFP_FS);
@@ -247,6 +247,43 @@ static inline void memalloc_noreclaim_restore(unsigned int flags)
 {
 	current->flags = (current->flags & ~PF_MEMALLOC) | flags;
 }
+
+#ifdef CONFIG_MEMCG
+/**
+ * memalloc_use_memcg - Starts the remote memcg charging scope.
+ * @memcg: memcg to charge.
+ *
+ * This function marks the beginning of the remote memcg charging scope. All the
+ * __GFP_ACCOUNT allocations till the end of the scope will be charged to the
+ * given memcg.
+ *
+ * NOTE: This function is not nesting safe.
+ */
+static inline void memalloc_use_memcg(struct mem_cgroup *memcg)
+{
+	WARN_ON_ONCE(current->active_memcg);
+	current->active_memcg = memcg;
+}
+
+/**
+ * memalloc_unuse_memcg - Ends the remote memcg charging scope.
+ *
+ * This function marks the end of the remote memcg charging scope started by
+ * memalloc_use_memcg().
+ */
+static inline void memalloc_unuse_memcg(void)
+{
+	current->active_memcg = NULL;
+}
+#else
+static inline void memalloc_use_memcg(struct mem_cgroup *memcg)
+{
+}
+
+static inline void memalloc_unuse_memcg(void)
+{
+}
+#endif
 
 #ifdef CONFIG_MEMBARRIER
 enum {

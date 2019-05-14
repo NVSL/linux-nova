@@ -26,7 +26,7 @@ static int hclgevf_get_mbx_resp(struct hclgevf_dev *hdev, u16 code0, u16 code1,
 				u8 *resp_data, u16 resp_len)
 {
 #define HCLGEVF_MAX_TRY_TIMES	500
-#define HCLGEVF_SLEEP_USCOEND	1000
+#define HCLGEVF_SLEEP_USECOND	1000
 	struct hclgevf_mbx_resp_status *mbx_resp;
 	u16 r_code0, r_code1;
 	int i = 0;
@@ -40,7 +40,10 @@ static int hclgevf_get_mbx_resp(struct hclgevf_dev *hdev, u16 code0, u16 code1,
 	}
 
 	while ((!hdev->mbx_resp.received_resp) && (i < HCLGEVF_MAX_TRY_TIMES)) {
-		udelay(HCLGEVF_SLEEP_USCOEND);
+		if (test_bit(HCLGEVF_STATE_CMD_DISABLE, &hdev->state))
+			return -EIO;
+
+		usleep_range(HCLGEVF_SLEEP_USECOND, HCLGEVF_SLEEP_USECOND * 2);
 		i++;
 	}
 
@@ -148,11 +151,16 @@ void hclgevf_mbx_handler(struct hclgevf_dev *hdev)
 	crq = &hdev->hw.cmq.crq;
 
 	while (!hclgevf_cmd_crq_empty(&hdev->hw)) {
+		if (test_bit(HCLGEVF_STATE_CMD_DISABLE, &hdev->state)) {
+			dev_info(&hdev->pdev->dev, "vf crq need init\n");
+			return;
+		}
+
 		desc = &crq->desc[crq->next_to_use];
 		req = (struct hclge_mbx_pf_to_vf_cmd *)desc->data;
 
 		flag = le16_to_cpu(crq->desc[crq->next_to_use].flag);
-		if (unlikely(!hnae_get_bit(flag, HCLGEVF_CMDQ_RX_OUTVLD_B))) {
+		if (unlikely(!hnae3_get_bit(flag, HCLGEVF_CMDQ_RX_OUTVLD_B))) {
 			dev_warn(&hdev->pdev->dev,
 				 "dropped invalid mailbox message, code = %d\n",
 				 req->msg[0]);
@@ -208,7 +216,8 @@ void hclgevf_mbx_handler(struct hclgevf_dev *hdev)
 
 			/* tail the async message in arq */
 			msg_q = hdev->arq.msg_q[hdev->arq.tail];
-			memcpy(&msg_q[0], req->msg, HCLGE_MBX_MAX_ARQ_MSG_SIZE);
+			memcpy(&msg_q[0], req->msg,
+			       HCLGE_MBX_MAX_ARQ_MSG_SIZE * sizeof(u16));
 			hclge_mbx_tail_ptr_move_arq(hdev->arq);
 			hdev->arq.count++;
 
@@ -232,6 +241,7 @@ void hclgevf_mbx_handler(struct hclgevf_dev *hdev)
 
 void hclgevf_mbx_async_handler(struct hclgevf_dev *hdev)
 {
+	enum hnae3_reset_type reset_type;
 	u16 link_status;
 	u16 *msg_q;
 	u8 duplex;
@@ -247,6 +257,12 @@ void hclgevf_mbx_async_handler(struct hclgevf_dev *hdev)
 
 	/* process all the async queue messages */
 	while (tail != hdev->arq.head) {
+		if (test_bit(HCLGEVF_STATE_CMD_DISABLE, &hdev->state)) {
+			dev_info(&hdev->pdev->dev,
+				 "vf crq need init in async\n");
+			return;
+		}
+
 		msg_q = hdev->arq.msg_q[hdev->arq.head];
 
 		switch (msg_q[0]) {
@@ -266,7 +282,8 @@ void hclgevf_mbx_async_handler(struct hclgevf_dev *hdev)
 			 * has been completely reset. After this stack should
 			 * eventually be re-initialized.
 			 */
-			hdev->nic.reset_level = HNAE3_VF_RESET;
+			reset_type = le16_to_cpu(msg_q[1]);
+			set_bit(reset_type, &hdev->reset_pending);
 			set_bit(HCLGEVF_RESET_PENDING, &hdev->reset_state);
 			hclgevf_reset_task_schedule(hdev);
 

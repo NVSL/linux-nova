@@ -283,9 +283,9 @@ static u32 crypto4xx_put_pd_to_pdr(struct crypto4xx_device *dev, u32 idx)
  */
 static u32 crypto4xx_build_gdr(struct crypto4xx_device *dev)
 {
-	dev->gdr = dma_zalloc_coherent(dev->core_dev->device,
-				       sizeof(struct ce_gd) * PPC4XX_NUM_GD,
-				       &dev->gdr_pa, GFP_ATOMIC);
+	dev->gdr = dma_alloc_coherent(dev->core_dev->device,
+				      sizeof(struct ce_gd) * PPC4XX_NUM_GD,
+				      &dev->gdr_pa, GFP_ATOMIC);
 	if (!dev->gdr)
 		return -ENOMEM;
 
@@ -596,7 +596,7 @@ static void crypto4xx_aead_done(struct crypto4xx_device *dev,
 					  pd->pd_ctl_len.bf.pkt_len,
 					  dst);
 	} else {
-		__dma_sync_page(sg_page(dst), dst->offset, dst->length,
+		dma_unmap_page(dev->core_dev->device, pd->dest, dst->length,
 				DMA_FROM_DEVICE);
 	}
 
@@ -1132,8 +1132,7 @@ static struct crypto4xx_alg_common crypto4xx_alg[] = {
 			.cra_name = "cbc(aes)",
 			.cra_driver_name = "cbc-aes-ppc4xx",
 			.cra_priority = CRYPTO4XX_CRYPTO_PRIORITY,
-			.cra_flags = CRYPTO_ALG_TYPE_SKCIPHER |
-				CRYPTO_ALG_ASYNC |
+			.cra_flags = CRYPTO_ALG_ASYNC |
 				CRYPTO_ALG_KERN_DRIVER_ONLY,
 			.cra_blocksize = AES_BLOCK_SIZE,
 			.cra_ctxsize = sizeof(struct crypto4xx_ctx),
@@ -1153,8 +1152,7 @@ static struct crypto4xx_alg_common crypto4xx_alg[] = {
 			.cra_name = "cfb(aes)",
 			.cra_driver_name = "cfb-aes-ppc4xx",
 			.cra_priority = CRYPTO4XX_CRYPTO_PRIORITY,
-			.cra_flags = CRYPTO_ALG_TYPE_SKCIPHER |
-				CRYPTO_ALG_ASYNC |
+			.cra_flags = CRYPTO_ALG_ASYNC |
 				CRYPTO_ALG_KERN_DRIVER_ONLY,
 			.cra_blocksize = AES_BLOCK_SIZE,
 			.cra_ctxsize = sizeof(struct crypto4xx_ctx),
@@ -1174,8 +1172,7 @@ static struct crypto4xx_alg_common crypto4xx_alg[] = {
 			.cra_name = "ctr(aes)",
 			.cra_driver_name = "ctr-aes-ppc4xx",
 			.cra_priority = CRYPTO4XX_CRYPTO_PRIORITY,
-			.cra_flags = CRYPTO_ALG_TYPE_SKCIPHER |
-				CRYPTO_ALG_NEED_FALLBACK |
+			.cra_flags = CRYPTO_ALG_NEED_FALLBACK |
 				CRYPTO_ALG_ASYNC |
 				CRYPTO_ALG_KERN_DRIVER_ONLY,
 			.cra_blocksize = AES_BLOCK_SIZE,
@@ -1196,8 +1193,7 @@ static struct crypto4xx_alg_common crypto4xx_alg[] = {
 			.cra_name = "rfc3686(ctr(aes))",
 			.cra_driver_name = "rfc3686-ctr-aes-ppc4xx",
 			.cra_priority = CRYPTO4XX_CRYPTO_PRIORITY,
-			.cra_flags = CRYPTO_ALG_TYPE_SKCIPHER |
-				CRYPTO_ALG_ASYNC |
+			.cra_flags = CRYPTO_ALG_ASYNC |
 				CRYPTO_ALG_KERN_DRIVER_ONLY,
 			.cra_blocksize = AES_BLOCK_SIZE,
 			.cra_ctxsize = sizeof(struct crypto4xx_ctx),
@@ -1217,8 +1213,7 @@ static struct crypto4xx_alg_common crypto4xx_alg[] = {
 			.cra_name = "ecb(aes)",
 			.cra_driver_name = "ecb-aes-ppc4xx",
 			.cra_priority = CRYPTO4XX_CRYPTO_PRIORITY,
-			.cra_flags = CRYPTO_ALG_TYPE_SKCIPHER |
-				CRYPTO_ALG_ASYNC |
+			.cra_flags = CRYPTO_ALG_ASYNC |
 				CRYPTO_ALG_KERN_DRIVER_ONLY,
 			.cra_blocksize = AES_BLOCK_SIZE,
 			.cra_ctxsize = sizeof(struct crypto4xx_ctx),
@@ -1237,8 +1232,7 @@ static struct crypto4xx_alg_common crypto4xx_alg[] = {
 			.cra_name = "ofb(aes)",
 			.cra_driver_name = "ofb-aes-ppc4xx",
 			.cra_priority = CRYPTO4XX_CRYPTO_PRIORITY,
-			.cra_flags = CRYPTO_ALG_TYPE_SKCIPHER |
-				CRYPTO_ALG_ASYNC |
+			.cra_flags = CRYPTO_ALG_ASYNC |
 				CRYPTO_ALG_KERN_DRIVER_ONLY,
 			.cra_blocksize = AES_BLOCK_SIZE,
 			.cra_ctxsize = sizeof(struct crypto4xx_ctx),

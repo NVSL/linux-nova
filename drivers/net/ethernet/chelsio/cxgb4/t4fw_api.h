@@ -1253,6 +1253,7 @@ enum fw_params_param_dev {
 	FW_PARAMS_PARAM_DEV_HMA_SIZE	= 0x20,
 	FW_PARAMS_PARAM_DEV_RDMA_WRITE_WITH_IMM = 0x21,
 	FW_PARAMS_PARAM_DEV_RI_WRITE_CMPL_WR    = 0x24,
+	FW_PARAMS_PARAM_DEV_OPAQUE_VIID_SMT_EXTN = 0x27,
 };
 
 /*
@@ -1332,6 +1333,7 @@ enum fw_params_param_dev_phyfw {
 enum fw_params_param_dev_diag {
 	FW_PARAM_DEV_DIAG_TMP		= 0x00,
 	FW_PARAM_DEV_DIAG_VDD		= 0x01,
+	FW_PARAM_DEV_DIAG_MAXTMPTHRESH	= 0x02,
 };
 
 enum fw_params_param_dev_fwcache {
@@ -1472,6 +1474,12 @@ enum fw_iq_type {
 	FW_IQ_TYPE_NO_FL_INT_CAP
 };
 
+enum fw_iq_iqtype {
+	FW_IQ_IQTYPE_OTHER,
+	FW_IQ_IQTYPE_NIC,
+	FW_IQ_IQTYPE_OFLD,
+};
+
 struct fw_iq_cmd {
 	__be32 op_to_vfn;
 	__be32 alloc_to_len16;
@@ -1585,6 +1593,12 @@ struct fw_iq_cmd {
 
 #define FW_IQ_CMD_IQFLINTISCSIC_S	26
 #define FW_IQ_CMD_IQFLINTISCSIC_V(x)	((x) << FW_IQ_CMD_IQFLINTISCSIC_S)
+
+#define FW_IQ_CMD_IQTYPE_S		24
+#define FW_IQ_CMD_IQTYPE_M		0x3
+#define FW_IQ_CMD_IQTYPE_V(x)		((x) << FW_IQ_CMD_IQTYPE_S)
+#define FW_IQ_CMD_IQTYPE_G(x)		\
+	(((x) >> FW_IQ_CMD_IQTYPE_S) & FW_IQ_CMD_IQTYPE_M)
 
 #define FW_IQ_CMD_FL0CNGCHMAP_S		20
 #define FW_IQ_CMD_FL0CNGCHMAP_V(x)	((x) << FW_IQ_CMD_FL0CNGCHMAP_S)
@@ -2096,6 +2110,19 @@ struct fw_vi_cmd {
 #define FW_VI_CMD_FREE_V(x)	((x) << FW_VI_CMD_FREE_S)
 #define FW_VI_CMD_FREE_F	FW_VI_CMD_FREE_V(1U)
 
+#define FW_VI_CMD_VFVLD_S	24
+#define FW_VI_CMD_VFVLD_M	0x1
+#define FW_VI_CMD_VFVLD_V(x)	((x) << FW_VI_CMD_VFVLD_S)
+#define FW_VI_CMD_VFVLD_G(x)	\
+	(((x) >> FW_VI_CMD_VFVLD_S) & FW_VI_CMD_VFVLD_M)
+#define FW_VI_CMD_VFVLD_F	FW_VI_CMD_VFVLD_V(1U)
+
+#define FW_VI_CMD_VIN_S		16
+#define FW_VI_CMD_VIN_M		0xff
+#define FW_VI_CMD_VIN_V(x)	((x) << FW_VI_CMD_VIN_S)
+#define FW_VI_CMD_VIN_G(x)	\
+	(((x) >> FW_VI_CMD_VIN_S) & FW_VI_CMD_VIN_M)
+
 #define FW_VI_CMD_VIID_S	0
 #define FW_VI_CMD_VIID_M	0xfff
 #define FW_VI_CMD_VIID_V(x)	((x) << FW_VI_CMD_VIID_S)
@@ -2168,6 +2195,12 @@ struct fw_vi_mac_cmd {
 		} exact_vni[2];
 	} u;
 };
+
+#define FW_VI_MAC_CMD_SMTID_S		12
+#define FW_VI_MAC_CMD_SMTID_M		0xff
+#define FW_VI_MAC_CMD_SMTID_V(x)	((x) << FW_VI_MAC_CMD_SMTID_S)
+#define FW_VI_MAC_CMD_SMTID_G(x)	\
+	(((x) >> FW_VI_MAC_CMD_SMTID_S) & FW_VI_MAC_CMD_SMTID_M)
 
 #define FW_VI_MAC_CMD_VIID_S	0
 #define FW_VI_MAC_CMD_VIID_V(x)	((x) << FW_VI_MAC_CMD_VIID_S)
@@ -2452,6 +2485,7 @@ struct fw_acl_vlan_cmd {
 
 #define FW_ACL_VLAN_CMD_DROPNOVLAN_S	7
 #define FW_ACL_VLAN_CMD_DROPNOVLAN_V(x)	((x) << FW_ACL_VLAN_CMD_DROPNOVLAN_S)
+#define FW_ACL_VLAN_CMD_DROPNOVLAN_F    FW_ACL_VLAN_CMD_DROPNOVLAN_V(1U)
 
 #define FW_ACL_VLAN_CMD_FM_S		6
 #define FW_ACL_VLAN_CMD_FM_M		0x1

@@ -16,6 +16,10 @@ extern struct nft_expr_type nft_meta_type;
 extern struct nft_expr_type nft_rt_type;
 extern struct nft_expr_type nft_exthdr_type;
 
+#ifdef CONFIG_NETWORK_SECMARK
+extern struct nft_object_type nft_secmark_obj_type;
+#endif
+
 int nf_tables_core_module_init(void);
 void nf_tables_core_module_exit(void);
 
@@ -71,4 +75,11 @@ extern struct nft_set_type nft_set_hash_fast_type;
 extern struct nft_set_type nft_set_rbtree_type;
 extern struct nft_set_type nft_set_bitmap_type;
 
+struct nft_expr;
+struct nft_regs;
+struct nft_pktinfo;
+void nft_meta_get_eval(const struct nft_expr *expr,
+		       struct nft_regs *regs, const struct nft_pktinfo *pkt);
+void nft_lookup_eval(const struct nft_expr *expr,
+		     struct nft_regs *regs, const struct nft_pktinfo *pkt);
 #endif /* _NET_NF_TABLES_CORE_H */

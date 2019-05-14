@@ -798,16 +798,12 @@ static struct intel_tv *intel_attached_tv(struct drm_connector *connector)
 static bool
 intel_tv_get_hw_state(struct intel_encoder *encoder, enum pipe *pipe)
 {
-	struct drm_device *dev = encoder->base.dev;
-	struct drm_i915_private *dev_priv = to_i915(dev);
+	struct drm_i915_private *dev_priv = to_i915(encoder->base.dev);
 	u32 tmp = I915_READ(TV_CTL);
 
-	if (!(tmp & TV_ENC_ENABLE))
-		return false;
+	*pipe = (tmp & TV_ENC_PIPE_SEL_MASK) >> TV_ENC_PIPE_SEL_SHIFT;
 
-	*pipe = PORT_TO_PIPE(tmp);
-
-	return true;
+	return tmp & TV_ENC_ENABLE;
 }
 
 static void
@@ -889,6 +885,7 @@ intel_tv_compute_config(struct intel_encoder *encoder,
 	if (adjusted_mode->flags & DRM_MODE_FLAG_DBLSCAN)
 		return false;
 
+	pipe_config->output_format = INTEL_OUTPUT_FORMAT_RGB;
 	adjusted_mode->crtc_clock = tv_mode->clock;
 	DRM_DEBUG_KMS("forcing bpc to 8 for TV\n");
 	pipe_config->pipe_bpp = 8*3;
@@ -1032,8 +1029,7 @@ static void intel_tv_pre_enable(struct intel_encoder *encoder,
 		break;
 	}
 
-	if (intel_crtc->pipe == 1)
-		tv_ctl |= TV_ENC_PIPEB_SELECT;
+	tv_ctl |= TV_ENC_PIPE_SEL(intel_crtc->pipe);
 	tv_ctl |= tv_mode->oversample;
 
 	if (tv_mode->progressive)
@@ -1157,12 +1153,9 @@ intel_tv_detect_type(struct intel_tv *intel_tv,
 	save_tv_ctl = tv_ctl = I915_READ(TV_CTL);
 
 	/* Poll for TV detection */
-	tv_ctl &= ~(TV_ENC_ENABLE | TV_TEST_MODE_MASK);
+	tv_ctl &= ~(TV_ENC_ENABLE | TV_ENC_PIPE_SEL_MASK | TV_TEST_MODE_MASK);
 	tv_ctl |= TV_TEST_MODE_MONITOR_DETECT;
-	if (intel_crtc->pipe == 1)
-		tv_ctl |= TV_ENC_PIPEB_SELECT;
-	else
-		tv_ctl &= ~TV_ENC_PIPEB_SELECT;
+	tv_ctl |= TV_ENC_PIPE_SEL(intel_crtc->pipe);
 
 	tv_dac &= ~(TVDAC_SENSE_MASK | DAC_A_MASK | DAC_B_MASK | DAC_C_MASK);
 	tv_dac |= (TVDAC_STATE_CHG_EN |
@@ -1355,8 +1348,7 @@ intel_tv_get_modes(struct drm_connector *connector)
 		mode_ptr = drm_mode_create(connector->dev);
 		if (!mode_ptr)
 			continue;
-		strncpy(mode_ptr->name, input->name, DRM_DISPLAY_MODE_LEN);
-		mode_ptr->name[DRM_DISPLAY_MODE_LEN - 1] = '\0';
+		strlcpy(mode_ptr->name, input->name, DRM_DISPLAY_MODE_LEN);
 
 		mode_ptr->hdisplay = hactive_s;
 		mode_ptr->hsync_start = hactive_s + 1;
@@ -1386,17 +1378,10 @@ intel_tv_get_modes(struct drm_connector *connector)
 	return count;
 }
 
-static void
-intel_tv_destroy(struct drm_connector *connector)
-{
-	drm_connector_cleanup(connector);
-	kfree(connector);
-}
-
 static const struct drm_connector_funcs intel_tv_connector_funcs = {
 	.late_register = intel_connector_register,
 	.early_unregister = intel_connector_unregister,
-	.destroy = intel_tv_destroy,
+	.destroy = intel_connector_destroy,
 	.fill_modes = drm_helper_probe_single_connector_modes,
 	.atomic_destroy_state = drm_atomic_helper_connector_destroy_state,
 	.atomic_duplicate_state = drm_atomic_helper_connector_duplicate_state,

@@ -41,7 +41,7 @@ struct intel_gvt_mpt {
 	int (*host_init)(struct device *dev, void *gvt, const void *ops);
 	void (*host_exit)(struct device *dev, void *gvt);
 	int (*attach_vgpu)(void *vgpu, unsigned long *handle);
-	void (*detach_vgpu)(unsigned long handle);
+	void (*detach_vgpu)(void *vgpu);
 	int (*inject_msi)(unsigned long handle, u32 addr, u16 data);
 	unsigned long (*from_virt_to_mfn)(void *p);
 	int (*enable_page_track)(unsigned long handle, u64 gfn);
@@ -53,7 +53,7 @@ struct intel_gvt_mpt {
 	unsigned long (*gfn_to_mfn)(unsigned long handle, unsigned long gfn);
 
 	int (*dma_map_guest_page)(unsigned long handle, unsigned long gfn,
-				  dma_addr_t *dma_addr);
+				  unsigned long size, dma_addr_t *dma_addr);
 	void (*dma_unmap_guest_page)(unsigned long handle, dma_addr_t dma_addr);
 
 	int (*map_gfn_to_mfn)(unsigned long handle, unsigned long gfn,

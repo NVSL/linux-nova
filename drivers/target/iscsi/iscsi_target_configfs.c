@@ -1090,10 +1090,8 @@ static struct configfs_attribute *lio_target_tpg_attrs[] = {
 
 /* Start items for lio_target_tiqn_cit */
 
-static struct se_portal_group *lio_target_tiqn_addtpg(
-	struct se_wwn *wwn,
-	struct config_group *group,
-	const char *name)
+static struct se_portal_group *lio_target_tiqn_addtpg(struct se_wwn *wwn,
+						      const char *name)
 {
 	struct iscsi_portal_group *tpg;
 	struct iscsi_tiqn *tiqn;
@@ -1345,11 +1343,6 @@ static struct configfs_attribute *lio_target_discovery_auth_attrs[] = {
 
 /* Start functions for target_core_fabric_ops */
 
-static char *iscsi_get_fabric_name(void)
-{
-	return "iSCSI";
-}
-
 static int iscsi_get_cmd_state(struct se_cmd *se_cmd)
 {
 	struct iscsi_cmd *cmd = container_of(se_cmd, struct iscsi_cmd, se_cmd);
@@ -1551,9 +1544,9 @@ static void lio_release_cmd(struct se_cmd *se_cmd)
 
 const struct target_core_fabric_ops iscsi_ops = {
 	.module				= THIS_MODULE,
-	.name				= "iscsi",
+	.fabric_alias			= "iscsi",
+	.fabric_name			= "iSCSI",
 	.node_acl_size			= sizeof(struct iscsi_node_acl),
-	.get_fabric_name		= iscsi_get_fabric_name,
 	.tpg_get_wwn			= lio_tpg_get_endpoint_wwn,
 	.tpg_get_tag			= lio_tpg_get_tag,
 	.tpg_get_default_depth		= lio_tpg_get_default_depth,
@@ -1598,4 +1591,6 @@ const struct target_core_fabric_ops iscsi_ops = {
 	.tfc_tpg_nacl_attrib_attrs	= lio_target_nacl_attrib_attrs,
 	.tfc_tpg_nacl_auth_attrs	= lio_target_nacl_auth_attrs,
 	.tfc_tpg_nacl_param_attrs	= lio_target_nacl_param_attrs,
+
+	.write_pending_must_be_called	= true,
 };

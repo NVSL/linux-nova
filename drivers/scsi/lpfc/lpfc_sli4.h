@@ -2,7 +2,7 @@
  * This file is part of the Emulex Linux Device Driver for         *
  * Fibre Channel Host Bus Adapters.                                *
  * Copyright (C) 2017-2018 Broadcom. All Rights Reserved. The term *
- * “Broadcom” refers to Broadcom Limited and/or its subsidiaries.  *
+ * “Broadcom” refers to Broadcom Inc. and/or its subsidiaries.     *
  * Copyright (C) 2009-2016 Emulex.  All rights reserved.           *
  * EMULEX and SLI are trademarks of Emulex.                        *
  * www.broadcom.com                                                *
@@ -279,6 +279,7 @@ struct lpfc_fcf {
 #define FCF_REDISC_EVT	0x100 /* FCF rediscovery event to worker thread */
 #define FCF_REDISC_FOV	0x200 /* Post FCF rediscovery fast failover */
 #define FCF_REDISC_PROG (FCF_REDISC_PEND | FCF_REDISC_EVT)
+	uint16_t fcf_redisc_attempted;
 	uint32_t addr_mode;
 	uint32_t eligible_fcf_cnt;
 	struct lpfc_fcf_rec current_rec;
@@ -490,6 +491,7 @@ struct lpfc_pc_sli4_params {
 	uint8_t eqav;
 	uint8_t cqav;
 	uint8_t wqsize;
+	uint8_t bv1s;
 #define LPFC_WQ_SZ64_SUPPORT	1
 #define LPFC_WQ_SZ128_SUPPORT	2
 	uint8_t wqpcnt;
@@ -716,6 +718,19 @@ struct lpfc_sli4_hba {
 	uint16_t num_online_cpu;
 	uint16_t num_present_cpu;
 	uint16_t curr_disp_cpu;
+	uint32_t conf_trunk;
+#define lpfc_conf_trunk_port0_WORD	conf_trunk
+#define lpfc_conf_trunk_port0_SHIFT	0
+#define lpfc_conf_trunk_port0_MASK	0x1
+#define lpfc_conf_trunk_port1_WORD	conf_trunk
+#define lpfc_conf_trunk_port1_SHIFT	1
+#define lpfc_conf_trunk_port1_MASK	0x1
+#define lpfc_conf_trunk_port2_WORD	conf_trunk
+#define lpfc_conf_trunk_port2_SHIFT	2
+#define lpfc_conf_trunk_port2_MASK	0x1
+#define lpfc_conf_trunk_port3_WORD	conf_trunk
+#define lpfc_conf_trunk_port3_SHIFT	3
+#define lpfc_conf_trunk_port3_MASK	0x1
 };
 
 enum lpfc_sge_type {
@@ -774,7 +789,9 @@ struct lpfc_rdp_context {
 struct lpfc_lcb_context {
 	uint8_t  sub_command;
 	uint8_t  type;
+	uint8_t  capability;
 	uint8_t  frequency;
+	uint16_t  duration;
 	uint16_t ox_id;
 	uint16_t rx_id;
 	struct lpfc_nodelist *ndlp;
@@ -883,3 +900,4 @@ int lpfc_sli4_unregister_fcf(struct lpfc_hba *);
 int lpfc_sli4_post_status_check(struct lpfc_hba *);
 uint8_t lpfc_sli_config_mbox_subsys_get(struct lpfc_hba *, LPFC_MBOXQ_t *);
 uint8_t lpfc_sli_config_mbox_opcode_get(struct lpfc_hba *, LPFC_MBOXQ_t *);
+void lpfc_sli4_ras_dma_free(struct lpfc_hba *phba);

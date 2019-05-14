@@ -1,11 +1,5 @@
-/*
- * Copyright (c) 2016~2017 Hisilicon Limited.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- */
+// SPDX-License-Identifier: GPL-2.0+
+// Copyright (c) 2016-2017 Hisilicon Limited.
 
 #include <linux/etherdevice.h>
 
@@ -178,7 +172,7 @@ static int hclge_pfc_pause_en_cfg(struct hclge_dev *hdev, u8 tx_rx_bitmap,
 				  u8 pfc_bitmap)
 {
 	struct hclge_desc desc;
-	struct hclge_pfc_en_cmd *pfc = (struct hclge_pfc_en_cmd *)&desc.data;
+	struct hclge_pfc_en_cmd *pfc = (struct hclge_pfc_en_cmd *)desc.data;
 
 	hclge_cmd_setup_basic_desc(&desc, HCLGE_OPC_CFG_PFC_PAUSE_EN, false);
 
@@ -194,11 +188,12 @@ static int hclge_pause_param_cfg(struct hclge_dev *hdev, const u8 *addr,
 	struct hclge_cfg_pause_param_cmd *pause_param;
 	struct hclge_desc desc;
 
-	pause_param = (struct hclge_cfg_pause_param_cmd *)&desc.data;
+	pause_param = (struct hclge_cfg_pause_param_cmd *)desc.data;
 
 	hclge_cmd_setup_basic_desc(&desc, HCLGE_OPC_CFG_MAC_PARA, false);
 
 	ether_addr_copy(pause_param->mac_addr, addr);
+	ether_addr_copy(pause_param->mac_addr_extra, addr);
 	pause_param->pause_trans_gap = pause_trans_gap;
 	pause_param->pause_trans_time = cpu_to_le16(pause_trans_time);
 
@@ -213,7 +208,7 @@ int hclge_pause_addr_cfg(struct hclge_dev *hdev, const u8 *mac_addr)
 	u8 trans_gap;
 	int ret;
 
-	pause_param = (struct hclge_cfg_pause_param_cmd *)&desc.data;
+	pause_param = (struct hclge_cfg_pause_param_cmd *)desc.data;
 
 	hclge_cmd_setup_basic_desc(&desc, HCLGE_OPC_CFG_MAC_PARA, true);
 
@@ -303,7 +298,7 @@ static int hclge_tm_qs_to_pri_map_cfg(struct hclge_dev *hdev,
 }
 
 static int hclge_tm_q_to_qs_map_cfg(struct hclge_dev *hdev,
-				    u8 q_id, u16 qs_id)
+				    u16 q_id, u16 qs_id)
 {
 	struct hclge_nq_to_qs_link_cmd *map;
 	struct hclge_desc desc;
@@ -1173,25 +1168,23 @@ static int hclge_pfc_setup_hw(struct hclge_dev *hdev)
  */
 static int hclge_bp_setup_hw(struct hclge_dev *hdev, u8 tc)
 {
-	struct hclge_vport *vport = hdev->vport;
-	u32 i, k, qs_bitmap;
-	int ret;
+	int i;
 
 	for (i = 0; i < HCLGE_BP_GRP_NUM; i++) {
-		qs_bitmap = 0;
+		u32 qs_bitmap = 0;
+		int k, ret;
 
 		for (k = 0; k < hdev->num_alloc_vport; k++) {
+			struct hclge_vport *vport = &hdev->vport[k];
 			u16 qs_id = vport->qs_offset + tc;
 			u8 grp, sub_grp;
 
-			grp = hnae_get_field(qs_id, HCLGE_BP_GRP_ID_M,
-					     HCLGE_BP_GRP_ID_S);
-			sub_grp = hnae_get_field(qs_id, HCLGE_BP_SUB_GRP_ID_M,
-						 HCLGE_BP_SUB_GRP_ID_S);
+			grp = hnae3_get_field(qs_id, HCLGE_BP_GRP_ID_M,
+					      HCLGE_BP_GRP_ID_S);
+			sub_grp = hnae3_get_field(qs_id, HCLGE_BP_SUB_GRP_ID_M,
+						  HCLGE_BP_SUB_GRP_ID_S);
 			if (i == grp)
 				qs_bitmap |= (1 << sub_grp);
-
-			vport++;
 		}
 
 		ret = hclge_tm_qs_bp_cfg(hdev, tc, i, qs_bitmap);
@@ -1223,6 +1216,10 @@ static int hclge_mac_pause_setup_hw(struct hclge_dev *hdev)
 		tx_en = true;
 		rx_en = true;
 		break;
+	case HCLGE_FC_PFC:
+		tx_en = false;
+		rx_en = false;
+		break;
 	default:
 		tx_en = true;
 		rx_en = true;
@@ -1240,8 +1237,9 @@ int hclge_pause_setup_hw(struct hclge_dev *hdev)
 	if (ret)
 		return ret;
 
-	if (hdev->tm_info.fc_mode != HCLGE_FC_PFC)
-		return hclge_mac_pause_setup_hw(hdev);
+	ret = hclge_mac_pause_setup_hw(hdev);
+	if (ret)
+		return ret;
 
 	/* Only DCB-supported dev supports qset back pressure and pfc cmd */
 	if (!hnae3_dev_dcb_supported(hdev))
@@ -1261,15 +1259,13 @@ int hclge_pause_setup_hw(struct hclge_dev *hdev)
 	return 0;
 }
 
-int hclge_tm_prio_tc_info_update(struct hclge_dev *hdev, u8 *prio_tc)
+void hclge_tm_prio_tc_info_update(struct hclge_dev *hdev, u8 *prio_tc)
 {
 	struct hclge_vport *vport = hdev->vport;
 	struct hnae3_knic_private_info *kinfo;
 	u32 i, k;
 
 	for (i = 0; i < HNAE3_MAX_USER_PRIO; i++) {
-		if (prio_tc[i] >= hdev->tm_info.num_tc)
-			return -EINVAL;
 		hdev->tm_info.prio_tc[i] = prio_tc[i];
 
 		for (k = 0;  k < hdev->num_alloc_vport; k++) {
@@ -1277,7 +1273,6 @@ int hclge_tm_prio_tc_info_update(struct hclge_dev *hdev, u8 *prio_tc)
 			kinfo->prio_tc[i] = prio_tc[i];
 		}
 	}
-	return 0;
 }
 
 void hclge_tm_schd_info_update(struct hclge_dev *hdev, u8 num_tc)

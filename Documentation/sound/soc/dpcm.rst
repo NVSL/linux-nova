@@ -218,7 +218,7 @@ like a BT phone call :-
                       *           * <----DAI5-----> FM
                       *************
 
-This allows the host CPU to sleep whilst the DSP, MODEM DAI and the BT DAI are
+This allows the host CPU to sleep while the DSP, MODEM DAI and the BT DAI are
 still in operation.
 
 A BE DAI link can also set the codec to a dummy device if the code is a device
@@ -254,9 +254,7 @@ configuration.
 	channels->min = channels->max = 2;
 
 	/* set DAI0 to 16 bit */
-	snd_mask_set(&params->masks[SNDRV_PCM_HW_PARAM_FORMAT -
-				    SNDRV_PCM_HW_PARAM_FIRST_MASK],
-				    SNDRV_PCM_FORMAT_S16_LE);
+	params_set_format(params, SNDRV_PCM_FORMAT_S16_LE);
 	return 0;
   }
 

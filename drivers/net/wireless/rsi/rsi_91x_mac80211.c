@@ -416,7 +416,8 @@ static int rsi_mac80211_add_interface(struct ieee80211_hw *hw,
 
 	/* Get free vap index */
 	for (i = 0; i < RSI_MAX_VIFS; i++) {
-		if (!adapter->vifs[i]) {
+		if (!adapter->vifs[i] ||
+		    !memcmp(vif->addr, adapter->vifs[i]->addr, ETH_ALEN)) {
 			vap_idx = i;
 			break;
 		}
@@ -923,7 +924,7 @@ static int rsi_hal_key_config(struct ieee80211_hw *hw,
 	if (status)
 		return status;
 
-	if (vif->type == NL80211_IFTYPE_STATION && key->key &&
+	if (vif->type == NL80211_IFTYPE_STATION &&
 	    (key->cipher == WLAN_CIPHER_SUITE_WEP104 ||
 	     key->cipher == WLAN_CIPHER_SUITE_WEP40)) {
 		if (!rsi_send_block_unblock_frame(adapter->priv, false))

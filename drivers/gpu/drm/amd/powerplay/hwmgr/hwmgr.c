@@ -44,11 +44,13 @@ extern const struct pp_smumgr_func vegam_smu_funcs;
 extern const struct pp_smumgr_func vega10_smu_funcs;
 extern const struct pp_smumgr_func vega12_smu_funcs;
 extern const struct pp_smumgr_func smu10_smu_funcs;
+extern const struct pp_smumgr_func vega20_smu_funcs;
 
 extern int smu7_init_function_pointers(struct pp_hwmgr *hwmgr);
 extern int smu8_init_function_pointers(struct pp_hwmgr *hwmgr);
 extern int vega10_hwmgr_init(struct pp_hwmgr *hwmgr);
 extern int vega12_hwmgr_init(struct pp_hwmgr *hwmgr);
+extern int vega20_hwmgr_init(struct pp_hwmgr *hwmgr);
 extern int smu10_init_function_pointers(struct pp_hwmgr *hwmgr);
 
 static int polaris_set_asic_special_caps(struct pp_hwmgr *hwmgr);
@@ -62,17 +64,19 @@ static int ci_set_asic_special_caps(struct pp_hwmgr *hwmgr);
 
 static void hwmgr_init_workload_prority(struct pp_hwmgr *hwmgr)
 {
-	hwmgr->workload_prority[PP_SMC_POWER_PROFILE_FULLSCREEN3D] = 2;
-	hwmgr->workload_prority[PP_SMC_POWER_PROFILE_POWERSAVING] = 0;
-	hwmgr->workload_prority[PP_SMC_POWER_PROFILE_VIDEO] = 1;
-	hwmgr->workload_prority[PP_SMC_POWER_PROFILE_VR] = 3;
-	hwmgr->workload_prority[PP_SMC_POWER_PROFILE_COMPUTE] = 4;
+	hwmgr->workload_prority[PP_SMC_POWER_PROFILE_BOOTUP_DEFAULT] = 0;
+	hwmgr->workload_prority[PP_SMC_POWER_PROFILE_FULLSCREEN3D] = 1;
+	hwmgr->workload_prority[PP_SMC_POWER_PROFILE_POWERSAVING] = 2;
+	hwmgr->workload_prority[PP_SMC_POWER_PROFILE_VIDEO] = 3;
+	hwmgr->workload_prority[PP_SMC_POWER_PROFILE_VR] = 4;
+	hwmgr->workload_prority[PP_SMC_POWER_PROFILE_COMPUTE] = 5;
 
-	hwmgr->workload_setting[0] = PP_SMC_POWER_PROFILE_POWERSAVING;
-	hwmgr->workload_setting[1] = PP_SMC_POWER_PROFILE_VIDEO;
-	hwmgr->workload_setting[2] = PP_SMC_POWER_PROFILE_FULLSCREEN3D;
-	hwmgr->workload_setting[3] = PP_SMC_POWER_PROFILE_VR;
-	hwmgr->workload_setting[4] = PP_SMC_POWER_PROFILE_COMPUTE;
+	hwmgr->workload_setting[0] = PP_SMC_POWER_PROFILE_BOOTUP_DEFAULT;
+	hwmgr->workload_setting[1] = PP_SMC_POWER_PROFILE_FULLSCREEN3D;
+	hwmgr->workload_setting[2] = PP_SMC_POWER_PROFILE_POWERSAVING;
+	hwmgr->workload_setting[3] = PP_SMC_POWER_PROFILE_VIDEO;
+	hwmgr->workload_setting[4] = PP_SMC_POWER_PROFILE_VR;
+	hwmgr->workload_setting[5] = PP_SMC_POWER_PROFILE_COMPUTE;
 }
 
 int hwmgr_early_init(struct pp_hwmgr *hwmgr)
@@ -81,14 +85,12 @@ int hwmgr_early_init(struct pp_hwmgr *hwmgr)
 		return -EINVAL;
 
 	hwmgr->usec_timeout = AMD_MAX_USEC_TIMEOUT;
-	hwmgr->power_source = PP_PowerSource_AC;
 	hwmgr->pp_table_version = PP_TABLE_V1;
 	hwmgr->dpm_level = AMD_DPM_FORCED_LEVEL_AUTO;
 	hwmgr->request_dpm_level = AMD_DPM_FORCED_LEVEL_AUTO;
 	hwmgr_init_default_caps(hwmgr);
 	hwmgr_set_user_specify_caps(hwmgr);
 	hwmgr->fan_ctrl_is_in_default_mode = true;
-	hwmgr->reload_fw = 1;
 	hwmgr_init_workload_prority(hwmgr);
 
 	switch (hwmgr->chip_family) {
@@ -148,16 +150,20 @@ int hwmgr_early_init(struct pp_hwmgr *hwmgr)
 		smu7_init_function_pointers(hwmgr);
 		break;
 	case AMDGPU_FAMILY_AI:
-		hwmgr->feature_mask &= ~PP_GFXOFF_MASK;
 		switch (hwmgr->chip_id) {
 		case CHIP_VEGA10:
-		case CHIP_VEGA20:
+			hwmgr->feature_mask &= ~PP_GFXOFF_MASK;
 			hwmgr->smumgr_funcs = &vega10_smu_funcs;
 			vega10_hwmgr_init(hwmgr);
 			break;
 		case CHIP_VEGA12:
 			hwmgr->smumgr_funcs = &vega12_smu_funcs;
 			vega12_hwmgr_init(hwmgr);
+			break;
+		case CHIP_VEGA20:
+			hwmgr->feature_mask &= ~PP_GFXOFF_MASK;
+			hwmgr->smumgr_funcs = &vega20_smu_funcs;
+			vega20_hwmgr_init(hwmgr);
 			break;
 		default:
 			return -EINVAL;
@@ -204,17 +210,6 @@ int hwmgr_hw_init(struct pp_hwmgr *hwmgr)
 {
 	int ret = 0;
 
-	if (!hwmgr || !hwmgr->smumgr_funcs)
-		return -EINVAL;
-
-	if (hwmgr->smumgr_funcs->start_smu) {
-		ret = hwmgr->smumgr_funcs->start_smu(hwmgr);
-		if (ret) {
-			pr_err("smc start failed\n");
-			return -EINVAL;
-		}
-	}
-
 	if (!hwmgr->pm_en)
 		return 0;
 
@@ -236,6 +231,11 @@ int hwmgr_hw_init(struct pp_hwmgr *hwmgr)
 	ret = hwmgr->hwmgr_func->backend_init(hwmgr);
 	if (ret)
 		goto err1;
+ /* make sure dc limits are valid */
+	if ((hwmgr->dyn_state.max_clock_voltage_on_dc.sclk == 0) ||
+			(hwmgr->dyn_state.max_clock_voltage_on_dc.mclk == 0))
+			hwmgr->dyn_state.max_clock_voltage_on_dc =
+					hwmgr->dyn_state.max_clock_voltage_on_ac;
 
 	ret = psm_init_power_state_table(hwmgr);
 	if (ret)
@@ -310,13 +310,6 @@ int hwmgr_resume(struct pp_hwmgr *hwmgr)
 	if (!hwmgr)
 		return -EINVAL;
 
-	if (hwmgr->smumgr_funcs && hwmgr->smumgr_funcs->start_smu) {
-		if (hwmgr->smumgr_funcs->start_smu(hwmgr)) {
-			pr_err("smc start failed\n");
-			return -EINVAL;
-		}
-	}
-
 	if (!hwmgr->pm_en)
 		return 0;
 
@@ -361,6 +354,9 @@ int hwmgr_handle_task(struct pp_hwmgr *hwmgr, enum amd_pp_task task_id,
 
 	switch (task_id) {
 	case AMD_PP_TASK_DISPLAY_CONFIG_CHANGE:
+		ret = phm_pre_display_configuration_changed(hwmgr);
+		if (ret)
+			return ret;
 		ret = phm_set_cpu_power_state(hwmgr);
 		if (ret)
 			return ret;

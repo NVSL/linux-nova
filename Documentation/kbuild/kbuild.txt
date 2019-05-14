@@ -50,6 +50,22 @@ LDFLAGS_MODULE
 --------------------------------------------------
 Additional options used for $(LD) when linking modules.
 
+HOSTCFLAGS
+--------------------------------------------------
+Additional flags to be passed to $(HOSTCC) when building host programs.
+
+HOSTCXXFLAGS
+--------------------------------------------------
+Additional flags to be passed to $(HOSTCXX) when building host programs.
+
+HOSTLDFLAGS
+--------------------------------------------------
+Additional flags to be passed when linking host programs.
+
+HOSTLDLIBS
+--------------------------------------------------
+Additional libraries to link against when building host programs.
+
 KBUILD_KCONFIG
 --------------------------------------------------
 Set the top-level Kconfig file to the value of this environment
@@ -65,12 +81,7 @@ KBUILD_EXTMOD
 --------------------------------------------------
 Set the directory to look for the kernel source when building external
 modules.
-The directory can be specified in several ways:
-1) Use "M=..." on the command line
-2) Environment variable KBUILD_EXTMOD
-3) Environment variable SUBDIRS
-The possibilities are listed in the order they take precedence.
-Using "M=..." will always override the others.
+Setting "M=..." takes precedence over KBUILD_EXTMOD.
 
 KBUILD_OUTPUT
 --------------------------------------------------

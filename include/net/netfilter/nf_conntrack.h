@@ -27,18 +27,28 @@
 
 #include <net/netfilter/nf_conntrack_tuple.h>
 
+struct nf_ct_udp {
+	unsigned long	stream_ts;
+};
+
 /* per conntrack: protocol private data */
 union nf_conntrack_proto {
 	/* insert conntrack proto private data here */
 	struct nf_ct_dccp dccp;
 	struct ip_ct_sctp sctp;
 	struct ip_ct_tcp tcp;
+	struct nf_ct_udp udp;
 	struct nf_ct_gre gre;
 	unsigned int tmpl_padto;
 };
 
 union nf_conntrack_expect_proto {
 	/* insert expect proto private data here */
+};
+
+struct nf_conntrack_net {
+	unsigned int users4;
+	unsigned int users6;
 };
 
 #include <linux/types.h>
@@ -170,8 +180,6 @@ void nf_ct_netns_put(struct net *net, u8 nfproto);
  * or hlist_nulls_head (if nulls == 1)
  */
 void *nf_ct_alloc_hashtable(unsigned int *sizep, int nulls);
-
-void nf_ct_free_hashtable(void *hash, unsigned int size);
 
 int nf_conntrack_hash_check_insert(struct nf_conn *ct);
 bool nf_ct_delete(struct nf_conn *ct, u32 pid, int report);

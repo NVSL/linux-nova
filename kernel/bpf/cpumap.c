@@ -183,7 +183,7 @@ static struct sk_buff *cpu_map_build_skb(struct bpf_cpu_map_entry *rcpu,
 	 * is not at a fixed memory location, with mixed length
 	 * packets, which is bad for cache-line hotness.
 	 */
-	frame_size = SKB_DATA_ALIGN(xdpf->len) + xdpf->headroom +
+	frame_size = SKB_DATA_ALIGN(xdpf->len + xdpf->headroom) +
 		SKB_DATA_ALIGN(sizeof(struct skb_shared_info));
 
 	pkt_data_start = xdpf->data - xdpf->headroom;
@@ -479,6 +479,8 @@ static void cpu_map_free(struct bpf_map *map)
 	 * It does __not__ ensure pending flush operations (if any) are
 	 * complete.
 	 */
+
+	bpf_clear_redirect_map(map);
 	synchronize_rcu();
 
 	/* To ensure all pending flush operations have completed wait for flush
@@ -555,6 +557,7 @@ const struct bpf_map_ops cpu_map_ops = {
 	.map_update_elem	= cpu_map_update_elem,
 	.map_lookup_elem	= cpu_map_lookup_elem,
 	.map_get_next_key	= cpu_map_get_next_key,
+	.map_check_btf		= map_check_no_btf,
 };
 
 static int bq_flush_to_queue(struct bpf_cpu_map_entry *rcpu,

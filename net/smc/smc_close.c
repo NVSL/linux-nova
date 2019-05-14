@@ -100,15 +100,14 @@ static void smc_close_active_abort(struct smc_sock *smc)
 	struct smc_cdc_conn_state_flags *txflags =
 		&smc->conn.local_tx_ctrl.conn_state_flags;
 
-	sk->sk_err = ECONNABORTED;
-	if (smc->clcsock && smc->clcsock->sk) {
-		smc->clcsock->sk->sk_err = ECONNABORTED;
-		smc->clcsock->sk->sk_state_change(smc->clcsock->sk);
+	if (sk->sk_state != SMC_INIT && smc->clcsock && smc->clcsock->sk) {
+		sk->sk_err = ECONNABORTED;
+		if (smc->clcsock && smc->clcsock->sk) {
+			smc->clcsock->sk->sk_err = ECONNABORTED;
+			smc->clcsock->sk->sk_state_change(smc->clcsock->sk);
+		}
 	}
 	switch (sk->sk_state) {
-	case SMC_INIT:
-		sk->sk_state = SMC_PEERABORTWAIT;
-		break;
 	case SMC_ACTIVE:
 		sk->sk_state = SMC_PEERABORTWAIT;
 		release_sock(sk);
@@ -143,6 +142,7 @@ static void smc_close_active_abort(struct smc_sock *smc)
 	case SMC_PEERFINCLOSEWAIT:
 		sock_put(sk); /* passive closing */
 		break;
+	case SMC_INIT:
 	case SMC_PEERABORTWAIT:
 	case SMC_CLOSED:
 		break;
@@ -345,14 +345,7 @@ static void smc_close_passive_work(struct work_struct *work)
 
 	switch (sk->sk_state) {
 	case SMC_INIT:
-		if (atomic_read(&conn->bytes_to_rcv) ||
-		    (rxflags->peer_done_writing &&
-		     !smc_cdc_rxed_any_close(conn))) {
-			sk->sk_state = SMC_APPCLOSEWAIT1;
-		} else {
-			sk->sk_state = SMC_CLOSED;
-			sock_put(sk); /* passive closing */
-		}
+		sk->sk_state = SMC_APPCLOSEWAIT1;
 		break;
 	case SMC_ACTIVE:
 		sk->sk_state = SMC_APPCLOSEWAIT1;

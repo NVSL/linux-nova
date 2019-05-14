@@ -32,6 +32,7 @@ struct netns_sysctl_ipv6 {
 	int flowlabel_consistency;
 	int auto_flowlabels;
 	int icmpv6_time;
+	int icmpv6_echo_ignore_all;
 	int anycast_src_echo_reply;
 	int ip_nonlocal_bind;
 	int fwmark_reflect;
@@ -44,6 +45,7 @@ struct netns_sysctl_ipv6 {
 	int max_dst_opts_len;
 	int max_hbh_opts_len;
 	int seg6_flowlabel;
+	bool skip_notify_on_dev_down;
 };
 
 struct netns_ipv6 {

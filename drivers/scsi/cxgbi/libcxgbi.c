@@ -573,6 +573,7 @@ static struct cxgbi_sock *cxgbi_sock_create(struct cxgbi_device *cdev)
 	skb_queue_head_init(&csk->receive_queue);
 	skb_queue_head_init(&csk->write_queue);
 	timer_setup(&csk->retry_timer, NULL, 0);
+	init_completion(&csk->cmpl);
 	rwlock_init(&csk->callback_lock);
 	csk->cdev = cdev;
 	csk->flags = 0;
@@ -784,7 +785,8 @@ cxgbi_check_route6(struct sockaddr *dst_addr, int ifindex)
 	csk->mtu = mtu;
 	csk->dst = dst;
 
-	if (ipv6_addr_any(&rt->rt6i_prefsrc.addr)) {
+	rt6_get_prefsrc(rt, &pref_saddr);
+	if (ipv6_addr_any(&pref_saddr)) {
 		struct inet6_dev *idev = ip6_dst_idev((struct dst_entry *)rt);
 
 		err = ipv6_dev_get_saddr(&init_net, idev ? idev->dev : NULL,
@@ -794,8 +796,6 @@ cxgbi_check_route6(struct sockaddr *dst_addr, int ifindex)
 				&daddr6->sin6_addr);
 			goto rel_rt;
 		}
-	} else {
-		pref_saddr = rt->rt6i_prefsrc.addr;
 	}
 
 	csk->csk_family = AF_INET6;
@@ -2252,14 +2252,14 @@ int cxgbi_set_conn_param(struct iscsi_cls_conn *cls_conn,
 		if (!err && conn->hdrdgst_en)
 			err = csk->cdev->csk_ddp_setup_digest(csk, csk->tid,
 							conn->hdrdgst_en,
-							conn->datadgst_en, 0);
+							conn->datadgst_en);
 		break;
 	case ISCSI_PARAM_DATADGST_EN:
 		err = iscsi_set_param(cls_conn, param, buf, buflen);
 		if (!err && conn->datadgst_en)
 			err = csk->cdev->csk_ddp_setup_digest(csk, csk->tid,
 							conn->hdrdgst_en,
-							conn->datadgst_en, 0);
+							conn->datadgst_en);
 		break;
 	case ISCSI_PARAM_MAX_R2T:
 		return iscsi_tcp_set_max_r2t(conn, buf);
@@ -2385,7 +2385,7 @@ int cxgbi_bind_conn(struct iscsi_cls_session *cls_session,
 
 	ppm = csk->cdev->cdev2ppm(csk->cdev);
 	err = csk->cdev->csk_ddp_setup_pgidx(csk, csk->tid,
-					     ppm->tformat.pgsz_idx_dflt, 0);
+					     ppm->tformat.pgsz_idx_dflt);
 	if (err < 0)
 		return err;
 

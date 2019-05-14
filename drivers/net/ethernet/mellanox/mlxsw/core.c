@@ -1,38 +1,5 @@
-/*
- * drivers/net/ethernet/mellanox/mlxsw/core.c
- * Copyright (c) 2015 Mellanox Technologies. All rights reserved.
- * Copyright (c) 2015 Jiri Pirko <jiri@mellanox.com>
- * Copyright (c) 2015 Ido Schimmel <idosch@mellanox.com>
- * Copyright (c) 2015 Elad Raz <eladr@mellanox.com>
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- * 3. Neither the names of the copyright holders nor the names of its
- *    contributors may be used to endorse or promote products derived from
- *    this software without specific prior written permission.
- *
- * Alternatively, this software may be distributed under the terms of the
- * GNU General Public License ("GPL") version 2 as published by the Free
- * Software Foundation.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
- */
+// SPDX-License-Identifier: BSD-3-Clause OR GPL-2.0
+/* Copyright (c) 2015-2018 Mellanox Technologies. All rights reserved */
 
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -114,6 +81,7 @@ struct mlxsw_core {
 	struct mlxsw_core_port *ports;
 	unsigned int max_ports;
 	bool reload_fail;
+	bool fw_flash_in_progress;
 	unsigned long driver_priv[0];
 	/* driver_priv has to be always the last item */
 };
@@ -461,11 +429,15 @@ struct mlxsw_reg_trans {
 	struct rcu_head rcu;
 };
 
-#define MLXSW_EMAD_TIMEOUT_MS 200
+#define MLXSW_EMAD_TIMEOUT_DURING_FW_FLASH_MS	3000
+#define MLXSW_EMAD_TIMEOUT_MS			200
 
 static void mlxsw_emad_trans_timeout_schedule(struct mlxsw_reg_trans *trans)
 {
 	unsigned long timeout = msecs_to_jiffies(MLXSW_EMAD_TIMEOUT_MS);
+
+	if (trans->core->fw_flash_in_progress)
+		timeout = msecs_to_jiffies(MLXSW_EMAD_TIMEOUT_DURING_FW_FLASH_MS);
 
 	queue_delayed_work(trans->core->emad_wq, &trans->timeout_dw, timeout);
 }
@@ -759,15 +731,6 @@ static struct mlxsw_driver *mlxsw_core_driver_get(const char *kind)
 	return mlxsw_driver;
 }
 
-static void mlxsw_core_driver_put(const char *kind)
-{
-	struct mlxsw_driver *mlxsw_driver;
-
-	spin_lock(&mlxsw_core_driver_list_lock);
-	mlxsw_driver = __driver_find(kind);
-	spin_unlock(&mlxsw_core_driver_list_lock);
-}
-
 static int mlxsw_devlink_port_split(struct devlink *devlink,
 				    unsigned int port_index,
 				    unsigned int count,
@@ -985,8 +948,8 @@ static int mlxsw_devlink_core_bus_device_reload(struct devlink *devlink,
 					     mlxsw_core->bus,
 					     mlxsw_core->bus_priv, true,
 					     devlink);
-	if (err)
-		mlxsw_core->reload_fail = true;
+	mlxsw_core->reload_fail = !!err;
+
 	return err;
 }
 
@@ -1007,10 +970,11 @@ static const struct devlink_ops mlxsw_devlink_ops = {
 	.sb_occ_tc_port_bind_get	= mlxsw_devlink_sb_occ_tc_port_bind_get,
 };
 
-int mlxsw_core_bus_device_register(const struct mlxsw_bus_info *mlxsw_bus_info,
-				   const struct mlxsw_bus *mlxsw_bus,
-				   void *bus_priv, bool reload,
-				   struct devlink *devlink)
+static int
+__mlxsw_core_bus_device_register(const struct mlxsw_bus_info *mlxsw_bus_info,
+				 const struct mlxsw_bus *mlxsw_bus,
+				 void *bus_priv, bool reload,
+				 struct devlink *devlink)
 {
 	const char *device_kind = mlxsw_bus_info->device_kind;
 	struct mlxsw_core *mlxsw_core;
@@ -1077,6 +1041,12 @@ int mlxsw_core_bus_device_register(const struct mlxsw_bus_info *mlxsw_bus_info,
 			goto err_devlink_register;
 	}
 
+	if (mlxsw_driver->params_register && !reload) {
+		err = mlxsw_driver->params_register(mlxsw_core);
+		if (err)
+			goto err_register_params;
+	}
+
 	err = mlxsw_hwmon_init(mlxsw_core, mlxsw_bus_info, &mlxsw_core->hwmon);
 	if (err)
 		goto err_hwmon_init;
@@ -1097,7 +1067,11 @@ int mlxsw_core_bus_device_register(const struct mlxsw_bus_info *mlxsw_bus_info,
 err_driver_init:
 	mlxsw_thermal_fini(mlxsw_core->thermal);
 err_thermal_init:
+	mlxsw_hwmon_fini(mlxsw_core->hwmon);
 err_hwmon_init:
+	if (mlxsw_driver->params_unregister && !reload)
+		mlxsw_driver->params_unregister(mlxsw_core);
+err_register_params:
 	if (!reload)
 		devlink_unregister(devlink);
 err_devlink_register:
@@ -1115,7 +1089,29 @@ err_bus_init:
 	if (!reload)
 		devlink_free(devlink);
 err_devlink_alloc:
-	mlxsw_core_driver_put(device_kind);
+	return err;
+}
+
+int mlxsw_core_bus_device_register(const struct mlxsw_bus_info *mlxsw_bus_info,
+				   const struct mlxsw_bus *mlxsw_bus,
+				   void *bus_priv, bool reload,
+				   struct devlink *devlink)
+{
+	bool called_again = false;
+	int err;
+
+again:
+	err = __mlxsw_core_bus_device_register(mlxsw_bus_info, mlxsw_bus,
+					       bus_priv, reload, devlink);
+	/* -EAGAIN is returned in case the FW was updated. FW needs
+	 * a reset, so lets try to call __mlxsw_core_bus_device_register()
+	 * again.
+	 */
+	if (err == -EAGAIN && !called_again) {
+		called_again = true;
+		goto again;
+	}
+
 	return err;
 }
 EXPORT_SYMBOL(mlxsw_core_bus_device_register);
@@ -1123,15 +1119,24 @@ EXPORT_SYMBOL(mlxsw_core_bus_device_register);
 void mlxsw_core_bus_device_unregister(struct mlxsw_core *mlxsw_core,
 				      bool reload)
 {
-	const char *device_kind = mlxsw_core->bus_info->device_kind;
 	struct devlink *devlink = priv_to_devlink(mlxsw_core);
 
-	if (mlxsw_core->reload_fail)
-		goto reload_fail;
+	if (mlxsw_core->reload_fail) {
+		if (!reload)
+			/* Only the parts that were not de-initialized in the
+			 * failed reload attempt need to be de-initialized.
+			 */
+			goto reload_fail_deinit;
+		else
+			return;
+	}
 
 	if (mlxsw_core->driver->fini)
 		mlxsw_core->driver->fini(mlxsw_core);
 	mlxsw_thermal_fini(mlxsw_core->thermal);
+	mlxsw_hwmon_fini(mlxsw_core->hwmon);
+	if (mlxsw_core->driver->params_unregister && !reload)
+		mlxsw_core->driver->params_unregister(mlxsw_core);
 	if (!reload)
 		devlink_unregister(devlink);
 	mlxsw_emad_fini(mlxsw_core);
@@ -1140,11 +1145,15 @@ void mlxsw_core_bus_device_unregister(struct mlxsw_core *mlxsw_core,
 	if (!reload)
 		devlink_resources_unregister(devlink, NULL);
 	mlxsw_core->bus->fini(mlxsw_core->bus_priv);
-	if (reload)
-		return;
-reload_fail:
+
+	return;
+
+reload_fail_deinit:
+	if (mlxsw_core->driver->params_unregister)
+		mlxsw_core->driver->params_unregister(mlxsw_core);
+	devlink_unregister(devlink);
+	devlink_resources_unregister(devlink, NULL);
 	devlink_free(devlink);
-	mlxsw_core_driver_put(device_kind);
 }
 EXPORT_SYMBOL(mlxsw_core_bus_device_unregister);
 
@@ -1886,6 +1895,18 @@ int mlxsw_core_kvd_sizes_get(struct mlxsw_core *mlxsw_core,
 				     p_linear_size);
 }
 EXPORT_SYMBOL(mlxsw_core_kvd_sizes_get);
+
+void mlxsw_core_fw_flash_start(struct mlxsw_core *mlxsw_core)
+{
+	mlxsw_core->fw_flash_in_progress = true;
+}
+EXPORT_SYMBOL(mlxsw_core_fw_flash_start);
+
+void mlxsw_core_fw_flash_end(struct mlxsw_core *mlxsw_core)
+{
+	mlxsw_core->fw_flash_in_progress = false;
+}
+EXPORT_SYMBOL(mlxsw_core_fw_flash_end);
 
 static int __init mlxsw_core_module_init(void)
 {

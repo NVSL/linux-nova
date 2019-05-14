@@ -1,34 +1,6 @@
-/*
- * drivers/net/ethernet/mellanox/mlxsw/core_thermal.c
+// SPDX-License-Identifier: BSD-3-Clause OR GPL-2.0
+/* Copyright (c) 2016-2018 Mellanox Technologies. All rights reserved
  * Copyright (c) 2016 Ivan Vecera <cera@cera.cz>
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- * 3. Neither the names of the copyright holders nor the names of its
- *    contributors may be used to endorse or promote products derived from
- *    this software without specific prior written permission.
- *
- * Alternatively, this software may be distributed under the terms of the
- * GNU General Public License ("GPL") version 2 as published by the Free
- * Software Foundation.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
  */
 
 #include <linux/kernel.h>
@@ -44,6 +16,15 @@
 #define MLXSW_THERMAL_MAX_TEMP	110000	/* 110C */
 #define MLXSW_THERMAL_MAX_STATE	10
 #define MLXSW_THERMAL_MAX_DUTY	255
+/* Minimum and maximum fan allowed speed in percent: from 20% to 100%. Values
+ * MLXSW_THERMAL_MAX_STATE + x, where x is between 2 and 10 are used for
+ * setting fan speed dynamic minimum. For example, if value is set to 14 (40%)
+ * cooling levels vector will be set to 4, 4, 4, 4, 4, 5, 6, 7, 8, 9, 10 to
+ * introduce PWM speed in percent: 40, 40, 40, 40, 40, 50, 60. 70, 80, 90, 100.
+ */
+#define MLXSW_THERMAL_SPEED_MIN		(MLXSW_THERMAL_MAX_STATE + 2)
+#define MLXSW_THERMAL_SPEED_MAX		(MLXSW_THERMAL_MAX_STATE * 2)
+#define MLXSW_THERMAL_SPEED_MIN_LEVEL	2		/* 20% */
 
 struct mlxsw_thermal_trip {
 	int	type;
@@ -96,6 +77,7 @@ struct mlxsw_thermal {
 	const struct mlxsw_bus_info *bus_info;
 	struct thermal_zone_device *tzdev;
 	struct thermal_cooling_device *cdevs[MLXSW_MFCR_PWMS_MAX];
+	u8 cooling_levels[MLXSW_THERMAL_MAX_STATE + 1];
 	struct mlxsw_thermal_trip trips[MLXSW_THERMAL_NUM_TRIPS];
 	enum thermal_device_mode mode;
 };
@@ -313,12 +295,51 @@ static int mlxsw_thermal_set_cur_state(struct thermal_cooling_device *cdev,
 	struct mlxsw_thermal *thermal = cdev->devdata;
 	struct device *dev = thermal->bus_info->dev;
 	char mfsc_pl[MLXSW_REG_MFSC_LEN];
-	int err, idx;
+	unsigned long cur_state, i;
+	int idx;
+	u8 duty;
+	int err;
 
 	idx = mlxsw_get_cooling_device_idx(thermal, cdev);
 	if (idx < 0)
 		return idx;
 
+	/* Verify if this request is for changing allowed fan dynamical
+	 * minimum. If it is - update cooling levels accordingly and update
+	 * state, if current state is below the newly requested minimum state.
+	 * For example, if current state is 5, and minimal state is to be
+	 * changed from 4 to 6, thermal->cooling_levels[0 to 5] will be changed
+	 * all from 4 to 6. And state 5 (thermal->cooling_levels[4]) should be
+	 * overwritten.
+	 */
+	if (state >= MLXSW_THERMAL_SPEED_MIN &&
+	    state <= MLXSW_THERMAL_SPEED_MAX) {
+		state -= MLXSW_THERMAL_MAX_STATE;
+		for (i = 0; i <= MLXSW_THERMAL_MAX_STATE; i++)
+			thermal->cooling_levels[i] = max(state, i);
+
+		mlxsw_reg_mfsc_pack(mfsc_pl, idx, 0);
+		err = mlxsw_reg_query(thermal->core, MLXSW_REG(mfsc), mfsc_pl);
+		if (err)
+			return err;
+
+		duty = mlxsw_reg_mfsc_pwm_duty_cycle_get(mfsc_pl);
+		cur_state = mlxsw_duty_to_state(duty);
+
+		/* If current fan state is lower than requested dynamical
+		 * minimum, increase fan speed up to dynamical minimum.
+		 */
+		if (state < cur_state)
+			return 0;
+
+		state = cur_state;
+	}
+
+	if (state > MLXSW_THERMAL_MAX_STATE)
+		return -EINVAL;
+
+	/* Normalize the state to the valid speed range. */
+	state = thermal->cooling_levels[state];
 	mlxsw_reg_mfsc_pack(mfsc_pl, idx, mlxsw_state_to_duty(state));
 	err = mlxsw_reg_write(thermal->core, MLXSW_REG(mfsc), mfsc_pl);
 	if (err) {
@@ -396,6 +417,11 @@ int mlxsw_thermal_init(struct mlxsw_core *core,
 			thermal->cdevs[i] = cdev;
 		}
 	}
+
+	/* Initialize cooling levels per PWM state. */
+	for (i = 0; i < MLXSW_THERMAL_MAX_STATE; i++)
+		thermal->cooling_levels[i] = max(MLXSW_THERMAL_SPEED_MIN_LEVEL,
+						 i);
 
 	thermal->tzdev = thermal_zone_device_register("mlxsw",
 						      MLXSW_THERMAL_NUM_TRIPS,

@@ -41,6 +41,7 @@ enum as_signal_type {
 	AS_SIGNAL_TYPE_LVDS,
 	AS_SIGNAL_TYPE_DISPLAY_PORT,
 	AS_SIGNAL_TYPE_GPU_PLL,
+	AS_SIGNAL_TYPE_XGMI,
 	AS_SIGNAL_TYPE_UNKNOWN
 };
 
@@ -234,6 +235,8 @@ struct bp_pixel_clock_parameters {
 		uint32_t USE_E_CLOCK_AS_SOURCE_FOR_D_CLOCK:1;
 		/* Use external reference clock (refDivSrc for PLL) */
 		uint32_t SET_EXTERNAL_REF_DIV_SRC:1;
+		/* Use DFS bypass for Display clock. */
+		uint32_t SET_DISPCLK_DFS_BYPASS:1;
 		/* Force program PHY PLL only */
 		uint32_t PROGRAM_PHY_PLL_ONLY:1;
 		/* Support for YUV420 */

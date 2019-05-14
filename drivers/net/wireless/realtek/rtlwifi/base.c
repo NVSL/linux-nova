@@ -1907,7 +1907,7 @@ void rtl_rx_ampdu_apply(struct rtl_priv *rtlpriv)
 		 reject_agg, ctrl_agg_size, agg_size);
 
 	rtlpriv->hw->max_rx_aggregation_subframes =
-		(ctrl_agg_size ? agg_size : IEEE80211_MAX_AMPDU_BUF);
+		(ctrl_agg_size ? agg_size : IEEE80211_MAX_AMPDU_BUF_HT);
 }
 EXPORT_SYMBOL(rtl_rx_ampdu_apply);
 
@@ -2289,6 +2289,7 @@ void rtl_c2hcmd_enqueue(struct ieee80211_hw *hw, struct sk_buff *skb)
 
 	if (rtl_c2h_fast_cmd(hw, skb)) {
 		rtl_c2h_content_parsing(hw, skb);
+		kfree_skb(skb);
 		return;
 	}
 

@@ -52,7 +52,7 @@ static DECLARE_DELAYED_WORK(klp_transition_work, klp_transition_work_fn);
 
 /*
  * This function is just a stub to implement a hard force
- * of synchronize_sched(). This requires synchronizing
+ * of synchronize_rcu(). This requires synchronizing
  * tasks even in userspace and idle.
  */
 static void klp_sync(struct work_struct *work)
@@ -175,7 +175,7 @@ void klp_cancel_transition(void)
 void klp_update_patch_state(struct task_struct *task)
 {
 	/*
-	 * A variant of synchronize_sched() is used to allow patching functions
+	 * A variant of synchronize_rcu() is used to allow patching functions
 	 * where RCU is not watching, see klp_synchronize_transition().
 	 */
 	preempt_disable_notrace();
@@ -308,13 +308,6 @@ static bool klp_try_switch_task(struct task_struct *task)
 	/* check if this task has already switched over */
 	if (task->patch_state == klp_target_state)
 		return true;
-
-	/*
-	 * For arches which don't have reliable stack traces, we have to rely
-	 * on other methods (e.g., switching tasks at kernel exit).
-	 */
-	if (!klp_have_reliable_stack())
-		return false;
 
 	/*
 	 * Now try to check the stack for any to-be-patched or to-be-unpatched

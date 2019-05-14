@@ -128,7 +128,7 @@ static void unref_cursor_worker(struct drm_flip_work *work, void *val)
 	struct mdp4_kms *mdp4_kms = get_kms(&mdp4_crtc->base);
 	struct msm_kms *kms = &mdp4_kms->base.base;
 
-	msm_gem_put_iova(val, kms->aspace);
+	msm_gem_unpin_iova(val, kms->aspace);
 	drm_gem_object_put_unlocked(val);
 }
 
@@ -201,7 +201,7 @@ static void blend_setup(struct drm_crtc *crtc)
 		int idx = idxs[pipe_id];
 		if (idx > 0) {
 			const struct mdp_format *format =
-					to_mdp_format(msm_framebuffer_format(plane->fb));
+					to_mdp_format(msm_framebuffer_format(plane->state->fb));
 			alpha[idx-1] = format->alpha_enable;
 		}
 	}
@@ -384,7 +384,7 @@ static void update_cursor(struct drm_crtc *crtc)
 		if (next_bo) {
 			/* take a obj ref + iova ref when we start scanning out: */
 			drm_gem_object_get(next_bo);
-			msm_gem_get_iova(next_bo, kms->aspace, &iova);
+			msm_gem_get_and_pin_iova(next_bo, kms->aspace, &iova);
 
 			/* enable cursor: */
 			mdp4_write(mdp4_kms, REG_MDP4_DMA_CURSOR_SIZE(dma),
@@ -429,7 +429,7 @@ static int mdp4_crtc_cursor_set(struct drm_crtc *crtc,
 	int ret;
 
 	if ((width > CURSOR_WIDTH) || (height > CURSOR_HEIGHT)) {
-		dev_err(dev->dev, "bad cursor size: %dx%d\n", width, height);
+		DRM_DEV_ERROR(dev->dev, "bad cursor size: %dx%d\n", width, height);
 		return -EINVAL;
 	}
 
@@ -442,7 +442,7 @@ static int mdp4_crtc_cursor_set(struct drm_crtc *crtc,
 	}
 
 	if (cursor_bo) {
-		ret = msm_gem_get_iova(cursor_bo, kms->aspace, &iova);
+		ret = msm_gem_get_and_pin_iova(cursor_bo, kms->aspace, &iova);
 		if (ret)
 			goto fail;
 	} else {
@@ -665,7 +665,6 @@ struct drm_crtc *mdp4_crtc_init(struct drm_device *dev,
 	drm_crtc_init_with_planes(dev, crtc, plane, NULL, &mdp4_crtc_funcs,
 				  NULL);
 	drm_crtc_helper_add(crtc, &mdp4_crtc_helper_funcs);
-	plane->crtc = crtc;
 
 	return crtc;
 }

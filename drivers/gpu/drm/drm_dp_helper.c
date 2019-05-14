@@ -185,6 +185,20 @@ EXPORT_SYMBOL(drm_dp_bw_code_to_link_rate);
 
 #define AUX_RETRY_INTERVAL 500 /* us */
 
+static inline void
+drm_dp_dump_access(const struct drm_dp_aux *aux,
+		   u8 request, uint offset, void *buffer, int ret)
+{
+	const char *arrow = request == DP_AUX_NATIVE_READ ? "->" : "<-";
+
+	if (ret > 0)
+		drm_dbg(DRM_UT_DP, "%s: 0x%05x AUX %s (ret=%3d) %*ph\n",
+			aux->name, offset, arrow, ret, min(ret, 20), buffer);
+	else
+		drm_dbg(DRM_UT_DP, "%s: 0x%05x AUX %s (ret=%3d)\n",
+			aux->name, offset, arrow, ret);
+}
+
 /**
  * DOC: dp helpers
  *
@@ -288,10 +302,14 @@ ssize_t drm_dp_dpcd_read(struct drm_dp_aux *aux, unsigned int offset,
 	ret = drm_dp_dpcd_access(aux, DP_AUX_NATIVE_READ, DP_DPCD_REV, buffer,
 				 1);
 	if (ret != 1)
-		return ret;
+		goto out;
 
-	return drm_dp_dpcd_access(aux, DP_AUX_NATIVE_READ, offset, buffer,
-				  size);
+	ret = drm_dp_dpcd_access(aux, DP_AUX_NATIVE_READ, offset, buffer,
+				 size);
+
+out:
+	drm_dp_dump_access(aux, DP_AUX_NATIVE_READ, offset, buffer, ret);
+	return ret;
 }
 EXPORT_SYMBOL(drm_dp_dpcd_read);
 
@@ -312,8 +330,12 @@ EXPORT_SYMBOL(drm_dp_dpcd_read);
 ssize_t drm_dp_dpcd_write(struct drm_dp_aux *aux, unsigned int offset,
 			  void *buffer, size_t size)
 {
-	return drm_dp_dpcd_access(aux, DP_AUX_NATIVE_WRITE, offset, buffer,
-				  size);
+	int ret;
+
+	ret = drm_dp_dpcd_access(aux, DP_AUX_NATIVE_WRITE, offset, buffer,
+				 size);
+	drm_dp_dump_access(aux, DP_AUX_NATIVE_WRITE, offset, buffer, ret);
+	return ret;
 }
 EXPORT_SYMBOL(drm_dp_dpcd_write);
 
@@ -828,7 +850,8 @@ static int drm_dp_i2c_do_msg(struct drm_dp_aux *aux, struct drm_dp_aux_msg *msg)
 			return ret;
 
 		case DP_AUX_I2C_REPLY_NACK:
-			DRM_DEBUG_KMS("I2C nack (result=%d, size=%zu\n", ret, msg->size);
+			DRM_DEBUG_KMS("I2C nack (result=%d, size=%zu)\n",
+				      ret, msg->size);
 			aux->i2c_nack_count++;
 			return -EREMOTEIO;
 
@@ -1087,6 +1110,7 @@ static void drm_dp_aux_crc_work(struct work_struct *work)
 void drm_dp_aux_init(struct drm_dp_aux *aux)
 {
 	mutex_init(&aux->hw_mutex);
+	mutex_init(&aux->cec.lock);
 	INIT_WORK(&aux->crc_work, drm_dp_aux_crc_work);
 
 	aux->ddc.algo = &drm_dp_i2c_algo;
@@ -1233,15 +1257,24 @@ EXPORT_SYMBOL(drm_dp_stop_crc);
 
 struct dpcd_quirk {
 	u8 oui[3];
+	u8 device_id[6];
 	bool is_branch;
 	u32 quirks;
 };
 
 #define OUI(first, second, third) { (first), (second), (third) }
+#define DEVICE_ID(first, second, third, fourth, fifth, sixth) \
+	{ (first), (second), (third), (fourth), (fifth), (sixth) }
+
+#define DEVICE_ID_ANY	DEVICE_ID(0, 0, 0, 0, 0, 0)
 
 static const struct dpcd_quirk dpcd_quirk_list[] = {
 	/* Analogix 7737 needs reduced M and N at HBR2 link rates */
-	{ OUI(0x00, 0x22, 0xb9), true, BIT(DP_DPCD_QUIRK_LIMITED_M_N) },
+	{ OUI(0x00, 0x22, 0xb9), DEVICE_ID_ANY, true, BIT(DP_DPCD_QUIRK_CONSTANT_N) },
+	/* LG LP140WF6-SPM1 eDP panel */
+	{ OUI(0x00, 0x22, 0xb9), DEVICE_ID('s', 'i', 'v', 'a', 'r', 'T'), false, BIT(DP_DPCD_QUIRK_CONSTANT_N) },
+	/* Apple panels need some additional handling to support PSR */
+	{ OUI(0x00, 0x10, 0xfa), DEVICE_ID_ANY, false, BIT(DP_DPCD_QUIRK_NO_PSR) }
 };
 
 #undef OUI
@@ -1260,6 +1293,7 @@ drm_dp_get_quirks(const struct drm_dp_dpcd_ident *ident, bool is_branch)
 	const struct dpcd_quirk *quirk;
 	u32 quirks = 0;
 	int i;
+	u8 any_device[] = DEVICE_ID_ANY;
 
 	for (i = 0; i < ARRAY_SIZE(dpcd_quirk_list); i++) {
 		quirk = &dpcd_quirk_list[i];
@@ -1270,11 +1304,18 @@ drm_dp_get_quirks(const struct drm_dp_dpcd_ident *ident, bool is_branch)
 		if (memcmp(quirk->oui, ident->oui, sizeof(ident->oui)) != 0)
 			continue;
 
+		if (memcmp(quirk->device_id, any_device, sizeof(any_device)) != 0 &&
+		    memcmp(quirk->device_id, ident->device_id, sizeof(ident->device_id)) != 0)
+			continue;
+
 		quirks |= quirk->quirks;
 	}
 
 	return quirks;
 }
+
+#undef DEVICE_ID_ANY
+#undef DEVICE_ID
 
 /**
  * drm_dp_read_desc - read sink/branch descriptor from DPCD
@@ -1313,3 +1354,95 @@ int drm_dp_read_desc(struct drm_dp_aux *aux, struct drm_dp_desc *desc,
 	return 0;
 }
 EXPORT_SYMBOL(drm_dp_read_desc);
+
+/**
+ * DRM DP Helpers for DSC
+ */
+u8 drm_dp_dsc_sink_max_slice_count(const u8 dsc_dpcd[DP_DSC_RECEIVER_CAP_SIZE],
+				   bool is_edp)
+{
+	u8 slice_cap1 = dsc_dpcd[DP_DSC_SLICE_CAP_1 - DP_DSC_SUPPORT];
+
+	if (is_edp) {
+		/* For eDP, register DSC_SLICE_CAPABILITIES_1 gives slice count */
+		if (slice_cap1 & DP_DSC_4_PER_DP_DSC_SINK)
+			return 4;
+		if (slice_cap1 & DP_DSC_2_PER_DP_DSC_SINK)
+			return 2;
+		if (slice_cap1 & DP_DSC_1_PER_DP_DSC_SINK)
+			return 1;
+	} else {
+		/* For DP, use values from DSC_SLICE_CAP_1 and DSC_SLICE_CAP2 */
+		u8 slice_cap2 = dsc_dpcd[DP_DSC_SLICE_CAP_2 - DP_DSC_SUPPORT];
+
+		if (slice_cap2 & DP_DSC_24_PER_DP_DSC_SINK)
+			return 24;
+		if (slice_cap2 & DP_DSC_20_PER_DP_DSC_SINK)
+			return 20;
+		if (slice_cap2 & DP_DSC_16_PER_DP_DSC_SINK)
+			return 16;
+		if (slice_cap1 & DP_DSC_12_PER_DP_DSC_SINK)
+			return 12;
+		if (slice_cap1 & DP_DSC_10_PER_DP_DSC_SINK)
+			return 10;
+		if (slice_cap1 & DP_DSC_8_PER_DP_DSC_SINK)
+			return 8;
+		if (slice_cap1 & DP_DSC_6_PER_DP_DSC_SINK)
+			return 6;
+		if (slice_cap1 & DP_DSC_4_PER_DP_DSC_SINK)
+			return 4;
+		if (slice_cap1 & DP_DSC_2_PER_DP_DSC_SINK)
+			return 2;
+		if (slice_cap1 & DP_DSC_1_PER_DP_DSC_SINK)
+			return 1;
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL(drm_dp_dsc_sink_max_slice_count);
+
+u8 drm_dp_dsc_sink_line_buf_depth(const u8 dsc_dpcd[DP_DSC_RECEIVER_CAP_SIZE])
+{
+	u8 line_buf_depth = dsc_dpcd[DP_DSC_LINE_BUF_BIT_DEPTH - DP_DSC_SUPPORT];
+
+	switch (line_buf_depth & DP_DSC_LINE_BUF_BIT_DEPTH_MASK) {
+	case DP_DSC_LINE_BUF_BIT_DEPTH_9:
+		return 9;
+	case DP_DSC_LINE_BUF_BIT_DEPTH_10:
+		return 10;
+	case DP_DSC_LINE_BUF_BIT_DEPTH_11:
+		return 11;
+	case DP_DSC_LINE_BUF_BIT_DEPTH_12:
+		return 12;
+	case DP_DSC_LINE_BUF_BIT_DEPTH_13:
+		return 13;
+	case DP_DSC_LINE_BUF_BIT_DEPTH_14:
+		return 14;
+	case DP_DSC_LINE_BUF_BIT_DEPTH_15:
+		return 15;
+	case DP_DSC_LINE_BUF_BIT_DEPTH_16:
+		return 16;
+	case DP_DSC_LINE_BUF_BIT_DEPTH_8:
+		return 8;
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL(drm_dp_dsc_sink_line_buf_depth);
+
+int drm_dp_dsc_sink_supported_input_bpcs(const u8 dsc_dpcd[DP_DSC_RECEIVER_CAP_SIZE],
+					 u8 dsc_bpc[3])
+{
+	int num_bpc = 0;
+	u8 color_depth = dsc_dpcd[DP_DSC_DEC_COLOR_DEPTH_CAP - DP_DSC_SUPPORT];
+
+	if (color_depth & DP_DSC_12_BPC)
+		dsc_bpc[num_bpc++] = 12;
+	if (color_depth & DP_DSC_10_BPC)
+		dsc_bpc[num_bpc++] = 10;
+	if (color_depth & DP_DSC_8_BPC)
+		dsc_bpc[num_bpc++] = 8;
+
+	return num_bpc;
+}
+EXPORT_SYMBOL(drm_dp_dsc_sink_supported_input_bpcs);

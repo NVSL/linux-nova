@@ -45,20 +45,31 @@ struct dc_stream_status {
 	struct dc_link *link;
 };
 
+// TODO: References to this needs to be removed..
+struct freesync_context {
+	bool dummy;
+};
+
 struct dc_stream_state {
 	struct dc_sink *sink;
 	struct dc_crtc_timing timing;
-	struct dc_crtc_timing_adjust timing_adjust;
-	struct vrr_params vrr_params;
+	struct dc_crtc_timing_adjust adjust;
+	struct dc_info_packet vrr_infopacket;
+	struct dc_info_packet vsc_infopacket;
+	struct dc_info_packet vsp_infopacket;
 
 	struct rect src; /* composition area */
 	struct rect dst; /* stream addressable area */
 
-	struct audio_info audio_info;
-
+	// TODO: References to this needs to be removed..
 	struct freesync_context freesync_ctx;
 
+	struct audio_info audio_info;
+
 	struct dc_info_packet hdr_static_metadata;
+	PHYSICAL_ADDRESS_LOC dmdata_address;
+	bool   use_dynamic_meta;
+
 	struct dc_transfer_func *out_transfer_func;
 	struct colorspace_transform gamut_remap_matrix;
 	struct dc_csc_transform csc_color_matrix;
@@ -80,7 +91,6 @@ struct dc_stream_state {
 
 	/* DMCU info */
 	unsigned int abm_level;
-	unsigned int bl_pwm_level;
 
 	/* from core_stream struct */
 	struct dc_context *ctx;
@@ -92,11 +102,11 @@ struct dc_stream_state {
 	int phy_pix_clk;
 	enum signal_type signal;
 	bool dpms_off;
-
-	struct dc_stream_status status;
+	bool apply_edp_fast_boot_optimization;
 
 	struct dc_cursor_attributes cursor_attributes;
 	struct dc_cursor_position cursor_position;
+	uint32_t sdr_white_level; // for boosting (SDR) cursor in HDR mode
 
 	/* from stream struct */
 	struct kref refcount;
@@ -116,6 +126,19 @@ struct dc_stream_update {
 	unsigned int *abm_level;
 
 	unsigned long long *periodic_fn_vsync_delta;
+	struct dc_crtc_timing_adjust *adjust;
+	struct dc_info_packet *vrr_infopacket;
+	struct dc_info_packet *vsc_infopacket;
+	struct dc_info_packet *vsp_infopacket;
+
+	bool *dpms_off;
+
+	struct colorspace_transform *gamut_remap;
+	enum dc_color_space *output_color_space;
+	enum dc_dither_option *dither_option;
+
+	struct dc_csc_transform *output_csc_transform;
+
 };
 
 bool dc_is_stream_unchanged(
@@ -144,10 +167,7 @@ void dc_commit_updates_for_stream(struct dc *dc,
 /*
  * Log the current stream state.
  */
-void dc_stream_log(
-	const struct dc_stream_state *stream,
-	struct dal_logger *dc_logger,
-	enum dc_log_type log_type);
+void dc_stream_log(const struct dc *dc, const struct dc_stream_state *stream);
 
 uint8_t dc_get_current_stream_count(struct dc *dc);
 struct dc_stream_state *dc_get_stream_at_index(struct dc *dc, uint8_t i);
@@ -255,11 +275,10 @@ bool dc_stream_set_cursor_position(
 	struct dc_stream_state *stream,
 	const struct dc_cursor_position *position);
 
+
 bool dc_stream_adjust_vmin_vmax(struct dc *dc,
-				struct dc_stream_state **stream,
-				int num_streams,
-				int vmin,
-				int vmax);
+				struct dc_stream_state *stream,
+				struct dc_crtc_timing_adjust *adjust);
 
 bool dc_stream_get_crtc_position(struct dc *dc,
 				 struct dc_stream_state **stream,
@@ -286,22 +305,16 @@ void dc_stream_set_static_screen_events(struct dc *dc,
 void dc_stream_set_dither_option(struct dc_stream_state *stream,
 				 enum dc_dither_option option);
 
+bool dc_stream_set_gamut_remap(struct dc *dc,
+			       const struct dc_stream_state *stream);
 
-bool dc_stream_adjust_vmin_vmax(struct dc *dc,
-				struct dc_stream_state **stream,
-				int num_streams,
-				int vmin,
-				int vmax);
+bool dc_stream_program_csc_matrix(struct dc *dc,
+				  struct dc_stream_state *stream);
 
 bool dc_stream_get_crtc_position(struct dc *dc,
 				 struct dc_stream_state **stream,
 				 int num_streams,
 				 unsigned int *v_pos,
 				 unsigned int *nom_v_pos);
-
-void dc_stream_set_static_screen_events(struct dc *dc,
-					struct dc_stream_state **stream,
-					int num_streams,
-					const struct dc_static_screen_events *events);
 
 #endif /* DC_STREAM_H_ */

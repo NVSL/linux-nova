@@ -370,7 +370,6 @@ struct vega10_hwmgr {
 	/* ---- Power Gating States ---- */
 	bool                           uvd_power_gated;
 	bool                           vce_power_gated;
-	bool                           samu_power_gated;
 	bool                           need_long_memory_training;
 
 	/* Internal settings to apply the application power optimization parameters */
@@ -442,7 +441,5 @@ int vega10_update_uvd_dpm(struct pp_hwmgr *hwmgr, bool bgate);
 int vega10_update_samu_dpm(struct pp_hwmgr *hwmgr, bool bgate);
 int vega10_update_acp_dpm(struct pp_hwmgr *hwmgr, bool bgate);
 int vega10_enable_disable_vce_dpm(struct pp_hwmgr *hwmgr, bool enable);
-int vega10_enable_smc_features(struct pp_hwmgr *hwmgr,
-		bool enable, uint32_t feature_mask);
 
 #endif /* _VEGA10_HWMGR_H_ */

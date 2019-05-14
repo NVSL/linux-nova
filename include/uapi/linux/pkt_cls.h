@@ -45,6 +45,7 @@ enum {
 				   * the skb and act like everything
 				   * is alright.
 				   */
+#define TC_ACT_VALUE_MAX	TC_ACT_TRAP
 
 /* There is a special kind of actions called "extended actions",
  * which need a value parameter. These have a local opcode located in
@@ -55,11 +56,12 @@ enum {
 #define __TC_ACT_EXT_SHIFT 28
 #define __TC_ACT_EXT(local) ((local) << __TC_ACT_EXT_SHIFT)
 #define TC_ACT_EXT_VAL_MASK ((1 << __TC_ACT_EXT_SHIFT) - 1)
-#define TC_ACT_EXT_CMP(combined, opcode) \
-	(((combined) & (~TC_ACT_EXT_VAL_MASK)) == opcode)
+#define TC_ACT_EXT_OPCODE(combined) ((combined) & (~TC_ACT_EXT_VAL_MASK))
+#define TC_ACT_EXT_CMP(combined, opcode) (TC_ACT_EXT_OPCODE(combined) == opcode)
 
 #define TC_ACT_JUMP __TC_ACT_EXT(1)
 #define TC_ACT_GOTO_CHAIN __TC_ACT_EXT(2)
+#define TC_ACT_EXT_OPCODE_MAX	TC_ACT_GOTO_CHAIN
 
 /* Action type identifiers*/
 enum {
@@ -469,15 +471,59 @@ enum {
 	TCA_FLOWER_KEY_IP_TTL,		/* u8 */
 	TCA_FLOWER_KEY_IP_TTL_MASK,	/* u8 */
 
+	TCA_FLOWER_KEY_CVLAN_ID,	/* be16 */
+	TCA_FLOWER_KEY_CVLAN_PRIO,	/* u8   */
+	TCA_FLOWER_KEY_CVLAN_ETH_TYPE,	/* be16 */
+
+	TCA_FLOWER_KEY_ENC_IP_TOS,	/* u8 */
+	TCA_FLOWER_KEY_ENC_IP_TOS_MASK,	/* u8 */
+	TCA_FLOWER_KEY_ENC_IP_TTL,	/* u8 */
+	TCA_FLOWER_KEY_ENC_IP_TTL_MASK,	/* u8 */
+
+	TCA_FLOWER_KEY_ENC_OPTS,
+	TCA_FLOWER_KEY_ENC_OPTS_MASK,
+
+	TCA_FLOWER_IN_HW_COUNT,
+
+	TCA_FLOWER_KEY_PORT_SRC_MIN,	/* be16 */
+	TCA_FLOWER_KEY_PORT_SRC_MAX,	/* be16 */
+	TCA_FLOWER_KEY_PORT_DST_MIN,	/* be16 */
+	TCA_FLOWER_KEY_PORT_DST_MAX,	/* be16 */
+
 	__TCA_FLOWER_MAX,
 };
 
 #define TCA_FLOWER_MAX (__TCA_FLOWER_MAX - 1)
 
 enum {
+	TCA_FLOWER_KEY_ENC_OPTS_UNSPEC,
+	TCA_FLOWER_KEY_ENC_OPTS_GENEVE, /* Nested
+					 * TCA_FLOWER_KEY_ENC_OPT_GENEVE_
+					 * attributes
+					 */
+	__TCA_FLOWER_KEY_ENC_OPTS_MAX,
+};
+
+#define TCA_FLOWER_KEY_ENC_OPTS_MAX (__TCA_FLOWER_KEY_ENC_OPTS_MAX - 1)
+
+enum {
+	TCA_FLOWER_KEY_ENC_OPT_GENEVE_UNSPEC,
+	TCA_FLOWER_KEY_ENC_OPT_GENEVE_CLASS,            /* u16 */
+	TCA_FLOWER_KEY_ENC_OPT_GENEVE_TYPE,             /* u8 */
+	TCA_FLOWER_KEY_ENC_OPT_GENEVE_DATA,             /* 4 to 128 bytes */
+
+	__TCA_FLOWER_KEY_ENC_OPT_GENEVE_MAX,
+};
+
+#define TCA_FLOWER_KEY_ENC_OPT_GENEVE_MAX \
+		(__TCA_FLOWER_KEY_ENC_OPT_GENEVE_MAX - 1)
+
+enum {
 	TCA_FLOWER_KEY_FLAGS_IS_FRAGMENT = (1 << 0),
 	TCA_FLOWER_KEY_FLAGS_FRAG_IS_FIRST = (1 << 1),
 };
+
+#define TCA_FLOWER_MASK_FLAGS_RANGE	(1 << 0) /* Range-based match */
 
 /* Match-all classifier */
 

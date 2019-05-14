@@ -46,6 +46,16 @@ struct drm_device {
 	struct drm_master *master;
 
 	/**
+	 * @driver_features: per-device driver features
+	 *
+	 * Drivers can clear specific flags here to disallow
+	 * certain features on a per-device basis while still
+	 * sharing a single &struct drm_driver instance across
+	 * all devices.
+	 */
+	u32 driver_features;
+
+	/**
 	 * @unplugged:
 	 *
 	 * Flag to tell if the device has been unplugged.
@@ -73,6 +83,27 @@ struct drm_device {
 
 	struct mutex filelist_mutex;
 	struct list_head filelist;
+
+	/**
+	 * @filelist_internal:
+	 *
+	 * List of open DRM files for in-kernel clients. Protected by @filelist_mutex.
+	 */
+	struct list_head filelist_internal;
+
+	/**
+	 * @clientlist_mutex:
+	 *
+	 * Protects @clientlist access.
+	 */
+	struct mutex clientlist_mutex;
+
+	/**
+	 * @clientlist:
+	 *
+	 * List of in-kernel clients. Protected by @clientlist_mutex.
+	 */
+	struct list_head clientlist;
 
 	/** \name Memory management */
 	/*@{ */

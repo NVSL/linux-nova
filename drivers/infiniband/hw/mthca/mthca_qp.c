@@ -872,8 +872,8 @@ int mthca_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr, int attr_mask,
 
 	new_state = attr_mask & IB_QP_STATE ? attr->qp_state : cur_state;
 
-	if (!ib_modify_qp_is_ok(cur_state, new_state, ibqp->qp_type, attr_mask,
-				IB_LINK_LAYER_UNSPECIFIED)) {
+	if (!ib_modify_qp_is_ok(cur_state, new_state, ibqp->qp_type,
+				attr_mask)) {
 		mthca_dbg(dev, "Bad QP transition (transport %d) "
 			  "%d->%d with attr 0x%08x\n",
 			  qp->transport, cur_state, new_state,
@@ -981,7 +981,8 @@ static void mthca_adjust_qp_caps(struct mthca_dev *dev,
  */
 static int mthca_alloc_wqe_buf(struct mthca_dev *dev,
 			       struct mthca_pd *pd,
-			       struct mthca_qp *qp)
+			       struct mthca_qp *qp,
+			       struct ib_udata *udata)
 {
 	int size;
 	int err = -ENOMEM;
@@ -1048,7 +1049,7 @@ static int mthca_alloc_wqe_buf(struct mthca_dev *dev,
 	 * allocate anything.  All we need is to calculate the WQE
 	 * sizes and the send_wqe_offset, so we're done now.
 	 */
-	if (pd->ibpd.uobject)
+	if (udata)
 		return 0;
 
 	size = PAGE_ALIGN(qp->send_wqe_offset +
@@ -1155,7 +1156,8 @@ static int mthca_alloc_qp_common(struct mthca_dev *dev,
 				 struct mthca_cq *send_cq,
 				 struct mthca_cq *recv_cq,
 				 enum ib_sig_type send_policy,
-				 struct mthca_qp *qp)
+				 struct mthca_qp *qp,
+				 struct ib_udata *udata)
 {
 	int ret;
 	int i;
@@ -1178,7 +1180,7 @@ static int mthca_alloc_qp_common(struct mthca_dev *dev,
 	if (ret)
 		return ret;
 
-	ret = mthca_alloc_wqe_buf(dev, pd, qp);
+	ret = mthca_alloc_wqe_buf(dev, pd, qp, udata);
 	if (ret) {
 		mthca_unmap_memfree(dev, qp);
 		return ret;
@@ -1191,7 +1193,7 @@ static int mthca_alloc_qp_common(struct mthca_dev *dev,
 	 * will be allocated and buffers will be initialized in
 	 * userspace.
 	 */
-	if (pd->ibpd.uobject)
+	if (udata)
 		return 0;
 
 	ret = mthca_alloc_memfree(dev, qp);
@@ -1285,7 +1287,8 @@ int mthca_alloc_qp(struct mthca_dev *dev,
 		   enum ib_qp_type type,
 		   enum ib_sig_type send_policy,
 		   struct ib_qp_cap *cap,
-		   struct mthca_qp *qp)
+		   struct mthca_qp *qp,
+		   struct ib_udata *udata)
 {
 	int err;
 
@@ -1308,7 +1311,7 @@ int mthca_alloc_qp(struct mthca_dev *dev,
 	qp->port = 0;
 
 	err = mthca_alloc_qp_common(dev, pd, send_cq, recv_cq,
-				    send_policy, qp);
+				    send_policy, qp, udata);
 	if (err) {
 		mthca_free(&dev->qp_table.alloc, qp->qpn);
 		return err;
@@ -1360,7 +1363,8 @@ int mthca_alloc_sqp(struct mthca_dev *dev,
 		    struct ib_qp_cap *cap,
 		    int qpn,
 		    int port,
-		    struct mthca_sqp *sqp)
+		    struct mthca_sqp *sqp,
+		    struct ib_udata *udata)
 {
 	u32 mqpn = qpn * 2 + dev->qp_table.sqp_start + port - 1;
 	int err;
@@ -1391,7 +1395,7 @@ int mthca_alloc_sqp(struct mthca_dev *dev,
 	sqp->qp.transport = MLX;
 
 	err = mthca_alloc_qp_common(dev, pd, send_cq, recv_cq,
-				    send_policy, &sqp->qp);
+				    send_policy, &sqp->qp, udata);
 	if (err)
 		goto err_out_free;
 
@@ -1488,7 +1492,7 @@ void mthca_free_qp(struct mthca_dev *dev,
 
 /* Create UD header for an MLX send and build a data segment for it */
 static int build_mlx_header(struct mthca_dev *dev, struct mthca_sqp *sqp,
-			    int ind, struct ib_ud_wr *wr,
+			    int ind, const struct ib_ud_wr *wr,
 			    struct mthca_mlx_seg *mlx,
 			    struct mthca_data_seg *data)
 {
@@ -1581,7 +1585,7 @@ static __always_inline void set_raddr_seg(struct mthca_raddr_seg *rseg,
 }
 
 static __always_inline void set_atomic_seg(struct mthca_atomic_seg *aseg,
-					   struct ib_atomic_wr *wr)
+					   const struct ib_atomic_wr *wr)
 {
 	if (wr->wr.opcode == IB_WR_ATOMIC_CMP_AND_SWP) {
 		aseg->swap_add = cpu_to_be64(wr->swap);
@@ -1594,7 +1598,7 @@ static __always_inline void set_atomic_seg(struct mthca_atomic_seg *aseg,
 }
 
 static void set_tavor_ud_seg(struct mthca_tavor_ud_seg *useg,
-			     struct ib_ud_wr *wr)
+			     const struct ib_ud_wr *wr)
 {
 	useg->lkey    = cpu_to_be32(to_mah(wr->ah)->key);
 	useg->av_addr =	cpu_to_be64(to_mah(wr->ah)->avdma);
@@ -1604,15 +1608,15 @@ static void set_tavor_ud_seg(struct mthca_tavor_ud_seg *useg,
 }
 
 static void set_arbel_ud_seg(struct mthca_arbel_ud_seg *useg,
-			     struct ib_ud_wr *wr)
+			     const struct ib_ud_wr *wr)
 {
 	memcpy(useg->av, to_mah(wr->ah)->av, MTHCA_AV_SIZE);
 	useg->dqpn = cpu_to_be32(wr->remote_qpn);
 	useg->qkey = cpu_to_be32(wr->remote_qkey);
 }
 
-int mthca_tavor_post_send(struct ib_qp *ibqp, struct ib_send_wr *wr,
-			  struct ib_send_wr **bad_wr)
+int mthca_tavor_post_send(struct ib_qp *ibqp, const struct ib_send_wr *wr,
+			  const struct ib_send_wr **bad_wr)
 {
 	struct mthca_dev *dev = to_mdev(ibqp->device);
 	struct mthca_qp *qp = to_mqp(ibqp);
@@ -1814,8 +1818,8 @@ out:
 	return err;
 }
 
-int mthca_tavor_post_receive(struct ib_qp *ibqp, struct ib_recv_wr *wr,
-			     struct ib_recv_wr **bad_wr)
+int mthca_tavor_post_receive(struct ib_qp *ibqp, const struct ib_recv_wr *wr,
+			     const struct ib_recv_wr **bad_wr)
 {
 	struct mthca_dev *dev = to_mdev(ibqp->device);
 	struct mthca_qp *qp = to_mqp(ibqp);
@@ -1925,8 +1929,8 @@ out:
 	return err;
 }
 
-int mthca_arbel_post_send(struct ib_qp *ibqp, struct ib_send_wr *wr,
-			  struct ib_send_wr **bad_wr)
+int mthca_arbel_post_send(struct ib_qp *ibqp, const struct ib_send_wr *wr,
+			  const struct ib_send_wr **bad_wr)
 {
 	struct mthca_dev *dev = to_mdev(ibqp->device);
 	struct mthca_qp *qp = to_mqp(ibqp);
@@ -2165,8 +2169,8 @@ out:
 	return err;
 }
 
-int mthca_arbel_post_receive(struct ib_qp *ibqp, struct ib_recv_wr *wr,
-			     struct ib_recv_wr **bad_wr)
+int mthca_arbel_post_receive(struct ib_qp *ibqp, const struct ib_recv_wr *wr,
+			     const struct ib_recv_wr **bad_wr)
 {
 	struct mthca_dev *dev = to_mdev(ibqp->device);
 	struct mthca_qp *qp = to_mqp(ibqp);

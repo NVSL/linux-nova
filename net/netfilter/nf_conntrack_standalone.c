@@ -1,12 +1,4 @@
-/* (C) 1999-2001 Paul `Rusty' Russell
- * (C) 2002-2004 Netfilter Core Team <coreteam@netfilter.org>
- * (C) 2005-2012 Patrick McHardy <kaber@trash.net>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- */
-
+// SPDX-License-Identifier: GPL-2.0
 #include <linux/types.h>
 #include <linux/netfilter.h>
 #include <linux/slab.h>
@@ -24,7 +16,6 @@
 
 #include <net/netfilter/nf_conntrack.h>
 #include <net/netfilter/nf_conntrack_core.h>
-#include <net/netfilter/nf_conntrack_l3proto.h>
 #include <net/netfilter/nf_conntrack_l4proto.h>
 #include <net/netfilter/nf_conntrack_expect.h>
 #include <net/netfilter/nf_conntrack_helper.h>
@@ -33,15 +24,14 @@
 #include <net/netfilter/nf_conntrack_timestamp.h>
 #include <linux/rculist_nulls.h>
 
-MODULE_LICENSE("GPL");
+unsigned int nf_conntrack_net_id __read_mostly;
 
 #ifdef CONFIG_NF_CONNTRACK_PROCFS
 void
 print_tuple(struct seq_file *s, const struct nf_conntrack_tuple *tuple,
-            const struct nf_conntrack_l3proto *l3proto,
             const struct nf_conntrack_l4proto *l4proto)
 {
-	switch (l3proto->l3proto) {
+	switch (tuple->src.l3num) {
 	case NFPROTO_IPV4:
 		seq_printf(s, "src=%pI4 dst=%pI4 ",
 			   &tuple->src.u3.ip, &tuple->dst.u3.ip);
@@ -277,12 +267,29 @@ static const char* l4proto_name(u16 proto)
 	return "unknown";
 }
 
+static unsigned int
+seq_print_acct(struct seq_file *s, const struct nf_conn *ct, int dir)
+{
+	struct nf_conn_acct *acct;
+	struct nf_conn_counter *counter;
+
+	acct = nf_conn_acct_find(ct);
+	if (!acct)
+		return 0;
+
+	counter = acct->counter;
+	seq_printf(s, "packets=%llu bytes=%llu ",
+		   (unsigned long long)atomic64_read(&counter[dir].packets),
+		   (unsigned long long)atomic64_read(&counter[dir].bytes));
+
+	return 0;
+}
+
 /* return 0 on success, 1 in case of error */
 static int ct_seq_show(struct seq_file *s, void *v)
 {
 	struct nf_conntrack_tuple_hash *hash = v;
 	struct nf_conn *ct = nf_ct_tuplehash_to_ctrack(hash);
-	const struct nf_conntrack_l3proto *l3proto;
 	const struct nf_conntrack_l4proto *l4proto;
 	struct net *net = seq_file_net(s);
 	int ret = 0;
@@ -303,14 +310,12 @@ static int ct_seq_show(struct seq_file *s, void *v)
 	if (!net_eq(nf_ct_net(ct), net))
 		goto release;
 
-	l3proto = __nf_ct_l3proto_find(nf_ct_l3num(ct));
-	WARN_ON(!l3proto);
-	l4proto = __nf_ct_l4proto_find(nf_ct_l3num(ct), nf_ct_protonum(ct));
+	l4proto = __nf_ct_l4proto_find(nf_ct_protonum(ct));
 	WARN_ON(!l4proto);
 
 	ret = -ENOSPC;
 	seq_printf(s, "%-8s %u %-8s %u ",
-		   l3proto_name(l3proto->l3proto), nf_ct_l3num(ct),
+		   l3proto_name(nf_ct_l3num(ct)), nf_ct_l3num(ct),
 		   l4proto_name(l4proto->l4proto), nf_ct_protonum(ct));
 
 	if (!test_bit(IPS_OFFLOAD_BIT, &ct->status))
@@ -320,7 +325,7 @@ static int ct_seq_show(struct seq_file *s, void *v)
 		l4proto->print_conntrack(s, ct);
 
 	print_tuple(s, &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple,
-		    l3proto, l4proto);
+		    l4proto);
 
 	ct_show_zone(s, ct, NF_CT_ZONE_DIR_ORIG);
 
@@ -333,8 +338,7 @@ static int ct_seq_show(struct seq_file *s, void *v)
 	if (!(test_bit(IPS_SEEN_REPLY_BIT, &ct->status)))
 		seq_puts(s, "[UNREPLIED] ");
 
-	print_tuple(s, &ct->tuplehash[IP_CT_DIR_REPLY].tuple,
-		    l3proto, l4proto);
+	print_tuple(s, &ct->tuplehash[IP_CT_DIR_REPLY].tuple, l4proto);
 
 	ct_show_zone(s, ct, NF_CT_ZONE_DIR_REPL);
 
@@ -528,36 +532,53 @@ nf_conntrack_hash_sysctl(struct ctl_table *table, int write,
 
 static struct ctl_table_header *nf_ct_netfilter_header;
 
+enum nf_ct_sysctl_index {
+	NF_SYSCTL_CT_MAX,
+	NF_SYSCTL_CT_COUNT,
+	NF_SYSCTL_CT_BUCKETS,
+	NF_SYSCTL_CT_CHECKSUM,
+	NF_SYSCTL_CT_LOG_INVALID,
+	NF_SYSCTL_CT_EXPECT_MAX,
+	NF_SYSCTL_CT_ACCT,
+	NF_SYSCTL_CT_HELPER,
+#ifdef CONFIG_NF_CONNTRACK_EVENTS
+	NF_SYSCTL_CT_EVENTS,
+#endif
+#ifdef CONFIG_NF_CONNTRACK_TIMESTAMP
+	NF_SYSCTL_CT_TIMESTAMP,
+#endif
+};
+
 static struct ctl_table nf_ct_sysctl_table[] = {
-	{
+	[NF_SYSCTL_CT_MAX] = {
 		.procname	= "nf_conntrack_max",
 		.data		= &nf_conntrack_max,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec,
 	},
-	{
+	[NF_SYSCTL_CT_COUNT] = {
 		.procname	= "nf_conntrack_count",
 		.data		= &init_net.ct.count,
 		.maxlen		= sizeof(int),
 		.mode		= 0444,
 		.proc_handler	= proc_dointvec,
 	},
-	{
+	[NF_SYSCTL_CT_BUCKETS] = {
 		.procname       = "nf_conntrack_buckets",
 		.data           = &nf_conntrack_htable_size_user,
 		.maxlen         = sizeof(unsigned int),
 		.mode           = 0644,
 		.proc_handler   = nf_conntrack_hash_sysctl,
 	},
-	{
+	[NF_SYSCTL_CT_CHECKSUM] = {
 		.procname	= "nf_conntrack_checksum",
 		.data		= &init_net.ct.sysctl_checksum,
 		.maxlen		= sizeof(unsigned int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec,
 	},
-	{
+	[NF_SYSCTL_CT_LOG_INVALID] = {
 		.procname	= "nf_conntrack_log_invalid",
 		.data		= &init_net.ct.sysctl_log_invalid,
 		.maxlen		= sizeof(unsigned int),
@@ -566,13 +587,45 @@ static struct ctl_table nf_ct_sysctl_table[] = {
 		.extra1		= &log_invalid_proto_min,
 		.extra2		= &log_invalid_proto_max,
 	},
-	{
+	[NF_SYSCTL_CT_EXPECT_MAX] = {
 		.procname	= "nf_conntrack_expect_max",
 		.data		= &nf_ct_expect_max,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec,
 	},
+	[NF_SYSCTL_CT_ACCT] = {
+		.procname	= "nf_conntrack_acct",
+		.data		= &init_net.ct.sysctl_acct,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
+	[NF_SYSCTL_CT_HELPER] = {
+		.procname	= "nf_conntrack_helper",
+		.data		= &init_net.ct.sysctl_auto_assign_helper,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
+#ifdef CONFIG_NF_CONNTRACK_EVENTS
+	[NF_SYSCTL_CT_EVENTS] = {
+		.procname	= "nf_conntrack_events",
+		.data		= &init_net.ct.sysctl_events,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
+#endif
+#ifdef CONFIG_NF_CONNTRACK_TIMESTAMP
+	[NF_SYSCTL_CT_TIMESTAMP] = {
+		.procname	= "nf_conntrack_timestamp",
+		.data		= &init_net.ct.sysctl_tstamp,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
+#endif
 	{ }
 };
 
@@ -596,16 +649,28 @@ static int nf_conntrack_standalone_init_sysctl(struct net *net)
 	if (!table)
 		goto out_kmemdup;
 
-	table[1].data = &net->ct.count;
-	table[3].data = &net->ct.sysctl_checksum;
-	table[4].data = &net->ct.sysctl_log_invalid;
+	table[NF_SYSCTL_CT_COUNT].data = &net->ct.count;
+	table[NF_SYSCTL_CT_CHECKSUM].data = &net->ct.sysctl_checksum;
+	table[NF_SYSCTL_CT_LOG_INVALID].data = &net->ct.sysctl_log_invalid;
+#ifdef CONFIG_NF_CONNTRACK_EVENTS
+	table[NF_SYSCTL_CT_EVENTS].data = &net->ct.sysctl_events;
+#endif
 
 	/* Don't export sysctls to unprivileged users */
-	if (net->user_ns != &init_user_ns)
-		table[0].procname = NULL;
+	if (net->user_ns != &init_user_ns) {
+		table[NF_SYSCTL_CT_MAX].procname = NULL;
+		table[NF_SYSCTL_CT_ACCT].procname = NULL;
+		table[NF_SYSCTL_CT_HELPER].procname = NULL;
+#ifdef CONFIG_NF_CONNTRACK_TIMESTAMP
+		table[NF_SYSCTL_CT_TIMESTAMP].procname = NULL;
+#endif
+#ifdef CONFIG_NF_CONNTRACK_EVENTS
+		table[NF_SYSCTL_CT_EVENTS].procname = NULL;
+#endif
+	}
 
 	if (!net_eq(&init_net, net))
-		table[2].mode = 0444;
+		table[NF_SYSCTL_CT_BUCKETS].mode = 0444;
 
 	net->ct.sysctl_header = register_net_sysctl(net, "net/netfilter", table);
 	if (!net->ct.sysctl_header)
@@ -680,6 +745,8 @@ static void nf_conntrack_pernet_exit(struct list_head *net_exit_list)
 static struct pernet_operations nf_conntrack_net_ops = {
 	.init		= nf_conntrack_pernet_init,
 	.exit_batch	= nf_conntrack_pernet_exit,
+	.id		= &nf_conntrack_net_id,
+	.size = sizeof(struct nf_conntrack_net),
 };
 
 static int __init nf_conntrack_standalone_init(void)
@@ -732,10 +799,3 @@ static void __exit nf_conntrack_standalone_fini(void)
 
 module_init(nf_conntrack_standalone_init);
 module_exit(nf_conntrack_standalone_fini);
-
-/* Some modules need us, but don't depend directly on any symbol.
-   They should call this. */
-void need_conntrack(void)
-{
-}
-EXPORT_SYMBOL_GPL(need_conntrack);

@@ -384,21 +384,13 @@ static void crypto_morus640_final(struct morus640_state *state,
 				  struct morus640_block *tag_xor,
 				  u64 assoclen, u64 cryptlen)
 {
-	u64 assocbits = assoclen * 8;
-	u64 cryptbits = cryptlen * 8;
-
-	u32 assocbits_lo = (u32)assocbits;
-	u32 assocbits_hi = (u32)(assocbits >> 32);
-	u32 cryptbits_lo = (u32)cryptbits;
-	u32 cryptbits_hi = (u32)(cryptbits >> 32);
-
 	struct morus640_block tmp;
 	unsigned int i;
 
-	tmp.words[0] = cpu_to_le32(assocbits_lo);
-	tmp.words[1] = cpu_to_le32(assocbits_hi);
-	tmp.words[2] = cpu_to_le32(cryptbits_lo);
-	tmp.words[3] = cpu_to_le32(cryptbits_hi);
+	tmp.words[0] = lower_32_bits(assoclen * 8);
+	tmp.words[1] = upper_32_bits(assoclen * 8);
+	tmp.words[2] = lower_32_bits(cryptlen * 8);
+	tmp.words[3] = upper_32_bits(cryptlen * 8);
 
 	for (i = 0; i < MORUS_BLOCK_WORDS; i++)
 		state->s[4].words[i] ^= state->s[0].words[i];
@@ -511,7 +503,6 @@ static struct aead_alg crypto_morus640_alg = {
 	.chunksize = MORUS640_BLOCK_SIZE,
 
 	.base = {
-		.cra_flags = CRYPTO_ALG_TYPE_AEAD,
 		.cra_blocksize = 1,
 		.cra_ctxsize = sizeof(struct morus640_ctx),
 		.cra_alignmask = 0,

@@ -1036,7 +1036,7 @@ static struct aa_label *build_change_hat(struct aa_profile *profile,
 audit:
 	aa_audit_file(profile, &nullperms, OP_CHANGE_HAT, AA_MAY_CHANGEHAT,
 		      name, hat ? hat->base.hname : NULL,
-		      hat ? &hat->label : NULL, GLOBAL_ROOT_UID, NULL,
+		      hat ? &hat->label : NULL, GLOBAL_ROOT_UID, info,
 		      error);
 	if (!hat || (error && error != -ENOENT))
 		return ERR_PTR(error);
@@ -1444,7 +1444,10 @@ check:
 			new = aa_label_merge(label, target, GFP_KERNEL);
 		if (IS_ERR_OR_NULL(new)) {
 			info = "failed to build target label";
-			error = PTR_ERR(new);
+			if (!new)
+				error = -ENOMEM;
+			else
+				error = PTR_ERR(new);
 			new = NULL;
 			perms.allow = 0;
 			goto audit;

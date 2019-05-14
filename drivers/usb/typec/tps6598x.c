@@ -81,11 +81,20 @@ struct tps6598x {
 	struct typec_capability typec_cap;
 };
 
+/*
+ * Max data bytes for Data1, Data2, and other registers. See ch 1.3.2:
+ * http://www.ti.com/lit/ug/slvuan1a/slvuan1a.pdf
+ */
+#define TPS_MAX_LEN	64
+
 static int
 tps6598x_block_read(struct tps6598x *tps, u8 reg, void *val, size_t len)
 {
-	u8 data[len + 1];
+	u8 data[TPS_MAX_LEN + 1];
 	int ret;
+
+	if (WARN_ON(len + 1 > sizeof(data)))
+		return -EINVAL;
 
 	if (!tps->i2c_protocol)
 		return regmap_raw_read(tps->regmap, reg, val, len);
@@ -492,19 +501,19 @@ static int tps6598x_remove(struct i2c_client *client)
 	return 0;
 }
 
-static const struct acpi_device_id tps6598x_acpi_match[] = {
-	{ "INT3515", 0 },
+static const struct i2c_device_id tps6598x_id[] = {
+	{ "tps6598x" },
 	{ }
 };
-MODULE_DEVICE_TABLE(acpi, tps6598x_acpi_match);
+MODULE_DEVICE_TABLE(i2c, tps6598x_id);
 
 static struct i2c_driver tps6598x_i2c_driver = {
 	.driver = {
 		.name = "tps6598x",
-		.acpi_match_table = tps6598x_acpi_match,
 	},
 	.probe_new = tps6598x_probe,
 	.remove = tps6598x_remove,
+	.id_table = tps6598x_id,
 };
 module_i2c_driver(tps6598x_i2c_driver);
 

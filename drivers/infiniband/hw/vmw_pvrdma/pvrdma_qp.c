@@ -249,7 +249,7 @@ struct ib_qp *pvrdma_create_qp(struct ib_pd *pd,
 		init_completion(&qp->free);
 
 		qp->state = IB_QPS_RESET;
-		qp->is_kernel = !(pd->uobject && udata);
+		qp->is_kernel = !udata;
 
 		if (!qp->is_kernel) {
 			dev_dbg(&dev->pdev->dev,
@@ -499,7 +499,7 @@ int pvrdma_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 	next_state = (attr_mask & IB_QP_STATE) ? attr->qp_state : cur_state;
 
 	if (!ib_modify_qp_is_ok(cur_state, next_state, ibqp->qp_type,
-				attr_mask, IB_LINK_LAYER_ETHERNET)) {
+				attr_mask)) {
 		ret = -EINVAL;
 		goto out;
 	}
@@ -599,7 +599,8 @@ static inline void *get_rq_wqe(struct pvrdma_qp *qp, unsigned int n)
 				       qp->rq.offset + n * qp->rq.wqe_size);
 }
 
-static int set_reg_seg(struct pvrdma_sq_wqe_hdr *wqe_hdr, struct ib_reg_wr *wr)
+static int set_reg_seg(struct pvrdma_sq_wqe_hdr *wqe_hdr,
+		       const struct ib_reg_wr *wr)
 {
 	struct pvrdma_user_mr *mr = to_vmr(wr->mr);
 
@@ -623,8 +624,8 @@ static int set_reg_seg(struct pvrdma_sq_wqe_hdr *wqe_hdr, struct ib_reg_wr *wr)
  *
  * @return: 0 on success, otherwise errno returned.
  */
-int pvrdma_post_send(struct ib_qp *ibqp, struct ib_send_wr *wr,
-		     struct ib_send_wr **bad_wr)
+int pvrdma_post_send(struct ib_qp *ibqp, const struct ib_send_wr *wr,
+		     const struct ib_send_wr **bad_wr)
 {
 	struct pvrdma_qp *qp = to_vqp(ibqp);
 	struct pvrdma_dev *dev = to_vdev(ibqp->device);
@@ -719,6 +720,12 @@ int pvrdma_post_send(struct ib_qp *ibqp, struct ib_send_wr *wr,
 		if (wr->opcode == IB_WR_SEND_WITH_IMM ||
 		    wr->opcode == IB_WR_RDMA_WRITE_WITH_IMM)
 			wqe_hdr->ex.imm_data = wr->ex.imm_data;
+
+		if (unlikely(wqe_hdr->opcode == PVRDMA_WR_ERROR)) {
+			*bad_wr = wr;
+			ret = -EINVAL;
+			goto out;
+		}
 
 		switch (qp->ibqp.qp_type) {
 		case IB_QPT_GSI:
@@ -827,8 +834,8 @@ out:
  *
  * @return: 0 on success, otherwise errno returned.
  */
-int pvrdma_post_recv(struct ib_qp *ibqp, struct ib_recv_wr *wr,
-		     struct ib_recv_wr **bad_wr)
+int pvrdma_post_recv(struct ib_qp *ibqp, const struct ib_recv_wr *wr,
+		     const struct ib_recv_wr **bad_wr)
 {
 	struct pvrdma_dev *dev = to_vdev(ibqp->device);
 	unsigned long flags;

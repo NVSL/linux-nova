@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0
 // Copyright (c) 2017-2018, The Linux foundation. All rights reserved.
 
+#if defined(CONFIG_SERIAL_QCOM_GENI_CONSOLE) && defined(CONFIG_MAGIC_SYSRQ)
+# define SUPPORT_SYSRQ
+#endif
+
 #include <linux/clk.h>
 #include <linux/console.h>
 #include <linux/io.h>
@@ -17,6 +21,7 @@
 #include <linux/tty_flip.h>
 
 /* UART specific GENI registers */
+#define SE_UART_LOOPBACK_CFG		0x22c
 #define SE_UART_TX_TRANS_CFG		0x25c
 #define SE_UART_TX_WORD_LEN		0x268
 #define SE_UART_TX_STOP_BIT_LEN		0x26c
@@ -26,6 +31,7 @@
 #define SE_UART_RX_STALE_CNT		0x294
 #define SE_UART_TX_PARITY_CFG		0x2a4
 #define SE_UART_RX_PARITY_CFG		0x2a8
+#define SE_UART_MANUAL_RFR		0x2ac
 
 /* SE_UART_TRANS_CFG */
 #define UART_TX_PAR_EN		BIT(0)
@@ -62,6 +68,11 @@
 #define PAR_SPACE		0x10
 #define PAR_MARK		0x11
 
+/* SE_UART_MANUAL_RFR register fields */
+#define UART_MANUAL_RFR_EN	BIT(31)
+#define UART_RFR_NOT_READY	BIT(1)
+#define UART_RFR_READY		BIT(0)
+
 /* UART M_CMD OP codes */
 #define UART_START_TX		0x1
 #define UART_START_BREAK	0x4
@@ -74,15 +85,17 @@
 #define STALE_TIMEOUT		16
 #define DEFAULT_BITS_PER_CHAR	10
 #define GENI_UART_CONS_PORTS	1
+#define GENI_UART_PORTS		3
 #define DEF_FIFO_DEPTH_WORDS	16
 #define DEF_TX_WM		2
 #define DEF_FIFO_WIDTH_BITS	32
 #define UART_CONSOLE_RX_WM	2
+#define MAX_LOOPBACK_CFG	3
 
 #ifdef CONFIG_CONSOLE_POLL
-#define RX_BYTES_PW 1
+#define CONSOLE_RX_BYTES_PW 1
 #else
-#define RX_BYTES_PW 4
+#define CONSOLE_RX_BYTES_PW 4
 #endif
 
 struct qcom_geni_serial_port {
@@ -101,21 +114,80 @@ struct qcom_geni_serial_port {
 	unsigned int baud;
 	unsigned int tx_bytes_pw;
 	unsigned int rx_bytes_pw;
+	u32 *rx_fifo;
+	u32 loopback;
 	bool brk;
+
+	unsigned int tx_remaining;
 };
 
 static const struct uart_ops qcom_geni_console_pops;
+static const struct uart_ops qcom_geni_uart_pops;
 static struct uart_driver qcom_geni_console_driver;
+static struct uart_driver qcom_geni_uart_driver;
 static int handle_rx_console(struct uart_port *uport, u32 bytes, bool drop);
+static int handle_rx_uart(struct uart_port *uport, u32 bytes, bool drop);
 static unsigned int qcom_geni_serial_tx_empty(struct uart_port *port);
 static void qcom_geni_serial_stop_rx(struct uart_port *uport);
 
 static const unsigned long root_freq[] = {7372800, 14745600, 19200000, 29491200,
 					32000000, 48000000, 64000000, 80000000,
-					96000000, 100000000};
+					96000000, 100000000, 102400000,
+					112000000, 120000000, 128000000};
 
 #define to_dev_port(ptr, member) \
 		container_of(ptr, struct qcom_geni_serial_port, member)
+
+static struct qcom_geni_serial_port qcom_geni_uart_ports[GENI_UART_PORTS] = {
+	[0] = {
+		.uport = {
+				.iotype = UPIO_MEM,
+				.ops = &qcom_geni_uart_pops,
+				.flags = UPF_BOOT_AUTOCONF,
+				.line = 0,
+		},
+	},
+	[1] = {
+		.uport = {
+				.iotype = UPIO_MEM,
+				.ops = &qcom_geni_uart_pops,
+				.flags = UPF_BOOT_AUTOCONF,
+				.line = 1,
+		},
+	},
+	[2] = {
+		.uport = {
+				.iotype = UPIO_MEM,
+				.ops = &qcom_geni_uart_pops,
+				.flags = UPF_BOOT_AUTOCONF,
+				.line = 2,
+		},
+	},
+};
+
+static ssize_t loopback_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	struct qcom_geni_serial_port *port = dev_get_drvdata(dev);
+
+	return snprintf(buf, sizeof(u32), "%d\n", port->loopback);
+}
+
+static ssize_t loopback_store(struct device *dev,
+				struct device_attribute *attr, const char *buf,
+				size_t size)
+{
+	struct qcom_geni_serial_port *port = dev_get_drvdata(dev);
+	u32 loopback;
+
+	if (kstrtoint(buf, 0, &loopback) || loopback > MAX_LOOPBACK_CFG) {
+		dev_err(dev, "Invalid input\n");
+		return -EINVAL;
+	}
+	port->loopback = loopback;
+	return size;
+}
+static DEVICE_ATTR_RW(loopback);
 
 static struct qcom_geni_serial_port qcom_geni_console_port = {
 	.uport = {
@@ -148,14 +220,33 @@ static void qcom_geni_serial_config_port(struct uart_port *uport, int cfg_flags)
 	}
 }
 
-static unsigned int qcom_geni_cons_get_mctrl(struct uart_port *uport)
+static unsigned int qcom_geni_serial_get_mctrl(struct uart_port *uport)
 {
-	return TIOCM_DSR | TIOCM_CAR | TIOCM_CTS;
+	unsigned int mctrl = TIOCM_DSR | TIOCM_CAR;
+	u32 geni_ios;
+
+	if (uart_console(uport)) {
+		mctrl |= TIOCM_CTS;
+	} else {
+		geni_ios = readl_relaxed(uport->membase + SE_GENI_IOS);
+		if (!(geni_ios & IO2_DATA_IN))
+			mctrl |= TIOCM_CTS;
+	}
+
+	return mctrl;
 }
 
-static void qcom_geni_cons_set_mctrl(struct uart_port *uport,
+static void qcom_geni_serial_set_mctrl(struct uart_port *uport,
 							unsigned int mctrl)
 {
+	u32 uart_manual_rfr = 0;
+
+	if (uart_console(uport))
+		return;
+
+	if (!(mctrl & TIOCM_RTS))
+		uart_manual_rfr = UART_MANUAL_RFR_EN | UART_RFR_NOT_READY;
+	writel_relaxed(uart_manual_rfr, uport->membase + SE_UART_MANUAL_RFR);
 }
 
 static const char *qcom_geni_serial_get_type(struct uart_port *uport)
@@ -163,11 +254,16 @@ static const char *qcom_geni_serial_get_type(struct uart_port *uport)
 	return "MSM";
 }
 
-static struct qcom_geni_serial_port *get_port_from_line(int line)
+static struct qcom_geni_serial_port *get_port_from_line(int line, bool console)
 {
-	if (line < 0 || line >= GENI_UART_CONS_PORTS)
+	struct qcom_geni_serial_port *port;
+	int nr_ports = console ? GENI_UART_CONS_PORTS : GENI_UART_PORTS;
+
+	if (line < 0 || line >= nr_ports)
 		return ERR_PTR(-ENXIO);
-	return &qcom_geni_console_port;
+
+	port = console ? &qcom_geni_console_port : &qcom_geni_uart_ports[line];
+	return port;
 }
 
 static bool qcom_geni_serial_poll_bit(struct uart_port *uport,
@@ -343,10 +439,12 @@ static void qcom_geni_serial_console_write(struct console *co, const char *s,
 	struct qcom_geni_serial_port *port;
 	bool locked = true;
 	unsigned long flags;
+	u32 geni_status;
+	u32 irq_en;
 
 	WARN_ON(co->index < 0 || co->index >= GENI_UART_CONS_PORTS);
 
-	port = get_port_from_line(co->index);
+	port = get_port_from_line(co->index, true);
 	if (IS_ERR(port))
 		return;
 
@@ -355,6 +453,8 @@ static void qcom_geni_serial_console_write(struct console *co, const char *s,
 		locked = spin_trylock_irqsave(&uport->lock, flags);
 	else
 		spin_lock_irqsave(&uport->lock, flags);
+
+	geni_status = readl_relaxed(uport->membase + SE_GENI_STATUS);
 
 	/* Cancel the current write to log the fault */
 	if (!locked) {
@@ -369,9 +469,26 @@ static void qcom_geni_serial_console_write(struct console *co, const char *s,
 		}
 		writel_relaxed(M_CMD_CANCEL_EN, uport->membase +
 							SE_GENI_M_IRQ_CLEAR);
+	} else if ((geni_status & M_GENI_CMD_ACTIVE) && !port->tx_remaining) {
+		/*
+		 * It seems we can't interrupt existing transfers if all data
+		 * has been sent, in which case we need to look for done first.
+		 */
+		qcom_geni_serial_poll_tx_done(uport);
+
+		if (uart_circ_chars_pending(&uport->state->xmit)) {
+			irq_en = readl_relaxed(uport->membase +
+					SE_GENI_M_IRQ_EN);
+			writel_relaxed(irq_en | M_TX_FIFO_WATERMARK_EN,
+					uport->membase + SE_GENI_M_IRQ_EN);
+		}
 	}
 
 	__qcom_geni_serial_console_write(uport, s, count);
+
+	if (port->tx_remaining)
+		qcom_geni_serial_setup_tx(uport, port->tx_remaining);
+
 	if (locked)
 		spin_unlock_irqrestore(&uport->lock, flags);
 }
@@ -403,7 +520,8 @@ static int handle_rx_console(struct uart_port *uport, u32 bytes, bool drop)
 					continue;
 			}
 
-			sysrq = uart_handle_sysrq_char(uport, buf[c]);
+			sysrq = uart_prepare_sysrq_char(uport, buf[c]);
+
 			if (!sysrq)
 				tty_insert_flip_char(tport, buf[c], TTY_NORMAL);
 		}
@@ -419,6 +537,32 @@ static int handle_rx_console(struct uart_port *uport, u32 bytes, bool drop)
 }
 
 #endif /* CONFIG_SERIAL_QCOM_GENI_CONSOLE */
+
+static int handle_rx_uart(struct uart_port *uport, u32 bytes, bool drop)
+{
+	unsigned char *buf;
+	struct tty_port *tport;
+	struct qcom_geni_serial_port *port = to_dev_port(uport, uport);
+	u32 num_bytes_pw = port->tx_fifo_width / BITS_PER_BYTE;
+	u32 words = ALIGN(bytes, num_bytes_pw) / num_bytes_pw;
+	int ret;
+
+	tport = &uport->state->port;
+	ioread32_rep(uport->membase + SE_GENI_RX_FIFOn, port->rx_fifo, words);
+	if (drop)
+		return 0;
+
+	buf = (unsigned char *)port->rx_fifo;
+	ret = tty_insert_flip_string(tport, buf, bytes);
+	if (ret != bytes) {
+		dev_err(uport->dev, "%s:Unable to push data ret %d_bytes %d\n",
+				__func__, ret, bytes);
+		WARN_ON_ONCE(1);
+	}
+	uport->icount.rx += ret;
+	tty_flip_buffer_push(tport);
+	return ret;
+}
 
 static void qcom_geni_serial_start_tx(struct uart_port *uport)
 {
@@ -576,32 +720,51 @@ static void qcom_geni_serial_handle_rx(struct uart_port *uport, bool drop)
 	port->handle_rx(uport, total_bytes, drop);
 }
 
-static void qcom_geni_serial_handle_tx(struct uart_port *uport)
+static void qcom_geni_serial_handle_tx(struct uart_port *uport, bool done,
+		bool active)
 {
 	struct qcom_geni_serial_port *port = to_dev_port(uport, uport);
 	struct circ_buf *xmit = &uport->state->xmit;
 	size_t avail;
 	size_t remaining;
+	size_t pending;
 	int i;
 	u32 status;
+	u32 irq_en;
 	unsigned int chunk;
 	int tail;
 
-	chunk = uart_circ_chars_pending(xmit);
 	status = readl_relaxed(uport->membase + SE_GENI_TX_FIFO_STATUS);
-	/* Both FIFO and framework buffer are drained */
-	if (!chunk && !status) {
+
+	/* Complete the current tx command before taking newly added data */
+	if (active)
+		pending = port->tx_remaining;
+	else
+		pending = uart_circ_chars_pending(xmit);
+
+	/* All data has been transmitted and acknowledged as received */
+	if (!pending && !status && done) {
 		qcom_geni_serial_stop_tx(uport);
 		goto out_write_wakeup;
 	}
 
-	avail = (port->tx_fifo_depth - port->tx_wm) * port->tx_bytes_pw;
+	avail = port->tx_fifo_depth - (status & TX_FIFO_WC);
+	avail *= port->tx_bytes_pw;
+
 	tail = xmit->tail;
-	chunk = min3((size_t)chunk, (size_t)(UART_XMIT_SIZE - tail), avail);
+	chunk = min(avail, pending);
 	if (!chunk)
 		goto out_write_wakeup;
 
-	qcom_geni_serial_setup_tx(uport, chunk);
+	if (!port->tx_remaining) {
+		qcom_geni_serial_setup_tx(uport, pending);
+		port->tx_remaining = pending;
+
+		irq_en = readl_relaxed(uport->membase + SE_GENI_M_IRQ_EN);
+		if (!(irq_en & M_TX_FIFO_WATERMARK_EN))
+			writel_relaxed(irq_en | M_TX_FIFO_WATERMARK_EN,
+					uport->membase + SE_GENI_M_IRQ_EN);
+	}
 
 	remaining = chunk;
 	for (i = 0; i < chunk; ) {
@@ -611,20 +774,38 @@ static void qcom_geni_serial_handle_tx(struct uart_port *uport)
 
 		memset(buf, 0, ARRAY_SIZE(buf));
 		tx_bytes = min_t(size_t, remaining, port->tx_bytes_pw);
-		for (c = 0; c < tx_bytes ; c++)
-			buf[c] = xmit->buf[tail + c];
+
+		for (c = 0; c < tx_bytes ; c++) {
+			buf[c] = xmit->buf[tail++];
+			tail &= UART_XMIT_SIZE - 1;
+		}
 
 		iowrite32_rep(uport->membase + SE_GENI_TX_FIFOn, buf, 1);
 
 		i += tx_bytes;
-		tail += tx_bytes;
 		uport->icount.tx += tx_bytes;
 		remaining -= tx_bytes;
+		port->tx_remaining -= tx_bytes;
 	}
 
-	xmit->tail = tail & (UART_XMIT_SIZE - 1);
-	qcom_geni_serial_poll_tx_done(uport);
+	xmit->tail = tail;
+
+	/*
+	 * The tx fifo watermark is level triggered and latched. Though we had
+	 * cleared it in qcom_geni_serial_isr it will have already reasserted
+	 * so we must clear it again here after our writes.
+	 */
+	writel_relaxed(M_TX_FIFO_WATERMARK_EN,
+			uport->membase + SE_GENI_M_IRQ_CLEAR);
+
 out_write_wakeup:
+	if (!port->tx_remaining) {
+		irq_en = readl_relaxed(uport->membase + SE_GENI_M_IRQ_EN);
+		if (irq_en & M_TX_FIFO_WATERMARK_EN)
+			writel_relaxed(irq_en & ~M_TX_FIFO_WATERMARK_EN,
+					uport->membase + SE_GENI_M_IRQ_EN);
+	}
+
 	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
 		uart_write_wakeup(uport);
 }
@@ -633,6 +814,7 @@ static irqreturn_t qcom_geni_serial_isr(int isr, void *dev)
 {
 	unsigned int m_irq_status;
 	unsigned int s_irq_status;
+	unsigned int geni_status;
 	struct uart_port *uport = dev;
 	unsigned long flags;
 	unsigned int m_irq_en;
@@ -646,6 +828,7 @@ static irqreturn_t qcom_geni_serial_isr(int isr, void *dev)
 	spin_lock_irqsave(&uport->lock, flags);
 	m_irq_status = readl_relaxed(uport->membase + SE_GENI_M_IRQ_STATUS);
 	s_irq_status = readl_relaxed(uport->membase + SE_GENI_S_IRQ_STATUS);
+	geni_status = readl_relaxed(uport->membase + SE_GENI_STATUS);
 	m_irq_en = readl_relaxed(uport->membase + SE_GENI_M_IRQ_EN);
 	writel_relaxed(m_irq_status, uport->membase + SE_GENI_M_IRQ_CLEAR);
 	writel_relaxed(s_irq_status, uport->membase + SE_GENI_S_IRQ_CLEAR);
@@ -658,9 +841,9 @@ static irqreturn_t qcom_geni_serial_isr(int isr, void *dev)
 		tty_insert_flip_char(tport, 0, TTY_OVERRUN);
 	}
 
-	if (m_irq_status & (M_TX_FIFO_WATERMARK_EN | M_CMD_DONE_EN) &&
-	    m_irq_en & (M_TX_FIFO_WATERMARK_EN | M_CMD_DONE_EN))
-		qcom_geni_serial_handle_tx(uport);
+	if (m_irq_status & m_irq_en & (M_TX_FIFO_WATERMARK_EN | M_CMD_DONE_EN))
+		qcom_geni_serial_handle_tx(uport, m_irq_status & M_CMD_DONE_EN,
+					geni_status & M_GENI_CMD_ACTIVE);
 
 	if (s_irq_status & S_GP_IRQ_0_EN || s_irq_status & S_GP_IRQ_1_EN) {
 		if (s_irq_status & S_GP_IRQ_0_EN)
@@ -677,7 +860,8 @@ static irqreturn_t qcom_geni_serial_isr(int isr, void *dev)
 		qcom_geni_serial_handle_rx(uport, drop_rx);
 
 out_unlock:
-	spin_unlock_irqrestore(&uport->lock, flags);
+	uart_unlock_and_check_sysrq(uport, flags);
+
 	return IRQ_HANDLED;
 }
 
@@ -710,7 +894,8 @@ static void qcom_geni_serial_shutdown(struct uart_port *uport)
 	unsigned long flags;
 
 	/* Stop the console before stopping the current tx */
-	console_stop(uport->cons);
+	if (uart_console(uport))
+		console_stop(uport->cons);
 
 	free_irq(uport->irq, uport);
 	spin_lock_irqsave(&uport->lock, flags);
@@ -723,6 +908,25 @@ static int qcom_geni_serial_port_setup(struct uart_port *uport)
 {
 	struct qcom_geni_serial_port *port = to_dev_port(uport, uport);
 	unsigned int rxstale = DEFAULT_BITS_PER_CHAR * STALE_TIMEOUT;
+	u32 proto;
+
+	if (uart_console(uport)) {
+		port->tx_bytes_pw = 1;
+		port->rx_bytes_pw = CONSOLE_RX_BYTES_PW;
+	} else {
+		port->tx_bytes_pw = 4;
+		port->rx_bytes_pw = 4;
+	}
+
+	proto = geni_se_read_proto(&port->se);
+	if (proto != GENI_SE_UART) {
+		dev_err(uport->dev, "Invalid FW loaded, proto: %d\n", proto);
+		return -ENXIO;
+	}
+
+	qcom_geni_serial_stop_rx(uport);
+
+	get_tx_fifo_size(port);
 
 	set_rfr_wm(port);
 	writel_relaxed(rxstale, uport->membase + SE_UART_RX_STALE_CNT);
@@ -731,33 +935,34 @@ static int qcom_geni_serial_port_setup(struct uart_port *uport)
 	 * it else we could end up in data loss scenarios.
 	 */
 	port->xfer_mode = GENI_SE_FIFO;
-	qcom_geni_serial_poll_tx_done(uport);
+	if (uart_console(uport))
+		qcom_geni_serial_poll_tx_done(uport);
 	geni_se_config_packing(&port->se, BITS_PER_BYTE, port->tx_bytes_pw,
 						false, true, false);
 	geni_se_config_packing(&port->se, BITS_PER_BYTE, port->rx_bytes_pw,
 						false, false, true);
 	geni_se_init(&port->se, port->rx_wm, port->rx_rfr);
 	geni_se_select_mode(&port->se, port->xfer_mode);
+	if (!uart_console(uport)) {
+		port->rx_fifo = devm_kcalloc(uport->dev,
+			port->rx_fifo_depth, sizeof(u32), GFP_KERNEL);
+		if (!port->rx_fifo)
+			return -ENOMEM;
+	}
 	port->setup = true;
+
 	return 0;
 }
 
 static int qcom_geni_serial_startup(struct uart_port *uport)
 {
 	int ret;
-	u32 proto;
 	struct qcom_geni_serial_port *port = to_dev_port(uport, uport);
 
 	scnprintf(port->name, sizeof(port->name),
-		  "qcom_serial_geni%d",	uport->line);
+		  "qcom_serial_%s%d",
+		(uart_console(uport) ? "console" : "uart"), uport->line);
 
-	proto = geni_se_read_proto(&port->se);
-	if (proto != GENI_SE_UART) {
-		dev_err(uport->dev, "Invalid FW loaded, proto: %d\n", proto);
-		return -ENXIO;
-	}
-
-	get_tx_fifo_size(port);
 	if (!port->setup) {
 		ret = qcom_geni_serial_port_setup(uport);
 		if (ret)
@@ -886,6 +1091,9 @@ static void qcom_geni_serial_set_termios(struct uart_port *uport,
 	if (baud)
 		uart_update_timeout(uport, termios->c_cflag, baud);
 
+	if (!uart_console(uport))
+		writel_relaxed(port->loopback,
+				uport->membase + SE_UART_LOOPBACK_CFG);
 	writel_relaxed(tx_trans_cfg, uport->membase + SE_UART_TX_TRANS_CFG);
 	writel_relaxed(tx_parity_cfg, uport->membase + SE_UART_TX_PARITY_CFG);
 	writel_relaxed(rx_trans_cfg, uport->membase + SE_UART_RX_TRANS_CFG);
@@ -913,11 +1121,12 @@ static int __init qcom_geni_console_setup(struct console *co, char *options)
 	int bits = 8;
 	int parity = 'n';
 	int flow = 'n';
+	int ret;
 
 	if (co->index >= GENI_UART_CONS_PORTS  || co->index < 0)
 		return -ENXIO;
 
-	port = get_port_from_line(co->index);
+	port = get_port_from_line(co->index, true);
 	if (IS_ERR(port)) {
 		pr_err("Invalid line %d\n", co->index);
 		return PTR_ERR(port);
@@ -928,21 +1137,10 @@ static int __init qcom_geni_console_setup(struct console *co, char *options)
 	if (unlikely(!uport->membase))
 		return -ENXIO;
 
-	if (geni_se_resources_on(&port->se)) {
-		dev_err(port->se.dev, "Error turning on resources\n");
-		return -ENXIO;
-	}
-
-	if (unlikely(geni_se_read_proto(&port->se) != GENI_SE_UART)) {
-		geni_se_resources_off(&port->se);
-		return -ENXIO;
-	}
-
 	if (!port->setup) {
-		port->tx_bytes_pw = 1;
-		port->rx_bytes_pw = RX_BYTES_PW;
-		qcom_geni_serial_stop_rx(uport);
-		qcom_geni_serial_port_setup(uport);
+		ret = qcom_geni_serial_port_setup(uport);
+		if (ret)
+			return ret;
 	}
 
 	if (options)
@@ -1048,13 +1246,21 @@ static void console_unregister(struct uart_driver *drv)
 }
 #endif /* CONFIG_SERIAL_QCOM_GENI_CONSOLE */
 
-static void qcom_geni_serial_cons_pm(struct uart_port *uport,
+static struct uart_driver qcom_geni_uart_driver = {
+	.owner = THIS_MODULE,
+	.driver_name = "qcom_geni_uart",
+	.dev_name = "ttyHS",
+	.nr =  GENI_UART_PORTS,
+};
+
+static void qcom_geni_serial_pm(struct uart_port *uport,
 		unsigned int new_state, unsigned int old_state)
 {
 	struct qcom_geni_serial_port *port = to_dev_port(uport, uport);
 
-	if (unlikely(!uart_console(uport)))
-		return;
+	/* If we've never been called, treat it as off */
+	if (old_state == UART_PM_STATE_UNDEFINED)
+		old_state = UART_PM_STATE_OFF;
 
 	if (new_state == UART_PM_STATE_ON && old_state == UART_PM_STATE_OFF)
 		geni_se_resources_on(&port->se);
@@ -1074,13 +1280,29 @@ static const struct uart_ops qcom_geni_console_pops = {
 	.config_port = qcom_geni_serial_config_port,
 	.shutdown = qcom_geni_serial_shutdown,
 	.type = qcom_geni_serial_get_type,
-	.set_mctrl = qcom_geni_cons_set_mctrl,
-	.get_mctrl = qcom_geni_cons_get_mctrl,
+	.set_mctrl = qcom_geni_serial_set_mctrl,
+	.get_mctrl = qcom_geni_serial_get_mctrl,
 #ifdef CONFIG_CONSOLE_POLL
 	.poll_get_char	= qcom_geni_serial_get_char,
 	.poll_put_char	= qcom_geni_serial_poll_put_char,
 #endif
-	.pm = qcom_geni_serial_cons_pm,
+	.pm = qcom_geni_serial_pm,
+};
+
+static const struct uart_ops qcom_geni_uart_pops = {
+	.tx_empty = qcom_geni_serial_tx_empty,
+	.stop_tx = qcom_geni_serial_stop_tx,
+	.start_tx = qcom_geni_serial_start_tx,
+	.stop_rx = qcom_geni_serial_stop_rx,
+	.set_termios = qcom_geni_serial_set_termios,
+	.startup = qcom_geni_serial_startup,
+	.request_port = qcom_geni_serial_request_port,
+	.config_port = qcom_geni_serial_config_port,
+	.shutdown = qcom_geni_serial_shutdown,
+	.type = qcom_geni_serial_get_type,
+	.set_mctrl = qcom_geni_serial_set_mctrl,
+	.get_mctrl = qcom_geni_serial_get_mctrl,
+	.pm = qcom_geni_serial_pm,
 };
 
 static int qcom_geni_serial_probe(struct platform_device *pdev)
@@ -1091,13 +1313,21 @@ static int qcom_geni_serial_probe(struct platform_device *pdev)
 	struct uart_port *uport;
 	struct resource *res;
 	int irq;
+	bool console = false;
+	struct uart_driver *drv;
 
-	if (pdev->dev.of_node)
+	if (of_device_is_compatible(pdev->dev.of_node, "qcom,geni-debug-uart"))
+		console = true;
+
+	if (console) {
+		drv = &qcom_geni_console_driver;
 		line = of_alias_get_id(pdev->dev.of_node, "serial");
+	} else {
+		drv = &qcom_geni_uart_driver;
+		line = of_alias_get_id(pdev->dev.of_node, "hsuart");
+	}
 
-	if (line < 0 || line >= GENI_UART_CONS_PORTS)
-		return -ENXIO;
-	port = get_port_from_line(line);
+	port = get_port_from_line(line, console);
 	if (IS_ERR(port)) {
 		dev_err(&pdev->dev, "Invalid line %d\n", line);
 		return PTR_ERR(port);
@@ -1134,10 +1364,12 @@ static int qcom_geni_serial_probe(struct platform_device *pdev)
 	}
 	uport->irq = irq;
 
-	uport->private_data = &qcom_geni_console_driver;
+	uport->private_data = drv;
 	platform_set_drvdata(pdev, port);
-	port->handle_rx = handle_rx_console;
-	return uart_add_one_port(&qcom_geni_console_driver, uport);
+	port->handle_rx = console ? handle_rx_console : handle_rx_uart;
+	if (!console)
+		device_create_file(uport->dev, &dev_attr_loopback);
+	return uart_add_one_port(drv, uport);
 }
 
 static int qcom_geni_serial_remove(struct platform_device *pdev)
@@ -1149,42 +1381,30 @@ static int qcom_geni_serial_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static int __maybe_unused qcom_geni_serial_sys_suspend_noirq(struct device *dev)
+static int __maybe_unused qcom_geni_serial_sys_suspend(struct device *dev)
 {
 	struct qcom_geni_serial_port *port = dev_get_drvdata(dev);
 	struct uart_port *uport = &port->uport;
 
-	uart_suspend_port(uport->private_data, uport);
-	return 0;
+	return uart_suspend_port(uport->private_data, uport);
 }
 
-static int __maybe_unused qcom_geni_serial_sys_resume_noirq(struct device *dev)
+static int __maybe_unused qcom_geni_serial_sys_resume(struct device *dev)
 {
 	struct qcom_geni_serial_port *port = dev_get_drvdata(dev);
 	struct uart_port *uport = &port->uport;
 
-	if (console_suspend_enabled && uport->suspended) {
-		uart_resume_port(uport->private_data, uport);
-		/*
-		 * uart_suspend_port() invokes port shutdown which in turn
-		 * frees the irq. uart_resume_port invokes port startup which
-		 * performs request_irq. The request_irq auto-enables the IRQ.
-		 * In addition, resume_noirq implicitly enables the IRQ and
-		 * leads to an unbalanced IRQ enable warning. Disable the IRQ
-		 * before returning so that the warning is suppressed.
-		 */
-		disable_irq(uport->irq);
-	}
-	return 0;
+	return uart_resume_port(uport->private_data, uport);
 }
 
 static const struct dev_pm_ops qcom_geni_serial_pm_ops = {
-	SET_NOIRQ_SYSTEM_SLEEP_PM_OPS(qcom_geni_serial_sys_suspend_noirq,
-					qcom_geni_serial_sys_resume_noirq)
+	SET_SYSTEM_SLEEP_PM_OPS(qcom_geni_serial_sys_suspend,
+					qcom_geni_serial_sys_resume)
 };
 
 static const struct of_device_id qcom_geni_serial_match_table[] = {
 	{ .compatible = "qcom,geni-debug-uart", },
+	{ .compatible = "qcom,geni-uart", },
 	{}
 };
 MODULE_DEVICE_TABLE(of, qcom_geni_serial_match_table);
@@ -1207,9 +1427,17 @@ static int __init qcom_geni_serial_init(void)
 	if (ret)
 		return ret;
 
-	ret = platform_driver_register(&qcom_geni_serial_platform_driver);
-	if (ret)
+	ret = uart_register_driver(&qcom_geni_uart_driver);
+	if (ret) {
 		console_unregister(&qcom_geni_console_driver);
+		return ret;
+	}
+
+	ret = platform_driver_register(&qcom_geni_serial_platform_driver);
+	if (ret) {
+		console_unregister(&qcom_geni_console_driver);
+		uart_unregister_driver(&qcom_geni_uart_driver);
+	}
 	return ret;
 }
 module_init(qcom_geni_serial_init);
@@ -1218,6 +1446,7 @@ static void __exit qcom_geni_serial_exit(void)
 {
 	platform_driver_unregister(&qcom_geni_serial_platform_driver);
 	console_unregister(&qcom_geni_console_driver);
+	uart_unregister_driver(&qcom_geni_uart_driver);
 }
 module_exit(qcom_geni_serial_exit);
 

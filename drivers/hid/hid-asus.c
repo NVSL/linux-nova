@@ -29,6 +29,7 @@
 #include <linux/dmi.h>
 #include <linux/hid.h>
 #include <linux/module.h>
+#include <linux/platform_data/x86/asus-wmi.h>
 #include <linux/input/mt.h>
 #include <linux/usb.h> /* For to_usb_interface for T100 touchpad intf check */
 
@@ -69,6 +70,7 @@ MODULE_DESCRIPTION("Asus HID Keyboard and TouchPad");
 #define QUIRK_T100_KEYBOARD		BIT(6)
 #define QUIRK_T100CHI			BIT(7)
 #define QUIRK_G752_KEYBOARD		BIT(8)
+#define QUIRK_T101HA_DOCK		BIT(9)
 
 #define I2C_KEYBOARD_QUIRKS			(QUIRK_FIX_NOTEBOOK_REPORT | \
 						 QUIRK_NO_INIT_REPORTS | \
@@ -240,6 +242,18 @@ static int asus_report_input(struct asus_drvdata *drvdat, u8 *data, int size)
 	return 1;
 }
 
+static int asus_event(struct hid_device *hdev, struct hid_field *field,
+		      struct hid_usage *usage, __s32 value)
+{
+	if ((usage->hid & HID_USAGE_PAGE) == 0xff310000 &&
+	    (usage->hid & HID_USAGE) != 0x00 && !usage->type) {
+		hid_warn(hdev, "Unmapped Asus vendor usagepage code 0x%02x\n",
+			 usage->hid & HID_USAGE);
+	}
+
+	return 0;
+}
+
 static int asus_raw_event(struct hid_device *hdev,
 		struct hid_report *report, u8 *data, int size)
 {
@@ -349,6 +363,27 @@ static void asus_kbd_backlight_work(struct work_struct *work)
 		hid_err(led->hdev, "Asus failed to set keyboard backlight: %d\n", ret);
 }
 
+/* WMI-based keyboard backlight LED control (via asus-wmi driver) takes
+ * precedence. We only activate HID-based backlight control when the
+ * WMI control is not available.
+ */
+static bool asus_kbd_wmi_led_control_present(struct hid_device *hdev)
+{
+	u32 value;
+	int ret;
+
+	if (!IS_ENABLED(CONFIG_ASUS_WMI))
+		return false;
+
+	ret = asus_wmi_evaluate_method(ASUS_WMI_METHODID_DSTS2,
+				       ASUS_WMI_DEVID_KBD_BACKLIGHT, 0, &value);
+	hid_dbg(hdev, "WMI backlight check: rc %d value %x", ret, value);
+	if (ret)
+		return false;
+
+	return !!(value & ASUS_WMI_DSTS_PRESENCE_BIT);
+}
+
 static int asus_kbd_register_leds(struct hid_device *hdev)
 {
 	struct asus_drvdata *drvdata = hid_get_drvdata(hdev);
@@ -436,7 +471,9 @@ static int asus_input_configured(struct hid_device *hdev, struct hid_input *hi)
 
 	drvdata->input = input;
 
-	if (drvdata->enable_backlight && asus_kbd_register_leds(hdev))
+	if (drvdata->enable_backlight &&
+	    !asus_kbd_wmi_led_control_present(hdev) &&
+	    asus_kbd_register_leds(hdev))
 		hid_warn(hdev, "Failed to initialize backlight.\n");
 
 	return 0;
@@ -486,6 +523,7 @@ static int asus_input_mapping(struct hid_device *hdev,
 		case 0x20: asus_map_key_clear(KEY_BRIGHTNESSUP);		break;
 		case 0x35: asus_map_key_clear(KEY_DISPLAY_OFF);		break;
 		case 0x6c: asus_map_key_clear(KEY_SLEEP);		break;
+		case 0x7c: asus_map_key_clear(KEY_MICMUTE);		break;
 		case 0x82: asus_map_key_clear(KEY_CAMERA);		break;
 		case 0x88: asus_map_key_clear(KEY_RFKILL);			break;
 		case 0xb5: asus_map_key_clear(KEY_CALC);			break;
@@ -503,6 +541,9 @@ static int asus_input_mapping(struct hid_device *hdev,
 
 		/* Fn+Space Power4Gear Hybrid */
 		case 0x5c: asus_map_key_clear(KEY_PROG3);		break;
+
+		/* Fn+F5 "fan" symbol on FX503VD */
+		case 0x99: asus_map_key_clear(KEY_PROG4);		break;
 
 		default:
 			/* ASUS lazily declares 256 usages, ignore the rest,
@@ -659,6 +700,11 @@ static int asus_probe(struct hid_device *hdev, const struct hid_device_id *id)
 		return ret;
 	}
 
+	/* use hid-multitouch for T101HA touchpad */
+	if (id->driver_data & QUIRK_T101HA_DOCK &&
+	    hdev->collection->usage == HID_GD_MOUSE)
+		return -ENODEV;
+
 	ret = hid_hw_start(hdev, HID_CONNECT_DEFAULT);
 	if (ret) {
 		hid_err(hdev, "Asus hw start failed: %d\n", ret);
@@ -782,11 +828,16 @@ static const struct hid_device_id asus_devices[] = {
 	{ HID_USB_DEVICE(USB_VENDOR_ID_ASUSTEK,
 		USB_DEVICE_ID_ASUSTEK_ROG_KEYBOARD3), QUIRK_G752_KEYBOARD },
 	{ HID_USB_DEVICE(USB_VENDOR_ID_ASUSTEK,
+		USB_DEVICE_ID_ASUSTEK_FX503VD_KEYBOARD),
+	  QUIRK_USE_KBD_BACKLIGHT },
+	{ HID_USB_DEVICE(USB_VENDOR_ID_ASUSTEK,
 		USB_DEVICE_ID_ASUSTEK_T100TA_KEYBOARD),
 	  QUIRK_T100_KEYBOARD | QUIRK_NO_CONSUMER_USAGES },
 	{ HID_USB_DEVICE(USB_VENDOR_ID_ASUSTEK,
 		USB_DEVICE_ID_ASUSTEK_T100TAF_KEYBOARD),
 	  QUIRK_T100_KEYBOARD | QUIRK_NO_CONSUMER_USAGES },
+	{ HID_USB_DEVICE(USB_VENDOR_ID_ASUSTEK,
+		USB_DEVICE_ID_ASUSTEK_T101HA_KEYBOARD), QUIRK_T101HA_DOCK },
 	{ HID_USB_DEVICE(USB_VENDOR_ID_CHICONY, USB_DEVICE_ID_ASUS_AK1D) },
 	{ HID_USB_DEVICE(USB_VENDOR_ID_TURBOX, USB_DEVICE_ID_ASUS_MD_5110) },
 	{ HID_USB_DEVICE(USB_VENDOR_ID_JESS, USB_DEVICE_ID_ASUS_MD_5112) },
@@ -808,6 +859,7 @@ static struct hid_driver asus_driver = {
 #ifdef CONFIG_PM
 	.reset_resume           = asus_reset_resume,
 #endif
+	.event			= asus_event,
 	.raw_event		= asus_raw_event
 };
 module_hid_driver(asus_driver);

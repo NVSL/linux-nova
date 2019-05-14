@@ -32,6 +32,13 @@ enum dmcu_state {
 	DMCU_RUNNING = 1
 };
 
+struct dmcu_version {
+	unsigned int date;
+	unsigned int month;
+	unsigned int year;
+	unsigned int interface_version;
+};
+
 struct dmcu {
 	struct dc_context *ctx;
 	const struct dmcu_funcs *funcs;
@@ -48,7 +55,7 @@ struct dmcu_funcs {
 			const char *src,
 			unsigned int bytes);
 	void (*set_psr_enable)(struct dmcu *dmcu, bool enable, bool wait);
-	void (*setup_psr)(struct dmcu *dmcu,
+	bool (*setup_psr)(struct dmcu *dmcu,
 			struct dc_link *link,
 			struct psr_context *psr_context);
 	void (*get_psr_state)(struct dmcu *dmcu, uint32_t *psr_state);

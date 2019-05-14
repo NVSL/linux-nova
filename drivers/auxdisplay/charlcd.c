@@ -99,10 +99,7 @@ static atomic_t charlcd_available = ATOMIC_INIT(1);
 /* sleeps that many milliseconds with a reschedule */
 static void long_sleep(int ms)
 {
-	if (in_interrupt())
-		mdelay(ms);
-	else
-		schedule_timeout_interruptible(msecs_to_jiffies(ms));
+	schedule_timeout_interruptible(msecs_to_jiffies(ms));
 }
 
 /* turn the backlight on or off */
@@ -541,6 +538,9 @@ static inline int handle_lcd_special_code(struct charlcd *lcd)
 	}
 	case 'x':	/* gotoxy : LxXXX[yYYY]; */
 	case 'y':	/* gotoxy : LyYYY[xXXX]; */
+		if (priv->esc_seq.buf[priv->esc_seq.len - 1] != ';')
+			break;
+
 		/* If the command is valid, move to the new address */
 		if (parse_xy(esc, &priv->addr.x, &priv->addr.y))
 			charlcd_gotoxy(lcd);

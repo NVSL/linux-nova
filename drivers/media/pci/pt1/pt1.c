@@ -1354,7 +1354,7 @@ static int pt1_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	i2c_adap->algo = &pt1_i2c_algo;
 	i2c_adap->algo_data = NULL;
 	i2c_adap->dev.parent = &pdev->dev;
-	strcpy(i2c_adap->name, DRIVER_NAME);
+	strscpy(i2c_adap->name, DRIVER_NAME, sizeof(i2c_adap->name));
 	i2c_set_adapdata(i2c_adap, pt1);
 	ret = i2c_add_adapter(i2c_adap);
 	if (ret < 0)
@@ -1443,9 +1443,7 @@ static struct pci_driver pt1_driver = {
 	.probe		= pt1_probe,
 	.remove		= pt1_remove,
 	.id_table	= pt1_id_table,
-#ifdef CONFIG_PM_SLEEP
 	.driver.pm	= &pt1_pm_ops,
-#endif
 };
 
 module_pci_driver(pt1_driver);

@@ -492,7 +492,7 @@ qla24xx_create_vhost(struct fc_vport *fc_vport)
 		    "Couldn't allocate vp_id.\n");
 		goto create_vhost_failed;
 	}
-	vha->mgmt_svr_loop_id = NPH_MGMT_SERVER;
+	vha->mgmt_svr_loop_id = qla2x00_reserve_mgmt_server_loop_id(vha);
 
 	vha->dpc_flags = 0L;
 
@@ -507,6 +507,7 @@ qla24xx_create_vhost(struct fc_vport *fc_vport)
 	qla2x00_start_timer(vha, WATCH_INTERVAL);
 
 	vha->req = base_vha->req;
+	vha->flags.nvme_enabled = base_vha->flags.nvme_enabled;
 	host->can_queue = base_vha->req->length + 128;
 	host->cmd_per_lun = 3;
 	if (IS_T10_PI_CAPABLE(ha) && ql2xenabledif)

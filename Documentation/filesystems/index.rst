@@ -71,6 +71,39 @@ Other Functions
 .. kernel-doc:: fs/block_dev.c
    :export:
 
+.. kernel-doc:: fs/anon_inodes.c
+   :export:
+
+.. kernel-doc:: fs/attr.c
+   :export:
+
+.. kernel-doc:: fs/d_path.c
+   :export:
+
+.. kernel-doc:: fs/dax.c
+   :export:
+
+.. kernel-doc:: fs/direct-io.c
+   :export:
+
+.. kernel-doc:: fs/file_table.c
+   :export:
+
+.. kernel-doc:: fs/libfs.c
+   :export:
+
+.. kernel-doc:: fs/posix_acl.c
+   :export:
+
+.. kernel-doc:: fs/stat.c
+   :export:
+
+.. kernel-doc:: fs/sync.c
+   :export:
+
+.. kernel-doc:: fs/xattr.c
+   :export:
+
 The proc filesystem
 ===================
 
@@ -326,3 +359,24 @@ encryption of files and directories.
     :maxdepth: 2
 
     fscrypt
+
+Pathname lookup
+===============
+
+
+This write-up is based on three articles published at lwn.net:
+
+- <https://lwn.net/Articles/649115/> Pathname lookup in Linux
+- <https://lwn.net/Articles/649729/> RCU-walk: faster pathname lookup in Linux
+- <https://lwn.net/Articles/650786/> A walk among the symlinks
+
+Written by Neil Brown with help from Al Viro and Jon Corbet.
+It has subsequently been updated to reflect changes in the kernel
+including:
+
+- per-directory parallel name lookup.
+
+.. toctree::
+   :maxdepth: 2
+
+   path-lookup.rst

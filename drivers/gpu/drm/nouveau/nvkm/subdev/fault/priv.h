@@ -12,23 +12,29 @@ struct nvkm_fault_buffer {
 	struct nvkm_fault *fault;
 	int id;
 	int entries;
+	u32 get;
+	u32 put;
 	struct nvkm_memory *mem;
-	struct nvkm_vma *vma;
+	u64 addr;
 };
 
 int nvkm_fault_new_(const struct nvkm_fault_func *, struct nvkm_device *,
 		    int index, struct nvkm_fault **);
 
 struct nvkm_fault_func {
+	int (*oneinit)(struct nvkm_fault *);
 	void (*init)(struct nvkm_fault *);
 	void (*fini)(struct nvkm_fault *);
 	void (*intr)(struct nvkm_fault *);
 	struct {
 		int nr;
 		u32 entry_size;
-		u32 (*entries)(struct nvkm_fault_buffer *);
+		void (*info)(struct nvkm_fault_buffer *);
 		void (*init)(struct nvkm_fault_buffer *);
 		void (*fini)(struct nvkm_fault_buffer *);
+		void (*intr)(struct nvkm_fault_buffer *, bool enable);
 	} buffer;
 };
+
+int gv100_fault_oneinit(struct nvkm_fault *);
 #endif

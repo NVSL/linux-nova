@@ -139,7 +139,7 @@ nouveau_abi16_chan_fini(struct nouveau_abi16 *abi16,
 	if (chan->ntfy) {
 		nouveau_vma_del(&chan->ntfy_vma);
 		nouveau_bo_unpin(chan->ntfy);
-		drm_gem_object_unreference_unlocked(&chan->ntfy->gem);
+		drm_gem_object_put_unlocked(&chan->ntfy->gem);
 	}
 
 	if (chan->heap.block_size)
@@ -306,7 +306,7 @@ nouveau_abi16_ioctl_channel_alloc(ABI16_IOCTL_ARGS)
 
 	/* create channel object and initialise dma and fence management */
 	ret = nouveau_channel_new(drm, device, init->fb_ctxdma_handle,
-				  init->tt_ctxdma_handle, &chan->chan);
+				  init->tt_ctxdma_handle, false, &chan->chan);
 	if (ret)
 		goto done;
 

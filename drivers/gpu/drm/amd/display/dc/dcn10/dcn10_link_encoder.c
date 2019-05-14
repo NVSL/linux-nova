@@ -65,11 +65,6 @@ enum {
 	DP_MST_UPDATE_MAX_RETRY = 50
 };
 
-
-
-static void aux_initialize(struct dcn10_link_encoder *enc10);
-
-
 static const struct link_encoder_funcs dcn10_lnk_enc_funcs = {
 	.validate_output_with_stream =
 		dcn10_link_encoder_validate_output_with_stream,
@@ -445,12 +440,11 @@ static uint8_t get_frontend_source(
 	}
 }
 
-static void configure_encoder(
+void configure_encoder(
 	struct dcn10_link_encoder *enc10,
 	const struct dc_link_settings *link_settings)
 {
 	/* set number of lanes */
-
 	REG_SET(DP_CONFIG, 0,
 			DP_UDI_LANES, link_settings->lane_count - LANE_COUNT_ONE);
 
@@ -595,12 +589,15 @@ static bool dcn10_link_encoder_validate_hdmi_output(
 		return false;
 
 	/* DCE11 HW does not support 420 */
-	if (!enc10->base.features.ycbcr420_supported &&
+	if (!enc10->base.features.hdmi_ycbcr420_supported &&
 			crtc_timing->pixel_encoding == PIXEL_ENCODING_YCBCR420)
 		return false;
 
 	if (!enc10->base.features.flags.bits.HDMI_6GB_EN &&
 		adjusted_pix_clk_khz >= 300000)
+		return false;
+	if (enc10->base.ctx->dc->debug.hdmi20_disable &&
+		crtc_timing->pixel_encoding == PIXEL_ENCODING_YCBCR420)
 		return false;
 	return true;
 }
@@ -609,22 +606,12 @@ bool dcn10_link_encoder_validate_dp_output(
 	const struct dcn10_link_encoder *enc10,
 	const struct dc_crtc_timing *crtc_timing)
 {
-	/* default RGB only */
-	if (crtc_timing->pixel_encoding == PIXEL_ENCODING_RGB)
-		return true;
+	if (crtc_timing->pixel_encoding == PIXEL_ENCODING_YCBCR420) {
+		if (!enc10->base.features.dp_ycbcr420_supported)
+			return false;
+	}
 
-	if (enc10->base.features.flags.bits.IS_YCBCR_CAPABLE)
-		return true;
-
-	/* for DCE 8.x or later DP Y-only feature,
-	 * we need ASIC cap + FeatureSupportDPYonly, not support 666
-	 */
-	if (crtc_timing->flags.Y_ONLY &&
-		enc10->base.features.flags.bits.IS_YCBCR_CAPABLE &&
-		crtc_timing->display_color_depth != COLOR_DEPTH_666)
-		return true;
-
-	return false;
+	return true;
 }
 
 void dcn10_link_encoder_construct(
@@ -734,6 +721,9 @@ void dcn10_link_encoder_construct(
 				__func__,
 				result);
 	}
+	if (enc10->base.ctx->dc->debug.hdmi20_disable) {
+		enc10->base.features.flags.bits.HDMI_6GB_EN = 0;
+	}
 }
 
 bool dcn10_link_encoder_validate_output_with_stream(
@@ -812,7 +802,7 @@ void dcn10_link_encoder_hw_init(
 		ASSERT(result == BP_RESULT_OK);
 
 	}
-	aux_initialize(enc10);
+	dcn10_aux_initialize(enc10);
 
 	/* reinitialize HPD.
 	 * hpd_initialize() will pass DIG_FE id to HW context.
@@ -995,6 +985,8 @@ void dcn10_link_encoder_disable_output(
 
 	if (!dcn10_is_dig_enabled(enc)) {
 		/* OF_SKIP_POWER_DOWN_INACTIVE_ENCODER */
+	/*in DP_Alt_No_Connect case, we turn off the dig already,
+	after excuation the PHY w/a sequence, not allow touch PHY any more*/
 		return;
 	}
 	/* Power-down RX and disable GPU PHY should be paired.
@@ -1347,8 +1339,7 @@ void dcn10_link_encoder_disable_hpd(struct link_encoder *enc)
 				FN(reg, f1), v1,\
 				FN(reg, f2), v2)
 
-static void aux_initialize(
-	struct dcn10_link_encoder *enc10)
+void dcn10_aux_initialize(struct dcn10_link_encoder *enc10)
 {
 	enum hpd_source_id hpd_source = enc10->base.hpd_source;
 

@@ -68,33 +68,6 @@ struct phylink {
 	struct sfp_bus *sfp_bus;
 };
 
-static inline void linkmode_zero(unsigned long *dst)
-{
-	bitmap_zero(dst, __ETHTOOL_LINK_MODE_MASK_NBITS);
-}
-
-static inline void linkmode_copy(unsigned long *dst, const unsigned long *src)
-{
-	bitmap_copy(dst, src, __ETHTOOL_LINK_MODE_MASK_NBITS);
-}
-
-static inline void linkmode_and(unsigned long *dst, const unsigned long *a,
-				const unsigned long *b)
-{
-	bitmap_and(dst, a, b, __ETHTOOL_LINK_MODE_MASK_NBITS);
-}
-
-static inline void linkmode_or(unsigned long *dst, const unsigned long *a,
-				const unsigned long *b)
-{
-	bitmap_or(dst, a, b, __ETHTOOL_LINK_MODE_MASK_NBITS);
-}
-
-static inline bool linkmode_empty(const unsigned long *src)
-{
-	return bitmap_empty(src, __ETHTOOL_LINK_MODE_MASK_NBITS);
-}
-
 /**
  * phylink_set_port_modes() - set the port type modes in the ethtool mask
  * @mask: ethtool link mode mask
@@ -218,8 +191,7 @@ static int phylink_parse_fixedlink(struct phylink *pl,
 	phylink_validate(pl, pl->supported, &pl->link_config);
 
 	s = phy_lookup_setting(pl->link_config.speed, pl->link_config.duplex,
-			       pl->supported,
-			       __ETHTOOL_LINK_MODE_MASK_NBITS, true);
+			       pl->supported, true);
 	linkmode_zero(pl->supported);
 	phylink_set(pl->supported, MII);
 	if (s) {
@@ -348,6 +320,10 @@ static int phylink_get_mac_state(struct phylink *pl, struct phylink_link_state *
 	linkmode_zero(state->lp_advertising);
 	state->interface = pl->link_config.interface;
 	state->an_enabled = pl->link_config.an_enabled;
+	state->speed = SPEED_UNKNOWN;
+	state->duplex = DUPLEX_UNKNOWN;
+	state->pause = MLO_PAUSE_NONE;
+	state->an_complete = 0;
 	state->link = 1;
 
 	return pl->ops->mac_link_state(ndev, state);
@@ -500,6 +476,17 @@ static void phylink_run_resolve(struct phylink *pl)
 {
 	if (!pl->phylink_disable_state)
 		queue_work(system_power_efficient_wq, &pl->resolve);
+}
+
+static void phylink_run_resolve_and_disable(struct phylink *pl, int bit)
+{
+	unsigned long state = pl->phylink_disable_state;
+
+	set_bit(bit, &pl->phylink_disable_state);
+	if (state == 0) {
+		queue_work(system_power_efficient_wq, &pl->resolve);
+		flush_work(&pl->resolve);
+	}
 }
 
 static void phylink_fixed_poll(struct timer_list *t)
@@ -661,13 +648,11 @@ static int phylink_bringup_phy(struct phylink *pl, struct phy_device *phy)
 {
 	struct phylink_link_state config;
 	__ETHTOOL_DECLARE_LINK_MODE_MASK(supported);
-	u32 advertising;
 	int ret;
 
 	memset(&config, 0, sizeof(config));
-	ethtool_convert_legacy_u32_to_link_mode(supported, phy->supported);
-	ethtool_convert_legacy_u32_to_link_mode(config.advertising,
-						phy->advertising);
+	linkmode_copy(supported, phy->supported);
+	linkmode_copy(config.advertising, phy->advertising);
 	config.interface = pl->link_config.interface;
 
 	/*
@@ -700,21 +685,44 @@ static int phylink_bringup_phy(struct phylink *pl, struct phy_device *phy)
 	linkmode_copy(pl->link_config.advertising, config.advertising);
 
 	/* Restrict the phy advertisement according to the MAC support. */
-	ethtool_convert_link_mode_to_legacy_u32(&advertising, config.advertising);
-	phy->advertising = advertising;
+	linkmode_copy(phy->advertising, config.advertising);
 	mutex_unlock(&pl->state_mutex);
 	mutex_unlock(&phy->lock);
 
 	netdev_dbg(pl->netdev,
-		   "phy: setting supported %*pb advertising 0x%08x\n",
+		   "phy: setting supported %*pb advertising %*pb\n",
 		   __ETHTOOL_LINK_MODE_MASK_NBITS, pl->supported,
-		   phy->advertising);
+		   __ETHTOOL_LINK_MODE_MASK_NBITS, phy->advertising);
 
 	phy_start_machine(phy);
 	if (phy->irq > 0)
 		phy_start_interrupts(phy);
 
 	return 0;
+}
+
+static int __phylink_connect_phy(struct phylink *pl, struct phy_device *phy,
+		phy_interface_t interface)
+{
+	int ret;
+
+	if (WARN_ON(pl->link_an_mode == MLO_AN_FIXED ||
+		    (pl->link_an_mode == MLO_AN_INBAND &&
+		     phy_interface_mode_is_8023z(interface))))
+		return -EINVAL;
+
+	if (pl->phydev)
+		return -EBUSY;
+
+	ret = phy_attach_direct(pl->netdev, phy, 0, interface);
+	if (ret)
+		return ret;
+
+	ret = phylink_bringup_phy(pl, phy);
+	if (ret)
+		phy_detach(phy);
+
+	return ret;
 }
 
 /**
@@ -734,31 +742,13 @@ static int phylink_bringup_phy(struct phylink *pl, struct phy_device *phy)
  */
 int phylink_connect_phy(struct phylink *pl, struct phy_device *phy)
 {
-	int ret;
-
-	if (WARN_ON(pl->link_an_mode == MLO_AN_FIXED ||
-		    (pl->link_an_mode == MLO_AN_INBAND &&
-		     phy_interface_mode_is_8023z(pl->link_interface))))
-		return -EINVAL;
-
-	if (pl->phydev)
-		return -EBUSY;
-
 	/* Use PHY device/driver interface */
 	if (pl->link_interface == PHY_INTERFACE_MODE_NA) {
 		pl->link_interface = phy->interface;
 		pl->link_config.interface = pl->link_interface;
 	}
 
-	ret = phy_attach_direct(pl->netdev, phy, 0, pl->link_interface);
-	if (ret)
-		return ret;
-
-	ret = phylink_bringup_phy(pl, phy);
-	if (ret)
-		phy_detach(phy);
-
-	return ret;
+	return __phylink_connect_phy(pl, phy, pl->link_interface);
 }
 EXPORT_SYMBOL_GPL(phylink_connect_phy);
 
@@ -901,6 +891,9 @@ void phylink_start(struct phylink *pl)
 		    phylink_an_mode_str(pl->link_an_mode),
 		    phy_modes(pl->link_config.interface));
 
+	/* Always set the carrier off */
+	netif_carrier_off(pl->netdev);
+
 	/* Apply the link configuration to the MAC when starting. This allows
 	 * a fixed-link to start with the correct parameters, and also
 	 * ensures that we set the appropriate advertisement for Serdes links.
@@ -946,9 +939,7 @@ void phylink_stop(struct phylink *pl)
 	if (pl->link_an_mode == MLO_AN_FIXED && !IS_ERR(pl->link_gpio))
 		del_timer_sync(&pl->link_poll);
 
-	set_bit(PHYLINK_DISABLE_STOPPED, &pl->phylink_disable_state);
-	queue_work(system_power_efficient_wq, &pl->resolve);
-	flush_work(&pl->resolve);
+	phylink_run_resolve_and_disable(pl, PHYLINK_DISABLE_STOPPED);
 }
 EXPORT_SYMBOL_GPL(phylink_stop);
 
@@ -1106,8 +1097,7 @@ int phylink_ethtool_ksettings_set(struct phylink *pl,
 		 * duplex.
 		 */
 		s = phy_lookup_setting(kset->base.speed, kset->base.duplex,
-				       pl->supported,
-				       __ETHTOOL_LINK_MODE_MASK_NBITS, false);
+				       pl->supported, false);
 		if (!s)
 			return -EINVAL;
 
@@ -1655,9 +1645,7 @@ static void phylink_sfp_link_down(void *upstream)
 
 	ASSERT_RTNL();
 
-	set_bit(PHYLINK_DISABLE_LINK, &pl->phylink_disable_state);
-	queue_work(system_power_efficient_wq, &pl->resolve);
-	flush_work(&pl->resolve);
+	phylink_run_resolve_and_disable(pl, PHYLINK_DISABLE_LINK);
 }
 
 static void phylink_sfp_link_up(void *upstream)
@@ -1672,7 +1660,9 @@ static void phylink_sfp_link_up(void *upstream)
 
 static int phylink_sfp_connect_phy(void *upstream, struct phy_device *phy)
 {
-	return phylink_connect_phy(upstream, phy);
+	struct phylink *pl = upstream;
+
+	return __phylink_connect_phy(upstream, phy, pl->link_config.interface);
 }
 
 static void phylink_sfp_disconnect_phy(void *upstream)
@@ -1687,5 +1677,35 @@ static const struct sfp_upstream_ops sfp_phylink_ops = {
 	.connect_phy = phylink_sfp_connect_phy,
 	.disconnect_phy = phylink_sfp_disconnect_phy,
 };
+
+/* Helpers for MAC drivers */
+
+/**
+ * phylink_helper_basex_speed() - 1000BaseX/2500BaseX helper
+ * @state: a pointer to a &struct phylink_link_state
+ *
+ * Inspect the interface mode, advertising mask or forced speed and
+ * decide whether to run at 2.5Gbit or 1Gbit appropriately, switching
+ * the interface mode to suit.  @state->interface is appropriately
+ * updated, and the advertising mask has the "other" baseX_Full flag
+ * cleared.
+ */
+void phylink_helper_basex_speed(struct phylink_link_state *state)
+{
+	if (phy_interface_mode_is_8023z(state->interface)) {
+		bool want_2500 = state->an_enabled ?
+			phylink_test(state->advertising, 2500baseX_Full) :
+			state->speed == SPEED_2500;
+
+		if (want_2500) {
+			phylink_clear(state->advertising, 1000baseX_Full);
+			state->interface = PHY_INTERFACE_MODE_2500BASEX;
+		} else {
+			phylink_clear(state->advertising, 2500baseX_Full);
+			state->interface = PHY_INTERFACE_MODE_1000BASEX;
+		}
+	}
+}
+EXPORT_SYMBOL_GPL(phylink_helper_basex_speed);
 
 MODULE_LICENSE("GPL");

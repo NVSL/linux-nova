@@ -62,7 +62,7 @@
 
 /* make sure inq_product_rev string corresponds to this version */
 #define SDEBUG_VERSION "0188"	/* format to fit INQUIRY revision field */
-static const char *sdebug_version_date = "20180128";
+static const char *sdebug_version_date = "20190125";
 
 #define MY_NAME "scsi_debug"
 
@@ -164,29 +164,29 @@ static const char *sdebug_version_date = "20180128";
 #define SDEBUG_OPT_RESET_NOISE		0x2000
 #define SDEBUG_OPT_NO_CDB_NOISE		0x4000
 #define SDEBUG_OPT_HOST_BUSY		0x8000
+#define SDEBUG_OPT_CMD_ABORT		0x10000
 #define SDEBUG_OPT_ALL_NOISE (SDEBUG_OPT_NOISE | SDEBUG_OPT_Q_NOISE | \
 			      SDEBUG_OPT_RESET_NOISE)
 #define SDEBUG_OPT_ALL_INJECTING (SDEBUG_OPT_RECOVERED_ERR | \
 				  SDEBUG_OPT_TRANSPORT_ERR | \
 				  SDEBUG_OPT_DIF_ERR | SDEBUG_OPT_DIX_ERR | \
 				  SDEBUG_OPT_SHORT_TRANSFER | \
-				  SDEBUG_OPT_HOST_BUSY)
+				  SDEBUG_OPT_HOST_BUSY | \
+				  SDEBUG_OPT_CMD_ABORT)
 /* When "every_nth" > 0 then modulo "every_nth" commands:
  *   - a missing response is simulated if SDEBUG_OPT_TIMEOUT is set
  *   - a RECOVERED_ERROR is simulated on successful read and write
  *     commands if SDEBUG_OPT_RECOVERED_ERR is set.
  *   - a TRANSPORT_ERROR is simulated on successful read and write
  *     commands if SDEBUG_OPT_TRANSPORT_ERR is set.
+ *   - similarly for DIF_ERR, DIX_ERR, SHORT_TRANSFER, HOST_BUSY and
+ *     CMD_ABORT
  *
- * When "every_nth" < 0 then after "- every_nth" commands:
- *   - a missing response is simulated if SDEBUG_OPT_TIMEOUT is set
- *   - a RECOVERED_ERROR is simulated on successful read and write
- *     commands if SDEBUG_OPT_RECOVERED_ERR is set.
- *   - a TRANSPORT_ERROR is simulated on successful read and write
- *     commands if _DEBUG_OPT_TRANSPORT_ERR is set.
- * This will continue on every subsequent command until some other action
- * occurs (e.g. the user * writing a new value (other than -1 or 1) to
- * every_nth via sysfs).
+ * When "every_nth" < 0 then after "- every_nth" commands the selected
+ * error will be injected. The error will be injected on every subsequent
+ * command until some other action occurs; for example, the user writing
+ * a new value (other than -1 or 1) to every_nth:
+ *      echo 0 > /sys/bus/pseudo/drivers/scsi_debug/every_nth
  */
 
 /* As indicated in SAM-5 and SPC-4 Unit Attentions (UAs) are returned in
@@ -281,6 +281,7 @@ struct sdebug_defer {
 	int issuing_cpu;
 	bool init_hrt;
 	bool init_wq;
+	bool aborted;	/* true when blk_abort_request() already called */
 	enum sdeb_defer_type defer_t;
 };
 
@@ -296,6 +297,7 @@ struct sdebug_queued_cmd {
 	unsigned int inj_dix:1;
 	unsigned int inj_short:1;
 	unsigned int inj_host_busy:1;
+	unsigned int inj_cmd_abort:1;
 };
 
 struct sdebug_queue {
@@ -733,7 +735,7 @@ static inline bool scsi_debug_lbp(void)
 		(sdebug_lbpu || sdebug_lbpws || sdebug_lbpws10);
 }
 
-static void *fake_store(unsigned long long lba)
+static void *lba2fake_store(unsigned long long lba)
 {
 	lba = do_div(lba, sdebug_store_sectors);
 
@@ -2512,8 +2514,8 @@ static int do_device_access(struct scsi_cmnd *scmd, u32 sg_skip, u64 lba,
 	return ret;
 }
 
-/* If fake_store(lba,num) compares equal to arr(num), then copy top half of
- * arr into fake_store(lba,num) and return true. If comparison fails then
+/* If lba2fake_store(lba,num) compares equal to arr(num), then copy top half of
+ * arr into lba2fake_store(lba,num) and return true. If comparison fails then
  * return false. */
 static bool comp_write_worker(u64 lba, u32 num, const u8 *arr)
 {
@@ -2641,7 +2643,7 @@ static int prot_verify_read(struct scsi_cmnd *SCpnt, sector_t start_sec,
 		if (sdt->app_tag == cpu_to_be16(0xffff))
 			continue;
 
-		ret = dif_verify(sdt, fake_store(sector), sector, ei_lba);
+		ret = dif_verify(sdt, lba2fake_store(sector), sector, ei_lba);
 		if (ret) {
 			dif_errors++;
 			return ret;
@@ -3259,10 +3261,12 @@ err_out:
 static int resp_write_same(struct scsi_cmnd *scp, u64 lba, u32 num,
 			   u32 ei_lba, bool unmap, bool ndob)
 {
+	int ret;
 	unsigned long iflags;
 	unsigned long long i;
-	int ret;
-	u64 lba_off;
+	u32 lb_size = sdebug_sector_size;
+	u64 block, lbaa;
+	u8 *fs1p;
 
 	ret = check_device_access_params(scp, lba, num);
 	if (ret)
@@ -3274,31 +3278,30 @@ static int resp_write_same(struct scsi_cmnd *scp, u64 lba, u32 num,
 		unmap_region(lba, num);
 		goto out;
 	}
-
-	lba_off = lba * sdebug_sector_size;
+	lbaa = lba;
+	block = do_div(lbaa, sdebug_store_sectors);
 	/* if ndob then zero 1 logical block, else fetch 1 logical block */
+	fs1p = fake_storep + (block * lb_size);
 	if (ndob) {
-		memset(fake_storep + lba_off, 0, sdebug_sector_size);
+		memset(fs1p, 0, lb_size);
 		ret = 0;
 	} else
-		ret = fetch_to_dev_buffer(scp, fake_storep + lba_off,
-					  sdebug_sector_size);
+		ret = fetch_to_dev_buffer(scp, fs1p, lb_size);
 
 	if (-1 == ret) {
 		write_unlock_irqrestore(&atomic_rw, iflags);
 		return DID_ERROR << 16;
-	} else if (sdebug_verbose && !ndob && (ret < sdebug_sector_size))
+	} else if (sdebug_verbose && !ndob && (ret < lb_size))
 		sdev_printk(KERN_INFO, scp->device,
 			    "%s: %s: lb size=%u, IO sent=%d bytes\n",
-			    my_name, "write same",
-			    sdebug_sector_size, ret);
+			    my_name, "write same", lb_size, ret);
 
 	/* Copy first sector to remaining blocks */
-	for (i = 1 ; i < num ; i++)
-		memcpy(fake_storep + ((lba + i) * sdebug_sector_size),
-		       fake_storep + lba_off,
-		       sdebug_sector_size);
-
+	for (i = 1 ; i < num ; i++) {
+		lbaa = lba + i;
+		block = do_div(lbaa, sdebug_store_sectors);
+		memmove(fake_storep + (block * lb_size), fs1p, lb_size);
+	}
 	if (scsi_debug_lbp())
 		map_region(lba, num);
 out:
@@ -3792,6 +3795,7 @@ static struct sdebug_queue *get_queue(struct scsi_cmnd *cmnd)
 /* Queued (deferred) command completions converge here. */
 static void sdebug_q_cmd_complete(struct sdebug_defer *sd_dp)
 {
+	bool aborted = sd_dp->aborted;
 	int qc_idx;
 	int retiring = 0;
 	unsigned long iflags;
@@ -3801,6 +3805,8 @@ static void sdebug_q_cmd_complete(struct sdebug_defer *sd_dp)
 	struct sdebug_dev_info *devip;
 
 	sd_dp->defer_t = SDEB_DEFER_NONE;
+	if (unlikely(aborted))
+		sd_dp->aborted = false;
 	qc_idx = sd_dp->qc_idx;
 	sqp = sdebug_q_arr + sd_dp->sqa_idx;
 	if (sdebug_statistics) {
@@ -3852,6 +3858,11 @@ static void sdebug_q_cmd_complete(struct sdebug_defer *sd_dp)
 			atomic_set(&retired_max_queue, k + 1);
 	}
 	spin_unlock_irqrestore(&sqp->qc_lock, iflags);
+	if (unlikely(aborted)) {
+		if (sdebug_verbose)
+			pr_info("bypassing scsi_done() due to aborted cmd\n");
+		return;
+	}
 	scp->scsi_done(scp); /* callback to mid level */
 }
 
@@ -3963,7 +3974,6 @@ static int scsi_debug_slave_configure(struct scsi_device *sdp)
 			return 1;  /* no resources, will be marked offline */
 	}
 	sdp->hostdata = devip;
-	blk_queue_max_segment_size(sdp->request_queue, -1U);
 	if (sdebug_no_uld)
 		sdp->no_uld_attach = 1;
 	config_cdb_len(sdp);
@@ -4312,7 +4322,8 @@ static void setup_inject(struct sdebug_queue *sqp,
 		if (sdebug_every_nth > 0)
 			sqcp->inj_recovered = sqcp->inj_transport
 				= sqcp->inj_dif
-				= sqcp->inj_dix = sqcp->inj_short = 0;
+				= sqcp->inj_dix = sqcp->inj_short
+				= sqcp->inj_host_busy = sqcp->inj_cmd_abort = 0;
 		return;
 	}
 	sqcp->inj_recovered = !!(SDEBUG_OPT_RECOVERED_ERR & sdebug_opts);
@@ -4321,6 +4332,7 @@ static void setup_inject(struct sdebug_queue *sqp,
 	sqcp->inj_dix = !!(SDEBUG_OPT_DIX_ERR & sdebug_opts);
 	sqcp->inj_short = !!(SDEBUG_OPT_SHORT_TRANSFER & sdebug_opts);
 	sqcp->inj_host_busy = !!(SDEBUG_OPT_HOST_BUSY & sdebug_opts);
+	sqcp->inj_cmd_abort = !!(SDEBUG_OPT_CMD_ABORT & sdebug_opts);
 }
 
 /* Complete the processing of the thread that queued a SCSI command to this
@@ -4458,7 +4470,14 @@ static int schedule_resp(struct scsi_cmnd *cmnd, struct sdebug_dev_info *devip,
 		if (sdebug_statistics)
 			sd_dp->issuing_cpu = raw_smp_processor_id();
 		sd_dp->defer_t = SDEB_DEFER_WQ;
+		if (unlikely(sqcp->inj_cmd_abort))
+			sd_dp->aborted = true;
 		schedule_work(&sd_dp->ew.work);
+		if (unlikely(sqcp->inj_cmd_abort)) {
+			sdev_printk(KERN_INFO, sdp, "abort request tag %d\n",
+				    cmnd->request->tag);
+			blk_abort_request(cmnd->request);
+		}
 	}
 	if (unlikely((SDEBUG_OPT_Q_NOISE & sdebug_opts) &&
 		     (scsi_result == device_qfull_result)))
@@ -4844,12 +4863,11 @@ static ssize_t fake_rw_store(struct device_driver *ddp, const char *buf,
 					(unsigned long)sdebug_dev_size_mb *
 					1048576;
 
-				fake_storep = vmalloc(sz);
+				fake_storep = vzalloc(sz);
 				if (NULL == fake_storep) {
 					pr_err("out of memory, 9\n");
 					return -ENOMEM;
 				}
-				memset(fake_storep, 0, sz);
 			}
 			sdebug_fake_rw = n;
 		}
@@ -5391,13 +5409,12 @@ static int __init scsi_debug_init(void)
 	}
 
 	if (sdebug_fake_rw == 0) {
-		fake_storep = vmalloc(sz);
+		fake_storep = vzalloc(sz);
 		if (NULL == fake_storep) {
 			pr_err("out of memory, 1\n");
 			ret = -ENOMEM;
 			goto free_q_arr;
 		}
-		memset(fake_storep, 0, sz);
 		if (sdebug_num_parts > 0)
 			sdebug_build_parts(fake_storep, sz);
 	}
@@ -5790,11 +5807,13 @@ static int scsi_debug_queuecommand(struct Scsi_Host *shost,
 fini:
 	if (F_DELAY_OVERR & flags)
 		return schedule_resp(scp, devip, errsts, pfp, 0, 0);
-	else if ((sdebug_jdelay || sdebug_ndelay) && (flags & F_LONG_DELAY)) {
+	else if ((flags & F_LONG_DELAY) && (sdebug_jdelay > 0 ||
+					    sdebug_ndelay > 10000)) {
 		/*
-		 * If any delay is active, for F_SSU_DELAY want at least 1
-		 * second and if sdebug_jdelay>0 want a long delay of that
-		 * many seconds; for F_SYNC_DELAY want 1/20 of that.
+		 * Skip long delays if ndelay <= 10 microseconds. Otherwise
+		 * for Start Stop Unit (SSU) want at least 1 second delay and
+		 * if sdebug_jdelay>1 want a long delay of that many seconds.
+		 * For Synchronize Cache want 1/20 of SSU's delay.
 		 */
 		int jdelay = (sdebug_jdelay < 2) ? 1 : sdebug_jdelay;
 		int denom = (flags & F_SYNC_DELAY) ? 20 : 1;
@@ -5832,7 +5851,7 @@ static struct scsi_host_template sdebug_driver_template = {
 	.sg_tablesize =		SG_MAX_SEGMENTS,
 	.cmd_per_lun =		DEF_CMD_PER_LUN,
 	.max_sectors =		-1U,
-	.use_clustering = 	DISABLE_CLUSTERING,
+	.max_segment_size =	-1U,
 	.module =		THIS_MODULE,
 	.track_queue_depth =	1,
 };
@@ -5847,8 +5866,9 @@ static int sdebug_driver_probe(struct device *dev)
 	sdbg_host = to_sdebug_host(dev);
 
 	sdebug_driver_template.can_queue = sdebug_max_queue;
-	if (sdebug_clustering)
-		sdebug_driver_template.use_clustering = ENABLE_CLUSTERING;
+	if (!sdebug_clustering)
+		sdebug_driver_template.dma_boundary = PAGE_SIZE - 1;
+
 	hpnt = scsi_host_alloc(&sdebug_driver_template, sizeof(sdbg_host));
 	if (NULL == hpnt) {
 		pr_err("scsi_host_alloc failed\n");
@@ -5862,8 +5882,7 @@ static int sdebug_driver_probe(struct device *dev)
 	}
 	/* Decide whether to tell scsi subsystem that we want mq */
 	/* Following should give the same answer for each host */
-	if (shost_use_blk_mq(hpnt))
-		hpnt->nr_hw_queues = submit_queues;
+	hpnt->nr_hw_queues = submit_queues;
 
 	sdbg_host->shost = hpnt;
 	*((struct sdebug_host_info **)hpnt->hostdata) = sdbg_host;

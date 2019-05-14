@@ -159,6 +159,10 @@ struct intel_vgpu_submission {
 	struct kmem_cache *workloads;
 	atomic_t running_workload_num;
 	struct i915_gem_context *shadow_ctx;
+	union {
+		u64 i915_context_pml4;
+		u64 i915_context_pdps[GEN8_3LVL_PDPES];
+	};
 	DECLARE_BITMAP(shadow_ctx_desc_updated, I915_NUM_ENGINES);
 	DECLARE_BITMAP(tlb_handle_pending, I915_NUM_ENGINES);
 	void *ring_scan_buffer[I915_NUM_ENGINES];
@@ -170,12 +174,18 @@ struct intel_vgpu_submission {
 
 struct intel_vgpu {
 	struct intel_gvt *gvt;
+	struct mutex vgpu_lock;
 	int id;
 	unsigned long handle; /* vGPU handle used by hypervisor MPT modules */
 	bool active;
 	bool pv_notified;
 	bool failsafe;
 	unsigned int resetting_eng;
+
+	/* Both sched_data and sched_ctl can be seen a part of the global gvt
+	 * scheduler structure. So below 2 vgpu data are protected
+	 * by sched_lock, not vgpu_lock.
+	 */
 	void *sched_data;
 	struct vgpu_sched_ctl sched_ctl;
 
@@ -296,7 +306,13 @@ struct intel_vgpu_type {
 };
 
 struct intel_gvt {
+	/* GVT scope lock, protect GVT itself, and all resource currently
+	 * not yet protected by special locks(vgpu and scheduler lock).
+	 */
 	struct mutex lock;
+	/* scheduler scope lock, protect gvt and vgpu schedule related data */
+	struct mutex sched_lock;
+
 	struct drm_i915_private *dev_priv;
 	struct idr vgpu_idr;	/* vGPU IDR pool */
 
@@ -316,6 +332,10 @@ struct intel_gvt {
 
 	struct task_struct *service_thread;
 	wait_queue_head_t service_thread_wq;
+
+	/* service_request is always used in bit operation, we should always
+	 * use it with atomic bit ops so that no need to use gvt big lock.
+	 */
 	unsigned long service_request;
 
 	struct {
@@ -363,9 +383,9 @@ int intel_gvt_load_firmware(struct intel_gvt *gvt);
 #define gvt_aperture_sz(gvt)	  (gvt->dev_priv->ggtt.mappable_end)
 #define gvt_aperture_pa_base(gvt) (gvt->dev_priv->ggtt.gmadr.start)
 
-#define gvt_ggtt_gm_sz(gvt)	  (gvt->dev_priv->ggtt.base.total)
+#define gvt_ggtt_gm_sz(gvt)	  (gvt->dev_priv->ggtt.vm.total)
 #define gvt_ggtt_sz(gvt) \
-	((gvt->dev_priv->ggtt.base.total >> PAGE_SHIFT) << 3)
+	((gvt->dev_priv->ggtt.vm.total >> PAGE_SHIFT) << 3)
 #define gvt_hidden_sz(gvt)	  (gvt_ggtt_gm_sz(gvt) - gvt_aperture_sz(gvt))
 
 #define gvt_aperture_gmadr_base(gvt) (0)
@@ -470,6 +490,7 @@ void intel_gvt_destroy_idle_vgpu(struct intel_vgpu *vgpu);
 struct intel_vgpu *intel_gvt_create_vgpu(struct intel_gvt *gvt,
 					 struct intel_vgpu_type *type);
 void intel_gvt_destroy_vgpu(struct intel_vgpu *vgpu);
+void intel_gvt_release_vgpu(struct intel_vgpu *vgpu);
 void intel_gvt_reset_vgpu_locked(struct intel_vgpu *vgpu, bool dmlr,
 				 unsigned int engine_mask);
 void intel_gvt_reset_vgpu(struct intel_vgpu *vgpu);
@@ -547,7 +568,8 @@ struct intel_gvt_ops {
 				unsigned int);
 	struct intel_vgpu *(*vgpu_create)(struct intel_gvt *,
 				struct intel_vgpu_type *);
-	void (*vgpu_destroy)(struct intel_vgpu *);
+	void (*vgpu_destroy)(struct intel_vgpu *vgpu);
+	void (*vgpu_release)(struct intel_vgpu *vgpu);
 	void (*vgpu_reset)(struct intel_vgpu *);
 	void (*vgpu_activate)(struct intel_vgpu *);
 	void (*vgpu_deactivate)(struct intel_vgpu *);

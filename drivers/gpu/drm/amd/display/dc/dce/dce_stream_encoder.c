@@ -289,11 +289,6 @@ static void dce110_stream_encoder_dp_set_stream_attribute(
 
 	struct dce110_stream_encoder *enc110 = DCE110STRENC_FROM_STRENC(enc);
 
-#if defined(CONFIG_DRM_AMD_DC_DCN1_0)
-	if (REG(DP_DB_CNTL))
-		REG_UPDATE(DP_DB_CNTL, DP_DB_DISABLE, 1);
-#endif
-
 	/* set pixel encoding */
 	switch (crtc_timing->pixel_encoding) {
 	case PIXEL_ENCODING_YCBCR422:
@@ -679,6 +674,28 @@ static void dce110_stream_encoder_dvi_set_stream_attribute(
 	dce110_stream_encoder_set_stream_attribute_helper(enc110, crtc_timing);
 }
 
+/* setup stream encoder in LVDS mode */
+static void dce110_stream_encoder_lvds_set_stream_attribute(
+	struct stream_encoder *enc,
+	struct dc_crtc_timing *crtc_timing)
+{
+	struct dce110_stream_encoder *enc110 = DCE110STRENC_FROM_STRENC(enc);
+	struct bp_encoder_control cntl = {0};
+
+	cntl.action = ENCODER_CONTROL_SETUP;
+	cntl.engine_id = enc110->base.id;
+	cntl.signal = SIGNAL_TYPE_LVDS;
+	cntl.enable_dp_audio = false;
+	cntl.pixel_clock = crtc_timing->pix_clk_khz;
+	cntl.lanes_number = LANE_COUNT_FOUR;
+
+	if (enc110->base.bp->funcs->encoder_control(
+			enc110->base.bp, &cntl) != BP_RESULT_OK)
+		return;
+
+	ASSERT(crtc_timing->pixel_encoding == PIXEL_ENCODING_RGB);
+}
+
 static void dce110_stream_encoder_set_mst_bandwidth(
 	struct stream_encoder *enc,
 	struct fixed31_32 avg_time_slots_per_mtp)
@@ -891,7 +908,6 @@ static void dce110_stream_encoder_dp_blank(
 	struct stream_encoder *enc)
 {
 	struct dce110_stream_encoder *enc110 = DCE110STRENC_FROM_STRENC(enc);
-	uint32_t retries = 0;
 	uint32_t  reg1 = 0;
 	uint32_t max_retries = DP_BLANK_MAX_RETRY * 10;
 
@@ -909,30 +925,28 @@ static void dce110_stream_encoder_dp_blank(
 	 * (2 = start of the next vertical blank) */
 	REG_UPDATE(DP_VID_STREAM_CNTL, DP_VID_STREAM_DIS_DEFER, 2);
 	/* Larger delay to wait until VBLANK - use max retry of
-	* 10us*3000=30ms. This covers 16.6ms of typical 60 Hz mode +
-	* a little more because we may not trust delay accuracy.
-	*/
+	 * 10us*3000=30ms. This covers 16.6ms of typical 60 Hz mode +
+	 * a little more because we may not trust delay accuracy.
+	 */
 	max_retries = DP_BLANK_MAX_RETRY * 150;
 
 	/* disable DP stream */
 	REG_UPDATE(DP_VID_STREAM_CNTL, DP_VID_STREAM_ENABLE, 0);
 
 	/* the encoder stops sending the video stream
-	* at the start of the vertical blanking.
-	* Poll for DP_VID_STREAM_STATUS == 0
-	*/
+	 * at the start of the vertical blanking.
+	 * Poll for DP_VID_STREAM_STATUS == 0
+	 */
 
 	REG_WAIT(DP_VID_STREAM_CNTL, DP_VID_STREAM_STATUS,
 			0,
 			10, max_retries);
 
-	ASSERT(retries <= max_retries);
-
 	/* Tell the DP encoder to ignore timing from CRTC, must be done after
-	* the polling. If we set DP_STEER_FIFO_RESET before DP stream blank is
-	* complete, stream status will be stuck in video stream enabled state,
-	* i.e. DP_VID_STREAM_STATUS stuck at 1.
-	*/
+	 * the polling. If we set DP_STEER_FIFO_RESET before DP stream blank is
+	 * complete, stream status will be stuck in video stream enabled state,
+	 * i.e. DP_VID_STREAM_STATUS stuck at 1.
+	 */
 
 	REG_UPDATE(DP_STEER_FIFO, DP_STEER_FIFO_RESET, true);
 }
@@ -1569,6 +1583,8 @@ static const struct stream_encoder_funcs dce110_str_enc_funcs = {
 		dce110_stream_encoder_hdmi_set_stream_attribute,
 	.dvi_set_stream_attribute =
 		dce110_stream_encoder_dvi_set_stream_attribute,
+	.lvds_set_stream_attribute =
+		dce110_stream_encoder_lvds_set_stream_attribute,
 	.set_mst_bandwidth =
 		dce110_stream_encoder_set_mst_bandwidth,
 	.update_hdmi_info_packets =

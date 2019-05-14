@@ -34,7 +34,7 @@
 #include <linux/slab.h>
 #include <linux/export.h>
 #include <linux/dma-fence.h>
-#include <drm/drmP.h>
+#include <linux/uaccess.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_edid.h>
 #include <drm/drm_fourcc.h>
@@ -42,6 +42,9 @@
 #include <drm/drm_atomic.h>
 #include <drm/drm_auth.h>
 #include <drm/drm_debugfs_crc.h>
+#include <drm/drm_drv.h>
+#include <drm/drm_print.h>
+#include <drm/drm_file.h>
 
 #include "drm_crtc_internal.h"
 #include "drm_internal.h"
@@ -225,16 +228,9 @@ static const char *drm_crtc_fence_get_timeline_name(struct dma_fence *fence)
 	return crtc->timeline_name;
 }
 
-static bool drm_crtc_fence_enable_signaling(struct dma_fence *fence)
-{
-	return true;
-}
-
 static const struct dma_fence_ops drm_crtc_fence_ops = {
 	.get_driver_name = drm_crtc_fence_get_driver_name,
 	.get_timeline_name = drm_crtc_fence_get_timeline_name,
-	.enable_signaling = drm_crtc_fence_enable_signaling,
-	.wait = dma_fence_default_wait,
 };
 
 struct dma_fence *drm_crtc_create_fence(struct drm_crtc *crtc)
@@ -286,6 +282,10 @@ int drm_crtc_init_with_planes(struct drm_device *dev, struct drm_crtc *crtc,
 	if (WARN_ON(config->num_crtc >= 32))
 		return -EINVAL;
 
+	WARN_ON(drm_drv_uses_atomic_modeset(dev) &&
+		(!funcs->atomic_destroy_state ||
+		 !funcs->atomic_duplicate_state));
+
 	crtc->dev = dev;
 	crtc->funcs = funcs;
 
@@ -325,9 +325,9 @@ int drm_crtc_init_with_planes(struct drm_device *dev, struct drm_crtc *crtc,
 	crtc->primary = primary;
 	crtc->cursor = cursor;
 	if (primary && !primary->possible_crtcs)
-		primary->possible_crtcs = 1 << drm_crtc_index(crtc);
+		primary->possible_crtcs = drm_crtc_mask(crtc);
 	if (cursor && !cursor->possible_crtcs)
-		cursor->possible_crtcs = 1 << drm_crtc_index(crtc);
+		cursor->possible_crtcs = drm_crtc_mask(crtc);
 
 	ret = drm_crtc_crc_init(crtc);
 	if (ret) {
@@ -340,6 +340,8 @@ int drm_crtc_init_with_planes(struct drm_device *dev, struct drm_crtc *crtc,
 		drm_object_attach_property(&crtc->base, config->prop_mode_id, 0);
 		drm_object_attach_property(&crtc->base,
 					   config->prop_out_fence_ptr, 0);
+		drm_object_attach_property(&crtc->base,
+					   config->prop_vrr_enabled, 0);
 	}
 
 	return 0;
@@ -405,7 +407,7 @@ int drm_mode_getcrtc(struct drm_device *dev,
 	struct drm_plane *plane;
 
 	if (!drm_core_check_feature(dev, DRIVER_MODESET))
-		return -EINVAL;
+		return -EOPNOTSUPP;
 
 	crtc = drm_crtc_find(dev, file_priv, crtc_resp->crtc_id);
 	if (!crtc)
@@ -464,32 +466,42 @@ static int __drm_mode_set_config_internal(struct drm_mode_set *set,
 	struct drm_crtc *tmp;
 	int ret;
 
+	WARN_ON(drm_drv_uses_atomic_modeset(crtc->dev));
+
 	/*
 	 * NOTE: ->set_config can also disable other crtcs (if we steal all
 	 * connectors from it), hence we need to refcount the fbs across all
 	 * crtcs. Atomic modeset will have saner semantics ...
 	 */
-	drm_for_each_crtc(tmp, crtc->dev)
-		tmp->primary->old_fb = tmp->primary->fb;
+	drm_for_each_crtc(tmp, crtc->dev) {
+		struct drm_plane *plane = tmp->primary;
+
+		plane->old_fb = plane->fb;
+	}
 
 	fb = set->fb;
 
 	ret = crtc->funcs->set_config(set, ctx);
 	if (ret == 0) {
-		crtc->primary->crtc = fb ? crtc : NULL;
-		crtc->primary->fb = fb;
+		struct drm_plane *plane = crtc->primary;
+
+		plane->crtc = fb ? crtc : NULL;
+		plane->fb = fb;
 	}
 
 	drm_for_each_crtc(tmp, crtc->dev) {
-		if (tmp->primary->fb)
-			drm_framebuffer_get(tmp->primary->fb);
-		if (tmp->primary->old_fb)
-			drm_framebuffer_put(tmp->primary->old_fb);
-		tmp->primary->old_fb = NULL;
+		struct drm_plane *plane = tmp->primary;
+
+		if (plane->fb)
+			drm_framebuffer_get(plane->fb);
+		if (plane->old_fb)
+			drm_framebuffer_put(plane->old_fb);
+		plane->old_fb = NULL;
 	}
 
 	return ret;
 }
+
 /**
  * drm_mode_set_config_internal - helper to call &drm_mode_config_funcs.set_config
  * @set: modeset config to set
@@ -570,7 +582,7 @@ int drm_mode_setcrtc(struct drm_device *dev, void *data,
 	int i;
 
 	if (!drm_core_check_feature(dev, DRIVER_MODESET))
-		return -EINVAL;
+		return -EOPNOTSUPP;
 
 	/*
 	 * Universal plane src offsets are only 16.16, prevent havoc for
@@ -589,11 +601,8 @@ int drm_mode_setcrtc(struct drm_device *dev, void *data,
 	plane = crtc->primary;
 
 	mutex_lock(&crtc->dev->mode_config.mutex);
-	drm_modeset_acquire_init(&ctx, DRM_MODESET_ACQUIRE_INTERRUPTIBLE);
-retry:
-	ret = drm_modeset_lock_all_ctx(crtc->dev, &ctx);
-	if (ret)
-		goto out;
+	DRM_MODESET_LOCK_ALL_BEGIN(dev, ctx,
+				   DRM_MODESET_ACQUIRE_INTERRUPTIBLE, ret);
 
 	if (crtc_req->mode_valid) {
 		/* If we have a mode we need a framebuffer. */
@@ -640,7 +649,9 @@ retry:
 
 		ret = drm_mode_convert_umode(dev, mode, &crtc_req->mode);
 		if (ret) {
-			DRM_DEBUG_KMS("Invalid mode\n");
+			DRM_DEBUG_KMS("Invalid mode (ret=%d, status=%s)\n",
+				      ret, drm_get_mode_status_name(mode->status));
+			drm_mode_debug_printmodeline(mode);
 			goto out;
 		}
 
@@ -732,7 +743,11 @@ retry:
 	set.connectors = connector_set;
 	set.num_connectors = crtc_req->count_connectors;
 	set.fb = fb;
-	ret = __drm_mode_set_config_internal(&set, &ctx);
+
+	if (drm_drv_uses_atomic_modeset(dev))
+		ret = crtc->funcs->set_config(&set, &ctx);
+	else
+		ret = __drm_mode_set_config_internal(&set, &ctx);
 
 out:
 	if (fb)
@@ -746,13 +761,13 @@ out:
 	}
 	kfree(connector_set);
 	drm_mode_destroy(dev, mode);
-	if (ret == -EDEADLK) {
-		ret = drm_modeset_backoff(&ctx);
-		if (!ret)
-			goto retry;
-	}
-	drm_modeset_drop_locks(&ctx);
-	drm_modeset_acquire_fini(&ctx);
+
+	/* In case we need to retry... */
+	connector_set = NULL;
+	fb = NULL;
+	mode = NULL;
+
+	DRM_MODESET_LOCK_ALL_END(ctx, ret);
 	mutex_unlock(&crtc->dev->mode_config.mutex);
 
 	return ret;

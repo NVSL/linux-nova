@@ -14,10 +14,7 @@
 
 #include "cgroup_helpers.h"
 #include "bpf_rlimit.h"
-
-#ifndef ARRAY_SIZE
-# define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
-#endif
+#include "bpf_util.h"
 
 #define CG_PATH		"/foo"
 #define MAX_INSNS	512
@@ -461,7 +458,7 @@ int main(int argc, char **argv)
 		goto err;
 
 	cgfd = create_and_get_cgroup(CG_PATH);
-	if (!cgfd)
+	if (cgfd < 0)
 		goto err;
 
 	if (join_cgroup(CG_PATH))

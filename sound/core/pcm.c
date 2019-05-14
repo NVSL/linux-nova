@@ -25,6 +25,7 @@
 #include <linux/time.h>
 #include <linux/mutex.h>
 #include <linux/device.h>
+#include <linux/nospec.h>
 #include <sound/core.h>
 #include <sound/minors.h>
 #include <sound/pcm.h>
@@ -129,6 +130,7 @@ static int snd_pcm_control_ioctl(struct snd_card *card,
 				return -EFAULT;
 			if (stream < 0 || stream > 1)
 				return -EINVAL;
+			stream = array_index_nospec(stream, 2);
 			if (get_user(subdevice, &info->subdevice))
 				return -EFAULT;
 			mutex_lock(&register_mutex);
@@ -492,13 +494,8 @@ static void snd_pcm_xrun_injection_write(struct snd_info_entry *entry,
 					 struct snd_info_buffer *buffer)
 {
 	struct snd_pcm_substream *substream = entry->private_data;
-	struct snd_pcm_runtime *runtime;
 
-	snd_pcm_stream_lock_irq(substream);
-	runtime = substream->runtime;
-	if (runtime && runtime->status->state == SNDRV_PCM_STATE_RUNNING)
-		snd_pcm_stop(substream, SNDRV_PCM_STATE_XRUN);
-	snd_pcm_stream_unlock_irq(substream);
+	snd_pcm_stop_xrun(substream);
 }
 
 static void snd_pcm_xrun_debug_read(struct snd_info_entry *entry,

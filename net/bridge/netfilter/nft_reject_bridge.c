@@ -89,8 +89,7 @@ static void nft_reject_br_send_v4_tcp_reset(struct net *net,
 	niph = nf_reject_iphdr_put(nskb, oldskb, IPPROTO_TCP,
 				   net->ipv4.sysctl_ip_default_ttl);
 	nf_reject_ip_tcphdr_put(nskb, oldskb, oth);
-	niph->ttl	= net->ipv4.sysctl_ip_default_ttl;
-	niph->tot_len	= htons(nskb->len);
+	niph->tot_len = htons(nskb->len);
 	ip_send_check(niph);
 
 	nft_reject_br_push_etherhdr(oldskb, nskb);
@@ -230,6 +229,7 @@ static bool reject6_br_csum_ok(struct sk_buff *skb, int hook)
 	    pskb_trim_rcsum(skb, ntohs(ip6h->payload_len) + sizeof(*ip6h)))
 		return false;
 
+	ip6h = ipv6_hdr(skb);
 	thoff = ipv6_skip_exthdr(skb, ((u8*)(ip6h+1) - skb->data), &proto, &fo);
 	if (thoff < 0 || thoff >= skb->len || (fo & htons(~0x7)) != 0)
 		return false;
