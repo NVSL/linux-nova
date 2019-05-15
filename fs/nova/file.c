@@ -473,7 +473,7 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 	index = pos >> PAGE_SHIFT;
 	offset = pos & ~PAGE_MASK;
 
-	if (!access_ok(VERIFY_WRITE, buf, len)) {
+	if (!access_ok(buf, len)) {
 		error = -EFAULT;
 		goto out;
 	}
@@ -654,7 +654,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 
 	NOVA_START_TIMING(do_cow_write_t, cow_write_time);
 
-	if (!access_ok(VERIFY_READ, buf, len)) {
+	if (!access_ok(buf, len)) {
 		ret = -EFAULT;
 		goto out;
 	}

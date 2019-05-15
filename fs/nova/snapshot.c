@@ -913,6 +913,7 @@ int nova_create_snapshot(struct super_block *sb)
 	u64 epoch_id;
 	int ret;
 	INIT_TIMING(create_snapshot_time);
+	struct timespec64 now;
 
 	NOVA_START_TIMING(create_snapshot_t, create_snapshot_time);
 
@@ -931,7 +932,8 @@ int nova_create_snapshot(struct super_block *sb)
 	nova_info("%s: epoch id %llu\n", __func__, epoch_id);
 
 
-	timestamp = timespec_trunc(current_kernel_time(),
+	ktime_get_coarse_real_ts64(&now);
+	timestamp = timespec64_trunc(now,
 				   sb->s_time_gran).tv_sec;
 
 	ret = nova_initialize_snapshot_info(sb, &info, 1, epoch_id);
@@ -1189,7 +1191,7 @@ static int nova_print_snapshot_info(struct snapshot_info *info,
 	timestamp = info->timestamp;
 
 	local_time = timestamp - sys_tz.tz_minuteswest * 60;
-	time_to_tm(local_time, 0, &tm);
+	time64_to_tm(local_time, 0, &tm);
 	seq_printf(seq, "%8llu\t%4lu-%02d-%02d\t%02d:%02d:%02d\n",
 					info->epoch_id,
 					tm.tm_year + 1900, tm.tm_mon + 1,

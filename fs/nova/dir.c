@@ -159,6 +159,8 @@ static unsigned int nova_init_dentry(struct super_block *sb,
 	struct nova_inode_log_page *curr_page = start;
 	unsigned int length;
 	unsigned short de_len;
+	struct timespec64 now;
+
 
 	de_len = NOVA_DIR_LOG_REC_LEN(1);
 	memset(de_entry, 0, de_len);
@@ -168,7 +170,8 @@ static unsigned int nova_init_dentry(struct super_block *sb,
 	de_entry->ino = cpu_to_le64(self_ino);
 	de_entry->name_len = 1;
 	de_entry->de_len = cpu_to_le16(de_len);
-	de_entry->mtime = timespec_trunc(current_kernel_time(),
+	ktime_get_coarse_real_ts64(&now);
+	de_entry->mtime = timespec64_trunc(now,
 					 sb->s_time_gran).tv_sec;
 
 	de_entry->links_count = 1;
@@ -186,7 +189,8 @@ static unsigned int nova_init_dentry(struct super_block *sb,
 	de_entry->ino = cpu_to_le64(parent_ino);
 	de_entry->name_len = 2;
 	de_entry->de_len = cpu_to_le16(de_len);
-	de_entry->mtime = timespec_trunc(current_kernel_time(),
+	ktime_get_coarse_real_ts64(&now);
+	de_entry->mtime = timespec64_trunc(now,
 					 sb->s_time_gran).tv_sec;
 
 	de_entry->links_count = 2;

@@ -596,7 +596,7 @@ ssize_t do_nova_inplace_file_write(struct file *filp,
 	NOVA_START_TIMING(inplace_write_t, inplace_write_time);
 
 
-	if (!access_ok(VERIFY_READ, buf, len)) {
+	if (!access_ok(buf, len)) {
 		ret = -EFAULT;
 		goto out;
 	}

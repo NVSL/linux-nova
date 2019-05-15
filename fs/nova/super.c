@@ -28,6 +28,7 @@
 #include <linux/io.h>
 #include <linux/seq_file.h>
 #include <linux/mount.h>
+#include <uapi/linux/mount.h>
 #include <linux/mm.h>
 #include <linux/ctype.h>
 #include <linux/bitops.h>
