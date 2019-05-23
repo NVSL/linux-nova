@@ -1068,10 +1068,10 @@ static struct iomap_ops nova_iomap_ops_lock = {
 };
 
 
-static int nova_dax_huge_fault(struct vm_fault *vmf,
+static vm_fault_t nova_dax_huge_fault(struct vm_fault *vmf,
 			      enum page_entry_size pe_size)
 {
-	int ret = 0;
+	vm_fault_t ret;
 	int error = 0;
 	pfn_t pfn;
 	INIT_TIMING(fault_time);
@@ -1092,7 +1092,7 @@ static int nova_dax_huge_fault(struct vm_fault *vmf,
 	return ret;
 }
 
-static int nova_dax_fault(struct vm_fault *vmf)
+static vm_fault_t nova_dax_fault(struct vm_fault *vmf)
 {
 	struct address_space *mapping = vmf->vma->vm_file->f_mapping;
 	struct inode *inode = mapping->host;
@@ -1103,7 +1103,7 @@ static int nova_dax_fault(struct vm_fault *vmf)
 	return nova_dax_huge_fault(vmf, PE_SIZE_PTE);
 }
 
-static int nova_dax_pfn_mkwrite(struct vm_fault *vmf)
+static vm_fault_t nova_dax_pfn_mkwrite(struct vm_fault *vmf)
 {
 	struct address_space *mapping = vmf->vma->vm_file->f_mapping;
 	struct inode *inode = mapping->host;
