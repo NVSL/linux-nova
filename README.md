@@ -48,6 +48,9 @@ UCSD-CSE Techreport CS2017-1018
 
 Read on for further details about NOVA's overall design and its current status 
 
+### Linux versions supported
+5.1 (current master), 5.0, 4.19, 4.18, 4.14, 4.13. Checkout each branch if you are interested.
+
 ### Compatibilty with Other File Systems
 
 NOVA aims to be compatible with other Linux file systems.  To help verify that it achieves this we run several test suites against NOVA each night.
