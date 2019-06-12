@@ -1,5 +1,9 @@
 # NOVA: NOn-Volatile memory Accelerated log-structured file system
 
+### Linux versions supported
+5.1 (current master), 5.0, 4.19, 4.18, 4.14, 4.13. Checkout each branch if you are interested.
+
+### Description
 NOVA's goal is to provide a high-performance, full-featured, production-ready
 file system tailored for byte-addressable non-volatile memories (e.g., NVDIMMs
 and Intel's soon-to-be-released 3DXpoint DIMMs).  It combines design elements
@@ -47,9 +51,6 @@ UCSD-CSE Techreport CS2017-1018
 *Jian Xu, Lu Zhang, Amirsaman Memaripour, Akshatha Gangadharaiah, Amit Borase, Tamires Brito Da Silva, Andy Rudoff, Steven Swanson*<br>
 
 Read on for further details about NOVA's overall design and its current status 
-
-### Linux versions supported
-5.1 (current master), 5.0, 4.19, 4.18, 4.14, 4.13. Checkout each branch if you are interested.
 
 ### Compatibilty with Other File Systems
 
