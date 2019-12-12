@@ -1,0 +1,81 @@
+/*
+ * Debug parameters
+ */
+
+/* Mode */
+// #define MODE_USE_MEMCPY
+#define MODE_USE_COOKIE 
+#define MODE_USE_GROUP
+#define MODE_USE_DYN_THRES
+
+// #define MODE_KEEP_STAT
+// #define MODE_KEEP_STAT_VPMEM
+// #define MODE_KEEP_STAT_BIO
+#define MODE_KEEP_STAT_ACCU
+
+#define MODE_FORE_ALLOC
+#define MODE_FORE_PMEM
+// #define MODE_FORE_BAL
+#define MODE_FORE_PREFETCH
+// #define MODE_FORE_LOG
+#define MODE_BACK_MIG
+#define MODE_REV_MIG
+// #define MODE_LOG_MIG
+#define MODE_MIG_SELF
+#define MODE_MIGRATION_DOWNWARD
+#define MODE_SR_FAULT
+#define MODE_SR_WB
+
+#define MODE_FIXED_BDEV
+#define TIER_BDEV_HIGH 1
+
+/* Configure */
+#define SUPER_KEEP_TIMING 0
+#define SUPER_DBGMASK_INIT 0
+
+#define BDEV_OPT_SIZE_BIT_INIT 12
+#define SYNC_BIT_INIT 20
+#define SEQ_BIT_INIT 2
+#define PMEM_LARGE_FILE_SIZE_BIT 30
+#define PMEM_LOG_RES_BIT 17
+#define PMEM_RES_SIZE_LOG 32
+#define PMEM_RES_SIZE_DATA 64
+#define VPMEM_MAX_PAGES_QTR_INIT 4096
+#define MIGRATION_DOWN_PMEM_PERC_INIT 80
+#define MIGRATION_IDEAL_PERC_INIT 80
+#define MIGRATION_DOWN_BDEV_PERC 80
+#define MIGRATION_FORCE_PERC 90
+#define MIGRATION_MAX_PERC 98
+
+/* Debug */
+// #define DEBUG_XFSTESTS
+
+// #define DEBUG_INIT
+// #define DEBUG_STARTUP_TEST
+// #define DEBUG_PROC_LOCK
+
+// #define DEBUG_BDEV_RW
+// #define DEBUG_BFL_INFO
+// #define DEBUG_WRITE_ENTRY
+// #define DEBUG_FILE_OP
+// #define DEBUG_KTHREAD
+
+// #define DEBUG_PROF_SYNC
+// #define DEBUG_PROF_SEQ
+// #define DEBUG_PROF_HOT
+
+// #define DEBUG_DO_MIGRATION
+// #define DEBUG_MIGRATION_FILE
+// #define DEBUG_MIGRATION_INFO
+// #define DEBUG_MIGRATION_USAGE
+
+// #define DEBUG_MIGRATION_ALLOC
+// #define DEBUG_MIGRATION_FREE
+// #define DEBUG_MIGRATION_CLONE
+
+// #define DEBUG_MIGRATION_ENTRY
+// #define DEBUG_MIGRATION_SPLIT
+// #define DEBUG_MIGRATION_MERGE
+// #define DEBUG_MIGRATION_SEM
+
+// #define DEBUG_GET_NVMM

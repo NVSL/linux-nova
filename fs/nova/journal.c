@@ -197,7 +197,7 @@ static u64 nova_append_replica_inode_journal(struct super_block *sb,
 	entry = (struct nova_lite_journal_entry *)nova_get_block(sb,
 							curr_p);
 	entry->type = cpu_to_le64(JOURNAL_INODE);
-	entry->padding = 0;
+	// entry->padding = 0;
 	entry->data1 = cpu_to_le64(sih->pi_addr);
 	entry->data2 = cpu_to_le64(sih->alter_pi_addr);
 	nova_update_journal_entry_csum(sb, entry);
@@ -218,7 +218,7 @@ static u64 nova_append_entry_journal(struct super_block *sb,
 	entry = (struct nova_lite_journal_entry *)nova_get_block(sb,
 							curr_p);
 	entry->type = cpu_to_le64(JOURNAL_ENTRY);
-	entry->padding = 0;
+	// entry->padding = 0;
 	/* Align to 8 bytes */
 	aligned_field = (u64 *)((unsigned long)field & ~7UL);
 	/* Store the offset from the start of Nova instead of the pointer */

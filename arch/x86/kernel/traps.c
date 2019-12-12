@@ -72,7 +72,18 @@
 #include <asm/proto.h>
 #endif
 
-DECLARE_BITMAP(system_vectors, NR_VECTORS);
+struct vpmem_operations vpmem_operations = {
+	.do_general_protection = 0,
+	.do_page_fault = 0,
+	.do_checkout = 0,
+};
+EXPORT_SYMBOL(vpmem_operations);
+
+/* Must be page-aligned because the real IDT is used in a fixmap. */
+gate_desc idt_table[NR_VECTORS] __page_aligned_bss;
+
+DECLARE_BITMAP(used_vectors, NR_VECTORS);
+EXPORT_SYMBOL_GPL(used_vectors);
 
 static inline void cond_local_irq_enable(struct pt_regs *regs)
 {
@@ -518,6 +529,16 @@ exit_trap:
 	do_trap(X86_TRAP_BR, SIGSEGV, "bounds", regs, error_code, 0, NULL);
 }
 
+bool (*custom_page_protection_handler)(struct pt_regs *, long)=0;
+
+bool install_custom_protection_fault_handler(bool (*fn)(struct pt_regs *, long))
+{
+        custom_page_protection_handler = fn;
+        return true;
+}
+EXPORT_SYMBOL(install_custom_protection_fault_handler);
+
+
 dotraplinkage void
 do_general_protection(struct pt_regs *regs, long error_code)
 {
@@ -540,7 +561,12 @@ do_general_protection(struct pt_regs *regs, long error_code)
 
 	tsk = current;
 	if (!user_mode(regs)) {
-		if (fixup_exception(regs, X86_TRAP_GP, error_code, 0))
+		if (vpmem_operations.do_general_protection) {
+			if (vpmem_operations.do_general_protection(regs, error_code))
+				return;
+		}
+
+		if (fixup_exception(regs, X86_TRAP_GP))
 			return;
 
 		tsk->thread.error_code = error_code;

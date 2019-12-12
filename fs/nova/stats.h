@@ -163,6 +163,26 @@ enum timing_category {
 	append_snapshot_file_t,
 	append_snapshot_inode_t,
 
+	/* Tiering */
+	tiering_title_t,
+	mig_t,
+	usih_t,
+	rmsih_t,
+	pop_t,
+
+	/* VPMEM */
+	vpmem_title_t,
+	pgcache_insert_t,
+	pgcache_lookup_t,
+	pgcache_evict_t,
+	pgcache_range_t,
+
+	/* BDEV */
+	bdev_title_t,
+	bdev_read_t,
+	bdev_read_range_t,
+	bdev_write_range_t,
+
 	/* Sentinel */
 	TIMING_NUM,
 };

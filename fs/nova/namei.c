@@ -410,8 +410,11 @@ static int nova_unlink(struct inode *dir, struct dentry *dentry)
 {
 	struct inode *inode = dentry->d_inode;
 	struct super_block *sb = dir->i_sb;
+	struct nova_sb_info *sbi = NOVA_SB(sb);
 	int retval = -ENOMEM;
 	struct nova_inode *pi = nova_get_inode(sb, inode);
+	struct nova_inode_info *si = NOVA_I(inode);
+	struct nova_inode_info_header *sih = &si->header;
 	struct nova_inode *pidir;
 	struct nova_inode_update update_dir;
 	struct nova_inode_update update;
@@ -439,8 +442,10 @@ static int nova_unlink(struct inode *dir, struct dentry *dentry)
 
 	inode->i_ctime = dir->i_ctime;
 
-	if (inode->i_nlink == 1)
+	if (inode->i_nlink == 1) {
 		invalidate = 1;
+		nova_unlink_inode_lru_list(sbi, sih);
+	}
 
 	if (inode->i_nlink)
 		drop_nlink(inode);

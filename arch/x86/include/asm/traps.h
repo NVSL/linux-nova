@@ -10,6 +10,14 @@
 
 #define dotraplinkage __visible
 
+struct vpmem_operations {
+	bool (*do_general_protection)(struct pt_regs *, long);
+	bool (*do_page_fault)(struct pt_regs *, unsigned long, unsigned long);
+	bool (*do_checkout)(unsigned long);
+};
+
+extern struct vpmem_operations vpmem_operations;
+
 asmlinkage void divide_error(void);
 asmlinkage void debug(void);
 asmlinkage void nmi(void);

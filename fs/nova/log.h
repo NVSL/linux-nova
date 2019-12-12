@@ -73,7 +73,7 @@ struct nova_file_write_entry {
 	u8	entry_type;
 	u8	reassigned;	/* Data is not latest */
 	u8	updating;	/* Data is being written */
-	u8	padding;
+	u8  seq_count;	/* Sequential combo counter */
 	__le32	num_pages;
 	__le64	block;          /* offset of first block in this write */
 	__le64	pgoff;          /* file offset at the beginning of this write */
@@ -83,8 +83,8 @@ struct nova_file_write_entry {
 	__le64	size;           /* File size after this write */
 	__le64	epoch_id;
 	__le64	trans_id;
-	__le32	csumpadding;
 	__le32	csum;
+	__le32	counter;	/* Atomic counter for entry locking */
 } __attribute((__packed__));
 
 #define WENTRY(entry)	((struct nova_file_write_entry *) entry)
@@ -264,11 +264,52 @@ static inline size_t nova_get_log_entry_size(struct super_block *sb,
 	return size;
 }
 
+/*
+ * counter definition
+ * - if == 0 then there are no active readers or writers.
+ * - if > 0 then that is the number of active readers.
+ * - if == -1 then there is one active writer.
+ */
+static inline int get_write_entry(struct nova_file_write_entry *entry)
+{
+	atomic_t *counter = (atomic_t *)&entry->counter;
+	int ret = atomic_add_unless(counter, 1, -1);
+	// nova_info("entry %llu counter %d\n", entry->pgoff, entry->counter);
+
+	return ret;
+}
+
+/* Return true if the counter fell to zero */
+static inline int put_write_entry(struct nova_file_write_entry *entry)
+{
+	atomic_t *counter = (atomic_t *)&entry->counter;
+	int ret = atomic_dec_and_test(counter);
+
+	return ret;
+}
+
+static inline int lock_write_entry(struct nova_file_write_entry *entry)
+{
+	atomic_t *counter = (atomic_t *)&entry->counter;
+	int ret = atomic_cmpxchg(counter, 0, -1);
+	// nova_info("entry %llu counter %d ret %d\n", entry->pgoff, entry->counter, ret);
+
+	return ret;
+}
+
+static inline void unlock_write_entry(struct nova_file_write_entry *entry)
+{
+	atomic_t *counter = (atomic_t *)&entry->counter;
+	atomic_set(counter, 0);
+}
 
 int nova_invalidate_logentry(struct super_block *sb, void *entry,
 	enum nova_entry_type type, unsigned int num_free);
 int nova_reassign_logentry(struct super_block *sb, void *entry,
 	enum nova_entry_type type);
+inline int nova_invalidate_write_entry(struct super_block *sb,
+	struct nova_file_write_entry *entry, int reassign,
+	unsigned int num_free);
 int nova_inplace_update_log_entry(struct super_block *sb,
 	struct inode *inode, void *entry,
 	struct nova_log_entry_info *entry_info);
@@ -285,7 +326,12 @@ int nova_update_alter_pages(struct super_block *sb, struct nova_inode *pi,
 	u64 curr, u64 alter_curr);
 struct nova_file_write_entry *nova_find_next_entry(struct super_block *sb,
 	struct nova_inode_info_header *sih, pgoff_t pgoff);
+struct nova_file_write_entry *nova_find_next_entry_lockfree(struct super_block *sb,
+	struct nova_inode_info_header *sih, pgoff_t pgoff);	
 int nova_allocate_inode_log_pages(struct super_block *sb,
+	struct nova_inode_info_header *sih, unsigned long num_pages,
+	u64 *new_block, int cpuid, enum nova_alloc_direction from_tail);
+int nova_allocate_inode_log_pages_from_bdev(struct super_block *sb,
 	struct nova_inode_info_header *sih, unsigned long num_pages,
 	u64 *new_block, int cpuid, enum nova_alloc_direction from_tail);
 int nova_free_contiguous_log_blocks(struct super_block *sb,

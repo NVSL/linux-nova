@@ -349,13 +349,13 @@ int nova_mmap_to_new_blocks(struct vm_area_struct *vma,
 	entryc = (metadata_csum == 0) ? entry : &entry_copy;
 
 	while (start_blk < end_blk) {
-		entry = nova_get_write_entry(sb, sih, start_blk);
+		entry = nova_get_write_entry_lockfree(sb, sih, start_blk);
 		if (!entry) {
 			nova_dbgv("%s: Found hole: pgoff %lu\n",
 					__func__, start_blk);
 
 			/* Jump the hole */
-			entry = nova_find_next_entry(sb, sih, start_blk);
+			entry = nova_find_next_entry_lockfree(sb, sih, start_blk);
 			if (!entry)
 				break;
 
@@ -424,6 +424,8 @@ int nova_mmap_to_new_blocks(struct vm_area_struct *vma,
 		nova_memlock_range(sb, to_kmem, bytes);
 		NOVA_END_TIMING(memcpy_w_wb_t, memcpy_time);
 
+		// reclaim_get_nvmm(sb, from_blocknr, entryc, start_blk);
+
 		if (copied == bytes) {
 			start_blk += copy_blocks;
 		} else {
@@ -460,7 +462,7 @@ int nova_mmap_to_new_blocks(struct vm_area_struct *vma,
 	nova_memlock_inode(sb, pi);
 
 	/* Update file tree */
-	ret = nova_reassign_file_tree(sb, sih, begin_tail);
+	ret = nova_reassign_file_tree(sb, sih, begin_tail, true);
 	if (ret)
 		goto out;
 

@@ -67,16 +67,6 @@ enum alloc_type {
 	DATA,
 };
 
-
-/* Range node type */
-enum node_type {
-	NODE_BLOCK = 1,
-	NODE_INODE,
-	NODE_DIR,
-};
-
-
-
 int nova_alloc_block_free_lists(struct super_block *sb);
 void nova_delete_free_lists(struct super_block *sb);
 struct nova_range_node *nova_alloc_blocknode(struct super_block *sb);
@@ -106,7 +96,8 @@ extern int nova_new_log_blocks(struct super_block *sb,
 	enum nova_alloc_init zero, int cpu,
 	enum nova_alloc_direction from_tail);
 extern unsigned long nova_count_free_blocks(struct super_block *sb);
-int nova_search_inodetree(struct nova_sb_info *sbi,
+extern unsigned long nova_count_total_blocks(struct super_block *sb);
+inline int nova_search_inodetree(struct nova_sb_info *sbi,
 	unsigned long ino, struct nova_range_node **ret_node);
 int nova_insert_blocktree(struct rb_root *tree,
 	struct nova_range_node *new_node);

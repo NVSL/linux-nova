@@ -694,6 +694,8 @@ int nova_update_pgoff_csum(struct super_block *sb,
 
 	nova_update_stripe_csum(sb, count, strp_nr, dax_mem, zero);
 
+	// reclaim_get_nvmm(sb, blockoff >> PAGE_SHIFT, entry, pgoff);
+
 	return 0;
 }
 
@@ -902,6 +904,8 @@ int nova_update_truncated_block_csum(struct super_block *sb,
 		strps--;
 		strp_nr++;
 	}
+
+	// reclaim_get_nvmm(sb, nvmm >> PAGE_SHIFT, NULL, pgoff);
 
 	if (strps > 0)
 		nova_update_stripe_csum(sb, strps, strp_nr, NULL, 1);

@@ -133,6 +133,7 @@ int nova_update_pgoff_parity(struct super_block *sb,
 	blocknr = nova_get_blocknr(sb, blockoff, sih->i_blk_type);
 	nova_update_block_parity(sb, dax_mem, blocknr, zero);
 
+	// reclaim_get_nvmm(sb, blockoff >> PAGE_SHIFT, entry, pgoff);
 	return 0;
 }
 
@@ -404,6 +405,9 @@ int nova_update_truncated_block_parity(struct super_block *sb,
 
 	nova_update_block_parity(sb, block, blocknr, 0);
 out:
+
+	// reclaim_get_nvmm(sb, nvmm >> PAGE_SHIFT, NULL, pgoff);
+
 	if (block != NULL)
 		kfree(block);
 	return ret;

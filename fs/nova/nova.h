@@ -47,13 +47,51 @@
 #include <linux/pfn_t.h>
 #include <linux/pagevec.h>
 
+#include <linux/rwsem.h>
+
 #include "nova_def.h"
 #include "stats.h"
 #include "snapshot.h"
+#include "debug.h"
+#include "vpmem.h"
+// #include "bdev.h"
 
 #define PAGE_SHIFT_2M 21
 #define PAGE_SHIFT_1G 30
 
+/* Tiering */
+/* The maximum size of mini-buffer is the maximum size of kmalloc,
+ * which is defined in /include/linux/slab.h (1024 pages).
+ */ 
+#define	BDEV_BUFFER_PAGES 512
+#define	MINI_BUFFER_PAGES 512
+#define	MINI_BUFFER_PAGES_BIT 9
+#define IO_BLOCK_SIZE 4096
+#define IO_BLOCK_SIZE_BIT 12
+#define BIO_ASYNC 0
+#define BIO_SYNC 1
+
+#define RWSEM_UP 0
+#define RWSEM_DOWN 1
+
+/* 
+ * Tiering level number
+ * If we have 3 block device, then TIER_BDEV_HIGH = 3
+ * Assume I/O speed 1>2>3
+ */
+#define TIER_PMEM 		0
+#define TIER_BDEV_LOW 	1
+// #define TIER_BDEV_HIGH 	2
+#define TIER_DRAM 	 	254
+#define TIER_MIGRATING 	255
+#define BDEV_COUNT_MAX 	5
+
+// #define MIGRATION_ROTATE 1
+// #define MIGRATION_DOWNWARD 2
+// #define MIGRATION_POLICY 2
+
+#define BM_THREAD_SLEEP_TIME 1000
+#define USAGE_THREAD_SLEEP_TIME 100
 
 /*
  * Debug code
@@ -147,6 +185,17 @@ extern int wprotect;
 extern int data_csum;
 extern int data_parity;
 extern int dram_struct_csum;
+
+extern int MIGRATION_DOWN_PMEM_PERC;
+extern int MIGRATION_IDEAL_PERC;
+extern int VPMEM_MAX_PAGES_QTR;
+extern int BDEV_OPT_SIZE_BIT;
+extern unsigned int SYNC_BIT;
+extern unsigned int SEQ_BIT;
+
+#ifndef MODE_FIXED_BDEV
+extern int TIER_BDEV_HIGH;
+#endif
 
 extern unsigned int blk_type_to_shift[NOVA_BLOCK_TYPE_MAX];
 extern unsigned int blk_type_to_size[NOVA_BLOCK_TYPE_MAX];
@@ -260,7 +309,7 @@ static inline int memcpy_to_pmem_nocache(void *dst, const void *src,
 	unsigned int size)
 {
 	int ret;
-
+	
 	ret = __copy_from_user_inatomic_nocache(dst, src, size);
 
 	return ret;
@@ -306,7 +355,6 @@ static inline void memset_nt(void *dest, uint32_t dword, size_t length)
 		: "memory", "rcx");
 }
 
-
 #include "super.h" // Remove when we factor out these and other functions.
 
 /* Translate an offset the beginning of the Nova instance to a PMEM address.
@@ -314,11 +362,21 @@ static inline void memset_nt(void *dest, uint32_t dword, size_t length)
  * If this is part of a read-modify-write of the block,
  * nova_memunlock_block() before calling!
  */
+
+static inline bool is_logical_offset(struct nova_sb_info *sbi, unsigned long block) {
+	if (block >= (sbi->num_blocks << PAGE_SHIFT)) return true;
+	else return false;
+}
+
 static inline void *nova_get_block(struct super_block *sb, u64 block)
 {
+	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_super_block *ps = nova_get_super(sb);
-
-	return block ? ((void *)ps + block) : NULL;
+	if (is_logical_offset(sbi, le64_to_cpu(block))){
+		return block ? ((void *)block_to_virt(le64_to_cpu(block))) : NULL;
+	}
+	else
+		return block ? ((void *)ps + block) : NULL;
 }
 
 static inline int nova_get_reference(struct super_block *sb, u64 block,
@@ -331,15 +389,20 @@ static inline int nova_get_reference(struct super_block *sb, u64 block,
 	return rc;
 }
 
-
+/* TODOzsa: 
+ * 		This is no longer correct in tiering NOVA.
+ * 		However, if we only have data blocks in BDEV, 
+ * 		this function will not cause any trouble.
+ */
 static inline u64
 nova_get_addr_off(struct nova_sb_info *sbi, void *addr)
 {
-	NOVA_ASSERT((addr >= sbi->virt_addr) &&
-			(addr < (sbi->virt_addr + sbi->initsize)));
+	// NOVA_ASSERT((addr >= sbi->virt_addr) &&
+	// 		(addr < (sbi->virt_addr + sbi->initsize)));
 	return (u64)(addr - sbi->virt_addr);
 }
 
+// Change block number to a logical offset
 static inline u64
 nova_get_block_off(struct super_block *sb, unsigned long blocknr,
 		    unsigned short btype)
@@ -477,8 +540,6 @@ struct scan_bitmap {
 	struct single_scan_bm scan_bm_1G;
 };
 
-
-
 struct inode_map {
 	struct mutex		inode_table_mutex;
 	struct rb_root		inode_inuse_tree;
@@ -487,12 +548,6 @@ struct inode_map {
 	int			allocated;
 	int			freed;
 };
-
-
-
-
-
-
 
 /* Old entry is freeable if it is appended after the latest snapshot */
 static inline int old_entry_freeable(struct super_block *sb, u64 epoch_id)
@@ -529,13 +584,130 @@ static inline unsigned long BKDRHash(const char *str, int length)
 	return hash;
 }
 
+// Tiering
+
+inline unsigned long nova_get_bdev_block_start(struct nova_sb_info *sbi, int tier);
+inline unsigned long nova_get_bdev_block_end(struct nova_sb_info *sbi, int tier);
+
+static inline bool is_tier_dram(int tier) {
+	return (tier == TIER_PMEM);
+}
+
+static inline bool is_tier_pmem(int tier) {
+	return (tier == TIER_PMEM);
+}
+
+static inline bool is_tier_bdev_low(int tier) {
+	return (tier == TIER_BDEV_LOW);
+}
+
+static inline bool is_tier_bdev(int tier) {
+	return (tier >= TIER_BDEV_LOW && tier <= TIER_BDEV_HIGH);
+}
+
+static inline unsigned long global_block_index(struct nova_sb_info *sbi,
+	int tier, unsigned long local_block_index) {
+	if (is_tier_pmem(tier)) return local_block_index;
+	if (is_tier_bdev(tier)) {
+		return nova_get_bdev_block_start(sbi, tier) + local_block_index;
+	}
+}
+
+static inline unsigned long nova_tier_start_block(struct nova_sb_info *sbi,
+	int tier) {
+	if (is_tier_pmem(tier)) return 0;
+	if (is_tier_bdev(tier)) {
+		return nova_get_bdev_block_start(sbi, tier);
+	}
+	return 0;
+}
+
+static inline unsigned long nova_tier_end_block(struct nova_sb_info *sbi,
+	int tier) {
+	if (is_tier_pmem(tier)) return sbi->num_blocks;
+	if (is_tier_bdev(tier)) {
+		return nova_get_bdev_block_end(sbi, tier);
+	}
+	return 0;
+}
+
+// Background migration thread
+struct nova_kthread {
+	struct task_struct *nova_task;
+	int index;
+	int stage;
+	wait_queue_head_t wait_queue_head;
+};
 
 #include "mprotect.h"
 
 #include "log.h"
 
+#include "balloc.h"
+
+static inline struct nova_file_write_entry *
+nova_get_or_lock_write_entry(struct super_block *sb,
+	struct nova_inode_info_header *sih, unsigned long blocknr, int lock)
+{
+	struct nova_file_write_entry *entry;
+	void **entryp;
+
+	rcu_read_lock();
+repeat:
+	entry = NULL;
+	entryp = radix_tree_lookup_slot(&sih->tree, blocknr);
+	if (entryp) {
+		entry = radix_tree_deref_slot(entryp);
+		if (unlikely(!entry))
+			goto out;
+
+		if (radix_tree_exception(entry)) {
+			if (radix_tree_deref_retry(entry)) {
+				goto repeat;
+			}
+
+			/* FIXME: What to do here? */
+			entry = NULL;
+			goto out;
+		}
+
+		if (lock) {
+			if (!lock_write_entry(entry)) {
+				goto repeat;
+			}
+		} else {
+			if (!get_write_entry(entry)) {
+				goto repeat;
+			}
+		}
+
+		if (unlikely(entry != *entryp)) {
+			put_write_entry(entry);
+			goto repeat;
+		}
+	}
+out:
+	rcu_read_unlock();
+
+	return entry;
+}
+
 static inline struct nova_file_write_entry *
 nova_get_write_entry(struct super_block *sb,
+	struct nova_inode_info_header *sih, unsigned long blocknr)
+{
+	return nova_get_or_lock_write_entry(sb, sih, blocknr, 0);
+}
+
+static inline struct nova_file_write_entry *
+nova_lock_write_entry(struct super_block *sb,
+	struct nova_inode_info_header *sih, unsigned long blocknr)
+{
+	return nova_get_or_lock_write_entry(sb, sih, blocknr, 1);
+}
+
+static inline struct nova_file_write_entry *
+nova_get_write_entry_lockfree(struct super_block *sb,
 	struct nova_inode_info_header *sih, unsigned long blocknr)
 {
 	struct nova_file_write_entry *entry;
@@ -546,34 +718,80 @@ nova_get_write_entry(struct super_block *sb,
 }
 
 
+int buffer_data_block_from_bdev_range(struct nova_sb_info *sbi, int tier, int blockoff, int length);
+void nova_update_entry_csum(void *entry);
+int get_tier(struct nova_sb_info *sbi, unsigned long blocknr);
+inline int get_entry_tier(struct nova_file_write_entry *entry);
+void print_a_write_entry(struct super_block *sb, struct nova_file_write_entry *entry, int n);
+void print_a_write_entry_data(struct super_block *sb, void* addr, int n);
+void print_a_page(void* addr);
+
 /*
  * Find data at a file offset (pgoff) in the data pointed to by a write log
  * entry.
  */
-static inline unsigned long get_nvmm(struct super_block *sb,
+static unsigned long get_nvmm(struct super_block *sb,
 	struct nova_inode_info_header *sih,
 	struct nova_file_write_entry *entry, unsigned long pgoff)
 {
+	unsigned long ret = 0;
+	#ifdef DEBUG_GET_NVMM
+		struct nova_sb_info *sbi = NOVA_SB(sb);
+	#endif
+
 	/* entry is already verified before this call and resides in dram
 	 * or we can do memcpy_mcsafe here but have to avoid double copy and
 	 * verification of the entry.
 	 */
-	if (entry->pgoff > pgoff || (unsigned long) entry->pgoff +
-			(unsigned long) entry->num_pages <= pgoff) {
-		struct nova_sb_info *sbi = NOVA_SB(sb);
-		u64 curr;
-
-		curr = nova_get_addr_off(sbi, entry);
-		nova_dbg("Entry ERROR: inode %lu, curr 0x%llx, pgoff %lu, entry pgoff %llu, num %u\n",
-			sih->ino,
-			curr, pgoff, entry->pgoff, entry->num_pages);
-		nova_print_nova_log_pages(sb, sih);
-		nova_print_nova_log(sb, sih);
-		NOVA_ASSERT(0);
+	
+	/*
+retry:
+	if (unlikely(nova_get_entry_type(entry) == FILE_WRITE && entry->updating == 1)) {
+		// This should not happen
+		nova_info("Error: get_nvmm(): Entry is being updated\n");
+		msleep(500);
+		goto retry;
 	}
+	*/
 
-	return (unsigned long) (entry->block >> PAGE_SHIFT) + pgoff
-		- entry->pgoff;
+	if ( get_entry_tier(entry) != TIER_PMEM ) {
+		#ifdef DEBUG_GET_NVMM
+			nova_info("[Get_nvmm] Get from TIER_BDEV\n");
+		#endif
+		ret = (unsigned long) (entry->block >> PAGE_SHIFT) + pgoff
+			- entry->pgoff;
+		#ifdef DEBUG_GET_NVMM
+			nova_info("ret %lu %lx block %llu num %d\n", ret,
+				(unsigned long)sbi->vpmem,entry->block >> PAGE_SHIFT,entry->num_pages);
+		#endif
+		return ret;
+	}
+	else {
+		#ifdef DEBUG_GET_NVMM
+			nova_info("[Get_nvmm] Get from TIER_PMEM\n");
+		#endif
+		if (entry->pgoff > pgoff || (unsigned long) entry->pgoff +
+				(unsigned long) entry->num_pages <= pgoff) {
+			struct nova_sb_info *sbi = NOVA_SB(sb);
+			u64 curr;
+			#ifdef DEBUG_GET_NVMM
+				nova_info("Entry: %p", entry);
+				print_a_write_entry(sb, entry, -2);
+			#endif
+			
+			curr = nova_get_addr_off(sbi, entry);
+			nova_dbg("Entry ERROR: inode %lu, curr 0x%llx(%p), pgoff %lu, entry pgoff %llu, num %u\n",
+				sih->ino,
+				curr, entry, pgoff, entry->pgoff, entry->num_pages);
+			nova_print_nova_log_pages(sb, sih);
+			nova_print_nova_log(sb, sih);
+			NOVA_ASSERT(0);
+		}
+
+		return (unsigned long) (entry->block >> PAGE_SHIFT) + pgoff
+			- entry->pgoff;
+	}
+	return 0;
 }
 
 bool nova_verify_entry_csum(struct super_block *sb, void *entry, void *entryc);
@@ -586,7 +804,7 @@ static inline u64 nova_find_nvmm_block(struct super_block *sb,
 	struct nova_file_write_entry *entryc, entry_copy;
 
 	if (!entry) {
-		entry = nova_get_write_entry(sb, sih, blocknr);
+		entry = nova_get_write_entry_lockfree(sb, sih, blocknr);
 		if (!entry)
 			return 0;
 	}
@@ -844,8 +1062,6 @@ static inline int is_dir_init_entry(struct super_block *sb,
 	return 0;
 }
 
-#include "balloc.h" // remove once we move the following functions away
-
 /* Checksum methods */
 static inline void *nova_get_data_csum_addr(struct super_block *sb, u64 strp_nr,
 	int replica)
@@ -934,16 +1150,72 @@ static inline void *nova_get_parity_addr(struct super_block *sb,
 
 /* Function Prototypes */
 
-
-
+/* balloc.c */
+int nova_free_blocks(struct super_block *sb, unsigned long blocknr,
+	int num, unsigned short btype, int log_page);
+long nova_alloc_blocks_in_free_list(struct super_block *sb,
+	struct free_list *free_list, unsigned short btype,
+	enum alloc_type atype, unsigned long num_blocks,
+	unsigned long *new_blocknr, enum nova_alloc_direction from_tail,
+	bool contiguous);
+int nova_new_blocks(struct super_block *sb, unsigned long *blocknr,
+	unsigned int num, unsigned short btype, int zero,
+	enum alloc_type atype, int cpuid, enum nova_alloc_direction from_tail,
+	bool contiguous);
+	
 /* bbuild.c */
 inline void set_bm(unsigned long bit, struct scan_bitmap *bm,
 	enum bm_type type);
+inline int get_cpuid(struct nova_sb_info *sbi, unsigned long blocknr);
 void nova_save_blocknode_mappings_to_log(struct super_block *sb);
 void nova_save_inode_list_to_log(struct super_block *sb);
 void nova_init_header(struct super_block *sb,
 	struct nova_inode_info_header *sih, u16 i_mode);
 int nova_recovery(struct super_block *sb);
+
+/* bdev.c */
+int nova_init_bio(void);
+int nova_destroy_bio(void);
+int nova_init_tiering_stat(struct super_block *sb);
+int flush_bal_entry(struct nova_sb_info *sbi);
+int nova_alloc_bdev_block_free_lists(struct super_block *sb);
+void nova_init_bdev_blockmap(struct super_block *sb, int recovery);
+unsigned long get_start_offset_of_tier(struct nova_sb_info *sbi, int tier);
+long nova_new_blocks_from_bdev(struct super_block *sb, int tier, 
+	unsigned long *blocknr,	unsigned int num_blocks, int cpuid, 
+	enum nova_alloc_direction from_tail, bool cache);
+int get_bfl_index(struct nova_sb_info *sbi, unsigned long blocknr);
+int get_tier_cpu(struct nova_sb_info *sbi, unsigned long blocknr);
+inline int get_tier_range_node(struct nova_sb_info *sbi, 
+	struct nova_range_node* nrn);
+int get_suitable_tier(struct super_block *sb, unsigned long num_blocks);
+inline unsigned long get_raw_from_blocknr(struct nova_sb_info *sbi, 
+	unsigned long blocknr);
+inline unsigned long get_blocknr_from_raw(struct nova_sb_info *sbi, int tier, 
+	unsigned long blocknr);
+int nova_bdev_write_block(struct nova_sb_info *sbi, struct block_device *device, 
+	unsigned long offset, unsigned long size, struct page *page, bool sync);
+inline int nova_bdev_write_block_range(struct nova_sb_info *sbi, struct block_device *device, 
+	unsigned long offset, int count, struct page **page, bool sync);
+int nova_bdev_read_block(struct nova_sb_info *sbi, struct block_device *device,
+	unsigned long offset, unsigned long size, struct page *page, bool sync);
+inline int nova_bdev_read_block_range(struct nova_sb_info *sbi, struct block_device *device, 
+	unsigned long offset, int count, struct page **page, bool sync);
+int nova_bdev_write_blockoff(struct nova_sb_info *sbi, unsigned long blockoff, 
+	unsigned long size, struct page *page, bool sync);
+int nova_bdev_read_blockoff(struct nova_sb_info *sbi, unsigned long blockoff, 
+	unsigned long size, struct page *page, bool sync);
+int nova_free_blocks_from_bdev(struct nova_sb_info *sbi, unsigned long blocknr,
+	unsigned long num_blocks);
+int nova_bdev_free_blocks(struct nova_sb_info *sbi, int tier, unsigned long blocknr,
+	unsigned long num_blocks);
+int nova_free_blocks_tier(struct nova_sb_info *sbi, unsigned long blocknr,
+	unsigned long num_blocks);
+int reclaim_get_nvmm(struct super_block *sb, unsigned long nvmm,
+	struct nova_file_write_entry *entry, unsigned long pgoff);
+void print_all_bfl(struct super_block *sb);
+long nova_alloc_block_tier(struct nova_sb_info *sbi, int tier, int cpuid, unsigned long *blocknr,
+	unsigned int num_blocks, enum nova_alloc_direction from_tail, bool cache);
 
 /* checksum.c */
 void nova_update_entry_csum(void *entry);
@@ -975,7 +1247,7 @@ void nova_init_file_write_entry(struct super_block *sb,
 	u64 epoch_id, u64 pgoff, int num_pages, u64 blocknr, u32 time,
 	u64 size);
 int nova_reassign_file_tree(struct super_block *sb,
-	struct nova_inode_info_header *sih, u64 begin_tail);
+	struct nova_inode_info_header *sih, u64 begin_tail, bool free);
 unsigned long nova_check_existing_entry(struct super_block *sb,
 	struct inode *inode, unsigned long num_blocks, unsigned long start_blk,
 	struct nova_file_write_entry **ret_entry,
@@ -1043,6 +1315,10 @@ int nova_inode_log_fast_gc(struct super_block *sb,
 	struct nova_inode *pi, struct nova_inode_info_header *sih,
 	u64 curr_tail, u64 new_block, u64 alter_new_block, int num_pages,
 	int force_thorough);
+int nova_inode_log_fast_gc_to_bdev(struct super_block *sb,
+	struct nova_inode *pi, struct nova_inode_info_header *sih,
+	u64 curr_tail, u64 new_block, u64 alter_new_block, int num_pages,
+	int force_thorough);
 
 /* ioctl.c */
 extern long nova_ioctl(struct file *filp, unsigned int cmd, unsigned long arg);
@@ -1052,6 +1328,38 @@ extern long nova_compat_ioctl(struct file *file, unsigned int cmd,
 #endif
 
 
+/* migration.c */
+int init_dram_buffer(struct nova_sb_info *sbi);
+int print_file_write_entries(struct super_block *sb, struct nova_inode_info_header *sih);
+int buffer_data_block_from_bdev(struct nova_sb_info *sbi, int tier, unsigned long blockoff);
+inline int clear_dram_buffer(struct nova_sb_info *sbi, unsigned long number);
+inline int put_dram_buffer(struct nova_sb_info *sbi, unsigned long number);
+inline int clear_dram_buffer_range(unsigned long blockoff, unsigned long length);
+inline int put_dram_buffer_range(unsigned long blockoff, unsigned long length);
+inline bool is_dram_buffer_addr(void *addr);
+int migrate_a_file(struct inode *inode, int to, bool force);
+int migrate_a_file_to_tier(struct inode *inode, int to, bool force);
+inline int migrate_a_file_to_pmem(struct inode *inode);
+inline int migrate_a_file_to_pmem_partial(struct inode *inode, pgoff_t index, pgoff_t end_index, bool sync);
+int do_migrate_a_file_rotate(struct inode *inode);
+int do_migrate_a_file_downward(struct super_block *sb, int cpu);
+int get_lowest_tier(struct super_block *sb);
+int get_available_tier(struct super_block *sb, int tier);
+unsigned int valid_index_range(struct super_block *sb, struct nova_inode_info_header *sih, pgoff_t index);
+
+int nova_update_usage(struct super_block *sb);
+unsigned long nova_pmem_used(struct nova_sb_info *sbi);
+unsigned long nova_pmem_total(struct nova_sb_info *sbi);
+unsigned long nova_bdev_used(struct nova_sb_info *sbi, int tier);
+unsigned long nova_bdev_total(struct nova_sb_info *sbi, int tier);
+inline bool is_tier_usage_really_high(struct nova_sb_info *sbi, int tier);
+inline bool is_tier_usage_quite_high(struct nova_sb_info *sbi, int tier);
+inline bool is_pmem_usage_high(struct nova_sb_info *sbi);
+inline bool is_pmem_usage_too_high(struct nova_sb_info *sbi);
+int start_bm_thread(struct nova_sb_info *sbi);
+void stop_bm_thread(struct nova_sb_info *sbi);
+int start_usage_thread(struct nova_sb_info *sbi);
+void stop_usage_thread(struct nova_sb_info *sbi);
 
 /* mprotect.c */
 extern int nova_dax_mem_protect(struct super_block *sb,
@@ -1082,6 +1390,27 @@ int nova_restore_data(struct super_block *sb, unsigned long blocknr,
 	u32 csum1, u32 *csum_good);
 int nova_update_truncated_block_parity(struct super_block *sb,
 	struct inode *inode, loff_t newsize);
+
+/* profile.c */
+inline int nova_sih_increase_wcount(struct super_block *sb, struct nova_inode_info_header *sih, 
+	size_t len);
+inline bool nova_sih_is_sync(struct nova_inode_info_header *sih);
+inline bool nova_sih_judge_sync(struct nova_sb_info *sbi, struct nova_inode_info_header *sih);
+inline bool nova_prof_judge_sync(struct super_block *sb, struct file *file);
+unsigned int nova_get_prev_seq_count(struct super_block *sb, struct nova_inode_info_header *sih, 
+    unsigned long pgoff, int num_pages, bool *exact);
+inline bool nova_prof_judge_seq(unsigned int seq_count);
+inline bool nova_entry_judge_seq(struct nova_file_write_entry *entry);
+int nova_alloc_inode_lru_lists(struct super_block *sb);
+inline struct list_head *nova_get_inode_lru_lists(struct nova_sb_info *sbi, int tier, int cpu);
+inline bool is_inode_lru_list_empty(struct nova_sb_info *sbi, int tier, int cpu);
+inline struct mutex *nova_get_inode_lru_mutex(struct nova_sb_info *sbi, int tier, int cpu);
+int nova_update_avg_atime(struct super_block *sb, struct nova_inode_info_header *sih, 
+    unsigned long len);
+int nova_update_sih_tier(struct super_block *sb, struct nova_inode_info_header *sih, 
+    int tier, int mode);
+int nova_unlink_inode_lru_list(struct nova_sb_info *sbi, struct nova_inode_info_header *sih);
+int nova_update_stat(struct nova_sb_info *sbi, size_t len, bool read);
 
 /* rebuild.c */
 int nova_reset_csum_parity_range(struct super_block *sb,
@@ -1142,6 +1471,13 @@ void nova_print_inode_log(struct super_block *sb, struct inode *inode);
 void nova_print_inode_log_pages(struct super_block *sb, struct inode *inode);
 int nova_check_inode_logs(struct super_block *sb, struct nova_inode *pi);
 void nova_print_free_lists(struct super_block *sb);
+
+/* super.c */
+int nova_get_bdev_info(struct nova_sb_info *sbi);
+
+/* vpmem.c */
+int vpmem_setup(struct nova_sb_info *sbi, unsigned long);
+inline void nova_set_stage(int n);
 
 /* perf.c */
 int nova_test_perf(struct super_block *sb, unsigned int func_id,

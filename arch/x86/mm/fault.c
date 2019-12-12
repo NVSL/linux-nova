@@ -419,7 +419,7 @@ NOKPROBE_SYMBOL(vmalloc_fault);
 
 #ifdef CONFIG_CPU_SUP_AMD
 static const char errata93_warning[] =
-KERN_ERR 
+KERN_ERR
 "******* Your BIOS seems to not contain a fix for K8 errata #93\n"
 "******* Working around it, but it may cause SEGVs or burn power.\n"
 "******* Please consider a BIOS update.\n"
@@ -1288,8 +1288,21 @@ do_kern_addr_fault(struct pt_regs *regs, unsigned long hw_error_code,
 	 *    (A demand fault would be on a non-present page which
 	 *     would have X86_PF_PROT==0).
 	 */
-	if (!(hw_error_code & (X86_PF_RSVD | X86_PF_USER | X86_PF_PROT))) {
-		if (vmalloc_fault(address) >= 0)
+	if (unlikely(fault_in_kernel_space(address))) {
+		if (!(error_code & (PF_RSVD | PF_USER | PF_PROT))) {
+			if(vpmem_operations.do_page_fault)
+				if(vpmem_operations.do_page_fault(regs, error_code, address))
+					return;
+
+			if (vmalloc_fault(address) >= 0)
+				return;
+
+			if (kmemcheck_fault(regs, address, error_code))
+				return;
+		}
+
+		/* Can handle a stale RO->RW TLB: */
+		if (spurious_fault(error_code, address))
 			return;
 	}
 
@@ -1545,11 +1558,10 @@ __do_page_fault(struct pt_regs *regs, unsigned long hw_error_code,
 	if (unlikely(kmmio_fault(regs, address)))
 		return;
 
-	/* Was the fault on kernel-controlled part of the address space? */
-	if (unlikely(fault_in_kernel_space(address)))
-		do_kern_addr_fault(regs, hw_error_code, address);
-	else
-		do_user_addr_fault(regs, hw_error_code, address);
+	prev_state = exception_enter();
+	__do_page_fault(regs, error_code, address);
+	exception_exit(prev_state);
+	if(vpmem_operations.do_checkout) vpmem_operations.do_checkout(address);
 }
 NOKPROBE_SYMBOL(__do_page_fault);
 
@@ -1582,5 +1594,6 @@ do_page_fault(struct pt_regs *regs, unsigned long error_code)
 
 	__do_page_fault(regs, error_code, address);
 	exception_exit(prev_state);
+	if(vpmem_operations.do_checkout) vpmem_operations.do_checkout(address);
 }
 NOKPROBE_SYMBOL(do_page_fault);

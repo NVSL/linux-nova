@@ -32,11 +32,13 @@
 #include "journal.h"
 #include "super.h"
 #include "inode.h"
+#include "bdev.h"
 #include "log.h"
 
 void nova_init_header(struct super_block *sb,
 	struct nova_inode_info_header *sih, u16 i_mode)
 {
+	int i;
 	sih->log_pages = 0;
 	sih->i_size = 0;
 	sih->ino = 0;
@@ -52,6 +54,15 @@ void nova_init_header(struct super_block *sb,
 	sih->i_flags = 0;
 	sih->valid_entries = 0;
 	sih->num_entries = 0;
+	sih->wcount = 0;
+	sih->htier = 0;
+	sih->ltier = 0;
+	sih->do_sync = 0;
+	sih->do_sync_start = 0;
+	sih->do_sync_end = 0;
+    init_rwsem(&sih->mig_sem);
+	sih->synced = false;
+	for (i=0;i<=TIER_BDEV_HIGH;++i) INIT_LIST_HEAD(&sih->lru_list[i]);
 	sih->last_setattr = 0;
 	sih->last_link_change = 0;
 	sih->last_dentry = 0;
@@ -87,8 +98,7 @@ inline void set_bm(unsigned long bit, struct scan_bitmap *bm,
 	}
 }
 
-static inline int get_block_cpuid(struct nova_sb_info *sbi,
-	unsigned long blocknr)
+inline int get_cpuid(struct nova_sb_info *sbi, unsigned long blocknr)
 {
 	return blocknr / sbi->per_list_blocks;
 }
@@ -199,12 +209,14 @@ static int nova_init_blockmap_from_inode(struct super_block *sb)
 	struct nova_inode *pi = nova_get_inode_by_ino(sb, NOVA_BLOCKNODE_INO);
 	struct nova_inode_info_header sih;
 	struct free_list *free_list;
+	struct bdev_free_list *bfl;
 	struct nova_range_node_lowhigh *entry;
 	struct nova_range_node *blknode;
 	size_t size = sizeof(struct nova_range_node_lowhigh);
 	u64 curr_p;
 	u64 cpuid;
 	int ret = 0;
+	int tier = 0;
 
 	/* FIXME: Backup inode for BLOCKNODE */
 	ret = nova_get_head_tail(sb, pi, &sih);
@@ -237,25 +249,57 @@ static int nova_init_blockmap_from_inode(struct super_block *sb)
 		blknode->range_low = le64_to_cpu(entry->range_low);
 		blknode->range_high = le64_to_cpu(entry->range_high);
 		nova_update_range_node_checksum(blknode);
-		cpuid = get_block_cpuid(sbi, blknode->range_low);
 
-		/* FIXME: Assume NR_CPUS not change */
-		free_list = nova_get_free_list(sb, cpuid);
-		ret = nova_insert_blocktree(&free_list->block_free_tree,
-						blknode);
-		if (ret) {
-			nova_err(sb, "%s failed\n", __func__);
-			nova_free_blocknode(blknode);
-			NOVA_ASSERT(0);
-			nova_destroy_blocknode_trees(sb);
+		tier = get_tier_range_node(sbi, blknode);
+		if (tier == -1) {
+			nova_info("Wrong tier of file.");
 			goto out;
 		}
-		free_list->num_blocknode++;
-		if (free_list->num_blocknode == 1)
-			free_list->first_node = blknode;
-		free_list->last_node = blknode;
-		free_list->num_free_blocks +=
-			blknode->range_high - blknode->range_low + 1;
+
+		// Original recovery of pmem in NOVA
+		if (tier == TIER_PMEM) {
+			cpuid = get_cpuid(sbi, blknode->range_low);
+
+			/* FIXME: Assume NR_CPUS not change */
+			free_list = nova_get_free_list(sb, cpuid);
+			ret = nova_insert_blocktree(sbi,
+					&free_list->block_free_tree, blknode);
+			if (ret) {
+				nova_err(sb, "%s failed\n", __func__);
+				nova_free_blocknode(sb, blknode);
+				NOVA_ASSERT(0);
+				nova_destroy_blocknode_trees(sb);
+				goto out;
+			}
+			free_list->num_blocknode++;
+			if (free_list->num_blocknode == 1)
+				free_list->first_node = blknode;
+			free_list->last_node = blknode;
+			free_list->num_free_blocks +=
+				blknode->range_high - blknode->range_low + 1;
+		}
+		// Recovering in block devices
+		else {
+			// cpuid here stands for the flat index of bfl
+			cpuid = get_bfl_index(sbi, blknode->range_low);
+			bfl = nova_get_bdev_free_list_flat(sbi, cpuid);
+			ret = nova_insert_blocktree(sbi,
+					&bfl->block_free_tree, blknode);
+			if (ret) {
+				nova_err(sb, "%s failed\n", __func__);
+				nova_free_blocknode(sb, blknode);
+				NOVA_ASSERT(0);
+				nova_destroy_blocknode_trees(sb);
+				goto out;
+			}
+			bfl->num_blocknode++;
+			if (bfl->num_blocknode == 1)
+				bfl->first_node = blknode;
+			bfl->last_node = blknode;
+			bfl->num_free_blocks +=
+				blknode->range_high - blknode->range_low + 1;
+		}
+
 		curr_p += sizeof(struct nova_range_node_lowhigh);
 	}
 out:
@@ -431,6 +475,18 @@ static u64 nova_save_free_list_blocknodes(struct super_block *sb, int cpu,
 	return temp_tail;
 }
 
+static u64 nova_save_bdev_free_list_blocknodes(struct super_block *sb, int index,
+	u64 temp_tail)
+{
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	struct bdev_free_list *bfl;
+
+	bfl = nova_get_bdev_free_list_flat(sbi, index);
+	temp_tail = nova_save_range_nodes_to_log(sb,
+				&bfl->block_free_tree, temp_tail, 0);
+	return temp_tail;
+}
+
 void nova_save_inode_list_to_log(struct super_block *sb)
 {
 	struct nova_inode *pi = nova_get_inode_by_ino(sb, NOVA_INODELIST_INO);
@@ -488,6 +544,7 @@ void nova_save_blocknode_mappings_to_log(struct super_block *sb)
 	struct nova_inode_info_header sih;
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct free_list *free_list;
+	struct bdev_free_list *bfl;
 	unsigned long num_blocknode = 0;
 	unsigned long num_pages;
 	int allocated;
@@ -506,6 +563,13 @@ void nova_save_blocknode_mappings_to_log(struct super_block *sb)
 				i, free_list->num_blocknode);
 	}
 
+	for (i = 0; i < sbi->cpus * ( TIER_BDEV_HIGH - TIER_BDEV_LOW + 1 ); i++) {
+		bfl = nova_get_bdev_free_list_flat(sbi, i);
+		num_blocknode += bfl->num_blocknode;
+		nova_dbgv("%s: free list %d: %lu nodes\n", __func__,
+				i, bfl->num_blocknode);
+	}
+
 	num_pages = num_blocknode / RANGENODE_PER_PAGE;
 	if (num_blocknode % RANGENODE_PER_PAGE)
 		num_pages++;
@@ -520,6 +584,10 @@ void nova_save_blocknode_mappings_to_log(struct super_block *sb)
 	temp_tail = new_block;
 	for (i = 0; i < sbi->cpus; i++)
 		temp_tail = nova_save_free_list_blocknodes(sb, i, temp_tail);
+
+	for (i = 0; i < sbi->cpus * ( TIER_BDEV_HIGH - TIER_BDEV_LOW + 1 ); i++) {
+		temp_tail = nova_save_bdev_free_list_blocknodes(sb, i, temp_tail);
+	}
 
 	/* Finally update log head and tail */
 	nova_memunlock_inode(sb, pi);
@@ -840,6 +908,8 @@ static unsigned int nova_check_old_entry(struct super_block *sb,
 
 	ret = nova_append_data_to_snapshot(sb, entryc, old_nvmm,
 				num_free, epoch_id);
+
+	// reclaim_get_nvmm(sb, old_nvmm, entryc, pgoff);
 
 	if (ret != 0)
 		return ret;
@@ -1549,6 +1619,9 @@ int nova_recovery(struct super_block *sb)
 
 	/* initialize free list info */
 	nova_init_blockmap(sb, 1);
+
+	/* initialize bdev free list info */
+	nova_init_bdev_blockmap(sb, 1);
 
 	value = nova_try_normal_recovery(sb);
 	if (value) {

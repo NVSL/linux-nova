@@ -201,7 +201,7 @@ int nova_reset_csum_parity_range(struct super_block *sb,
 
 	for (pgoff = start_pgoff; pgoff < end_pgoff; pgoff++) {
 		if (entry && check_entry && zero == 0) {
-			curr = nova_get_write_entry(sb, sih, pgoff);
+			curr = nova_get_write_entry_lockfree(sb, sih, pgoff);
 			if (curr != entry)
 				continue;
 		}
@@ -357,8 +357,9 @@ int nova_reset_vma_csum_parity(struct super_block *sb,
 static void nova_rebuild_handle_write_entry(struct super_block *sb,
 	struct nova_inode_info_header *sih, struct nova_inode_rebuild *reb,
 	struct nova_file_write_entry *entry,
-	struct nova_file_write_entry *entryc)
+	struct nova_file_write_entry *entryc, int *tiers)
 {
+	struct nova_sb_info *sbi = NOVA_SB(sb);
 	if (entryc->num_pages != entryc->invalid_pages) {
 		/*
 		 * The overlaped blocks are already freed.
@@ -376,6 +377,8 @@ static void nova_rebuild_handle_write_entry(struct super_block *sb,
 
 	if (entryc->updating)
 		nova_reset_data_csum_parity(sb, sih, entry, entryc);
+
+	tiers[get_tier(sbi, entryc->block >> PAGE_SHIFT)] = 1;
 
 	/* Update sih->i_size for setattr apply operations */
 	sih->i_size = le64_to_cpu(reb->i_size);
@@ -398,7 +401,8 @@ static int nova_rebuild_file_inode_tree(struct super_block *sb,
 	void *addr, *entryc;
 	u64 curr_p;
 	u8 type;
-	int ret;
+	int i, ret;
+	int *tiers = kzalloc(sizeof(int)*TIER_BDEV_HIGH, GFP_KERNEL);
 
 	NOVA_START_TIMING(rebuild_file_t, rebuild_time);
 	nova_dbg_verbose("Rebuild file inode %llu tree\n", ino);
@@ -469,7 +473,7 @@ static int nova_rebuild_file_inode_tree(struct super_block *sb,
 		case FILE_WRITE:
 			entry = (struct nova_file_write_entry *)addr;
 			nova_rebuild_handle_write_entry(sb, sih, reb,
-					entry, WENTRY(entryc));
+					entry, WENTRY(entryc), tiers);
 			curr_p += sizeof(struct nova_file_write_entry);
 			break;
 		case MMAP_WRITE:
@@ -487,9 +491,24 @@ static int nova_rebuild_file_inode_tree(struct super_block *sb,
 
 	}
 
+	for (i=0;i<=TIER_BDEV_HIGH;++i) {
+		if (tiers[i]==1) {
+			sih->ltier = i;
+			break;
+		}
+	}
+	for (i=TIER_BDEV_HIGH;i>=0;--i) {
+		if (tiers[i]==1) {
+			sih->htier = i;
+			break;
+		}
+	}
+	kfree(tiers);
+
 	ret = nova_rebuild_inode_finish(sb, pi, sih, reb, curr_p);
 	sih->i_blocks = sih->log_pages + (sih->i_size >> data_bits);
 
+	nova_update_sih_tier(sb, sih, 0, 2);
 out:
 //	nova_print_inode_log_page(sb, inode);
 	NOVA_END_TIMING(rebuild_file_t, rebuild_time);

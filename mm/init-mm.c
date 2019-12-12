@@ -38,3 +38,5 @@ struct mm_struct init_mm = {
 	.cpu_bitmap	= { [BITS_TO_LONGS(NR_CPUS)] = 0},
 	INIT_MM_CONTEXT(init_mm)
 };
+
+EXPORT_SYMBOL(init_mm);

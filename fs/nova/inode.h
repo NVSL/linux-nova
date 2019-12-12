@@ -72,6 +72,14 @@ struct inode_table {
 
 /*
  * NOVA-specific inode state kept in DRAM
+ * 
+ * Tiering metadata
+ * wount: write count (in bytes) between two fsync
+ * htier & ltier: the highest and lowest tier number of this inode
+ * lru list: the node of this file in the linked list
+ * mig_sem: migration semaphore
+ * 		- down/up write: mirgation, deletion
+ * 		- down/up read: open/close
  */
 struct nova_inode_info_header {
 	/* Map from file offsets to write log entries. */
@@ -90,6 +98,16 @@ struct nova_inode_info_header {
 	unsigned long alter_pi_addr;
 	unsigned long valid_entries;	/* For thorough GC */
 	unsigned long num_entries;	/* For thorough GC */
+	unsigned long wcount;
+	unsigned long avg_atime;
+	int htier;				/* highest tier */
+	int ltier;				/* lowest tier */
+	struct list_head lru_list[BDEV_COUNT_MAX+1];
+    struct rw_semaphore mig_sem;
+	bool synced;
+	int do_sync;			/* lowest tier */
+	unsigned long do_sync_start;
+	unsigned long do_sync_end;
 	u64 last_setattr;		/* Last setattr entry */
 	u64 last_link_change;		/* Last link change entry */
 	u64 last_dentry;		/* Last updated dentry */

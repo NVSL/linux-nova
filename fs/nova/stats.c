@@ -159,6 +159,26 @@ const char *Timingstring[TIMING_NUM] = {
 	"delete_snapshot",
 	"append_snapshot_filedata",
 	"append_snapshot_inode",
+
+	/* Tiering */
+	"=================== Tiering ====================",
+	"migrate_a_file",
+	"update_sih_tier",
+	"unlink_inode_lru_list",
+	"pop_a_file",
+
+	/* VPMEM */
+	"==================== VPMEM =====================",
+	"pgcache_insert",
+	"pgcache_lookup",
+	"pgcache_evict",
+	"pgcache_range",
+
+	/* BDEV */
+	"===================== BDEV =====================",
+	"bdev_read",
+	"bdev_read_range",
+	"bdev_write_range",
 };
 
 u64 Timingstats[TIMING_NUM];
