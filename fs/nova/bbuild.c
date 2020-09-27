@@ -1427,7 +1427,7 @@ static int nova_failure_recovery_crawl(struct super_block *sb)
 	}
 
 	nova_recover_inode_pages(sb, &sih, &task_rings[0],
-					&fake_pi, global_bm[1]);
+					&fake_pi, global_bm[0]);
 
 	return ret;
 }
