@@ -1410,6 +1410,7 @@ int nova_free_inode_log(struct super_block *sb, struct nova_inode *pi,
 						sizeof(struct nova_inode));
 			}
 		}
+		nova_flush_buffer(pi, sizeof(struct nova_inode), 0); 
 		nova_memlock_inode(sb, pi);
 	}
 
