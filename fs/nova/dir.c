@@ -240,6 +240,7 @@ int nova_append_dir_init_entries(struct super_block *sb,
 
 	nova_update_tail(pi, new_block + length);
 
+	nova_flush_buffer(&(pi->log_head), CACHELINE_SIZE, 0);
 	nova_memlock_inode(sb, pi);
 
 	if (metadata_csum == 0)
