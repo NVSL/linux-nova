@@ -146,7 +146,7 @@ to be done.  In particular, (at least) the following items are currently missing
 10. Remounting a NOVA file system with different mount options may fail.
 
 None of these are fundamental limitations of NOVA's design.  Additional bugs
-and issues are here [here][https://github.com/NVSL/linux-nova/issues].
+and issues are [here](https://github.com/NVSL/linux-nova/issues).
 
 NOVA is complete and robust enough to run a range of complex applications, but
 it is not yet ready for production use.  Our current focus is on adding a few
