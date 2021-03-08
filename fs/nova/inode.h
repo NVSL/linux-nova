@@ -178,12 +178,13 @@ static inline int nova_update_inode_checksum(struct nova_inode *pi)
 	u32 crc = 0;
 
 	if (metadata_csum == 0)
-		return 0;
+		goto persist;
 
 	crc = nova_crc32c(~0, (__u8 *)pi,
 			(sizeof(struct nova_inode) - sizeof(__le32)));
 
 	pi->csum = crc;
+persist:
 	nova_flush_buffer(pi, sizeof(struct nova_inode), 1);
 	return 0;
 }
