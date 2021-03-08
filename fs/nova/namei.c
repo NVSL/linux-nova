@@ -99,7 +99,6 @@ static void nova_lite_transaction_for_new_inode(struct super_block *sb,
 	nova_update_inode(sb, dir, pidir, update, 0);
 
 	pi->valid = 1;
-	nova_flush_buffer(&(pi->valid), CACHELINE_SIZE, 0);
 	nova_update_inode_checksum(pi);
 	PERSISTENT_BARRIER();
 
