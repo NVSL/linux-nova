@@ -409,8 +409,15 @@ static int nova_rebuild_file_inode_tree(struct super_block *sb,
 		goto out;
 
 	curr_p = sih->log_head;
-	if (curr_p == 0 && sih->log_tail == 0)
+	// if (curr_p == 0 && sih->log_tail == 0)
+	// 	goto out;
+	if (curr_p == 0 || sih->log_tail == 0) {
+		nova_warn("NULL log pointer(s) in file inode %llu\n", ino);
+		pi->log_head = 0;
+		pi->log_tail = 0;
+		nova_flush_buffer(pi, sizeof(struct nova_inode), 1);
 		goto out;
+	}
 
 	entryc = (metadata_csum == 0) ? NULL : entry_copy;
 
