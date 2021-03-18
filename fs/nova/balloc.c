@@ -876,6 +876,7 @@ static int nova_new_blocks(struct super_block *sb, unsigned long *blocknr,
 	unsigned long new_blocknr = 0;
 	long ret_blocks = 0;
 	int retried = 0;
+	unsigned long irq_flags = 0;
 	INIT_TIMING(alloc_time);
 
 	num_blocks = num * nova_get_numblocks(btype);
@@ -934,9 +935,9 @@ alloc:
 	if (zero) {
 		bp = nova_get_block(sb, nova_get_block_off(sb,
 						new_blocknr, btype));
-		nova_memunlock_range(sb, bp, PAGE_SIZE * ret_blocks);
+		nova_memunlock_range(sb, bp, PAGE_SIZE * ret_blocks, &irq_flags);
 		memset_nt(bp, 0, PAGE_SIZE * ret_blocks);
-		nova_memlock_range(sb, bp, PAGE_SIZE * ret_blocks);
+		nova_memlock_range(sb, bp, PAGE_SIZE * ret_blocks, &irq_flags);
 	}
 	*blocknr = new_blocknr;
 

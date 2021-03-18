@@ -42,6 +42,7 @@ int nova_set_blocksize_hint(struct super_block *sb, struct inode *inode,
 	struct nova_inode *pi, loff_t new_size)
 {
 	unsigned short block_type;
+	unsigned long irq_flags = 0;
 
 	if (!nova_can_set_blocksize_hint(inode, pi, new_size))
 		return 0;
@@ -64,9 +65,9 @@ hint_set:
 		"Hint: new_size 0x%llx, i_size 0x%llx\n",
 		new_size, pi->i_size);
 	nova_dbg_verbose("Setting the hint to 0x%x\n", block_type);
-	nova_memunlock_inode(sb, pi);
+	nova_memunlock_inode(sb, pi, &irq_flags);
 	pi->i_blk_type = block_type;
-	nova_memlock_inode(sb, pi);
+	nova_memlock_inode(sb, pi, &irq_flags);
 	return 0;
 }
 
@@ -195,6 +196,7 @@ static long nova_fallocate(struct file *file, int mode, loff_t offset,
 	u64 begin_tail = 0;
 	u64 epoch_id;
 	u32 time;
+	unsigned long irq_flags = 0;
 
 	/*
 	 * Fallocate does not make much sence for CoW,
@@ -250,11 +252,11 @@ static long nova_fallocate(struct file *file, int mode, loff_t offset,
 		if (entry && inplace) {
 			if (entryc->size < new_size) {
 				/* Update existing entry */
-				nova_memunlock_range(sb, entry, CACHELINE_SIZE);
+				nova_memunlock_range(sb, entry, CACHELINE_SIZE, &irq_flags);
 				entry->size = new_size;
 				nova_update_entry_csum(entry);
 				nova_update_alter_entry(sb, entry);
-				nova_memlock_range(sb, entry, CACHELINE_SIZE);
+				nova_memlock_range(sb, entry, CACHELINE_SIZE, &irq_flags);
 			}
 			allocated = ent_blks;
 			goto next;
@@ -310,11 +312,11 @@ next:
 		sih->log_tail = update.tail;
 		sih->alter_log_tail = update.alter_tail;
 
-		nova_memunlock_inode(sb, pi);
+		nova_memunlock_inode(sb, pi, &irq_flags);
 		nova_update_tail(pi, update.tail);
 		if (metadata_csum)
 			nova_update_alter_tail(pi, update.alter_tail);
-		nova_memlock_inode(sb, pi);
+		nova_memlock_inode(sb, pi, &irq_flags);
 
 		/* Update file tree */
 		ret = nova_reassign_file_tree(sb, sih, begin_tail);
@@ -326,9 +328,9 @@ next:
 	nova_dbgv("blocks: %lu, %lu\n", inode->i_blocks, sih->i_blocks);
 
 	if (ret || (mode & FALLOC_FL_KEEP_SIZE)) {
-		nova_memunlock_inode(sb, pi);
+		nova_memunlock_inode(sb, pi, &irq_flags);
 		pi->i_flags |= cpu_to_le32(NOVA_EOFBLOCKS_FL);
-		nova_memlock_inode(sb, pi);
+		nova_memlock_inode(sb, pi, &irq_flags);
 		sih->i_flags |= cpu_to_le32(NOVA_EOFBLOCKS_FL);
 	}
 
@@ -337,10 +339,10 @@ next:
 		sih->i_size = new_size;
 	}
 
-	nova_memunlock_inode(sb, pi);
+	nova_memunlock_inode(sb, pi, &irq_flags);
 	nova_update_inode_checksum(pi);
 	nova_update_alter_inode(sb, inode, pi);
-	nova_memlock_inode(sb, pi);
+	nova_memlock_inode(sb, pi, &irq_flags);
 
 	sih->trans_id++;
 out:
@@ -647,6 +649,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	int try_inplace = 0;
 	u64 epoch_id;
 	u32 time;
+	unsigned long irq_flags = 0;
 
 
 	if (len == 0)
@@ -741,10 +744,10 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 		/* Now copy from user buf */
 		//		nova_dbg("Write: %p\n", kmem);
 		NOVA_START_TIMING(memcpy_w_nvmm_t, memcpy_time);
-		nova_memunlock_range(sb, kmem + offset, bytes);
+		nova_memunlock_range(sb, kmem + offset, bytes, &irq_flags);
 		copied = bytes - memcpy_to_pmem_nocache(kmem + offset,
 						buf, bytes);
-		nova_memlock_range(sb, kmem + offset, bytes);
+		nova_memlock_range(sb, kmem + offset, bytes, &irq_flags);
 		NOVA_END_TIMING(memcpy_w_nvmm_t, memcpy_time);
 
 		if (data_csum > 0 || data_parity > 0) {
@@ -796,9 +799,9 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	data_bits = blk_type_to_shift[sih->i_blk_type];
 	sih->i_blocks += (total_blocks << (data_bits - sb->s_blocksize_bits));
 
-	nova_memunlock_inode(sb, pi);
+	nova_memunlock_inode(sb, pi, &irq_flags);
 	nova_update_inode(sb, inode, pi, &update, 1);
-	nova_memlock_inode(sb, pi);
+	nova_memlock_inode(sb, pi, &irq_flags);
 
 	/* Free the overlap blocks after the write is committed */
 	ret = nova_reassign_file_tree(sb, sih, begin_tail);

@@ -244,6 +244,7 @@ static int nova_repair_entry_pr(struct super_block *sb, void *entry)
 	int ret;
 	u64 entry_off, alter_off;
 	void *entry_pr, *alter_pr;
+	unsigned long irq_flags = 0;
 
 	entry_off = nova_get_addr_off(sbi, entry);
 	alter_off = alter_log_entry(sb, entry_off);
@@ -258,9 +259,9 @@ static int nova_repair_entry_pr(struct super_block *sb, void *entry)
 	if (entry_pr == NULL || alter_pr == NULL)
 		BUG();
 
-	nova_memunlock_range(sb, entry_pr, POISON_RADIUS);
+	nova_memunlock_range(sb, entry_pr, POISON_RADIUS, &irq_flags);
 	ret = memcpy_mcsafe(entry_pr, alter_pr, POISON_RADIUS);
-	nova_memlock_range(sb, entry_pr, POISON_RADIUS);
+	nova_memlock_range(sb, entry_pr, POISON_RADIUS, &irq_flags);
 	nova_flush_buffer(entry_pr, POISON_RADIUS, 0);
 
 	/* alter_entry shows media error during memcpy */
@@ -279,10 +280,11 @@ static int nova_repair_entry(struct super_block *sb, void *bad, void *good,
 	size_t entry_size)
 {
 	int ret;
+	unsigned long irq_flags = 0;
 
-	nova_memunlock_range(sb, bad, entry_size);
+	nova_memunlock_range(sb, bad, entry_size, &irq_flags);
 	ret = memcpy_to_pmem_nocache(bad, good, entry_size);
-	nova_memlock_range(sb, bad, entry_size);
+	nova_memlock_range(sb, bad, entry_size, &irq_flags);
 
 	if (ret == 0)
 		nova_dbg("%s: entry error repaired\n", __func__);
@@ -401,6 +403,7 @@ static int nova_repair_inode_pr(struct super_block *sb,
 {
 	int ret;
 	void *bad_pr, *good_pr;
+	unsigned long irq_flags = 0;
 
 	bad_pr = (void *)((u64) bad_pi & POISON_MASK);
 	good_pr = (void *)((u64) good_pi & POISON_MASK);
@@ -408,9 +411,9 @@ static int nova_repair_inode_pr(struct super_block *sb,
 	if (bad_pr == NULL || good_pr == NULL)
 		BUG();
 
-	nova_memunlock_range(sb, bad_pr, POISON_RADIUS);
+	nova_memunlock_range(sb, bad_pr, POISON_RADIUS, &irq_flags);
 	ret = memcpy_mcsafe(bad_pr, good_pr, POISON_RADIUS);
-	nova_memlock_range(sb, bad_pr, POISON_RADIUS);
+	nova_memlock_range(sb, bad_pr, POISON_RADIUS, &irq_flags);
 	nova_flush_buffer(bad_pr, POISON_RADIUS, 0);
 
 	/* good_pi shows media error during memcpy */
@@ -429,11 +432,12 @@ static int nova_repair_inode(struct super_block *sb, struct nova_inode *bad_pi,
 	struct nova_inode *good_copy)
 {
 	int ret;
+	unsigned long irq_flags = 0;
 
-	nova_memunlock_inode(sb, bad_pi);
+	nova_memunlock_inode(sb, bad_pi, &irq_flags);
 	ret = memcpy_to_pmem_nocache(bad_pi, good_copy,
 					sizeof(struct nova_inode));
-	nova_memlock_inode(sb, bad_pi);
+	nova_memlock_inode(sb, bad_pi, &irq_flags);
 
 	if (ret == 0)
 		nova_dbg("%s: inode %llu error repaired\n", __func__,
@@ -542,6 +546,7 @@ static int nova_update_stripe_csum(struct super_block *sb, unsigned long strps,
 	u32 crc[8];
 	void *csum_addr, *csum_addr1;
 	void *src_addr;
+	unsigned long irq_flags = 0;
 
 	while (strps >= 8) {
 		if (zero) {
@@ -571,7 +576,7 @@ copy:
 		csum_addr = nova_get_data_csum_addr(sb, strp_nr, 0);
 		csum_addr1 = nova_get_data_csum_addr(sb, strp_nr, 1);
 
-		nova_memunlock_range(sb, csum_addr, NOVA_DATA_CSUM_LEN * 8);
+		nova_memunlock_range(sb, csum_addr, NOVA_DATA_CSUM_LEN * 8, &irq_flags);
 		if (support_clwb) {
 			memcpy(csum_addr, src_addr, NOVA_DATA_CSUM_LEN * 8);
 			memcpy(csum_addr1, src_addr, NOVA_DATA_CSUM_LEN * 8);
@@ -581,7 +586,7 @@ copy:
 			memcpy_to_pmem_nocache(csum_addr1, src_addr,
 						NOVA_DATA_CSUM_LEN * 8);
 		}
-		nova_memlock_range(sb, csum_addr, NOVA_DATA_CSUM_LEN * 8);
+		nova_memlock_range(sb, csum_addr, NOVA_DATA_CSUM_LEN * 8, &irq_flags);
 		if (support_clwb) {
 			nova_flush_buffer(csum_addr,
 					  NOVA_DATA_CSUM_LEN * 8, 0);
@@ -605,10 +610,10 @@ copy:
 		csum_addr = nova_get_data_csum_addr(sb, strp_nr, 0);
 		csum_addr1 = nova_get_data_csum_addr(sb, strp_nr, 1);
 
-		nova_memunlock_range(sb, csum_addr, NOVA_DATA_CSUM_LEN);
+		nova_memunlock_range(sb, csum_addr, NOVA_DATA_CSUM_LEN, &irq_flags);
 		memcpy_to_pmem_nocache(csum_addr, &csum, NOVA_DATA_CSUM_LEN);
 		memcpy_to_pmem_nocache(csum_addr1, &csum, NOVA_DATA_CSUM_LEN);
-		nova_memlock_range(sb, csum_addr, NOVA_DATA_CSUM_LEN);
+		nova_memlock_range(sb, csum_addr, NOVA_DATA_CSUM_LEN, &irq_flags);
 
 		strp_nr += 1;
 		if (!zero)
@@ -722,6 +727,7 @@ bool nova_verify_data_csum(struct super_block *sb,
 	u32 *csum_addr0, *csum_addr1;
 	int error;
 	bool match;
+	unsigned long irq_flags = 0;
 	INIT_TIMING(verify_time);
 
 	NOVA_START_TIMING(verify_data_csum_t, verify_time);
@@ -818,7 +824,7 @@ bool nova_verify_data_csum(struct super_block *sb,
 				strp_nr, csum_calc, csum_nvmm0, csum_nvmm1);
 
 			nova_memunlock_range(sb, csum_addr0,
-							NOVA_DATA_CSUM_LEN);
+							NOVA_DATA_CSUM_LEN, &irq_flags);
 			if (csum_nvmm0 != csum_calc) {
 				csum_nvmm0 = cpu_to_le32(csum_calc);
 				memcpy_to_pmem_nocache(csum_addr0, &csum_nvmm0,
@@ -830,7 +836,7 @@ bool nova_verify_data_csum(struct super_block *sb,
 				memcpy_to_pmem_nocache(csum_addr1, &csum_nvmm1,
 							NOVA_DATA_CSUM_LEN);
 			}
-			nova_memlock_range(sb, csum_addr0, NOVA_DATA_CSUM_LEN);
+			nova_memlock_range(sb, csum_addr0, NOVA_DATA_CSUM_LEN, &irq_flags);
 
 			nova_dbg("%s: nova checksum corruption repaired!\n",
 								__func__);

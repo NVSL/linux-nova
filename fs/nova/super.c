@@ -343,8 +343,9 @@ inline void nova_sync_super(struct super_block *sb)
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_super_block *super = nova_get_super(sb);
 	struct nova_super_block *super_redund;
+	unsigned long irq_flags = 0;
 
-	nova_memunlock_super(sb);
+	nova_memunlock_super(sb, &irq_flags);
 
 	super_redund = nova_get_redund_super(sb);
 
@@ -356,7 +357,7 @@ inline void nova_sync_super(struct super_block *sb)
 		sizeof(struct nova_super_block));
 	PERSISTENT_BARRIER();
 
-	nova_memlock_super(sb);
+	nova_memlock_super(sb, &irq_flags);
 }
 
 /* Update checksum for the DRAM copy */
@@ -396,6 +397,7 @@ static struct nova_inode *nova_init(struct super_block *sb,
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_inode_update update;
 	u64 epoch_id;
+	unsigned long irq_flags = 0;
 	INIT_TIMING(init_time);
 
 	NOVA_START_TIMING(new_init_t, init_time);
@@ -415,7 +417,7 @@ static struct nova_inode *nova_init(struct super_block *sb,
 
 	super = nova_get_super(sb);
 
-	nova_memunlock_reserved(sb, super);
+	nova_memunlock_reserved(sb, super, &irq_flags);
 	/* clear out super-block and inode table */
 	memset_nt(super, 0, sbi->head_reserved_blocks * sbi->blocksize);
 
@@ -430,7 +432,7 @@ static struct nova_inode *nova_init(struct super_block *sb,
 	memset(&update, 0, sizeof(struct nova_inode_update));
 	nova_update_inode(sb, &sbi->snapshot_si->vfs_inode, pi, &update, 1);
 
-	nova_memlock_reserved(sb, super);
+	nova_memlock_reserved(sb, super, &irq_flags);
 
 	nova_init_blockmap(sb, 0);
 
@@ -460,7 +462,7 @@ static struct nova_inode *nova_init(struct super_block *sb,
 	root_i = nova_get_inode_by_ino(sb, NOVA_ROOT_INO);
 	nova_dbgv("%s: Allocate root inode @ 0x%p\n", __func__, root_i);
 
-	nova_memunlock_inode(sb, root_i);
+	nova_memunlock_inode(sb, root_i, &irq_flags);
 	root_i->i_mode = cpu_to_le16(sbi->mode | S_IFDIR);
 	root_i->i_uid = cpu_to_le32(from_kuid(&init_user_ns, sbi->uid));
 	root_i->i_gid = cpu_to_le32(from_kgid(&init_user_ns, sbi->gid));
@@ -474,7 +476,7 @@ static struct nova_inode *nova_init(struct super_block *sb,
 	root_i->valid = 1;
 	/* nova_sync_inode(root_i); */
 	nova_flush_buffer(root_i, sizeof(*root_i), false);
-	nova_memlock_inode(sb, root_i);
+	nova_memlock_inode(sb, root_i, &irq_flags);
 
 	epoch_id = nova_get_epoch_id(sb);
 	nova_append_dir_init_entries(sb, root_i, NOVA_ROOT_INO,

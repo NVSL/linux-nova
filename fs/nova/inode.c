@@ -76,6 +76,7 @@ static int nova_alloc_inode_table(struct super_block *sb,
 	u64 block;
 	int allocated;
 	int i;
+	unsigned long irq_flags = 0;
 
 	for (i = 0; i < sbi->cpus; i++) {
 		inode_table = nova_get_inode_table(sb, version, i);
@@ -93,9 +94,9 @@ static int nova_alloc_inode_table(struct super_block *sb,
 			return -ENOSPC;
 
 		block = nova_get_block_off(sb, blocknr, NOVA_BLOCK_TYPE_2M);
-		nova_memunlock_range(sb, inode_table, CACHELINE_SIZE);
+		nova_memunlock_range(sb, inode_table, CACHELINE_SIZE, &irq_flags);
 		inode_table->log_head = block;
-		nova_memlock_range(sb, inode_table, CACHELINE_SIZE);
+		nova_memlock_range(sb, inode_table, CACHELINE_SIZE, &irq_flags);
 		nova_flush_buffer(inode_table, CACHELINE_SIZE, 0);
 	}
 
@@ -109,8 +110,9 @@ int nova_init_inode_table(struct super_block *sb)
 	int num_tables;
 	int ret = 0;
 	int i;
+	unsigned long irq_flags = 0;
 
-	nova_memunlock_inode(sb, pi);
+	nova_memunlock_inode(sb, pi, &irq_flags);
 	pi->i_mode = 0;
 	pi->i_uid = 0;
 	pi->i_gid = 0;
@@ -119,7 +121,7 @@ int nova_init_inode_table(struct super_block *sb)
 	pi->nova_ino = NOVA_INODETABLE_INO;
 
 	pi->i_blk_type = NOVA_BLOCK_TYPE_2M;
-	nova_memlock_inode(sb, pi);
+	nova_memlock_inode(sb, pi, &irq_flags);
 
 	sih.ino = NOVA_INODETABLE_INO;
 	sih.i_blk_type = NOVA_BLOCK_TYPE_2M;
@@ -188,6 +190,7 @@ int nova_get_inode_address(struct super_block *sb, u64 ino, int version,
 	unsigned long blocknr;
 	unsigned long curr_addr;
 	int allocated;
+	unsigned long irq_flags = 0;
 
 	if (ino < NOVA_NORMAL_INODE_START) {
 		*pi_addr = nova_get_reserved_inode_addr(sb, ino);
@@ -235,10 +238,10 @@ int nova_get_inode_address(struct super_block *sb, u64 ino, int version,
 			curr = nova_get_block_off(sb, blocknr,
 						NOVA_BLOCK_TYPE_2M);
 			nova_memunlock_range(sb, (void *)curr_addr,
-						CACHELINE_SIZE);
+						CACHELINE_SIZE, &irq_flags);
 			*(u64 *)(curr_addr) = curr;
 			nova_memlock_range(sb, (void *)curr_addr,
-						CACHELINE_SIZE);
+						CACHELINE_SIZE, &irq_flags);
 			nova_flush_buffer((void *)curr_addr,
 						NOVA_INODE_SIZE, 1);
 		}
@@ -373,14 +376,15 @@ static inline void check_eof_blocks(struct super_block *sb,
 	struct nova_inode *pi, struct inode *inode,
 	struct nova_inode_info_header *sih)
 {
+	unsigned long irq_flags = 0;
 	if ((pi->i_flags & cpu_to_le32(NOVA_EOFBLOCKS_FL)) &&
 		(inode->i_size + sb->s_blocksize) > (sih->i_blocks
 			<< sb->s_blocksize_bits)) {
-		nova_memunlock_inode(sb, pi);
+		nova_memunlock_inode(sb, pi, &irq_flags);
 		pi->i_flags &= cpu_to_le32(~NOVA_EOFBLOCKS_FL);
 		nova_update_inode_checksum(pi);
 		nova_update_alter_inode(sb, inode, pi);
-		nova_memlock_inode(sb, pi);
+		nova_memlock_inode(sb, pi, &irq_flags);
 	}
 }
 
@@ -848,8 +852,9 @@ static int nova_free_inode_resource(struct super_block *sb,
 	int ret = 0;
 	int freed = 0;
 	struct nova_inode *alter_pi;
+	unsigned long irq_flags = 0;
 
-	nova_memunlock_inode(sb, pi);
+	nova_memunlock_inode(sb, pi, &irq_flags);
 	pi->deleted = 1;
 
 	if (pi->valid) {
@@ -863,7 +868,7 @@ static int nova_free_inode_resource(struct super_block *sb,
 						sih->alter_pi_addr);
 		memcpy_to_pmem_nocache(alter_pi, pi, sizeof(struct nova_inode));
 	}
-	nova_memlock_inode(sb, pi);
+	nova_memlock_inode(sb, pi, &irq_flags);
 
 	/* We need the log to free the blocks from the b-tree */
 	switch (__le16_to_cpu(pi->i_mode) & S_IFMT) {
@@ -1061,6 +1066,7 @@ struct inode *nova_new_vfs_inode(enum nova_new_inode_type type,
 	struct nova_inode *alter_pi;
 	int errval;
 	u64 alter_pi_addr = 0;
+	unsigned long irq_flags = 0;
 	INIT_TIMING(new_inode_time);
 
 	NOVA_START_TIMING(new_vfs_inode_t, new_inode_time);
@@ -1131,7 +1137,7 @@ struct inode *nova_new_vfs_inode(enum nova_new_inode_type type,
 	 * Pi is part of the dir log so no transaction is needed,
 	 * but we need to flush to NVMM.
 	 */
-	nova_memunlock_inode(sb, pi);
+	nova_memunlock_inode(sb, pi, &irq_flags);
 	pi->i_blk_type = NOVA_DEFAULT_BLOCK_TYPE;
 	pi->i_flags = nova_mask_flags(mode, diri->i_flags);
 	pi->nova_ino = ino;
@@ -1145,7 +1151,7 @@ struct inode *nova_new_vfs_inode(enum nova_new_inode_type type,
 		memcpy_to_pmem_nocache(alter_pi, pi, sizeof(struct nova_inode));
 	}
 
-	nova_memlock_inode(sb, pi);
+	nova_memlock_inode(sb, pi, &irq_flags);
 
 	si = NOVA_I(inode);
 	sih = &si->header;
@@ -1190,13 +1196,14 @@ int nova_write_inode(struct inode *inode, struct writeback_control *wbc)
  * clean. Only exception is touch_atime which calls dirty_inode to update the
  * i_atime field.
  */
-void nova_dirty_inode(struct inode *inode, int flags)
+void nova_dirty_inode(struct inode *inode, int _flags)
 {
 	struct super_block *sb = inode->i_sb;
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_inode_info *si = NOVA_I(inode);
 	struct nova_inode_info_header *sih = &si->header;
 	struct nova_inode *pi, inode_copy;
+	unsigned long irq_flags = 0;
 
 	if (sbi->mount_snapshot)
 		return;
@@ -1211,11 +1218,11 @@ void nova_dirty_inode(struct inode *inode, int flags)
 	/* only i_atime should have changed if at all.
 	 * we can do in-place atomic update
 	 */
-	nova_memunlock_inode(sb, pi);
+	nova_memunlock_inode(sb, pi, &irq_flags);
 	pi->i_atime = cpu_to_le32(inode->i_atime.tv_sec);
 	nova_update_inode_checksum(pi);
 	nova_update_alter_inode(sb, inode, pi);
-	nova_memlock_inode(sb, pi);
+	nova_memlock_inode(sb, pi, &irq_flags);
 	/* Relax atime persistency */
 	nova_flush_buffer(&pi->i_atime, sizeof(pi->i_atime), 0);
 }
