@@ -25,53 +25,6 @@
 #include "nova.h"
 #include "inode.h"
 
-static inline void wprotect_disable(void)
-{
-	unsigned long cr0_val;
-
-	cr0_val = read_cr0();
-	cr0_val &= (~X86_CR0_WP);
-	write_cr0(cr0_val);
-}
-
-static inline void wprotect_enable(void)
-{
-	unsigned long cr0_val;
-
-	cr0_val = read_cr0();
-	cr0_val |= X86_CR0_WP;
-	write_cr0(cr0_val);
-}
-
-/* FIXME: Assumes that we are always called in the right order.
- * nova_writeable(vaddr, size, 1);
- * nova_writeable(vaddr, size, 0);
- */
-int nova_writeable(void *vaddr, unsigned long size, int rw)
-{
-	static unsigned long flags;
-	INIT_TIMING(wprotect_time);
-
-	NOVA_START_TIMING(wprotect_t, wprotect_time);
-	if (rw) {
-		local_irq_save(flags);
-		wprotect_disable();
-	} else {
-		wprotect_enable();
-		local_irq_restore(flags);
-	}
-	NOVA_END_TIMING(wprotect_t, wprotect_time);
-	return 0;
-}
-
-int nova_dax_mem_protect(struct super_block *sb, void *vaddr,
-			  unsigned long size, int rw)
-{
-	if (!nova_is_wprotected(sb))
-		return 0;
-	return nova_writeable(vaddr, size, rw);
-}
-
 int nova_get_vma_overlap_range(struct super_block *sb,
 	struct nova_inode_info_header *sih, struct vm_area_struct *vma,
 	unsigned long entry_pgoff, unsigned long entry_pages,
@@ -315,6 +268,7 @@ int nova_mmap_to_new_blocks(struct vm_area_struct *vma,
 	u32 time;
 	INIT_TIMING(mmap_cow_time);
 	int ret = 0;
+	unsigned long irq_flags = 0;
 
 	NOVA_START_TIMING(mmap_cow_t, mmap_cow_time);
 
@@ -418,10 +372,10 @@ int nova_mmap_to_new_blocks(struct vm_area_struct *vma,
 
 		/* Now copy from user buf */
 		NOVA_START_TIMING(memcpy_w_wb_t, memcpy_time);
-		nova_memunlock_range(sb, to_kmem, bytes);
+		nova_memunlock_range(sb, to_kmem, bytes, &irq_flags);
 		copied = bytes - memcpy_to_pmem_nocache(to_kmem, from_kmem,
 							bytes);
-		nova_memlock_range(sb, to_kmem, bytes);
+		nova_memlock_range(sb, to_kmem, bytes, &irq_flags);
 		NOVA_END_TIMING(memcpy_w_wb_t, memcpy_time);
 
 		if (copied == bytes) {
@@ -455,9 +409,9 @@ int nova_mmap_to_new_blocks(struct vm_area_struct *vma,
 	if (begin_tail == 0)
 		goto out;
 
-	nova_memunlock_inode(sb, pi);
+	nova_memunlock_inode(sb, pi, &irq_flags);
 	nova_update_inode(sb, inode, pi, &update, 1);
-	nova_memlock_inode(sb, pi);
+	nova_memlock_inode(sb, pi, &irq_flags);
 
 	/* Update file tree */
 	ret = nova_reassign_file_tree(sb, sih, begin_tail);

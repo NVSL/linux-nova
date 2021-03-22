@@ -364,6 +364,7 @@ static int nova_test_func_perf(struct super_block *sb, unsigned int func_id,
 	const memcpy_call_t *fmemcpy = NULL;
 	const checksum_call_t *fchecksum = NULL;
 	const raid5_call_t *fraid5 = NULL;
+	unsigned long irq_flags = 0;
 	INIT_TIMING(perf_time);
 
 	cpu = get_cpu(); /* get cpu id and disable preemption */
@@ -481,10 +482,10 @@ test:
 			err = fmemcpy->call(dst, pmem, off, size);
 		break;
 	case to_pmem_gid:
-		nova_memunlock_range(sb, pmem, poolsize);
+		nova_memunlock_range(sb, pmem, poolsize, &irq_flags);
 		for (i = 0; i < reps; i++, off += size)
 			err = fmemcpy->call(pmem, src, off, size);
-		nova_memlock_range(sb, pmem, poolsize);
+		nova_memlock_range(sb, pmem, poolsize, &irq_flags);
 		break;
 	case checksum_gid:
 		for (i = 0; i < reps; i++, off += size)

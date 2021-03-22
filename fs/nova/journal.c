@@ -168,8 +168,9 @@ static int nova_recover_lite_journal(struct super_block *sb,
 {
 	struct nova_lite_journal_entry *entry;
 	u64 temp;
+	unsigned long irq_flags = 0;
 
-	nova_memunlock_journal(sb);
+	nova_memunlock_journal(sb, &irq_flags);
 	temp = pair->journal_head;
 	while (temp != pair->journal_tail) {
 		entry = (struct nova_lite_journal_entry *)nova_get_block(sb,
@@ -179,7 +180,7 @@ static int nova_recover_lite_journal(struct super_block *sb,
 	}
 
 	pair->journal_tail = pair->journal_head;
-	nova_memlock_journal(sb);
+	nova_memlock_journal(sb, &irq_flags);
 	nova_flush_buffer(&pair->journal_head, CACHELINE_SIZE, 1);
 
 	return 0;
@@ -472,6 +473,7 @@ int nova_lite_journal_hard_init(struct super_block *sb)
 	int allocated;
 	int i;
 	u64 block;
+	unsigned long irq_flags = 0;
 
 	sih.ino = NOVA_LITEJOURNAL_INO;
 	sih.i_blk_type = NOVA_BLOCK_TYPE_4K;
@@ -487,10 +489,10 @@ int nova_lite_journal_hard_init(struct super_block *sb)
 			return -ENOSPC;
 
 		block = nova_get_block_off(sb, blocknr, NOVA_BLOCK_TYPE_4K);
-		nova_memunlock_range(sb, pair, CACHELINE_SIZE);
+		nova_memunlock_range(sb, pair, CACHELINE_SIZE, &irq_flags);
 		pair->journal_head = pair->journal_tail = block;
 		nova_flush_buffer(pair, CACHELINE_SIZE, 0);
-		nova_memlock_range(sb, pair, CACHELINE_SIZE);
+		nova_memlock_range(sb, pair, CACHELINE_SIZE, &irq_flags);
 	}
 
 	PERSISTENT_BARRIER();

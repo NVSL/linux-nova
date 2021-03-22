@@ -78,6 +78,7 @@ static int nova_update_block_parity(struct super_block *sb, u8 *block,
 	size_t strp_size = NOVA_STRIPE_SIZE;
 	void *parity, *nvmmptr;
 	int ret = 0;
+	unsigned long irq_flags = 0;
 	INIT_TIMING(block_parity_time);
 
 	NOVA_START_TIMING(block_parity_t, block_parity_time);
@@ -101,9 +102,9 @@ static int nova_update_block_parity(struct super_block *sb, u8 *block,
 
 	nvmmptr = nova_get_parity_addr(sb, blocknr);
 
-	nova_memunlock_range(sb, nvmmptr, strp_size);
+	nova_memunlock_range(sb, nvmmptr, strp_size, &irq_flags);
 	memcpy_to_pmem_nocache(nvmmptr, parity, strp_size);
-	nova_memlock_range(sb, nvmmptr, strp_size);
+	nova_memlock_range(sb, nvmmptr, strp_size, &irq_flags);
 
 	// TODO: The parity stripe is better checksummed for higher reliability.
 out:
@@ -158,6 +159,7 @@ int nova_update_block_csum_parity(struct super_block *sb,
 	u64 acc[8] = {CSUM0, CSUM0, CSUM0, CSUM0, CSUM0, CSUM0, CSUM0, CSUM0};
 	bool unroll_csum = false, unroll_parity = false;
 	int ret = 0;
+	unsigned long irq_flags = 0;
 	INIT_TIMING(block_csum_parity_time);
 
 	NOVA_STATS_ADD(block_csum_parity, 1);
@@ -225,17 +227,17 @@ int nova_update_block_csum_parity(struct super_block *sb,
 
 			nvmmptr = nova_get_data_csum_addr(sb, strp_nr, 0);
 			nvmmptr1 = nova_get_data_csum_addr(sb, strp_nr, 1);
-			nova_memunlock_range(sb, nvmmptr, csum_size * 8);
+			nova_memunlock_range(sb, nvmmptr, csum_size * 8, &irq_flags);
 			memcpy_to_pmem_nocache(nvmmptr, crc, csum_size * 8);
 			memcpy_to_pmem_nocache(nvmmptr1, crc, csum_size * 8);
-			nova_memlock_range(sb, nvmmptr, csum_size * 8);
+			nova_memlock_range(sb, nvmmptr, csum_size * 8, &irq_flags);
 		}
 
 		if (data_parity > 0) {
 			nvmmptr = nova_get_parity_addr(sb, blocknr);
-			nova_memunlock_range(sb, nvmmptr, strp_size);
+			nova_memunlock_range(sb, nvmmptr, strp_size, &irq_flags);
 			memcpy_to_pmem_nocache(nvmmptr, parity, strp_size);
-			nova_memlock_range(sb, nvmmptr, strp_size);
+			nova_memlock_range(sb, nvmmptr, strp_size, &irq_flags);
 		}
 
 		if (parity != NULL)
@@ -274,6 +276,7 @@ int nova_restore_data(struct super_block *sb, unsigned long blocknr,
 	u8 *blockptr, *stripptr, *block, *parity, *strip;
 	u32 csum_calc;
 	bool success = false;
+	unsigned long irq_flags = 0;
 	INIT_TIMING(restore_time);
 	int ret = 0;
 
@@ -347,9 +350,9 @@ int nova_restore_data(struct super_block *sb, unsigned long blocknr,
 
 	if (success) {
 		/* recovery success, repair the bad nvmm data */
-		nova_memunlock_range(sb, stripptr, strp_size);
+		nova_memunlock_range(sb, stripptr, strp_size, &irq_flags);
 		memcpy_to_pmem_nocache(stripptr, strip, strp_size);
-		nova_memlock_range(sb, stripptr, strp_size);
+		nova_memlock_range(sb, stripptr, strp_size, &irq_flags);
 
 		/* return the good checksum */
 		*csum_good = csum_calc;

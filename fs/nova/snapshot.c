@@ -821,11 +821,12 @@ static int nova_free_nvmm_page(struct super_block *sb,
 static int nova_set_nvmm_page_addr(struct super_block *sb,
 	struct nova_snapshot_info_entry *entry, u64 nvmm_page_addr)
 {
-	nova_memunlock_range(sb, entry, CACHELINE_SIZE);
+	unsigned long irq_flags = 0;
+	nova_memunlock_range(sb, entry, CACHELINE_SIZE, &irq_flags);
 	entry->nvmm_page_addr = nvmm_page_addr;
 	nova_update_entry_csum(entry);
 	nova_update_alter_entry(sb, entry);
-	nova_memlock_range(sb, entry, CACHELINE_SIZE);
+	nova_memlock_range(sb, entry, CACHELINE_SIZE, &irq_flags);
 
 	return 0;
 }
@@ -883,6 +884,7 @@ static int nova_append_snapshot_info_log(struct super_block *sb,
 	struct nova_inode_update update;
 	struct nova_snapshot_info_entry entry_info;
 	int ret;
+	unsigned long irq_flags = 0;
 
 	entry_info.type = SNAPSHOT_INFO;
 	entry_info.deleted = 0;
@@ -898,9 +900,9 @@ static int nova_append_snapshot_info_log(struct super_block *sb,
 		return ret;
 	}
 
-	nova_memunlock_inode(sb, pi);
+	nova_memunlock_inode(sb, pi, &irq_flags);
 	nova_update_inode(sb, &si->vfs_inode, pi, &update, 1);
-	nova_memlock_inode(sb, pi);
+	nova_memlock_inode(sb, pi, &irq_flags);
 
 	return 0;
 }
@@ -1098,6 +1100,7 @@ static int nova_copy_snapshot_list_to_nvmm(struct super_block *sb,
 	u64 curr_dram_addr;
 	unsigned long i;
 	size_t size = sizeof(struct snapshot_nvmm_list);
+	unsigned long irq_flags = 0;
 
 	curr_dram_addr = list->head;
 	prev_nvmm_block = new_block;
@@ -1106,10 +1109,10 @@ static int nova_copy_snapshot_list_to_nvmm(struct super_block *sb,
 
 	for (i = 0; i < list->num_pages; i++) {
 		/* Leave next_page field alone */
-		nova_memunlock_block(sb, curr_nvmm_addr);
+		nova_memunlock_block(sb, curr_nvmm_addr, &irq_flags);
 		memcpy_to_pmem_nocache(curr_nvmm_addr, (void *)curr_dram_addr,
 						LOG_BLOCK_TAIL);
-		nova_memlock_block(sb, curr_nvmm_addr);
+		nova_memlock_block(sb, curr_nvmm_addr, &irq_flags);
 
 		dram_page = (struct nova_inode_log_page *)curr_dram_addr;
 		prev_nvmm_block = curr_nvmm_block;
@@ -1120,11 +1123,11 @@ static int nova_copy_snapshot_list_to_nvmm(struct super_block *sb,
 		curr_dram_addr = dram_page->page_tail.next_page;
 	}
 
-	nova_memunlock_range(sb, nvmm_list, size);
+	nova_memunlock_range(sb, nvmm_list, size, &irq_flags);
 	nvmm_list->num_pages = list->num_pages;
 	nvmm_list->tail = prev_nvmm_block + ENTRY_LOC(list->tail);
 	nvmm_list->head = new_block;
-	nova_memlock_range(sb, nvmm_list, size);
+	nova_memlock_range(sb, nvmm_list, size, &irq_flags);
 
 	nova_flush_buffer(nvmm_list, sizeof(struct snapshot_nvmm_list), 1);
 

@@ -144,13 +144,14 @@ static int nova_rebuild_inode_finish(struct super_block *sb,
 {
 	struct nova_inode *alter_pi;
 	u64 next;
+	unsigned long irq_flags = 0;
 
 	sih->i_size = le64_to_cpu(reb->i_size);
 	sih->i_mode = le64_to_cpu(reb->i_mode);
 	sih->i_flags = le32_to_cpu(reb->i_flags);
 	sih->trans_id = reb->trans_id + 1;
 
-	nova_memunlock_inode(sb, pi);
+	nova_memunlock_inode(sb, pi, &irq_flags);
 	nova_update_inode_with_rebuild(sb, reb, pi);
 	nova_update_inode_checksum(pi);
 	if (metadata_csum) {
@@ -158,7 +159,7 @@ static int nova_rebuild_inode_finish(struct super_block *sb,
 							sih->alter_pi_addr);
 		memcpy_to_pmem_nocache(alter_pi, pi, sizeof(struct nova_inode));
 	}
-	nova_memlock_inode(sb, pi);
+	nova_memlock_inode(sb, pi, &irq_flags);
 
 	/* Keep traversing until log ends */
 	curr_p &= PAGE_MASK;
