@@ -38,7 +38,7 @@ This repository contains a version of the mainline kernel with NOVA
 added.  You can check the current version by looking at the first
 lines of the Makefile.
 
-A more thorough discussion of NOVA's design is avaialable in these two papers:
+A more thorough discussion of NOVA's design is avaialable in these three papers:
 
 **NOVA: A Log-structured File system for Hybrid Volatile/Non-volatile Main Memories** 
 [PDF](http://cseweb.ucsd.edu/~swanson/papers/FAST2016NOVA.pdf)<br>
@@ -49,6 +49,11 @@ Published in [FAST 2016][FAST2016]
 [PDF](http://cseweb.ucsd.edu/~swanson/papers/TechReport2017HardenedNOVA.pdf) <br>
 UCSD-CSE Techreport CS2017-1018
 *Jian Xu, Lu Zhang, Amirsaman Memaripour, Akshatha Gangadharaiah, Amit Borase, Tamires Brito Da Silva, Andy Rudoff, Steven Swanson*<br>
+
+**Ziggurat: A Tiered File System for Non-Volatile Main Memories and Disks** 
+[PDF](https://www.usenix.org/system/files/fast19-zheng.pdf)<br>
+*Shengan Zheng, Morteza Hoseinzadeh, Steven Swanson*<br>
+Published in [FAST 2019][FAST2019]
 
 Read on for further details about NOVA's overall design and its current status 
 
@@ -179,5 +184,6 @@ If you have other questions or suggestions you can contact the NOVA developers a
 [NVSL]: http://nvsl.ucsd.edu/ "http://nvsl.ucsd.edu"
 [POSIXtest]: http://www.tuxera.com/community/posix-test-suite/ 
 [FAST2016]: https://www.usenix.org/conference/fast16/technical-sessions
+[FAST2019]: https://www.usenix.org/conference/fast19/technical-sessions
 [CSE]: http://cs.ucsd.edu
 [UCSD]: http://www.ucsd.edu
