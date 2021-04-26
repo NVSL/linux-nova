@@ -920,6 +920,7 @@ const struct file_operations nova_dax_file_operations = {
 	.read_iter		= nova_dax_read_iter,
 	.write_iter		= nova_dax_write_iter,
 	.mmap			= nova_dax_file_mmap,
+	.mmap_supported_flags 	= MAP_SYNC,
 	.open			= nova_open,
 	.fsync			= nova_fsync,
 	.flush			= nova_flush,
