@@ -1,6 +1,7 @@
 config NOVA_FS
 	tristate "NOVA: log-structured file system for non-volatile memories"
 	depends on FS_DAX
+	depends on LIBNVDIMM
 	select CRC32
 	select LIBCRC32C
 	help
