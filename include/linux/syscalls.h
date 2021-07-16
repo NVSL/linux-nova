@@ -1390,4 +1390,9 @@ static inline unsigned int ksys_personality(unsigned int personality)
 	return old;
 }
 
+/*
+ * For Dedup Testing
+ */
+asmlinkage long sys_dedup(void);
+
 #endif
