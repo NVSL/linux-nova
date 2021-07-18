@@ -1184,7 +1184,6 @@ static int nova_initialize_inode_log(struct super_block *sb,
 		sih->log_pages++;
 		nova_flush_buffer(&pi->alter_log_head, CACHELINE_SIZE, 1);
 	}
-	nova_update_inode_checksum(pi);
 	nova_memlock_inode(sb, pi, &irq_flags);
 
 	return 0;
@@ -1220,6 +1219,10 @@ static u64 nova_extend_inode_log(struct super_block *sb, struct nova_inode *pi,
 							sih->alter_log_head);
 			nova_memlock_inode(sb, pi, &irq_flags);
 		}
+
+		nova_memunlock_inode(sb, pi, &irq_flags);
+		nova_update_inode_checksum(pi);
+		nova_memlock_inode(sb, pi, &irq_flags);
 
 		return sih->log_head;
 	}
