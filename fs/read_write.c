@@ -2157,3 +2157,21 @@ next_loop:
 	return ret;
 }
 EXPORT_SYMBOL(vfs_dedupe_file_range);
+
+int ksys_dedup(unsigned int fd){
+	printk("1\n");
+	struct fd f = fdget_pos(fd);
+	printk("2\n");
+	struct file *file = f.file;
+	printk("3\n");
+	return 0;
+}
+
+SYSCALL_DEFINE1(dedup, unsigned int, fd){
+	printk("0\n");
+	return ksys_dedup(fd);
+}
+
+
+
+
