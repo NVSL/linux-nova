@@ -2158,20 +2158,48 @@ next_loop:
 }
 EXPORT_SYMBOL(vfs_dedupe_file_range);
 
+/*
+int __vfs_dedup(struct file *file){
+	printk("4\n");
+	if(file)
+		printk("file exists\n");
+	printk("5\n");
+	if(file->f_op)
+		printk("file operations exists\n");
+	printk("6\n");
+	if(file->f_op->read)
+		printk("Read Exists\n");
+	printk("7\n");
+	if(file->f_op->dedup){
+		printk("8\n");
+		return file->f_op->dedup(1);
+	}
+	else
+		return -EINVAL;
+}
+
+int vfs_dedup(struct file *file){
+	printk("3\n");
+	return __vfs_dedup(file);
+}
+
 int ksys_dedup(unsigned int fd){
 	printk("1\n");
 	struct fd f = fdget_pos(fd);
+	if(f.file){
+		printk("file exists\n");
+	}
 	printk("2\n");
-	struct file *file = f.file;
-	printk("3\n");
+	vfs_dedup(f.file);
 	return 0;
 }
 
 SYSCALL_DEFINE1(dedup, unsigned int, fd){
 	printk("0\n");
+	printk("%u\n",fd);
 	return ksys_dedup(fd);
 }
 
 
 
-
+*/
