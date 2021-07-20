@@ -174,6 +174,10 @@ struct nova_sb_info {
 	/* Per-CPU free block list */
 	struct free_list *free_lists;
 	unsigned long per_list_blocks;
+
+	/* For Deduplication KHJ */
+	struct radix_tree_root dedup_tree_fingerprint;
+	struct radix_tree_root dedup_tree_address;
 };
 
 static inline struct nova_sb_info *NOVA_SB(struct super_block *sb)

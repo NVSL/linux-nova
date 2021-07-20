@@ -4,8 +4,10 @@
 #include<linux/fs.h>
 
 int real_dedup(struct file *file){
-	if(file->f_op->dedup)
-		return file->f_op->dedup(1);
+	printk("dedup system call\n");
+	if(file->f_op->dedup){
+		return file->f_op->dedup(file);
+	}
 	return 0;
 }
 
