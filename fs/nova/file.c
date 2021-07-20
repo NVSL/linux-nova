@@ -22,12 +22,24 @@
 #include <asm/mman.h>
 #include "nova.h"
 #include "inode.h"
+#include "dedup.h"
 
 
 /* ------ NOVA DEDUP by KHJ --------- */
-static int nova_dedup(int temp){
-  printk("Dedup Function Called\n");
-  return 1;
+static int nova_dedup(struct file *filp){
+  printk("fs/nova/file.c\n");
+	struct address_space *mapping = filp->f_mapping;
+	struct inode *inode = mapping->host;
+
+  sb_start_write(inode->i_sb);
+	inode_lock(inode);
+	
+	dedup_test(filp);
+	
+	inode_unlock(inode);
+	sb_end_write(inode->i_sb);
+
+	return 1;
 }
 /* ---------------------------------- */
 
@@ -174,7 +186,6 @@ static int nova_flush(struct file *file, fl_owner_t id)
 
 static int nova_open(struct inode *inode, struct file *filp)
 {
-	printk("open file success!\n");
 	return generic_file_open(inode, filp);
 }
 

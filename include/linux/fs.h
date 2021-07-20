@@ -1785,7 +1785,7 @@ struct iov_iter;
 struct file_operations {
 	struct module *owner;
 	// DEDUP NOVA //
-	int (*dedup) (int);
+	int (*dedup) (struct file *);
 	// ---------- //
 	loff_t (*llseek) (struct file *, loff_t, int);
 	ssize_t (*read) (struct file *, char __user *, size_t, loff_t *);
