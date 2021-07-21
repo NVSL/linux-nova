@@ -49,6 +49,7 @@ modules.builtin
 #
 # Top-level generic files
 #
+/fs/nova/tags
 /tags
 /TAGS
 /linux

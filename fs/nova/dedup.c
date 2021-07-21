@@ -1,17 +1,7 @@
-#include <linux/slab.h>
-#include <linux/uio.h>
-#include <linux/uaccess.h>
-#include <linux/falloc.h>
-#include <asm/mman.h>
 
 #include "nova.h"
 #include "inode.h"
 #include "dedup.h"
-
-struct dedup_node{
-	long long dedup_table_entry;
-};
-
 
 void nova_init_dedup_entry(struct dedup_node * entry){
 	memset(entry,0,sizeof(struct dedup_node));
