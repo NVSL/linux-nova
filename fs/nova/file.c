@@ -34,7 +34,7 @@ static int nova_dedup(struct file *filp){
   sb_start_write(inode->i_sb);
 	inode_lock(inode);
 	
-	dedup_test(filp);
+	nova_dedup_test(filp);
 	
 	inode_unlock(inode);
 	sb_end_write(inode->i_sb);
@@ -682,7 +682,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 		goto out;
 	}
 	pos = *ppos;
-
+	printk("starting offset %lld\n",pos);
 	if (filp->f_flags & O_APPEND)
 		pos = i_size_read(inode);
 
@@ -786,8 +786,13 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 					start_blk, allocated, blocknr, time,
 					file_size);
 
+		/* NOVA DEDUP KHJ */
+		nova_dedup_queue_init();
+		printk("Dedup Queue init\n");
+
 		ret = nova_append_file_write_entry(sb, pi, inode,
 					&entry_data, &update);
+
 		if (ret) {
 			nova_dbg("%s: append inode entry failed\n", __func__);
 			ret = -ENOSPC;
@@ -891,13 +896,11 @@ static ssize_t nova_dax_file_write(struct file *filp, const char __user *buf,
 	struct address_space *mapping = filp->f_mapping;
 	struct inode *inode = mapping->host;
 	
-	printk("Write testing 1\n");
 	if (test_opt(inode->i_sb, DATA_COW)){
 		printk("COW\n");
 		return nova_cow_file_write(filp, buf, len, ppos);
 	}
 	else{
-		printk("INPLACE\n");
 		return nova_inplace_file_write(filp, buf, len, ppos);
 	}
 }

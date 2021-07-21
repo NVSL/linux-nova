@@ -19,6 +19,7 @@
 #include "journal.h"
 #include "inode.h"
 #include "log.h"
+#include "dedup.h"
 
 static int nova_execute_invalidate_reassign_logentry(struct super_block *sb,
 	void *entry, enum nova_entry_type type, int reassign,
@@ -421,6 +422,13 @@ static int nova_append_log_entry(struct super_block *sb,
 						MAIN_LOG, 0, &extended);
 	if (curr_p == 0)
 		return -ENOSPC;
+
+
+	/* DEDUP NOVA KHJ */
+	if(type == FILE_WRITE){
+		nova_dedup_queue_push(curr_p);
+	}
+	/*****************/
 
 	nova_dbg_verbose("%s: inode %lu attr change entry @ 0x%llx\n",
 				__func__, sih->ino, curr_p);
