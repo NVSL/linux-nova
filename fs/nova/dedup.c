@@ -43,58 +43,85 @@ void nova_dedup_init_radix_tree_node(struct nova_dedup_radix_tree_node * node, l
 
 
 // For Fingerprint
-void nova_fingerprint(char* datapage, char * ret_fingerprint){
+void nova_dedup_fingerprint(char* datapage, char * ret_fingerprint){
 
 
 }
 
 
 
+
 int nova_dedup_test(struct file * filp){
+	// for radix tree
 	struct nova_dedup_radix_tree_node temp;
 	void ** temp2; 
 	struct nova_dedup_radix_tree_node *temp3;
 
+	// Super Block
 	struct address_space *mapping = filp->f_mapping;	
 	struct inode *inode = mapping->host;
 	struct super_block *sb = inode->i_sb;
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 
-
+	// for write entry 
+	struct nova_file_write_entry *target_entry;
+	u64 entry_address;
+	char *buf;
+	char *fingerprint;
+	unsigned long left;
+	pgoff_t index;
+	int i, data_page_number =0;
+	unsigned long nvmm;
+	void *dax_mem = NULL;
 
 	printk("fs/nova/dedup.c\n");
 
-	INIT_RADIX_TREE(&sbi->dedup_tree_fingerprint,GFP_KERNEL);	
+	// Pop Write Entry
+	buf = kmalloc(DATABLOCK_SIZE,GFP_KERNEL);
+	fingerprint = kmalloc(FINGERPRINT_SIZE,GFP_KERNEL);
+	entry_address = nova_dedup_queue_get_next_entry();
+
+	if(entry_address!=0){
+		// Read write_entry
+		target_entry = nova_get_block(sb, entry_address);
+		printk("write entries block info: num_pages:%d, block: %lld, pgoff: %lld\n",target_entry->num_pages, target_entry->block, target_entry->pgoff);
+		// Read 4096Bytes from a write entry
+		index = target_entry->pgoff;
+		data_page_number = target_entry->num_pages;
+		for(i=0;i<data_page_number;i++){
+			nvmm = (unsigned long) (target_entry->block >> PAGE_SHIFT) + index - target_entry->pgoff;
+			dax_mem = nova_get_block(sb,(nvmm << PAGE_SHIFT));
+			memset(buf,0,DATABLOCK_SIZE);
+			memset(fingerprint,0,FINGERPRINT_SIZE);
+			left = __copy_to_user(buf,dax_mem,DATABLOCK_SIZE);
+			if(left){
+				nova_dbg("%s ERROR!: left %lu\n",__func__,left);
+				return 0;
+			}
+
+			// Make Fingerprint
+			
+			nova_dedup_fingerprint(buf,fingerprint);
+			/*
+			for(i=0;i<FINGERPRINT_SIZE;i++)
+				printk("%02x",fingerprint[i]);
+			printk("\n");
+			*/
+			printk("%c %c %c\n",buf[0],buf[1],buf[2]);
+
+			index++;
+		}
+	}
+	else printk("no entry!\n");	
+
+
+
+
+	// RADIX TREE TEST
+	INIT_RADIX_TREE(&sbi->dedup_tree_fingerprint,GFP_KERNEL); 
 	INIT_RADIX_TREE(&sbi->dedup_tree_address,GFP_KERNEL);
-	printk("Radix Tree Initialized\n");
-
-
-
-	// 1. Determine Write Entry
-	//   1.1 Read Data Pages
-	//   1.2 For each Data page
-
-	// 2. Save Start address of Data Page
-	// 3. Fingerprint Data Page
-	// 4. Lookup Fingerprint
-	// 5. 
-
+	printk("Radix Tree Initialized\n");	
 	
-	//nova_dedup_queue_init();
-	//printk("Dedup queue initialized\n");
-
-	if(nova_dedup_queue_get_next_entry()!=0){ }
-  else printk("no entry!\n");
-	
-	if(nova_dedup_queue_get_next_entry()!=0){ }
-  else printk("no entry!\n");
-	
-	if(nova_dedup_queue_get_next_entry()!=0){ }
-  else printk("no entry!\n");
-
-	if(nova_dedup_queue_get_next_entry()!=0){ }
-  else printk("no entry!\n");
-
 	nova_dedup_init_radix_tree_node(&temp,1);
 
 	radix_tree_insert(&sbi->dedup_tree_fingerprint,32,&temp);	
@@ -107,13 +134,9 @@ int nova_dedup_test(struct file * filp){
 		printk("%lld\n",temp3->dedup_table_entry);
 	}
 
+
+	kfree(buf);
+	kfree(fingerprint);
 	return 0;
 }
 
-/* TODO
-	 1. Find place to initialize dedup queue + Radix Trees
-	 2. Try reading from write entry
-	 3. Try fiingerprinting each data page
-	 4. Think of how to save the Dedup Table
-	 5. 
- */
