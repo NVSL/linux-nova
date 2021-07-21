@@ -27,9 +27,10 @@
 
 /* ------ NOVA DEDUP by KHJ --------- */
 static int nova_dedup(struct file *filp){
-  printk("fs/nova/file.c\n");
 	struct address_space *mapping = filp->f_mapping;
 	struct inode *inode = mapping->host;
+  
+	printk("fs/nova/file.c\n");
 
   sb_start_write(inode->i_sb);
 	inode_lock(inode);
@@ -786,10 +787,6 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 					start_blk, allocated, blocknr, time,
 					file_size);
 
-		/* NOVA DEDUP KHJ */
-		nova_dedup_queue_init();
-		printk("Dedup Queue init\n");
-
 		ret = nova_append_file_write_entry(sb, pi, inode,
 					&entry_data, &update);
 
@@ -942,7 +939,7 @@ static int nova_dax_file_mmap(struct file *file, struct vm_area_struct *vma)
 }
 
 const struct file_operations nova_dax_file_operations = {
-	// DEDUP //
+	// NOVA DEDUP KHJ //
   .dedup = nova_dedup,
   // ----- //
 	.llseek			= nova_llseek,
@@ -1026,7 +1023,7 @@ err:
 
 /* Wrap read/write_iter for DP, CoW and WP */
 const struct file_operations nova_wrap_file_operations = {
-	// DEDUP //
+	// NOVA DEDUP KHJ //
 	.dedup = nova_dedup,
 	// ----- //
 	.llseek			= nova_llseek,

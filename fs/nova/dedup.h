@@ -12,7 +12,8 @@
 #include "nova.h"
 #include "inode.h"
 
-
+#define DATABLOCK_SIZE 4096
+#define FINGERPRINT_SIZE 16
 /* nova_dedup_queue
 	 queue of entries that needs to be deduplicated
 	 */

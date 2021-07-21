@@ -42,6 +42,7 @@
 #include "journal.h"
 #include "super.h"
 #include "inode.h"
+#include "dedup.h"
 
 int measure_timing;
 int metadata_csum;
@@ -485,6 +486,12 @@ static struct nova_inode *nova_init(struct super_block *sb,
 	PERSISTENT_MARK();
 	PERSISTENT_BARRIER();
 	NOVA_END_TIMING(new_init_t, init_time);
+
+	/* NOVA DEDUP KHJ */
+	nova_dedup_queue_init();
+	printk("dedup_queue init\n");
+
+
 	nova_info("NOVA initialization finish\n");
 	return root_i;
 }
