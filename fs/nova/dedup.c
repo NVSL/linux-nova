@@ -17,22 +17,22 @@ int nova_dedup_queue_push(u64 new_address){
 	new_data = kmalloc(sizeof(struct nova_dedup_queue), GFP_KERNEL);
 	list_add_tail(&new_data->list, &nova_dedup_queue_head.list);
 	new_data->write_entry_address = new_address;
-	printk("push print %llu\n",new_data->write_entry_address);
+	printk("PUSH to queue: %llu\n",new_address);
 	return 0;
 }
 
-// Get next Dedup queue entry
+// Get next write entry to dedup
 u64 nova_dedup_queue_get_next_entry(void){
 	struct nova_dedup_queue *ptr;
-	
-	if(nova_dedup_queue_head.list.next){
+	u64 ret = 0;
+	if(!list_empty(&nova_dedup_queue_head.list)){
 		ptr = list_entry(nova_dedup_queue_head.list.next, struct nova_dedup_queue, list);
-		printk("checking~ %llu\n",ptr->write_entry_address);
-		return 1;
+		ret = ptr->write_entry_address;
+		list_del(nova_dedup_queue_head.list.next);
+		kfree(ptr);
+		printk("POP from queue: %llu\n",ret);
 	}
-	else{
-		return 0;
-	}
+	return ret;
 }
 
 // Initialize a raidx_tree leaf node
@@ -83,11 +83,17 @@ int nova_dedup_test(struct file * filp){
 	//nova_dedup_queue_init();
 	//printk("Dedup queue initialized\n");
 
-	if(nova_dedup_queue_get_next_entry()==1){
-	}
-	else{
-		printk("no entry!\n");
-	}
+	if(nova_dedup_queue_get_next_entry()!=0){ }
+  else printk("no entry!\n");
+	
+	if(nova_dedup_queue_get_next_entry()!=0){ }
+  else printk("no entry!\n");
+	
+	if(nova_dedup_queue_get_next_entry()!=0){ }
+  else printk("no entry!\n");
+
+	if(nova_dedup_queue_get_next_entry()!=0){ }
+  else printk("no entry!\n");
 
 	nova_dedup_init_radix_tree_node(&temp,1);
 
