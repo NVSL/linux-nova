@@ -176,7 +176,7 @@ int nova_dedup_test(struct file * filp){
 	entry_address = nova_dedup_queue_get_next_entry();
 
 	if(entry_address!=0){
-		// Should Lock File responding to write entry
+		// TODO Should Lock File responding to write entry
 
 		// Read write_entry
 		target_entry = nova_get_block(sb, entry_address);
@@ -196,24 +196,30 @@ int nova_dedup_test(struct file * filp){
 				nova_dbg("%s ERROR!: left %lu\n",__func__,left);
 				return 0;
 			}
+			// Fingerprint each datapage
 			nova_dedup_fingerprint(buf,fingerprint);
 			for(j=0;j<FINGERPRINT_SIZE;j++)
 				printk("%08X",fingerprint[j]);
 			printk("\n");
 			index++;
 		}
+		// TODO Lookup for duplicate datapages
+
+		// TODO add new 'DEDUP-TABLE' entry
+		// TODO do normal 'write' for unique datapages
+		// TODO append new write entries
+		// TODO update tail of that file
 	}
 	else printk("no entry!\n");	
 
 
 
-	// DEDUP TABLE should be updated
-
+	// DEDUP TABLE should be updated (testing)
 	dedup_table_update(filp,buf,32,&filp->f_pos);
 	printk("Dedup Table Update Finsihed\n");
 
 
-	// RADIX TREE TEST
+	// RADIX TREE TEST (testing)
 	/*
 		 INIT_RADIX_TREE(&sbi->dedup_tree_fingerprint,GFP_KERNEL); 
 		 INIT_RADIX_TREE(&sbi->dedup_tree_address,GFP_KERNEL);
@@ -233,7 +239,7 @@ int nova_dedup_test(struct file * filp){
 	 */
 
 	kfree(buf);
-	//kfree(fingerprint);
+	kfree(fingerprint);
 	return 0;
 }
 
