@@ -11,15 +11,19 @@ int real_dedup(struct file *file){
 	return 0;
 }
 
-int ksys_dedup(unsigned int fd){
-	struct fd f = fdget_pos(fd);
-	if(f.file){
-		return real_dedup(f.file);
+int ksys_dedup(void){
+	int ret = 0;
+	struct file *filp=NULL;
+	
+	filp = filp_open("/mnt/nova/deduptable",O_APPEND|O_RDWR|O_CREAT,0);
+	if(filp){
+		ret = real_dedup(filp);
 	}
-	return 0;
+	filp_close(filp,NULL);
+	return ret;
 }
 
 
-SYSCALL_DEFINE1(dedup, unsigned int, fd){
-  return ksys_dedup(fd);
+SYSCALL_DEFINE0(dedup){
+  return ksys_dedup();
 }

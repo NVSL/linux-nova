@@ -252,6 +252,11 @@ void nova_init_file_write_entry(struct super_block *sb,
 	entry->entry_type = FILE_WRITE;
 	entry->reassigned = 0;
 	entry->updating = 0;
+	
+	/* DEDUP NOVA KHJ */
+	entry->dedup_flag = 0;
+	/* -------------- */
+
 	entry->epoch_id = epoch_id;
 	entry->trans_id = sih->trans_id;
 	entry->pgoff = cpu_to_le64(pgoff);
@@ -721,6 +726,10 @@ ssize_t do_nova_inplace_file_write(struct file *filp,
 			nova_init_file_write_entry(sb, sih, &entry_data,
 						epoch_id, start_blk, allocated,
 						blocknr, time, file_size);
+			
+			/* DEDUP NOVA KHJ */
+			entry_data.dedup_flag=2;
+			/* -------------- */
 
 			ret = nova_append_file_write_entry(sb, pi, inode,
 						&entry_data, &update);
