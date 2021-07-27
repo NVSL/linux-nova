@@ -27,19 +27,10 @@
 
 /* ------ NOVA DEDUP by KHJ --------- */
 static int nova_dedup(struct file *filp){
-	struct address_space *mapping = filp->f_mapping;
-	struct inode *inode = mapping->host;
-  
 	printk("fs/nova/file.c\n");
 
-  sb_start_write(inode->i_sb);
-	inode_lock(inode);
-	
 	nova_dedup_test(filp);
 	
-	inode_unlock(inode);
-	sb_end_write(inode->i_sb);
-
 	return 1;
 }
 /* ---------------------------------- */
@@ -532,6 +523,7 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 				goto out;
 		}
 
+		
 		entry = nova_get_write_entry(sb, sih, index);
 		if (unlikely(entry == NULL)) {
 			nova_dbgv("Required extent not found: pgoff %lu, inode size %lld\n",
@@ -562,6 +554,7 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 		}
 
 		nvmm = get_nvmm(sb, sih, entryc, index);
+		printk("Testing 7/22: %lu\n",nvmm);
 		dax_mem = nova_get_block(sb, (nvmm << PAGE_SHIFT));
 
 memcpy:
@@ -677,6 +670,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 		return 0;
 
 	NOVA_START_TIMING(do_cow_write_t, cow_write_time);
+
 
 	if (!access_ok(buf, len)) {
 		ret = -EFAULT;
@@ -876,9 +870,8 @@ ssize_t nova_cow_file_write(struct file *filp,
 
 	sb_start_write(inode->i_sb);
 	inode_lock(inode);
-
 	ret = do_nova_cow_file_write(filp, buf, len, ppos);
-
+	
 	inode_unlock(inode);
 	sb_end_write(inode->i_sb);
 

@@ -404,6 +404,9 @@ static int nova_append_log_entry(struct super_block *sb,
 	void *entry, *alter_entry;
 	enum nova_entry_type type = entry_info->type;
 	struct nova_inode_update *update = entry_info->update;
+	/* DEDUP NOVA KHJ */
+	struct nova_file_write_entry *target_entry = entry_info->data;
+	/* -------------- */
 	u64 tail, alter_tail;
 	u64 curr_p, alter_curr_p;
 	size_t size;
@@ -423,12 +426,6 @@ static int nova_append_log_entry(struct super_block *sb,
 	if (curr_p == 0)
 		return -ENOSPC;
 
-
-	/* DEDUP NOVA KHJ */
-	if(type == FILE_WRITE){
-		nova_dedup_queue_push(curr_p);
-	}
-	/*****************/
 
 	nova_dbg_verbose("%s: inode %lu attr change entry @ 0x%llx\n",
 				__func__, sih->ino, curr_p);
@@ -460,6 +457,16 @@ static int nova_append_log_entry(struct super_block *sb,
 	}
 
 	entry_info->curr_p = curr_p;
+
+	/* DEDUP NOVA KHJ */
+  // The Write Entries that are doing deduplication should not be here
+	// Check 'dedup_flag' 
+	if(type == FILE_WRITE){
+		if(target_entry->dedup_flag == 0)
+			nova_dedup_queue_push(curr_p);
+  }
+  /*****************/
+	
 	return 0;
 }
 

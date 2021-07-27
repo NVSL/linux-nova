@@ -5,15 +5,24 @@
 #include <linux/uio.h>
 #include <linux/uaccess.h>
 #include <linux/falloc.h>
+#include <linux/sched/xacct.h>
 #include <asm/mman.h>
+#include <asm/uaccess.h>
 #include <linux/radix-tree.h>
 #include <linux/list.h>
+#include <linux/fs.h>
+#include <linux/fsnotify.h>
+
+// SHA1
+#include <crypto/hash.h>
+#include <crypto/skcipher.h>
+#include <linux/crypto.h>
 
 #include "nova.h"
 #include "inode.h"
 
 #define DATABLOCK_SIZE 4096
-#define FINGERPRINT_SIZE 16
+#define FINGERPRINT_SIZE 20
 /* nova_dedup_queue
 	 queue of entries that needs to be deduplicated
 	 */

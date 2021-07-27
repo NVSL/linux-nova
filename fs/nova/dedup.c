@@ -1,7 +1,9 @@
 #include "nova.h"
 #include "inode.h"
 #include "dedup.h"
+#include <linux/rbtree.h>
 
+struct rb_node temp_rb_node;
 struct nova_dedup_queue nova_dedup_queue_head;
 
 // Initialize Dedup Queue
@@ -42,53 +44,149 @@ void nova_dedup_init_radix_tree_node(struct nova_dedup_radix_tree_node * node, l
 }
 
 
-// For Fingerprint
-void nova_dedup_fingerprint(char* datapage, char * ret_fingerprint){
+/*
+Many user space methods cannot be used when writing kernel modules, such as Openssl.
+But Linux itself provides a Crypto API for various encryption calculations of data.
+Using this API, you can perform some encryption and signature operations in the kernel module.
+The following is an example of sha1.
+*/
+// ----------------------------------------------------------------------------------------------------------------
+struct sdesc {
+    struct shash_desc shash;
+    char ctx[];
+};
 
+static struct sdesc *init_sdesc(struct crypto_shash *alg)
+{
+    struct sdesc *sdesc;
+    int size;
 
+    size = sizeof(struct shash_desc) + crypto_shash_descsize(alg);
+    sdesc = kmalloc(size, GFP_KERNEL);
+    if (!sdesc)
+        return ERR_PTR(-ENOMEM);
+    sdesc->shash.tfm = alg;
+    sdesc->shash.flags = 0x0;
+    return sdesc;
 }
 
+static int calc_hash(struct crypto_shash *alg,
+             const unsigned char *data, unsigned int datalen,
+             unsigned char *digest)
+{
+    struct sdesc *sdesc;
+    int ret;
+
+    sdesc = init_sdesc(alg);
+    if (IS_ERR(sdesc)) {
+        pr_info("can't alloc sdesc\n");
+        return PTR_ERR(sdesc);
+    }
+
+    ret = crypto_shash_digest(&sdesc->shash, data, datalen, digest);
+    kfree(sdesc);
+    return ret;
+}
+
+// For Fingerprint
+int nova_dedup_fingerprint(char* datapage, char * ret_fingerprint){
+	struct crypto_shash *alg;
+	char *hash_alg_name = "sha1";
+	int ret;
+
+	alg = crypto_alloc_shash(hash_alg_name,0,0);
+	if(IS_ERR(alg)){
+		pr_info("can't alloc alg %s\n",hash_alg_name);
+		return PTR_ERR(alg);
+	}
+	ret = calc_hash(alg,datapage,DATABLOCK_SIZE,ret_fingerprint);
+	crypto_free_shash(alg);
+	return ret;
+}
+
+// ------------------------------------------------------------------------------------------------------------------
+
+
+// Append a new dedup table entry
+ssize_t dedup_table_update(struct file *file, const void *buf, size_t count, loff_t *pos){
+	mm_segment_t old_fs;
+	ssize_t ret = -EINVAL;
+
+	old_fs = get_fs();
+	set_fs(KERNEL_DS);
+
+	if (!(file->f_mode & FMODE_WRITE))
+		return -EBADF;
+	if (!(file->f_mode & FMODE_CAN_WRITE))
+		return -EINVAL;
+	if (unlikely(!access_ok(buf, count)))
+		return -EFAULT;
+
+	//ret = rw_verify_area(WRITE, file, pos, count);
+	if (count > MAX_RW_COUNT)
+		count =  MAX_RW_COUNT;
+	file_start_write(file);
+
+	if(file->f_op->write)
+		ret = nova_inplace_file_write(file,buf,count,pos);
+
+	if (ret > 0) { 
+		fsnotify_modify(file);
+		add_wchar(current, ret);
+	}    
+	inc_syscw(current);
+	file_end_write(file);
+
+	set_fs(old_fs);
+	return ret;
+}
 
 
 
 int nova_dedup_test(struct file * filp){
 	// for radix tree
-	struct nova_dedup_radix_tree_node temp;
-	void ** temp2; 
-	struct nova_dedup_radix_tree_node *temp3;
-
+	/*
+		 struct nova_dedup_radix_tree_node temp;
+		 void ** temp2; 
+		 struct nova_dedup_radix_tree_node *temp3;
+		 char test_key[20] = "L9ThxnotKPzthJ7hu3bnORuT6xI=";
+		 char compare_key[20] = "L9ThxnotKPzthJ7hu3bnORuT6xI=";
+	 */
 	// Super Block
 	struct address_space *mapping = filp->f_mapping;	
 	struct inode *inode = mapping->host;
 	struct super_block *sb = inode->i_sb;
-	struct nova_sb_info *sbi = NOVA_SB(sb);
 
-	// for write entry 
+	// For write entry 
 	struct nova_file_write_entry *target_entry;
 	u64 entry_address;
 	char *buf;
 	char *fingerprint;
 	unsigned long left;
 	pgoff_t index;
-	int i, data_page_number =0;
+	int i, j, data_page_number =0;
 	unsigned long nvmm;
 	void *dax_mem = NULL;
 
-	printk("fs/nova/dedup.c\n");
-
-	// Pop Write Entry
+	printk("Initialize Buffer, Fingerprint\n");
 	buf = kmalloc(DATABLOCK_SIZE,GFP_KERNEL);
 	fingerprint = kmalloc(FINGERPRINT_SIZE,GFP_KERNEL);
+
+	// Pop Write Entry
 	entry_address = nova_dedup_queue_get_next_entry();
 
 	if(entry_address!=0){
+		// Should Lock File responding to write entry
+
 		// Read write_entry
 		target_entry = nova_get_block(sb, entry_address);
 		printk("write entries block info: num_pages:%d, block: %lld, pgoff: %lld\n",target_entry->num_pages, target_entry->block, target_entry->pgoff);
-		// Read 4096Bytes from a write entry
+
+		// Read Each Data Page from the write entry
 		index = target_entry->pgoff;
 		data_page_number = target_entry->num_pages;
 		for(i=0;i<data_page_number;i++){
+			printk("Daga Page number %d\n",i+1);
 			nvmm = (unsigned long) (target_entry->block >> PAGE_SHIFT) + index - target_entry->pgoff;
 			dax_mem = nova_get_block(sb,(nvmm << PAGE_SHIFT));
 			memset(buf,0,DATABLOCK_SIZE);
@@ -98,17 +196,10 @@ int nova_dedup_test(struct file * filp){
 				nova_dbg("%s ERROR!: left %lu\n",__func__,left);
 				return 0;
 			}
-
-			// Make Fingerprint
-			
 			nova_dedup_fingerprint(buf,fingerprint);
-			/*
-			for(i=0;i<FINGERPRINT_SIZE;i++)
-				printk("%02x",fingerprint[i]);
+			for(j=0;j<FINGERPRINT_SIZE;j++)
+				printk("%08X",fingerprint[j]);
 			printk("\n");
-			*/
-			printk("%c %c %c\n",buf[0],buf[1],buf[2]);
-
 			index++;
 		}
 	}
@@ -116,27 +207,33 @@ int nova_dedup_test(struct file * filp){
 
 
 
+	// DEDUP TABLE should be updated
+
+	dedup_table_update(filp,buf,32,&filp->f_pos);
+	printk("Dedup Table Update Finsihed\n");
+
 
 	// RADIX TREE TEST
-	INIT_RADIX_TREE(&sbi->dedup_tree_fingerprint,GFP_KERNEL); 
-	INIT_RADIX_TREE(&sbi->dedup_tree_address,GFP_KERNEL);
-	printk("Radix Tree Initialized\n");	
-	
-	nova_dedup_init_radix_tree_node(&temp,1);
+	/*
+		 INIT_RADIX_TREE(&sbi->dedup_tree_fingerprint,GFP_KERNEL); 
+		 INIT_RADIX_TREE(&sbi->dedup_tree_address,GFP_KERNEL);
+		 printk("Radix Tree Initialized\n");	
 
-	radix_tree_insert(&sbi->dedup_tree_fingerprint,32,&temp);	
-	printk("Inserted!\n");
-	temp2 = radix_tree_lookup_slot(&sbi->dedup_tree_fingerprint,32);
+		 nova_dedup_init_radix_tree_node(&temp,1);
 
-	if(temp2){
-		printk("Found Entry\n");
-		temp3 = radix_tree_deref_slot(temp2);
-		printk("%lld\n",temp3->dedup_table_entry);
-	}
+		 radix_tree_insert(&sbi->dedup_tree_fingerprint,test_key,&temp);	
+		 printk("Inserted!\n");
+		 temp2 = radix_tree_lookup_slot(&sbi->dedup_tree_fingerprint,compare_key);
 
+		 if(temp2){
+		 printk("Found Entry\n");
+		 temp3 = radix_tree_deref_slot(temp2);
+		 printk("%lld\n",temp3->dedup_table_entry);
+		 }
+	 */
 
 	kfree(buf);
-	kfree(fingerprint);
+	//kfree(fingerprint);
 	return 0;
 }
 
