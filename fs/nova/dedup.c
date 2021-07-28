@@ -197,18 +197,24 @@ int nova_dedup_test(struct file * filp){
 				return 0;
 			}
 			// Fingerprint each datapage
+			printk("Fingerprint Start\n");
 			nova_dedup_fingerprint(buf,fingerprint);
-			for(j=0;j<FINGERPRINT_SIZE;j++)
+			printk("Fingerprint End\n");
+			for(j=0;j<FINGERPRINT_SIZE;j++){
 				printk("%08X",fingerprint[j]);
+			}
 			printk("\n");
 			index++;
 		}
 		// TODO Lookup for duplicate datapages
 
 		// TODO add new 'DEDUP-TABLE' entry
-		// TODO do normal 'write' for unique datapages
+		
 		// TODO append new write entries
+
 		// TODO update tail of that file
+		
+		// TODO update 'DEDUP-TABLE' entry
 	}
 	else printk("no entry!\n");	
 
@@ -242,4 +248,13 @@ int nova_dedup_test(struct file * filp){
 	kfree(fingerprint);
 	return 0;
 }
+
+// TODO 
+// How to search 'dedup table' for deduplication
+// How to search 'dedup table' for deletion
+// How to gain file lock from 'write entry'
+// How are we going to provide parallelism
+
+
+
 
