@@ -463,7 +463,7 @@ static int nova_append_log_entry(struct super_block *sb,
 	// Check 'dedup_flag' 
 	if(type == FILE_WRITE){
 		if(target_entry->dedup_flag == 0)
-			nova_dedup_queue_push(curr_p);
+			nova_dedup_queue_push(curr_p, pi->nova_ino);
   }
   /*****************/
 	

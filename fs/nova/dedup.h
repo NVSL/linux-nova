@@ -23,46 +23,31 @@
 
 #define DATABLOCK_SIZE 4096
 #define FINGERPRINT_SIZE 20
+
 /* nova_dedup_queue
 	 queue of entries that needs to be deduplicated
 	 */
 struct nova_dedup_queue{
 	u64 write_entry_address;
+	u64 target_inode_number;
 	struct list_head list;
 };
 
+/* SHA1 */
+struct sdesc {
+  struct shash_desc shash;
+  char ctx[];
+};
+
+
 extern struct nova_dedup_queue nova_dedup_queue_head;
 
-/* NOVA_DEDUP_RADIX_TREE_NODE 
-	Leaf node of radix tree, it cotains
-	the address of the matching 
-	dedup table entry.
- */
-struct nova_dedup_radix_tree_node{
-  loff_t dedup_table_entry;
-};
-
-
-/* nova_dedup_table_entry
-	 Used to read from the dedup_table
-	 size should be 32B
-		fingerprint: 16B
-		block_address: 8B
-		referenc count: 4B
-		flag: 4B
- */
-struct nova_dedup_table_entry{
-  char fingerprint[16];
-  loff_t block_address;
-  int reference_count;
-  int flag;
-};
 
 /* nova_dedup_test
 	 for debugging + test
  */
 int nova_dedup_test(struct file *);
-int nova_dedup_queue_push(u64);
+int nova_dedup_queue_push(u64,u64);
 int nova_dedup_queue_init(void);
 
 #endif
