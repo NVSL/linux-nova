@@ -727,10 +727,6 @@ ssize_t do_nova_inplace_file_write(struct file *filp,
 						epoch_id, start_blk, allocated,
 						blocknr, time, file_size);
 			
-			/* DEDUP NOVA KHJ */
-			entry_data.dedup_flag=2;
-			/* -------------- */
-
 			ret = nova_append_file_write_entry(sb, pi, inode,
 						&entry_data, &update);
 			if (ret) {
