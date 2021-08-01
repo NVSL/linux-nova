@@ -27,8 +27,6 @@
 
 /* ------ NOVA DEDUP by KHJ --------- */
 static int nova_dedup(struct file *filp){
-	printk("fs/nova/file.c\n");
-
 	nova_dedup_test(filp);
 	
 	return 1;
@@ -554,7 +552,7 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 		}
 
 		nvmm = get_nvmm(sb, sih, entryc, index);
-		printk("Testing 7/22: %lu\n",nvmm);
+		printk("Reading From: %lu\n",index);
 		dax_mem = nova_get_block(sb, (nvmm << PAGE_SHIFT));
 
 memcpy:
@@ -677,7 +675,6 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 		goto out;
 	}
 	pos = *ppos;
-	printk("starting offset %lld\n",pos);
 	if (filp->f_flags & O_APPEND)
 		pos = i_size_read(inode);
 
@@ -725,6 +722,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	update.alter_tail = sih->alter_log_tail;
 	while (num_blocks > 0) {
 		offset = pos & (nova_inode_blk_size(sih) - 1);
+		printk("Writing offset %lld\n",pos);
 		start_blk = pos >> sb->s_blocksize_bits;
 
 		/* don't zero-out the allocated blocks */

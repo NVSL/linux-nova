@@ -1,7 +1,6 @@
 #include "nova.h"
 #include "inode.h"
 #include "dedup.h"
-#include <linux/rbtree.h>
 
 struct nova_dedup_queue nova_dedup_queue_head;
 
@@ -106,95 +105,114 @@ int nova_dedup_test(struct file * filp){
 	struct nova_inode *target_pi;	// nova_inode of TI
 	struct nova_inode_info *target_si;
 	struct nova_inode_info_header *target_sih;
-	
+
 	unsigned char *buf;	// Read Buffer
 	unsigned char *fingerprint; // Fingerprint result
-	
+
 	unsigned long left;
 	pgoff_t index;
 	int i, j, data_page_number =0;
 	unsigned long nvmm;
 	void *dax_mem = NULL;
 
+	// For new write entry
+	int new_entry_num=0;
+	u64 new_entry_address[MAX_DATAPAGE_PER_WRITEENTRY];
+
 	// kmalloc buf, fingerprint
 	buf = kmalloc(DATABLOCK_SIZE,GFP_KERNEL);
 	fingerprint = kmalloc(FINGERPRINT_SIZE,GFP_KERNEL);
 
-	// Pop TWE(Target Write Entry)
-	entry_address = nova_dedup_queue_get_next_entry(&target_inode_number);
+	do{
+		// Pop TWE(Target Write Entry)
+		entry_address = nova_dedup_queue_get_next_entry(&target_inode_number);
+		new_entry_num=0;
+		memset(new_entry_address,0,MAX_DATAPAGE_PER_WRITEENTRY*8);
 
-	if(entry_address!=0){
-		// Read TI(Target Inode)
-		target_inode = nova_iget(sb, target_inode_number);
-		target_si = NOVA_I(target_inode);
-		target_sih = &target_si->header;
-		target_pi = nova_get_inode(sb,target_inode);
-		
-		printk("number of inode?: %llu\n",target_pi->nova_ino);
-		
-		// Read Lock Acquire
-		INIT_TIMING(dax_read_time);
-		NOVA_START_TIMING(dax_read_t, dax_read_time);
-		inode_lock_shared(target_inode);
-
-		// Read TWE
-		target_entry = nova_get_block(sb, entry_address);
-		
-		printk("write entries block info: num_pages:%d, block: %lld, pgoff: %lld\n",target_entry->num_pages, target_entry->block, target_entry->pgoff);
-		
-		// Read Each Data Page from the write entry
-		index = target_entry->pgoff;
-		data_page_number = target_entry->num_pages;
-		
-		for(i=0;i<data_page_number;i++){
-			printk("Daga Page number %d\n",i+1);
-			memset(buf,0,DATABLOCK_SIZE);
-			memset(fingerprint,0,FINGERPRINT_SIZE);
-
-			nvmm = get_nvmm(sb,target_sih,target_entry,index);
-			dax_mem = nova_get_block(sb,(nvmm << PAGE_SHIFT));
-
-			left = __copy_to_user(buf,dax_mem,DATABLOCK_SIZE);
-			if(left){
-				nova_dbg("%s ERROR!: left %lu\n",__func__,left);
-				return 0;
-			}
-			// Fingerprint each datapage
-			printk("Fingerprint Start\n");
-			nova_dedup_fingerprint(buf,fingerprint);
-			printk("Fingerprint End\n");
-			for(j=0;j<FINGERPRINT_SIZE;j++){
-				printk("%d: %02X\n",j,fingerprint[j]);
-			}
-			printk("\n");
-			index++;
+		// target_inode_number should exist
+		if (target_inode_number < NOVA_NORMAL_INODE_START && target_inode_number != NOVA_ROOT_INO) {
+			//nova_info("%s: invalid inode %llu.", __func__,target_inode_number);
+			printk("No entry\n");
+			continue;
 		}
-		// TODO Lookup for duplicate datapages
-		// TODO add new 'DEDUP-Table' Entries
-		
 
-		// Read Unlock	
-		inode_unlock_shared(target_inode);
-		NOVA_END_TIMING(dax_read_t, dax_read_time);
+		if(entry_address!=0){
+			// Read TI(Target Inode)
+
+			target_inode = nova_iget(sb, target_inode_number);
+			// Inode Could've been deleted, 
+			if (target_inode == ERR_PTR(-ESTALE)) {
+				nova_info("%s: inode %llu does not exist.", __func__,target_inode_number);
+				continue;
+			}
+			target_si = NOVA_I(target_inode);
+			target_sih = &target_si->header;
+			target_pi = nova_get_inode(sb,target_inode);
+
+			printk("number of inode?: %llu\n",target_pi->nova_ino);
+
+			// Read Lock Acquire
+			INIT_TIMING(dax_read_time);
+			NOVA_START_TIMING(dax_read_t, dax_read_time);
+			inode_lock_shared(target_inode);
+
+			// Read TWE
+			target_entry = nova_get_block(sb, entry_address);
+
+			printk("write entries block info: num_pages:%d, block: %lld, pgoff: %lld\n",target_entry->num_pages, target_entry->block, target_entry->pgoff);
+
+			// Read Each Data Page from the write entry
+			index = target_entry->pgoff;
+			data_page_number = target_entry->num_pages;
+
+			for(i=0;i<data_page_number;i++){
+				printk("Daga Page number %d\n",i+1);
+				memset(buf,0,DATABLOCK_SIZE);
+				memset(fingerprint,0,FINGERPRINT_SIZE);
+
+				nvmm = get_nvmm(sb,target_sih,target_entry,index);
+				dax_mem = nova_get_block(sb,(nvmm << PAGE_SHIFT));
+
+				left = __copy_to_user(buf,dax_mem,DATABLOCK_SIZE);
+				if(left){
+					nova_dbg("%s ERROR!: left %lu\n",__func__,left);
+					return 0;
+				}
+				// Fingerprint each datapage
+				printk("Fingerprint Start\n");
+				nova_dedup_fingerprint(buf,fingerprint);
+				printk("Fingerprint End\n");
+				for(j=0;j<FINGERPRINT_SIZE;j++){
+					printk("%02X",fingerprint[j]);
+				}
+				printk("\n");
+				index++;
+			}
+			// TODO Lookup for duplicate datapages
+			// TODO add new 'DEDUP-Table' Entries
 
 
-		// NO MORE READING!!!!!!
-
-		// TODO Write Lock
-		
-		// TODO append new write entries
-
-		// TODO update tail
-		
-		// TODO update 'update-count', 'reference count'
-		
-		// TODO update 'dedup-flag'
-		
-		// TODO Write Unlock
-	}
-	else printk("no entry!\n");	
+			// Read Unlock	
+			inode_unlock_shared(target_inode);
+			NOVA_END_TIMING(dax_read_t, dax_read_time);
 
 
+			// NO MORE READING!!!!!!
+
+			// TODO Write Lock
+
+			// TODO append new write entries
+
+			// TODO update tail
+
+			// TODO update 'update-count', 'reference count'
+
+			// TODO update 'dedup-flag' - inplace
+
+			// TODO Write Unlock
+		}
+		else printk("no entry!\n");	
+	}while(0);
 
 
 	kfree(buf);
