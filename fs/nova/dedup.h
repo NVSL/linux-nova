@@ -23,7 +23,7 @@
 
 #define DATABLOCK_SIZE 4096
 #define FINGERPRINT_SIZE 20
-
+#define MAX_DATAPAGE_PER_WRITEENTRY 32
 /* nova_dedup_queue
 	 queue of entries that needs to be deduplicated
 	 */
