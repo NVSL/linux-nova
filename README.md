@@ -1,3 +1,11 @@
+# Hishine6 Exclusive
+- DFLAG  
+0: Valid  
+1: Need Process  
+2: Processing  
+
+
+
 # NOVA: NOn-Volatile memory Accelerated log-structured file system
 
 ### Linux versions supported
