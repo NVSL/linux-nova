@@ -27,8 +27,7 @@
 
 /* ------ NOVA DEDUP by KHJ --------- */
 static int nova_dedup(struct file *filp){
-	nova_dedup_test(filp);
-	
+	nova_dedup_test(filp);	
 	return 1;
 }
 /* ---------------------------------- */
@@ -552,7 +551,7 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 		}
 
 		nvmm = get_nvmm(sb, sih, entryc, index);
-		printk("Reading From: %lu\n",index);
+		printk("Reading %lu pages from entry %lu\n",entry->num_pages,entry->pgoff);
 		dax_mem = nova_get_block(sb, (nvmm << PAGE_SHIFT));
 
 memcpy:
