@@ -91,15 +91,43 @@ int nova_dedup_fingerprint(unsigned char* datapage, unsigned char * ret_fingerpr
 }
 
 // Return the number of new write entries needed
-int nova_dedup_num_new_write_entry(bool *target, int num_pages){
-	int ret=1;
+int nova_dedup_num_new_write_entry(short *target, int num_pages){
+	int ret=1; // divided data pages
+	int invalid_count =0; // Invalid data pages
 	int i;
 	for(i=0;i<num_pages-1;i++){
-		if(target[i] != target[i+1])
+		if(target[i] != target[i+1]){
+			if(target[i]==2)
+				invalid_count++;
+			else if(i==num_pages-2 && target[i+1]==2)
+				invalid_count++;
 			ret++;
+		}
 	}
-	return ret;
+	if(ret==1){
+		if(target[0]==2)
+			ret=0;
+	}
+	return ret-invalid_count;
 }
+
+// Cross check if 'Inode', 'WriteEntry', 'Datapage' was invalidated
+// Return 1 if Inode-writeentry-datapage is all valid
+int nova_dedup_crosscheck(struct nova_file_write_entry *entry
+		,struct nova_inode_info_header *sih, unsigned long pgoff){
+	struct nova_file_write_entry *referenced_entry;
+	void ** pentry;
+	pentry = radix_tree_lookup_slot(&sih->tree, pgoff);
+	referenced_entry = radix_tree_deref_slot(pentry);
+
+	if(referenced_entry == entry)
+		return 1;
+	else{
+		printk("Invalid DataPage Detected\n");
+		return 0;
+	}
+}
+
 
 // TODO update 'update-count', 'reference count'
 // TODO update 'dedup-flag' - inplace
@@ -141,7 +169,7 @@ int nova_dedup_test(struct file * filp){
 	struct inode *inode = mapping->host;
 	struct super_block *sb = inode->i_sb;
 
-	// For write entry 
+	// For read phase
 	struct nova_file_write_entry *target_entry;	// Target write entry to deduplicate
 	struct inode *target_inode;		// Inode of target write entry
 	u64 entry_address;	// Address of target write entry(TWE)
@@ -159,12 +187,12 @@ int nova_dedup_test(struct file * filp){
 	unsigned long nvmm;
 	void *dax_mem = NULL;
 
-	// For new write entry
+	// For write phase
 	int num_new_entry=0;
 	struct fingerprint_lookup_data *lookup_data;
 	struct nova_inode_update update;
 	struct nova_file_write_entry new_entry; // new write entry
-	bool *duplicate_check;
+	short *duplicate_check;
 	u64 file_size;
 	unsigned long blocknr =0;
 	unsigned long num_blocks =0;
@@ -172,11 +200,10 @@ int nova_dedup_test(struct file * filp){
 	u64 begin_tail =0;
 	u64 epoch_id;
 	u32 time;
+	u32 valid_page_num=0;
 
 	// Other
 	ssize_t ret;
-	INIT_TIMING(dax_read_time);
-	INIT_TIMING(cow_write_time);
 	// -------------------------------------------------------//
 	// kmalloc buf, fingerprint
 	buf = kmalloc(DATABLOCK_SIZE,GFP_KERNEL);
@@ -185,96 +212,93 @@ int nova_dedup_test(struct file * filp){
 	do{
 		// Pop TWE(Target Write Entry)
 		entry_address = nova_dedup_queue_get_next_entry(&target_inode_number);
-		num_new_entry=0;
-
 		// target_inode_number should exist
 		if (target_inode_number < NOVA_NORMAL_INODE_START && target_inode_number != NOVA_ROOT_INO) {
 			//nova_info("%s: invalid inode %llu.", __func__,target_inode_number);
 			printk("No entry\n");
 			continue;
 		}
+		// Read TI(Target Inode)
+		target_inode = nova_iget(sb,target_inode_number);
+		// Inode Could've been deleted
+		if(target_inode == ERR_PTR(-ESTALE)){
+			nova_info("%s: inode %llu does not exist.", __func__,target_inode_number);
+			continue;
+		}
+
 		if(entry_address!=0){
-			// Read TI(Target Inode)
-			target_inode = nova_iget(sb, target_inode_number);
-			// Inode Could've been deleted, 
-			if (target_inode == ERR_PTR(-ESTALE)) {
-				nova_info("%s: inode %llu does not exist.", __func__,target_inode_number);
-				continue;
-			}
+			//Initialize variables
+			num_new_entry=0;
+			valid_page_num=0;
+			begin_tail=0;
+			irq_flags=0;
+				
 			target_si = NOVA_I(target_inode);
 			target_sih = &target_si->header;
 			target_pi = nova_get_inode(sb,target_inode);
 
-			printk("number of inode?: %llu\n",target_pi->nova_ino);
-
-			// TODO cross check inode <-> write entry
-
-			// Read Lock Acquire---------------------------------------------------------------
-			NOVA_START_TIMING(dax_read_t, dax_read_time);
-			inode_lock_shared(target_inode);
+			// ---------------------------Lock Acquire---------------------------------------------------------------
+			sb_start_write(target_inode->i_sb);
+			inode_lock(target_inode);
 
 			// Read TWE
 			target_entry = nova_get_block(sb, entry_address);
 
-			printk("write entry: num_pages:%d, block(address): %lld, pgoff(of file): %lld\n\
-					",target_entry->num_pages, target_entry->block, target_entry->pgoff);
-
-			// Read Each Data Page from the write entry
 			index = target_entry->pgoff;
 			num_pages = target_entry->num_pages;
 			lookup_data = kmalloc(num_pages*sizeof(struct fingerprint_lookup_data),GFP_KERNEL);
+			duplicate_check = kmalloc(sizeof(short)*num_pages,GFP_KERNEL);
+			memset(duplicate_check,false,sizeof(short)*num_pages);
 
+			printk("write entry: num_pages:%d, block(address): %lld, pgoff(of file): %lld\n",target_entry->num_pages, target_entry->block, target_entry->pgoff);
+			
+			// Read Each Data Page from TWE
 			for(i=0;i<num_pages;i++){
-				printk("Daga Page number %d\n",i+1);
+				if(nova_dedup_crosscheck(target_entry,target_sih,index)==0){
+					duplicate_check[i] = 2; // Data page i in invalid, target write entry does not point to it!
+					index++;
+					continue;
+				}
+				valid_page_num++;
 				memset(buf,0,DATABLOCK_SIZE);
 				memset(fingerprint,0,FINGERPRINT_SIZE);
 
 				nvmm = get_nvmm(sb,target_sih,target_entry,index);
 				dax_mem = nova_get_block(sb,(nvmm << PAGE_SHIFT));
-
-				left = __copy_to_user(buf,dax_mem,DATABLOCK_SIZE);
+				left = __copy_to_user(buf,dax_mem,DATABLOCK_SIZE); // Read data page
 				if(left){
 					nova_dbg("%s ERROR!: left %lu\n",__func__,left);
 					return 0;
 				}
 				// Fingerprint each datapage
-				printk("Fingerprint Start\n");
 				nova_dedup_fingerprint(buf,fingerprint);
-				printk("Fingerprint End\n");
 				for(j=0;j<FINGERPRINT_SIZE;j++){
 					lookup_data[i].fingerprint[j] = fingerprint[j];
 				}
 				index++;
 			}
-
-			duplicate_check = kmalloc(sizeof(bool)*num_pages,GFP_KERNEL);
-			memset(duplicate_check,false,sizeof(bool)*num_pages);
-			// TODO Lookup for duplicate datapages
-			// TODO add new FACT table Entries
-
+			
 			// Get the number of new write entries needed to be appended.
 			num_new_entry = nova_dedup_num_new_write_entry(duplicate_check,num_pages);
+			if(num_new_entry ==0){
+				printk("No Valid Datapages\n");
+				goto out;
+			}
 
-			// For Debugging
+			// TODO Lookup for duplicate datapages
+			// TODO add new FACT table Entries
+			// Construct lookup_data
+		
+			// For Test
 			for(i=0;i<num_pages;i++){
+				printk("Data Page Number %d\n",i+1);
 				for(j=0;j<FINGERPRINT_SIZE;j++){
 					printk("%02X",lookup_data[i].fingerprint[j]);
 				}
 				printk("\n");
 			}
-			// Read Unlock	------------------------------------------------------------------
-			inode_unlock_shared(target_inode);
-			NOVA_END_TIMING(dax_read_t, dax_read_time);
 
-
-			// NO MORE READING!!!!!!
-
-			// Write Lock --------------------------------------------------------------------
-			NOVA_START_TIMING(cow_write_t,cow_write_time);
-			sb_start_write(target_inode->i_sb);
-			inode_lock(target_inode);
-
-
+			// ------------------- Write Phase -----------------------
 			if(nova_check_inode_integrity(sb,target_sih->ino,target_sih->pi_addr,
 						target_sih->alter_pi_addr, &inode_copy,0) <0){
 				ret = -EIO;
@@ -282,8 +306,8 @@ int nova_dedup_test(struct file * filp){
 			}	
 
 			// set time
-			inode->i_ctime = inode->i_mtime = current_time(inode);
-			time = current_time(inode).tv_sec;
+			target_inode->i_ctime  = current_time(target_inode);
+			time = current_time(target_inode).tv_sec;
 
 			epoch_id = nova_get_epoch_id(sb);
 			update.tail = target_sih->log_tail;
@@ -307,11 +331,17 @@ int nova_dedup_test(struct file * filp){
 			if(ret){
 			nova_dpg("%s: append inode entry failed\n",__func__);
 			ret = -ENOSPC;
-			//goto out
+			//goto out;
 			}
 			if(begin_tail == 0)
 			begin_tail = update.curr_entry;
+			valid_page_num -= num_blocks;
 			}
+			if(valid_page_num!=0){
+				printk("Datapage assign error!\n");
+				goto out;
+			}
+
 			 */
 
 
@@ -319,7 +349,6 @@ int nova_dedup_test(struct file * filp){
 			nova_memunlock_inode(sb,target_pi,&irq_flags);
 			nova_update_inode(sb,inode,target_pi,&update,1);
 			nova_memlock_inode(sb,target_pi,&irq_flags);
-
 
 			// Update FACT TABLE + dedup_flag
 			nova_dedup_update_FACT(sb,target_sih,begin_tail);
@@ -334,10 +363,9 @@ out:
 				printk("Clean up incomplete deduplication\n");
 				//nova_cleanup_incomplete_write(sb,target_sih,blocknr,num_blocks,begin_tail,update.tail);
 
-			// Write Unlock ------------------------------------------------------------
+			// Unlock ------------------------------------------------------------
 			inode_unlock(target_inode);
 			sb_end_write(target_inode->i_sb);
-			NOVA_END_TIMING(cow_write_t,cow_write_time);
 
 			kfree(lookup_data);
 			kfree(duplicate_check);
@@ -357,4 +385,5 @@ out:
 // Design : How to search 'dedup table' for deduplication -> indexing
 // Design : How to search 'dedup table' for deletion -> indirect indexing
 // Implementation : How to gain file lock from 'write entry' -> nova_get_inode, nonva_iget
+
 
