@@ -41,8 +41,9 @@ struct sdesc {
 
 /* For Fingerprint lookup */
 struct fingerprint_lookup_data{
-		unsigned char fingerprint[FINGERPRINT_SIZE];
-		u64 FACT_table_entry_address;
+		unsigned char fingerprint[FINGERPRINT_SIZE]; // fingerprint of entry
+		u64 FACT_table_entry_index; // index of entry
+		__le64 block; // Actual address of this entry(where the data block is)
 };
 
 extern struct nova_dedup_queue nova_dedup_queue_head;

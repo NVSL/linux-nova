@@ -552,6 +552,7 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 
 		nvmm = get_nvmm(sb, sih, entryc, index);
 		printk("Reading %lu pages from entry %lu\n",entry->num_pages,entry->pgoff);
+		printk("Reading the time: %d\n",inode->i_ctime.tv_sec);
 		dax_mem = nova_get_block(sb, (nvmm << PAGE_SHIFT));
 
 memcpy:
@@ -711,6 +712,8 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 		goto out;
 
 	inode->i_ctime = inode->i_mtime = current_time(inode);
+	printk("log head: %lu\n",pi->log_head);
+	printk("write ctime: %u\n",inode->i_ctime.tv_sec);
 	time = current_time(inode).tv_sec;
 
 	nova_dbgv("%s: inode %lu, offset %lld, count %lu\n",
