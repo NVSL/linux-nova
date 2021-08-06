@@ -118,6 +118,8 @@ int nova_dedup_crosscheck(struct nova_file_write_entry *entry
 	struct nova_file_write_entry *referenced_entry;
 	void ** pentry;
 	pentry = radix_tree_lookup_slot(&sih->tree, pgoff);
+	if(!pentry)
+		return 0;
 	referenced_entry = radix_tree_deref_slot(pentry);
 
 	if(referenced_entry == entry)
@@ -132,18 +134,46 @@ int nova_dedup_crosscheck(struct nova_file_write_entry *entry
 // Functions for FACT table
 
 // Find FACT entry with index(of FACT)
+int nova_dedup_FACT_update_count(struct super_block *sb, u64 index){
+	u32 count = 0;
+	u8 compare = (1<<5)-1;
+	struct fact_entry* target_entry;
+	unsigned long irq_flags=0;
+	u64 target_index = NOVA_DEF_BLOCK_SIZE_4K * FACT_TABLE_START + index * NOVA_FACT_ENTRY_SIZE;
+
+	target_entry = (struct fact_entry *)nova_get_block(sb,target_index);
+	count = target_entry->count;
+
+	if(compare | count){
+		// decrease update count 1
+		// increase reference count 1
+		count += 15;
+		if(count > ((1UL<<32)-1)){
+			printk("ERRO Overflow\n");
+			return 1;
+		}
+	}
+	// Reference count, update count Atomic Update
+	nova_memunlock_range(sb,target_entry,NOVA_FACT_ENTRY_SIZE, &irq_flags);
+	PERSISTENT_BARRIER();
+	target_entry->count = count;
+	nova_memlock_range(sb,target_entry,NOVA_FACT_ENTRY_SIZE, &irq_flags);
+
+	return 0;
+}
 int nova_dedup_FACT_read(struct super_block *sb, u64 index){
-	int j;
+	int r_count,u_count;
 	struct fact_entry* target;
 
 	u64 target_index = NOVA_DEF_BLOCK_SIZE_4K * FACT_TABLE_START + index * NOVA_FACT_ENTRY_SIZE;
 
 	target = (struct fact_entry*)nova_get_block(sb,target_index);
-	printk("is it 1?: %d\n",target->count);
-	for(j=0;j<FINGERPRINT_SIZE;j++){
-		printk("%02X",target->fingerprint[j]);
-	}
-	printk("\n");
+	r_count = target->count;
+	u_count = target->count;
+	r_count >>= 4;
+	u_count &= 15;
+
+	printk("FACT table insert complete, reference count: %d, update count: %d\n",r_count,u_count);
 	return 0;
 }
 
@@ -154,13 +184,16 @@ int nova_dedup_is_empty(struct fact_entry target){
 	return 0;
 }
 
+
+// TODO insert delete entries too
+
 // Insert new FACT entry
 int nova_dedup_FACT_insert(struct super_block *sb, struct fingerprint_lookup_data* lookup){
 	unsigned long irq_flags=0;
 	struct fact_entry  te; // target entry
 	struct fact_entry* pmem_te; // pmem target entry
 	u64 index = 0;
-	int flag=0;
+	int ret=0;
 
 	index = lookup->fingerprint[0];
 	index = index<<8 | lookup->fingerprint[1];
@@ -171,12 +204,12 @@ int nova_dedup_FACT_insert(struct super_block *sb, struct fingerprint_lookup_dat
 		u64 target_index = NOVA_DEF_BLOCK_SIZE_4K * FACT_TABLE_START + index * NOVA_FACT_ENTRY_SIZE;
 		pmem_te = (struct fact_entry*)nova_get_block(sb,target_index);
 		__copy_to_user(&te,pmem_te,sizeof(struct fact_entry));
-		if(strncmp(te.fingerprint, lookup->fingerprint,FINGERPRINT_SIZE) == 0){
-			flag = 1;
+		if(strncmp(te.fingerprint, lookup->fingerprint,FINGERPRINT_SIZE) == 0){ // duplicate
+			ret = 1;
 			break;
 		}
-		if(nova_dedup_is_empty(te)){
-			flag =0;
+		if(nova_dedup_is_empty(te)){ // unique
+			ret =0;
 			break;
 		}
 		// TODO add pointer to the entry and add a new entry at the end of fact table
@@ -184,42 +217,39 @@ int nova_dedup_FACT_insert(struct super_block *sb, struct fingerprint_lookup_dat
 	while(0);
 
 	// 
-	if(flag){ // duplicate data page detected
+	if(ret){ // duplicate data page detected
 		if((te.count & ((1<<5)-1)) > (1<<5)){
 			printk("ERRO: more than 16 updates to this entry\n");
-			return 1;
+			return -1;
 		}
 		te.count++;
 	}
 	else{ // new entry should be written
 		strncpy(te.fingerprint,lookup->fingerprint,FINGERPRINT_SIZE);
 		te.block_address = lookup->block_address;
-		te.count = 1;
+		te.count=1;
 		te.next = 0;
 	}
 
 	// copy target_entry to pmem
-	nova_memunlock_range(sb,pmem_te, CACHELINE_SIZE, &irq_flags);
-	memcpy_to_pmem_nocache(pmem_te, &te, sizeof(struct fact_entry)-4); // don't write 'delete' area
-	nova_memlock_range(sb, pmem_te, CACHELINE_SIZE, &irq_flags);
+	nova_memunlock_range(sb,pmem_te, NOVA_FACT_ENTRY_SIZE, &irq_flags);
+	memcpy_to_pmem_nocache(pmem_te, &te, NOVA_FACT_ENTRY_SIZE - 4); // don't write 'delete' area
+	nova_memlock_range(sb, pmem_te, NOVA_FACT_ENTRY_SIZE, &irq_flags);
 
 	lookup->index = index;
 	lookup->block_address = te.block_address;
-	return 0;
+	return ret;
 }
 
 
 // TODO update 'update-count', 'reference count'
-// TODO update 'dedup-flag' - inplace
 // Update FACT table + dedup_flags in write entry
-int nova_dedup_update_FACT(struct super_block *sb, 
-		struct nova_inode_info_header *sih, u64 begin_tail){
+int nova_dedup_entry_update(struct super_block *sb, struct nova_inode_info_header *sih, u64 begin_tail){
 	void *addr;
 	struct nova_file_write_entry *entry;
 	u64 curr_p = begin_tail;
 	size_t entry_size = sizeof(struct nova_file_write_entry);
 	unsigned long irq_flags=0;
-
 
 	while(curr_p && curr_p != sih->log_tail){
 		if(is_last_entry(curr_p,entry_size))
@@ -230,6 +260,9 @@ int nova_dedup_update_FACT(struct super_block *sb,
 		entry = (struct nova_file_write_entry *)addr;
 
 		// Update FACT Table responding to new write entry
+		// 1. Know data page address(blocknr)
+		// 2. Know the index of that datapage in FACT table
+		// 3. call nova_dedup_FACT_update
 
 		// Update Write New Write Entry 'dedup_flag'
 		nova_memunlock_range(sb,entry,CACHELINE_SIZE,&irq_flags);
@@ -237,6 +270,7 @@ int nova_dedup_update_FACT(struct super_block *sb,
 		nova_update_entry_csum(entry);
 		nova_update_alter_entry(sb,entry);
 		nova_memlock_range(sb,entry,CACHELINE_SIZE,&irq_flags);
+		curr_p += entry_size;
 	}
 	return 0;
 }
@@ -245,8 +279,8 @@ int nova_dedup_update_FACT(struct super_block *sb,
 int nova_dedup_test(struct file * filp){
 	// Read Super Block
 	struct address_space *mapping = filp->f_mapping;	
-	struct inode *inode = mapping->host;
-	struct super_block *sb = inode->i_sb;
+	struct inode *garbage_inode = mapping->host;
+	struct super_block *sb = garbage_inode->i_sb;
 
 
 	// TEST FACT table
@@ -271,11 +305,13 @@ int nova_dedup_test(struct file * filp){
 
 	// For write phase
 	int num_new_entry=0;
+	int start, end;
 	struct fingerprint_lookup_data *lookup_data;
 	struct nova_inode_update update;
-	struct nova_file_write_entry new_entry; // new write entry
+	struct nova_file_write_entry entry_data; // new write entry
 	short *duplicate_check;
 	u64 file_size;
+	unsigned long original_start_blk, start_blk;
 	unsigned long blocknr =0;
 	unsigned long num_blocks =0;
 	unsigned long irq_flags=0;
@@ -285,7 +321,7 @@ int nova_dedup_test(struct file * filp){
 	u32 valid_page_num=0;
 
 	// Other
-	ssize_t ret;
+	ssize_t ret=0;
 	// -------------------------------------------------------//
 	// kmalloc buf, fingerprint
 	buf = kmalloc(DATABLOCK_SIZE,GFP_KERNEL);
@@ -310,8 +346,10 @@ int nova_dedup_test(struct file * filp){
 
 		if(entry_address!=0){
 			//Initialize variables
+			ret =0;
 			num_new_entry=0;
 			valid_page_num=0;
+			original_start_blk = 0;
 			begin_tail=0;
 			irq_flags=0;
 
@@ -325,6 +363,7 @@ int nova_dedup_test(struct file * filp){
 
 			// Read TWE
 			target_entry = nova_get_block(sb, entry_address);
+			original_start_blk = target_entry->pgoff;
 
 			index = target_entry->pgoff;
 			num_pages = target_entry->num_pages;
@@ -361,21 +400,23 @@ int nova_dedup_test(struct file * filp){
 				index++;
 			}
 
+
+
+			// Lookup & Add to FACT table
+			for(i=0;i<num_pages;i++)
+				if(duplicate_check[i] != 2)
+					duplicate_check[i] = nova_dedup_FACT_insert(sb,&lookup_data[i]);
+			// Test
+			for(i=0;i<num_pages;i++)
+				if(duplicate_check[i] != 2)
+					nova_dedup_FACT_read(sb, lookup_data[i].index);
+
 			// Get the number of new write entries needed to be appended.
 			num_new_entry = nova_dedup_num_new_write_entry(duplicate_check,num_pages);
 			if(num_new_entry ==0){
 				printk("No Valid Datapages\n");
 				goto out;
 			}
-
-			// TODO Lookup for duplicate datapages
-			for(i=0;i<num_pages;i++)
-				nova_dedup_FACT_insert(sb,&lookup_data[i]);
-
-			for(i=0;i<num_pages;i++)
-				nova_dedup_FACT_read(sb, lookup_data[i].index);
-			
-			// TODO add new FACT table Entries
 
 			// ------------------- Write Phase -----------------------
 			if(nova_check_inode_integrity(sb,target_sih->ino,target_sih->pi_addr,
@@ -393,50 +434,68 @@ int nova_dedup_test(struct file * filp){
 			update.alter_tail = target_sih->alter_log_tail;
 
 
-			// TODO Append Write Entry 
-			/*
-				 for(i=0;i<num_new_entry;i++){
-			// start_blk - block offset inside the file (0,1 ...)
-			// num_blocks - number of blocks
-			// blocknr - block starting address(Data Page) (2341413 something like this)
-			// file_size - size of file after write (does not change)
-			file_size = cpu_to_le64(inode->i_size); 
+			for(i=0;i<num_pages;i++){
+				start = i;
+				end = i;
 
-			nova_init_file_write_entry(sb,target_sih, &entry_data, epoch_id,
-			start_blk, num_blocks,blocknr, time,
-			file_size);
-			entry_data.dedup_flag = 2; // flag is set to 2
-			ret = nova_append_file_write_entry(sb,target_pi,inode,&entry_data,&update);
-			if(ret){
-			nova_dpg("%s: append inode entry failed\n",__func__);
-			ret = -ENOSPC;
-			//goto out;
-			}
-			if(begin_tail == 0)
-			begin_tail = update.curr_entry;
-			valid_page_num -= num_blocks;
+				if(duplicate_check[i] == 0){ // unique
+					for(j=i;j<num_pages-1;j++){
+						if(duplicate_check[j+1] == 0) end = j+1; //unique
+						else break; // duplicate or invalid
+					}
+					// start ~ end is unique, 
+					i=j;
+				}
+				else if(duplicate_check[i]==2) continue; // invalid
+
+				// start ~ end should go into data pages
+				// start_blk - block offset inside the file (0,1 ...) = offset of 'start'
+				start_blk = original_start_blk + start;
+				// num_blocks - number of blocks = (end-start+1)
+				num_blocks = (end-start)+1;
+				// blocknr - block starting address(Data Page) (2341413 something like this) = blocknr of start
+				blocknr = lookup_data[start].block_address;
+				// file_size - size of file after write (does not change)
+				file_size = cpu_to_le64(target_inode->i_size);
+				if(duplicate_check[start]==1){
+					printk("file size shrink\n");
+					file_size -= DATABLOCK_SIZE;
+				}
+				
+				printk("NEW WRITE ENTRY: start pgoff: %lu, number of pages: %lu\n",start_blk,num_blocks);
+
+				nova_init_file_write_entry(sb,target_sih, &entry_data, epoch_id,
+						start_blk, num_blocks,blocknr, time, file_size);
+				entry_data.dedup_flag = 2; // flag is set to 2
+				ret = nova_append_file_write_entry(sb,target_pi,target_inode,&entry_data,&update);
+				if(ret){
+					nova_dbg("%s: append inode entry failed\n",__func__);
+					ret = -ENOSPC;
+					//goto out;
+				}
+				if(begin_tail == 0)
+					begin_tail = update.curr_entry;
+				valid_page_num -= num_blocks;
 			}
 			if(valid_page_num!=0){
-			printk("Datapage assign error!\n");
-			goto out;
+				printk("Datapage assign error! %d left\n",valid_page_num);
+				goto out;
 			}
-
-			 */
 
 
 			// Update tail
 			nova_memunlock_inode(sb,target_pi,&irq_flags);
-			nova_update_inode(sb,inode,target_pi,&update,1);
+			nova_update_inode(sb,target_inode,target_pi,&update,1);
 			nova_memlock_inode(sb,target_pi,&irq_flags);
 
 			// Update FACT TABLE + dedup_flag
-			nova_dedup_update_FACT(sb,target_sih,begin_tail);
+			nova_dedup_entry_update(sb,target_sih,begin_tail);
 
 			// Update Radix Tree
 			ret = nova_reassign_file_tree(sb,target_sih,begin_tail);
 			if(ret)
 				goto out;
-			inode->i_blocks = target_sih->i_blocks;
+			target_inode->i_blocks = target_sih->i_blocks;
 out:
 			if(ret<0)
 				printk("Clean up incomplete deduplication\n");
@@ -449,7 +508,7 @@ out:
 			kfree(lookup_data);
 			kfree(duplicate_check);
 			iput(target_inode);
-			printk("DEDUP COMPLETE\n");
+			printk("----------DEDUP COMPLETE----------\n");
 		}
 		else printk("no entry!\n");	
 	}while(0);

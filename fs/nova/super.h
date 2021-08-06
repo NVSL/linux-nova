@@ -57,7 +57,7 @@ struct nova_super_block {
  * If data protection is enabled, more blocks are reserverd for checksums and
  * parities and the number is derived according to the whole storage size.
  */
-#define	HEAD_RESERVED_BLOCKS 327743
+#define	HEAD_RESERVED_BLOCKS 327744
 #define	NUM_JOURNAL_PAGES	16
 
 #define SUPER_BLOCK_START       0 // Superblock

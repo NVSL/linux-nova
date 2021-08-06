@@ -142,6 +142,9 @@ static void nova_init_free_list(struct super_block *sb,
 
 	free_list->block_start = sbi->head_reserved_blocks + per_list_blocks * index;
 	free_list->block_end = free_list->block_start + per_list_blocks -1;
+	
+	printk("cpu%d: start%lu, end%lu\n",index,free_list->block_start, free_list->block_end);
+	
 	if(index==sbi->cpus-1)
 		free_list->block_end -= sbi->tail_reserved_blocks;
 
@@ -171,7 +174,10 @@ void nova_init_blockmap(struct super_block *sb, int recovery)
 	int ret;
 
 	/* Divide the block range among per-CPU free lists */
-	sbi->per_list_blocks = sbi->num_blocks / sbi->cpus;
+	/* NOVA DEDUP KHJ */
+	//sbi->per_list_blocks = sbi->num_blocks / sbi->cpus;
+	sbi->per_list_blocks = (sbi->num_blocks - sbi->head_reserved_blocks) / sbi->cpus;
+	
 	for (i = 0; i < sbi->cpus; i++) {
 		free_list = nova_get_free_list(sb, i);
 		tree = &(free_list->block_free_tree);
@@ -407,7 +413,9 @@ static int nova_free_blocks(struct super_block *sb, unsigned long blocknr,
 	}
 
 	NOVA_START_TIMING(free_blocks_t, free_time);
-	cpuid = blocknr / sbi->per_list_blocks;
+	/* NOVA DEDUP KHJ */
+	//cpuid = blocknr / sbi->per_list_blocks;
+	cpuid = (blocknr - sbi->head_reserved_blocks)/sbi->per_list_blocks;
 
 	/* Pre-allocate blocknode */
 	curr_node = nova_alloc_blocknode(sb);
