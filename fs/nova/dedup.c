@@ -2,6 +2,9 @@
 #include "inode.h"
 #include "dedup.h"
 
+
+
+/******************** DEDUP QUEUE ********************/
 struct nova_dedup_queue nova_dedup_queue_head;
 
 // Initialize Dedup Queue
@@ -18,7 +21,7 @@ int nova_dedup_queue_push(u64 new_address, u64 target_inode_number){
 	list_add_tail(&new_data->list, &nova_dedup_queue_head.list);
 	new_data->write_entry_address = new_address;
 	new_data->target_inode_number = target_inode_number;
-	printk("PUSH to queue: %llu %llu\n",new_address,target_inode_number);
+	printk("PUSH(Write Entry Address: %llu, Inode Number: %llu)\n",new_address,target_inode_number);
 	return 0;
 }
 
@@ -34,12 +37,13 @@ u64 nova_dedup_queue_get_next_entry(u64 *target_inode_number){
 
 		list_del(nova_dedup_queue_head.list.next);
 		kfree(ptr);
-		printk("POP from queue: %llu %llu\n",ret,*target_inode_number);
+		printk("POP(Write Entry Address: %llu, Inode Number: %llu)\n",ret,*target_inode_number);
 	}
 	return ret;
 }
 
-// For SHA1
+/******************** SHA1 ********************/
+
 static struct sdesc *init_sdesc(struct crypto_shash *alg)
 {
 	struct sdesc *sdesc;
@@ -53,8 +57,6 @@ static struct sdesc *init_sdesc(struct crypto_shash *alg)
 	sdesc->shash.flags = 0x0;
 	return sdesc;
 }
-
-// For SHA1
 static int calc_hash(struct crypto_shash *alg,
 		const unsigned char *data, unsigned int datalen,
 		unsigned char *digest)
@@ -72,8 +74,6 @@ static int calc_hash(struct crypto_shash *alg,
 	kfree(sdesc);
 	return ret;
 }
-
-// For SHA1
 int nova_dedup_fingerprint(unsigned char* datapage, unsigned char * ret_fingerprint){
 	struct crypto_shash *alg;
 	char *hash_alg_name = "sha1";
@@ -89,6 +89,9 @@ int nova_dedup_fingerprint(unsigned char* datapage, unsigned char * ret_fingerpr
 	crypto_free_shash(alg);
 	return ret;
 }
+
+
+/******************** OTHER ********************/
 
 // Return the number of new write entries needed
 int nova_dedup_num_new_write_entry(short *target, int num_pages){
@@ -130,8 +133,7 @@ int nova_dedup_crosscheck(struct nova_file_write_entry *entry
 	}
 }
 
-
-// Functions for FACT table
+/******************** FACT ********************/
 
 // Find FACT entry with index(of FACT)
 int nova_dedup_FACT_update_count(struct super_block *sb, u64 index){
@@ -186,7 +188,6 @@ int nova_dedup_is_empty(struct fact_entry target){
 
 
 // TODO insert delete entries too
-
 // Insert new FACT entry
 int nova_dedup_FACT_insert(struct super_block *sb, struct fingerprint_lookup_data* lookup){
 	unsigned long irq_flags=0;
@@ -275,15 +276,12 @@ int nova_dedup_entry_update(struct super_block *sb, struct nova_inode_info_heade
 	return 0;
 }
 
-// DEDUPLICATION FUNCITON //
+/******************** DEDUPLICATION MAIN FUNCTION ********************/
 int nova_dedup_test(struct file * filp){
 	// Read Super Block
 	struct address_space *mapping = filp->f_mapping;	
 	struct inode *garbage_inode = mapping->host;
 	struct super_block *sb = garbage_inode->i_sb;
-
-
-	// TEST FACT table
 
 	// For read phase
 	struct nova_file_write_entry *target_entry;	// Target write entry to deduplicate
@@ -319,15 +317,14 @@ int nova_dedup_test(struct file * filp){
 	u64 epoch_id;
 	u32 time;
 	u32 valid_page_num=0;
-
-	// Other
 	ssize_t ret=0;
-	// -------------------------------------------------------//
+	
 	// kmalloc buf, fingerprint
 	buf = kmalloc(DATABLOCK_SIZE,GFP_KERNEL);
 	fingerprint = kmalloc(FINGERPRINT_SIZE,GFP_KERNEL);
 
 	do{
+		printk("----------DEDUP START----------\n");
 		// Pop TWE(Target Write Entry)
 		entry_address = nova_dedup_queue_get_next_entry(&target_inode_number);
 		// target_inode_number should exist
@@ -448,17 +445,11 @@ int nova_dedup_test(struct file * filp){
 				}
 				else if(duplicate_check[i]==2) continue; // invalid
 
-				// start ~ end should go into data pages
-				// start_blk - block offset inside the file (0,1 ...) = offset of 'start'
-				start_blk = original_start_blk + start;
-				// num_blocks - number of blocks = (end-start+1)
-				num_blocks = (end-start)+1;
-				// blocknr - block starting address(Data Page) (2341413 something like this) = blocknr of start
-				blocknr = lookup_data[start].block_address;
-				// file_size - size of file after write (does not change)
+				start_blk = original_start_blk + start; // start_blk - block offset inside the file (0,1 ...) = offset of 'start'
+				num_blocks = (end-start)+1; // num_blocks - number of blocks = (end-start+1)
+				blocknr = lookup_data[start].block_address; // blocknr - block starting address(Data Page) 
 				file_size = cpu_to_le64(target_inode->i_size);
-				if(duplicate_check[start]==1){
-					printk("file size shrink\n");
+				if(duplicate_check[start]==1){ // If duplicate...
 					file_size -= DATABLOCK_SIZE;
 				}
 				
@@ -477,7 +468,7 @@ int nova_dedup_test(struct file * filp){
 					begin_tail = update.curr_entry;
 				valid_page_num -= num_blocks;
 			}
-			if(valid_page_num!=0){
+			if(valid_page_num!=0){ // Not appended pages exists
 				printk("Datapage assign error! %d left\n",valid_page_num);
 				goto out;
 			}
@@ -495,6 +486,8 @@ int nova_dedup_test(struct file * filp){
 			ret = nova_reassign_file_tree(sb,target_sih,begin_tail);
 			if(ret)
 				goto out;
+
+
 			target_inode->i_blocks = target_sih->i_blocks;
 out:
 			if(ret<0)
@@ -517,11 +510,3 @@ out:
 	kfree(fingerprint);
 	return 0;
 }
-
-// TODO 
-// Implementation : How are we going to make the 'dedup table'? --> Static Table
-// Design : How to search 'dedup table' for deduplication -> indexing
-// Design : How to search 'dedup table' for deletion -> indirect indexing
-// Implementation : How to gain file lock from 'write entry' -> nova_get_inode, nonva_iget
-
-
