@@ -551,7 +551,7 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 		}
 
 		nvmm = get_nvmm(sb, sih, entryc, index);
-		printk("Reading %lu pages from datapage %lu",entry->num_pages,nvmm);
+		printk("READ: Reading pgoff(%lu ~ %lu), from datapage %lu",index,index+(nr/PAGE_SIZE)-1,nvmm);
 		dax_mem = nova_get_block(sb, (nvmm << PAGE_SHIFT));
 
 memcpy:
@@ -721,7 +721,6 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	update.alter_tail = sih->alter_log_tail;
 	while (num_blocks > 0) {
 		offset = pos & (nova_inode_blk_size(sih) - 1);
-		printk("Writing offset %lld\n",pos);
 		start_blk = pos >> sb->s_blocksize_bits;
 
 		/* don't zero-out the allocated blocks */
@@ -774,6 +773,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 		else
 			file_size = cpu_to_le64(inode->i_size);
 
+		printk("WRTIE: write %lu pages from %lu\n",allocated,start_blk);
 		nova_init_file_write_entry(sb, sih, &entry_data, epoch_id,
 					start_blk, allocated, blocknr, time,
 					file_size);
@@ -884,7 +884,6 @@ static ssize_t nova_dax_file_write(struct file *filp, const char __user *buf,
 	struct inode *inode = mapping->host;
 	
 	if (test_opt(inode->i_sb, DATA_COW)){
-		printk("COW\n");
 		return nova_cow_file_write(filp, buf, len, ppos);
 	}
 	else{

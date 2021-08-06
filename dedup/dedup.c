@@ -4,7 +4,6 @@
 #include<linux/fs.h>
 
 int real_dedup(struct file *file){
-	printk("dedup system call\n");
 	if(file->f_op->dedup){
 		return file->f_op->dedup(file);
 	}
