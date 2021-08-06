@@ -551,7 +551,7 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 		}
 
 		nvmm = get_nvmm(sb, sih, entryc, index);
-		printk("Reading %lu pages from entry %lu\n",entry->num_pages,entry->pgoff);
+		printk("Reading %lu pages from datapage %lu",entry->num_pages,nvmm);
 		dax_mem = nova_get_block(sb, (nvmm << PAGE_SHIFT));
 
 memcpy:

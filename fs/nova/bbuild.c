@@ -90,7 +90,9 @@ inline void set_bm(unsigned long bit, struct scan_bitmap *bm,
 static inline int get_block_cpuid(struct nova_sb_info *sbi,
 	unsigned long blocknr)
 {
-	return blocknr / sbi->per_list_blocks;
+	/* NOVA DEDUP KHJ */
+	// return blocknr / sbi->per_list_blocks;
+	return (blocknr - sbi->head_reserved_blocks)/sbi->per_list_blocks;
 }
 
 static int nova_failure_insert_inodetree(struct super_block *sb,
