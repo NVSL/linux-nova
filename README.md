@@ -1,5 +1,5 @@
-# Hishine6 Exclusive  
-(fs/nova/dedup.c)
+# Hishine6 Exclusive   
+- modified files(fs/nova): super.c, nova_def.h, super.h, file.c, log.c, log.h, dax.c, balloc.c  
 - DFLAG  
 0: Valid  
 1: Need Process  
