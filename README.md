@@ -1,4 +1,5 @@
-# Hishine6 Exclusive
+# Hishine6 Exclusive  
+(fs/nova/dedup.c)
 - DFLAG  
 0: Valid  
 1: Need Process  
