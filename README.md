@@ -1,3 +1,6 @@
+#Hishine6 Exclusive   
+- modified files(fs/nova): super.c, nova_def.h, super.h, file.c, log.c, log.h, dax.c, balloc.c  
+
 # NOVA: NOn-Volatile memory Accelerated log-structured file system
 
 ### Linux versions supported
