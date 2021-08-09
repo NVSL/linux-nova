@@ -409,7 +409,7 @@ static int nova_free_blocks(struct super_block *sb, unsigned long blocknr,
 	struct free_list *free_list;
 	int cpuid;
 	int new_node_used = 0;
-	int ret;
+	int ret=0;
 	int i;
 	INIT_TIMING(free_time);
 
