@@ -5,6 +5,7 @@
 
 
 /******************** DEDUP QUEUE ********************/
+// TODO LOCK IN DEDUP QUEUE
 struct nova_dedup_queue nova_dedup_queue_head;
 
 // Initialize Dedup Queue
@@ -132,8 +133,6 @@ int nova_dedup_crosscheck(struct nova_file_write_entry *entry
 		return 0;
 	}
 }
-
-
 int nova_dedup_reassign_file_tree(struct super_block *sb, 
 		struct nova_inode_info_header *sih, u64 begin_tail)
 {
@@ -178,8 +177,46 @@ int nova_dedup_reassign_file_tree(struct super_block *sb,
 }
 
 
-/******************** FACT ********************/
+int nova_dedup_invalidate_target_entry(struct super_block *sb, 
+		struct nova_inode_info_header *sih,	struct nova_file_write_entry *target_entry){
 
+	unsigned long start_pgoff = target_entry->pgoff;
+	unsigned int num = target_entry->num_pages;
+	unsigned int num_free = 0;
+	unsigned long curr_pgoff;
+	unsigned long start_blocknr = (target_entry->block)>>PAGE_SHIFT;
+	unsigned long curr_blocknr;
+	// Free Data pages that are duplicate
+	// Invalidate Target Entry
+	// radix_tree_replace_slot
+
+	int i;
+	int ret = 0;
+	INIT_TIMING(assign_time);
+
+	NOVA_START_TIMING(assign_t, assign_time);
+	for (i = 0; i < num; i++) { 
+		curr_pgoff = start_pgoff + i;
+		curr_blocknr = start_blocknr + i;
+
+		// duplicate: Free (not inside dedup table)
+		if(nova_dedup_is_duplicate(sb,curr_blocknr,true) == 2)
+			nova_free_old_entry(sb, sih,target_entry,
+					curr_pgoff,1,false,target_entry->epoch_id);
+		// unique: Don't Free
+		else
+			nova_invalidate_write_entry(sb,target_entry,1,1);
+	} 
+
+	nova_invalidate_write_entry(sb, target_entry, 1, 0);
+out:
+	NOVA_END_TIMING(assign_t, assign_time);
+	return ret;
+}
+
+
+/******************** FACT ********************/
+// TODO Range Lock in FACT table
 // Find FACT entry with index(of FACT)
 int nova_dedup_FACT_update_count(struct super_block *sb, u64 index){
 	u32 count = 0;
@@ -196,7 +233,6 @@ int nova_dedup_FACT_update_count(struct super_block *sb, u64 index){
 	target_index = NOVA_DEF_BLOCK_SIZE_4K * FACT_TABLE_START + target_index * NOVA_FACT_ENTRY_SIZE;
 	target_entry = (struct fact_entry*) nova_get_block(sb,target_index);
 	count = target_entry->count;
-	printk("Updating Count : %d\n",count);
 	// IF update Count > 0
 	if(compare & count){
 		// decrease update count 1
@@ -248,6 +284,7 @@ int nova_dedup_FACT_insert(struct super_block *sb, struct fingerprint_lookup_dat
 	u64 target_index;
 	int ret=0;
 
+	// TODO Key index 24bits --> 27 bits
 	index = lookup->fingerprint[0];
 	index = index<<8 | lookup->fingerprint[1];
 	index = index<<8 | lookup->fingerprint[2];
@@ -350,7 +387,7 @@ int nova_dedup_entry_update(struct super_block *sb, struct nova_inode_info_heade
 // Check if target block has multiple Reference Count
 // Return 1 if it's okay to delete
 // Return 0 if it's not okay to delete
-int nova_dedup_is_duplicate(struct super_block *sb, unsigned long blocknr){
+int nova_dedup_is_duplicate(struct super_block *sb, unsigned long blocknr, bool check){
 	unsigned long irq_flags=0;
 	struct fact_entry  te; // target entry
 	struct fact_entry* pmem_te; // pmem target entry
@@ -372,17 +409,21 @@ int nova_dedup_is_duplicate(struct super_block *sb, unsigned long blocknr){
 
 	ret = te.count >> 4;
 
-	if(ret <= 0){ // most likely impossible
-		printk("ERROR: reference count can't be less than 1\n");
-		return 1;
+	// TODO return 1 when there is no entry corresponding to blocknr 
+	// --> Deleted before deduplication
+
+	if(ret <= 0){ // It's not in dedup table
+		printk("ERROR: Block is not in FACT table\n");
+		return 2;
 	}
 	else{ // It's okay to delete, this entry can also be deleted
+		if(!check){
 		te.count -= 16;
 
 		nova_memunlock_range(sb,pmem_te, NOVA_FACT_ENTRY_SIZE, &irq_flags);
 		memcpy_to_pmem_nocache(pmem_te, &te, NOVA_FACT_ENTRY_SIZE - 4); // don't write 'delete' area
 		nova_memlock_range(sb, pmem_te, NOVA_FACT_ENTRY_SIZE, &irq_flags);
-
+		}
 		if(ret == 1)
 			return 1;
 		else
@@ -609,7 +650,9 @@ int nova_dedup_test(struct file * filp){
 			ret = nova_dedup_reassign_file_tree(sb,target_sih,begin_tail);
 			if(ret)
 				goto out;
-
+			ret = nova_dedup_invalidate_target_entry(sb,target_sih,target_entry);
+			if(ret)
+				goto out;
 
 			target_inode->i_blocks = target_sih->i_blocks;
 out:
@@ -624,9 +667,9 @@ out:
 			kfree(lookup_data);
 			kfree(duplicate_check);
 			iput(target_inode);
-			printk("----------DEDUP COMPLETE----------\n");
 		}
 		else printk("no entry!\n");	
+		printk("----------DEDUP COMPLETE----------\n");
 	}while(0);
 
 	kfree(buf);
