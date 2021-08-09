@@ -46,7 +46,7 @@ struct fact_entry{
 	u32 count; // 28bit -> reference, 4bit -> update
 	u32 next;
 	u32 delete_target;
-};
+}__attribute((__packed__));
 
 /* For Fingerprint lookup */
 struct fingerprint_lookup_data{
@@ -58,11 +58,11 @@ struct fingerprint_lookup_data{
 extern struct nova_dedup_queue nova_dedup_queue_head;
 
 
-/* nova_dedup_test
-	 for debugging + test
- */
 int nova_dedup_test(struct file *);
 int nova_dedup_queue_push(u64,u64);
 int nova_dedup_queue_init(void);
+
+int nova_dedup_is_duplicate(struct super_block *sb, unsigned long blocknr);
+
 
 #endif

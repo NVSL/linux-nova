@@ -133,42 +133,94 @@ int nova_dedup_crosscheck(struct nova_file_write_entry *entry
 	}
 }
 
+
+int nova_dedup_reassign_file_tree(struct super_block *sb, 
+		struct nova_inode_info_header *sih, u64 begin_tail)
+{
+	void *addr;
+	struct nova_file_write_entry *entry;
+	struct nova_file_write_entry *entryc, entry_copy;
+	u64 curr_p = begin_tail;
+	size_t entry_size = sizeof(struct nova_file_write_entry);
+
+	entryc = (metadata_csum == 0) ? entry : &entry_copy;
+
+	while (curr_p && curr_p != sih->log_tail) {
+		if (is_last_entry(curr_p, entry_size))
+			curr_p = next_log_page(sb, curr_p);
+
+		if (curr_p == 0) { 
+			nova_err(sb, "%s: File inode %lu log is NULL!\n",
+					__func__, sih->ino);
+			return -EINVAL;
+		}    
+
+		addr = (void *) nova_get_block(sb, curr_p);
+		entry = (struct nova_file_write_entry *) addr;
+
+		if (metadata_csum == 0)
+			entryc = entry;
+		else if (!nova_verify_entry_csum(sb, entry, entryc))
+			return -EIO;
+
+		if (nova_get_entry_type(entryc) != FILE_WRITE) {
+			nova_dbg("%s: entry type is not write? %d\n",
+					__func__, nova_get_entry_type(entry));
+			curr_p += entry_size;
+			continue;
+		}    
+
+		nova_assign_write_entry(sb, sih, entry, entryc, false);
+		curr_p += entry_size;
+	}
+
+	return 0;
+}
+
+
 /******************** FACT ********************/
 
 // Find FACT entry with index(of FACT)
 int nova_dedup_FACT_update_count(struct super_block *sb, u64 index){
 	u32 count = 0;
-	u8 compare = (1<<5)-1;
+	u8 compare = (1<<4)-1;
 	struct fact_entry* target_entry;
 	unsigned long irq_flags=0;
+
+	// Read Actual Index
 	u64 target_index = NOVA_DEF_BLOCK_SIZE_4K * FACT_TABLE_START + index * NOVA_FACT_ENTRY_SIZE;
-
 	target_entry = (struct fact_entry *)nova_get_block(sb,target_index);
-	count = target_entry->count;
+	target_index = target_entry->delete_target;
 
-	if(compare | count){
+	// Read Count of Actual Index
+	target_index = NOVA_DEF_BLOCK_SIZE_4K * FACT_TABLE_START + target_index * NOVA_FACT_ENTRY_SIZE;
+	target_entry = (struct fact_entry*) nova_get_block(sb,target_index);
+	count = target_entry->count;
+	printk("Updating Count : %d\n",count);
+	// IF update Count > 0
+	if(compare & count){
 		// decrease update count 1
 		// increase reference count 1
 		count += 15;
 		if(count > ((1UL<<32)-1)){
-			printk("ERRO Overflow\n");
+			printk("ERROR: Overflow\n");
 			return 1;
 		}
+		// Reference count, update count Atomic Update
+		nova_memunlock_range(sb,target_entry,NOVA_FACT_ENTRY_SIZE, &irq_flags);
+		PERSISTENT_BARRIER();
+		target_entry->count = count;
+		nova_memlock_range(sb,target_entry,NOVA_FACT_ENTRY_SIZE, &irq_flags);
 	}
-	// Reference count, update count Atomic Update
-	nova_memunlock_range(sb,target_entry,NOVA_FACT_ENTRY_SIZE, &irq_flags);
-	PERSISTENT_BARRIER();
-	target_entry->count = count;
-	nova_memlock_range(sb,target_entry,NOVA_FACT_ENTRY_SIZE, &irq_flags);
-
 	return 0;
 }
+
+// For debugging
 int nova_dedup_FACT_read(struct super_block *sb, u64 index){
 	int r_count,u_count;
 	struct fact_entry* target;
 
 	u64 target_index = NOVA_DEF_BLOCK_SIZE_4K * FACT_TABLE_START + index * NOVA_FACT_ENTRY_SIZE;
-
 	target = (struct fact_entry*)nova_get_block(sb,target_index);
 	r_count = target->count;
 	u_count = target->count;
@@ -177,6 +229,7 @@ int nova_dedup_FACT_read(struct super_block *sb, u64 index){
 
 	printk("FACT table insert complete, reference count: %d, update count: %d\n",r_count,u_count);
 	return 0;
+
 }
 
 // Is fact entry empty?
@@ -186,14 +239,13 @@ int nova_dedup_is_empty(struct fact_entry target){
 	return 0;
 }
 
-
-// TODO insert delete entries too
 // Insert new FACT entry
 int nova_dedup_FACT_insert(struct super_block *sb, struct fingerprint_lookup_data* lookup){
 	unsigned long irq_flags=0;
 	struct fact_entry  te; // target entry
 	struct fact_entry* pmem_te; // pmem target entry
 	u64 index = 0;
+	u64 target_index;
 	int ret=0;
 
 	index = lookup->fingerprint[0];
@@ -202,7 +254,7 @@ int nova_dedup_FACT_insert(struct super_block *sb, struct fingerprint_lookup_dat
 
 	// Read Entries until it finds a match, or finds a empty slot
 	do{
-		u64 target_index = NOVA_DEF_BLOCK_SIZE_4K * FACT_TABLE_START + index * NOVA_FACT_ENTRY_SIZE;
+		target_index = NOVA_DEF_BLOCK_SIZE_4K * FACT_TABLE_START + index * NOVA_FACT_ENTRY_SIZE;
 		pmem_te = (struct fact_entry*)nova_get_block(sb,target_index);
 		__copy_to_user(&te,pmem_te,sizeof(struct fact_entry));
 		if(strncmp(te.fingerprint, lookup->fingerprint,FINGERPRINT_SIZE) == 0){ // duplicate
@@ -219,11 +271,12 @@ int nova_dedup_FACT_insert(struct super_block *sb, struct fingerprint_lookup_dat
 
 	// 
 	if(ret){ // duplicate data page detected
-		if((te.count & ((1<<5)-1)) > (1<<5)){
+		if((te.count & ((1<<4)-1)) == ((1<<4)-1)){
 			printk("ERRO: more than 16 updates to this entry\n");
 			return -1;
 		}
 		te.count++;
+		printk("Duplicate Page detected, count is %d\n",te.count);
 	}
 	else{ // new entry should be written
 		strncpy(te.fingerprint,lookup->fingerprint,FINGERPRINT_SIZE);
@@ -237,13 +290,25 @@ int nova_dedup_FACT_insert(struct super_block *sb, struct fingerprint_lookup_dat
 	memcpy_to_pmem_nocache(pmem_te, &te, NOVA_FACT_ENTRY_SIZE - 4); // don't write 'delete' area
 	nova_memlock_range(sb, pmem_te, NOVA_FACT_ENTRY_SIZE, &irq_flags);
 
+	// update lookup data
 	lookup->index = index;
 	lookup->block_address = te.block_address;
+
+	// Add FACT entry for delete
+	target_index = NOVA_DEF_BLOCK_SIZE_4K * FACT_TABLE_START + te.block_address * NOVA_FACT_ENTRY_SIZE;
+	pmem_te = (struct fact_entry*)nova_get_block(sb,target_index);
+	__copy_to_user(&te,pmem_te,sizeof(struct fact_entry));
+
+	te.delete_target = index;
+
+	nova_memunlock_range(sb,pmem_te,NOVA_FACT_ENTRY_SIZE,&irq_flags);
+	memcpy_to_pmem_nocache(pmem_te,&te,NOVA_FACT_ENTRY_SIZE);
+	nova_memlock_range(sb,pmem_te, NOVA_FACT_ENTRY_SIZE,&irq_flags);
+
 	return ret;
 }
 
 
-// TODO update 'update-count', 'reference count'
 // Update FACT table + dedup_flags in write entry
 int nova_dedup_entry_update(struct super_block *sb, struct nova_inode_info_header *sih, u64 begin_tail){
 	void *addr;
@@ -251,6 +316,10 @@ int nova_dedup_entry_update(struct super_block *sb, struct nova_inode_info_heade
 	u64 curr_p = begin_tail;
 	size_t entry_size = sizeof(struct nova_file_write_entry);
 	unsigned long irq_flags=0;
+	unsigned long curr_index;
+	unsigned long start_index;
+	unsigned int num=0;
+	int i;
 
 	while(curr_p && curr_p != sih->log_tail){
 		if(is_last_entry(curr_p,entry_size))
@@ -260,11 +329,12 @@ int nova_dedup_entry_update(struct super_block *sb, struct nova_inode_info_heade
 		addr = (void*) nova_get_block(sb,curr_p);
 		entry = (struct nova_file_write_entry *)addr;
 
-		// Update FACT Table responding to new write entry
-		// 1. Know data page address(blocknr)
-		// 2. Know the index of that datapage in FACT table
-		// 3. call nova_dedup_FACT_update
-
+		num = entry->num_pages;
+		start_index = entry->block >> PAGE_SHIFT;
+		for(i=0;i<num;i++){
+			curr_index = start_index + i;
+			nova_dedup_FACT_update_count(sb,curr_index);
+		}
 		// Update Write New Write Entry 'dedup_flag'
 		nova_memunlock_range(sb,entry,CACHELINE_SIZE,&irq_flags);
 		entry->dedup_flag=0;
@@ -275,6 +345,52 @@ int nova_dedup_entry_update(struct super_block *sb, struct nova_inode_info_heade
 	}
 	return 0;
 }
+
+
+// Check if target block has multiple Reference Count
+// Return 1 if it's okay to delete
+// Return 0 if it's not okay to delete
+int nova_dedup_is_duplicate(struct super_block *sb, unsigned long blocknr){
+	unsigned long irq_flags=0;
+	struct fact_entry  te; // target entry
+	struct fact_entry* pmem_te; // pmem target entry
+	u64 index = 0;
+	u64 target_index;
+	int ret=0;
+
+
+	target_index = NOVA_DEF_BLOCK_SIZE_4K * FACT_TABLE_START + blocknr * NOVA_FACT_ENTRY_SIZE;
+
+	pmem_te = (struct fact_entry*)nova_get_block(sb,target_index);
+	__copy_to_user(&te,pmem_te,sizeof(struct fact_entry));
+
+	index = te.delete_target;
+
+	target_index = NOVA_DEF_BLOCK_SIZE_4K * FACT_TABLE_START + index * NOVA_FACT_ENTRY_SIZE;
+	pmem_te = (struct fact_entry*)nova_get_block(sb,target_index);
+	__copy_to_user(&te,pmem_te,sizeof(struct fact_entry));
+
+	ret = te.count >> 4;
+
+	if(ret <= 0){ // most likely impossible
+		printk("ERROR: reference count can't be less than 1\n");
+		return 1;
+	}
+	else{ // It's okay to delete, this entry can also be deleted
+		te.count -= 16;
+
+		nova_memunlock_range(sb,pmem_te, NOVA_FACT_ENTRY_SIZE, &irq_flags);
+		memcpy_to_pmem_nocache(pmem_te, &te, NOVA_FACT_ENTRY_SIZE - 4); // don't write 'delete' area
+		nova_memlock_range(sb, pmem_te, NOVA_FACT_ENTRY_SIZE, &irq_flags);
+
+		if(ret == 1)
+			return 1;
+		else
+			return 0;
+	}
+
+}
+
 
 /******************** DEDUPLICATION MAIN FUNCTION ********************/
 int nova_dedup_test(struct file * filp){
@@ -318,7 +434,7 @@ int nova_dedup_test(struct file * filp){
 	u32 time;
 	u32 valid_page_num=0;
 	ssize_t ret=0;
-	
+
 	// kmalloc buf, fingerprint
 	buf = kmalloc(DATABLOCK_SIZE,GFP_KERNEL);
 	fingerprint = kmalloc(FINGERPRINT_SIZE,GFP_KERNEL);
@@ -401,13 +517,14 @@ int nova_dedup_test(struct file * filp){
 
 			// Lookup & Add to FACT table
 			for(i=0;i<num_pages;i++)
-				if(duplicate_check[i] != 2)
+				if(duplicate_check[i] != 2){
 					duplicate_check[i] = nova_dedup_FACT_insert(sb,&lookup_data[i]);
+				}
 			// Test
 			for(i=0;i<num_pages;i++)
-				if(duplicate_check[i] != 2)
+				if(duplicate_check[i] != 2){
 					nova_dedup_FACT_read(sb, lookup_data[i].index);
-
+				}
 			// Get the number of new write entries needed to be appended.
 			num_new_entry = nova_dedup_num_new_write_entry(duplicate_check,num_pages);
 			if(num_new_entry ==0){
@@ -452,7 +569,7 @@ int nova_dedup_test(struct file * filp){
 				if(duplicate_check[start]==1){ // If duplicate...
 					file_size -= DATABLOCK_SIZE;
 				}
-				
+
 				printk("NEW WRITE ENTRY: start pgoff: %lu, number of pages: %lu\n",start_blk,num_blocks);
 
 				nova_init_file_write_entry(sb,target_sih, &entry_data, epoch_id,
@@ -482,8 +599,14 @@ int nova_dedup_test(struct file * filp){
 			// Update FACT TABLE + dedup_flag
 			nova_dedup_entry_update(sb,target_sih,begin_tail);
 
-			// Update Radix Tree
-			ret = nova_reassign_file_tree(sb,target_sih,begin_tail);
+			// Test(updated Count)
+			for(i=0;i<num_pages;i++)
+				if(duplicate_check[i] != 2){
+					nova_dedup_FACT_read(sb, lookup_data[i].index);
+				}
+
+			// Update Radix Tree - use unique function
+			ret = nova_dedup_reassign_file_tree(sb,target_sih,begin_tail);
 			if(ret)
 				goto out;
 
