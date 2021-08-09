@@ -62,7 +62,7 @@ int nova_dedup_test(struct file *);
 int nova_dedup_queue_push(u64,u64);
 int nova_dedup_queue_init(void);
 
-int nova_dedup_is_duplicate(struct super_block *sb, unsigned long blocknr);
+int nova_dedup_is_duplicate(struct super_block *sb, unsigned long blocknr, bool check);
 
 
 #endif

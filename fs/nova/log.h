@@ -321,6 +321,10 @@ int nova_assign_write_entry(struct super_block *sb,
 	struct nova_file_write_entry *entry,
 	struct nova_file_write_entry *entryc, bool free);
 
+/* NOVA DEDUP KHJ */
+int nova_invalidate_write_entry(struct super_block *sb,
+	struct nova_file_write_entry *entry, int reassign,
+	unsigned int num_free);
 
 void nova_print_curr_log_page(struct super_block *sb, u64 curr);
 void nova_print_nova_log(struct super_block *sb,
