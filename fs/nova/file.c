@@ -773,7 +773,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 		else
 			file_size = cpu_to_le64(inode->i_size);
 
-		printk("WRTIE: write %lu pages from %lu\n",allocated,start_blk);
+		printk("WRTIE: write %d pages from %lu\n",allocated,start_blk);
 		nova_init_file_write_entry(sb, sih, &entry_data, epoch_id,
 					start_blk, allocated, blocknr, time,
 					file_size);
