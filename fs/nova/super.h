@@ -51,13 +51,26 @@ struct nova_super_block {
  * Block 32 - 47 contain pointers to replica inode table.
  * Block 48 - 63 contain pointers to journal pages.
  * 
- * NOVA DEDUP KHJ
- * Block 64 - 327743 Static FACT table (1280 MB)
  * 
  * If data protection is enabled, more blocks are reserverd for checksums and
  * parities and the number is derived according to the whole storage size.
  */
-#define	HEAD_RESERVED_BLOCKS 327744
+
+/* NOVA DEDUP KHJ */
+/*
+ * 4G Environment
+ * Block 64 - 5183 Static FACT Table (20MB)
+ * Index 0 ~ (2^20 - 1)
+
+ * 1T Environment
+ * Block 64 ~ 1310783 Static FACT Table (5GB)
+ * Index 0 ~ (2^28 - 1) --> 1T Environment
+ */
+#define FACT_TABLE_INDEX_MAX 1048575 // 2^20 - 1  (4G ENV)
+// #define FACT_TABLE_INDEX_MAX 268435455 // 2^28 -1 (1TB ENV)
+#define	HEAD_RESERVED_BLOCKS 63 + ((FACT_TABLE_INDEX_MAX+1)*20)/4096
+// 20 - FACT entry size
+// 4096 - Block size
 #define	NUM_JOURNAL_PAGES	16
 
 #define SUPER_BLOCK_START       0 // Superblock
