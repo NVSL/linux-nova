@@ -27,11 +27,18 @@
 /* nova_dedup_queue
 	 queue of entries that needs to be deduplicated
 	 */
-struct nova_dedup_queue{
+struct nova_dedup_queue_entry{
 	u64 write_entry_address;
 	u64 target_inode_number;
 	struct list_head list;
 };
+
+struct nova_dedup_queue{
+	struct nova_dedup_queue_entry head;	// head of dqueue
+	struct mutex lock;
+};
+
+extern struct nova_dedup_queue dqueue;
 
 /* SHA1 */
 struct sdesc {
@@ -55,7 +62,6 @@ struct fingerprint_lookup_data{
 		u64 block_address; // Actual address of this entry(where the data block is)
 };
 
-extern struct nova_dedup_queue nova_dedup_queue_head;
 
 
 int nova_dedup_test(struct file *);

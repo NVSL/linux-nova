@@ -3,41 +3,48 @@
 #include "dedup.h"
 
 /******************** DEDUP QUEUE ********************/
-// TODO LOCK IN DEDUP QUEUE
-struct nova_dedup_queue nova_dedup_queue_head;
+struct nova_dedup_queue dqueue;
 
 // Initialize Dedup Queue
 int nova_dedup_queue_init(void){
-	INIT_LIST_HEAD(&nova_dedup_queue_head.list);
-	nova_dedup_queue_head.write_entry_address=0;
+	INIT_LIST_HEAD(&dqueue.head.list);
+	mutex_init(&dqueue.lock);
+	dqueue.head.write_entry_address = 0;
 	return 0;
 }
 
 // Insert Write Entries to Dedup Queue
 int nova_dedup_queue_push(u64 new_address, u64 target_inode_number){
-	struct nova_dedup_queue *new_data;
-	new_data = kmalloc(sizeof(struct nova_dedup_queue), GFP_KERNEL);
-	list_add_tail(&new_data->list, &nova_dedup_queue_head.list);
+	struct nova_dedup_queue_entry *new_data;
+	
+	mutex_lock(&dqueue.lock);
+	new_data = kmalloc(sizeof(struct nova_dedup_queue_entry), GFP_KERNEL);
+	list_add_tail(&new_data->list, &dqueue.head.list);
 	new_data->write_entry_address = new_address;
 	new_data->target_inode_number = target_inode_number;
+	mutex_unlock(&dqueue.lock);
+	
 	printk("PUSH(Write Entry Address: %llu, Inode Number: %llu)\n",new_address,target_inode_number);
 	return 0;
 }
 
 // Get next write entry to dedup
 u64 nova_dedup_queue_get_next_entry(u64 *target_inode_number){
-	struct nova_dedup_queue *ptr;
+	struct nova_dedup_queue_entry *ptr;
 	u64 ret = 0;
-	if(!list_empty(&nova_dedup_queue_head.list)){
-		ptr = list_entry(nova_dedup_queue_head.list.next, struct nova_dedup_queue, list);
+
+	mutex_lock(&dqueue.lock);
+	if(!list_empty(&dqueue.head.list)){
+		ptr = list_entry(dqueue.head.list.next, struct nova_dedup_queue_entry, list);
 
 		ret = ptr->write_entry_address;
 		*target_inode_number = ptr->target_inode_number;
 
-		list_del(nova_dedup_queue_head.list.next);
+		list_del(dqueue.head.list.next);
 		kfree(ptr);
 		printk("POP(Write Entry Address: %llu, Inode Number: %llu)\n",ret,*target_inode_number);
 	}
+	mutex_unlock(&dqueue.lock);
 	return ret;
 }
 
