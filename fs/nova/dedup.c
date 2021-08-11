@@ -16,15 +16,15 @@ int nova_dedup_queue_init(void){
 // Insert Write Entries to Dedup Queue
 int nova_dedup_queue_push(u64 new_address, u64 target_inode_number){
 	struct nova_dedup_queue_entry *new_data;
-	
+
 	mutex_lock(&dqueue.lock);
 	new_data = kmalloc(sizeof(struct nova_dedup_queue_entry), GFP_KERNEL);
 	list_add_tail(&new_data->list, &dqueue.head.list);
 	new_data->write_entry_address = new_address;
 	new_data->target_inode_number = target_inode_number;
 	mutex_unlock(&dqueue.lock);
-	
-	printk("PUSH(Write Entry Address: %llu, Inode Number: %llu)\n",new_address,target_inode_number);
+
+	printk("dqueue-PUSH(Write Entry Address: %llu, Inode Number: %llu)\n",new_address,target_inode_number);
 	return 0;
 }
 
@@ -42,7 +42,7 @@ u64 nova_dedup_queue_get_next_entry(u64 *target_inode_number){
 
 		list_del(dqueue.head.list.next);
 		kfree(ptr);
-		printk("POP(Write Entry Address: %llu, Inode Number: %llu)\n",ret,*target_inode_number);
+		printk("dqueue-POP(Write Entry Address: %llu, Inode Number: %llu)\n",ret,*target_inode_number);
 	}
 	mutex_unlock(&dqueue.lock);
 	return ret;
@@ -101,23 +101,28 @@ int nova_dedup_fingerprint(unsigned char* datapage, unsigned char * ret_fingerpr
 
 // Return the number of new write entries needed
 int nova_dedup_num_new_write_entry(short *target, int num_pages){
-	int ret=1; // divided data pages
-	int invalid_count =0; // Invalid data pages
-	int i;
-	for(i=0;i<num_pages-1;i++){
-		if(target[i] != target[i+1]){
+	int i,j;
+	int ret=0;
+	int invalid_count = 0;
+
+	for(i=0;i<num_pages;i++){
+		if(target[i] == 0){ // unique
+			for(j=i;j<num_pages;j++){
+				if(target[j] == 0) continue; //unique
+				else{
+					break;
+				}
+			}   
+			i=j-1;
+			ret++;
+		}   
+		else{
+			ret++;
 			if(target[i]==2)
 				invalid_count++;
-			else if(i==num_pages-2 && target[i+1]==2)
-				invalid_count++;
-			ret++;
 		}
 	}
-	if(ret==1){
-		if(target[0]==2)
-			ret=0;
-	}
-	return ret-invalid_count;
+	return ret - invalid_count;
 }
 
 // Cross check if 'Inode', 'WriteEntry', 'Datapage' was invalidated
@@ -214,7 +219,7 @@ int nova_dedup_invalidate_target_entry(struct super_block *sb,
 // Find FACT entry with index(of FACT)
 int nova_dedup_FACT_index_check(u64 index){
 	if(index > FACT_TABLE_INDEX_MAX){
-		printk("Index Out of Range: %lu\n",index);
+		printk("Index Out of Range: %llu\n",index);
 		return 1;
 	}
 	return 0;
@@ -301,15 +306,15 @@ int nova_dedup_FACT_insert(struct super_block *sb, struct fingerprint_lookup_dat
 	index = lookup->fingerprint[0];
 	index = index<<8 | lookup->fingerprint[1];
 	index = index<<3 | ((lookup->fingerprint[2] & 224)>>5);
-	
+
 	/* 1TB Environment - 27 bit */
 	/*
-	index = lookup->fingerprint[0];
-	index = index << 8 | lookup->fingerprint[1];
-	index = index << 8 | lookup->fingerprint[2];
-	index = index << 3 | ((lookup->fingerprint[3] & 224)>>5);
-	*/
-	
+		 index = lookup->fingerprint[0];
+		 index = index << 8 | lookup->fingerprint[1];
+		 index = index << 8 | lookup->fingerprint[2];
+		 index = index << 3 | ((lookup->fingerprint[3] & 224)>>5);
+	 */
+
 	if(nova_dedup_FACT_index_check(index))
 		return 2;
 
@@ -331,7 +336,7 @@ int nova_dedup_FACT_insert(struct super_block *sb, struct fingerprint_lookup_dat
 		// 1. Get new available index --> new function needed
 		// 2. Set 'next' as the index
 		// 3. return the entry in that index
-	
+
 	}
 	while(0);
 
@@ -558,7 +563,7 @@ int nova_dedup_test(struct file * filp){
 			duplicate_check = kmalloc(sizeof(short)*num_pages,GFP_KERNEL);
 			memset(duplicate_check,false,sizeof(short)*num_pages);
 
-			printk("write entry: num_pages:%d, block(address): %lld, pgoff(of file): %lld\n",target_entry->num_pages, target_entry->block, target_entry->pgoff);
+			//printk("write entry: num_pages:%d, block(address): %lld, pgoff(of file): %lld\n",target_entry->num_pages, target_entry->block, target_entry->pgoff);
 
 			// Read Each Data Page from TWE
 			for(i=0;i<num_pages;i++){
@@ -595,15 +600,15 @@ int nova_dedup_test(struct file * filp){
 					duplicate_check[i] = nova_dedup_FACT_insert(sb,&lookup_data[i]);
 				}
 			/* Test
-			for(i=0;i<num_pages;i++)
-				if(duplicate_check[i] != 2){
-					nova_dedup_FACT_read(sb, lookup_data[i].index);
-				}
-			*/
+				 for(i=0;i<num_pages;i++)
+				 if(duplicate_check[i] != 2){
+				 nova_dedup_FACT_read(sb, lookup_data[i].index);
+				 }
+			 */
 
 			// Get the number of new write entries needed to be appended.
 			num_new_entry = nova_dedup_num_new_write_entry(duplicate_check,num_pages);
-			if(num_new_entry ==0){
+			if(num_new_entry == 0){
 				printk("No Valid Datapages\n");
 				goto out;
 			}
@@ -643,13 +648,14 @@ int nova_dedup_test(struct file * filp){
 				if(duplicate_check[start]==1){ // If duplicate...
 					//file_size -= DATABLOCK_SIZE;
 				}
-
-				printk("NEW WRITE ENTRY: start pgoff: %lu, number of pages: %lu\n",start_blk,num_blocks);
-
 				nova_init_file_write_entry(sb,target_sih, &entry_data, epoch_id,
 						start_blk, num_blocks,blocknr, time, file_size);
 				entry_data.dedup_flag = 2; // flag is set to 2
 				ret = nova_append_file_write_entry(sb,target_pi,target_inode,&entry_data,&update);
+
+
+				printk("NEW WRITE ENTRY(offset: %lu, %lu blocks)\n",start_blk,num_blocks);
+
 				if(ret){
 					nova_dbg("%s: append inode entry failed\n",__func__);
 					ret = -ENOSPC;
@@ -658,8 +664,9 @@ int nova_dedup_test(struct file * filp){
 				if(begin_tail == 0)
 					begin_tail = update.curr_entry;
 				valid_page_num -= num_blocks;
+				num_new_entry -= 1;
 			}
-			if(valid_page_num!=0){ // Not appended pages exists
+			if(valid_page_num!=0 || num_new_entry!=0){ // Not appended pages exists
 				printk("Datapage assign error! %d left\n",valid_page_num);
 				goto out;
 			}
@@ -677,7 +684,7 @@ int nova_dedup_test(struct file * filp){
 			ret = nova_dedup_reassign_file_tree(sb,target_sih,begin_tail);
 			if(ret)
 				goto out;
-			
+
 			// Invalidate target entry, since it's not used any more
 			ret = nova_dedup_invalidate_target_entry(sb,target_sih,target_entry);
 			if(ret)
@@ -685,11 +692,11 @@ int nova_dedup_test(struct file * filp){
 
 			target_inode->i_blocks = target_sih->i_blocks;
 			target_sih->trans_id++;
-		
-			
+
+
 			//i_size_write(target_inode, file_size);
 			//target_sih->i_size = file_size;
-			
+
 out:
 			if(ret<0)
 				nova_cleanup_incomplete_write(sb,target_sih,blocknr,num_blocks,begin_tail,update.tail);
