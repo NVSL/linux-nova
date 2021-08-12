@@ -268,6 +268,10 @@ int nova_dedup_FACT_update_count(struct super_block *sb, u64 index){
 // For debugging
 int nova_dedup_FACT_read(struct super_block *sb, u64 index){
 	int r_count,u_count;
+	unsigned char fingerprint[20];
+	u64 block_address;
+	int next;
+	int delete_address;
 	struct fact_entry* target;
 	u64 target_index;
 
@@ -278,9 +282,16 @@ int nova_dedup_FACT_read(struct super_block *sb, u64 index){
 	target = (struct fact_entry*)nova_get_block(sb,target_index);
 	r_count = target->count;
 	u_count = target->count;
+
+	
+	strncpy(fingerprint,target->fingerprint,FINGERPRINT_SIZE);
+	block_address = target->block_address;
+	next = target->next;
+	delete_address = target->delete_target;
 	r_count >>= 4;
 	u_count &= 15;
 
+	printk("Fingerprint:%X%X%X%X%X%X%X%X%X%X%X%X%X%X%X%X%X%X%X%X, Block address: %lu, Reference count: %d, Update count: %d, next: %d, delete_address: %d\n", fingerprint[0],fingerprint[1],fingerprint[2],fingerprint[3],fingerprint[4],fingerprint[5],fingerprint[6],fingerprint[7],fingerprint[8],fingerprint[9],fingerprint[10],fingerprint[11],fingerprint[12],fingerprint[13],fingerprint[14],fingerprint[15],fingerprint[16],fingerprint[17],fingerprint[18],fingerprint[19],block_address,r_count,u_count,next,delete_address);
 	printk("FACT table insert complete, reference count: %d, update count: %d\n",r_count,u_count);
 	return 0;
 }
@@ -599,12 +610,13 @@ int nova_dedup_test(struct file * filp){
 				if(duplicate_check[i] != 2){
 					duplicate_check[i] = nova_dedup_FACT_insert(sb,&lookup_data[i]);
 				}
-			/* Test
+			
+			//Test
 				 for(i=0;i<num_pages;i++)
 				 if(duplicate_check[i] != 2){
 				 nova_dedup_FACT_read(sb, lookup_data[i].index);
 				 }
-			 */
+			 
 
 			// Get the number of new write entries needed to be appended.
 			num_new_entry = nova_dedup_num_new_write_entry(duplicate_check,num_pages);
