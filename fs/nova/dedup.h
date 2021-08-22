@@ -26,7 +26,7 @@
 #define MAX_DATAPAGE_PER_WRITEENTRY 32
 /* nova_dedup_queue
 	 queue of entries that needs to be deduplicated
-	 */
+*/
 struct nova_dedup_queue_entry{
 	u64 write_entry_address;
 	u64 target_inode_number;

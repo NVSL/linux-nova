@@ -153,6 +153,6 @@ static inline void nova_flush_buffer(void *buf, uint32_t len, bool fence)
 #define NOVA_STRIPE_SIZE	(1 << NOVA_STRIPE_SHIFT)
 
 /* NOVA DEDUP KHJ */
-#define NOVA_FACT_ENTRY_SIZE 40
+#define NOVA_FACT_ENTRY_SIZE 64
 
 #endif /* _LINUX_NOVA_DEF_H */
