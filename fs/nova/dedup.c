@@ -291,7 +291,6 @@ int nova_dedup_FACT_read(struct super_block *sb, u64 index){
 	r_count >>= 4;
 	u_count &= 15;
 
-	printk("Fingerprint:%X%X%X%X%X%X%X%X%X%X%X%X%X%X%X%X%X%X%X%X, Block address: %lu, Reference count: %d, Update count: %d, next: %d, delete_address: %d\n", fingerprint[0],fingerprint[1],fingerprint[2],fingerprint[3],fingerprint[4],fingerprint[5],fingerprint[6],fingerprint[7],fingerprint[8],fingerprint[9],fingerprint[10],fingerprint[11],fingerprint[12],fingerprint[13],fingerprint[14],fingerprint[15],fingerprint[16],fingerprint[17],fingerprint[18],fingerprint[19],block_address,r_count,u_count,next,delete_address);
 	printk("FACT table insert complete, reference count: %d, update count: %d\n",r_count,u_count);
 	return 0;
 }
