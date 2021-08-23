@@ -66,6 +66,10 @@ struct nova_super_block {
  * Block 64 ~ 3072063 (almost 12GB)
  * Index 0 ~ (750*2^18 - 1)
 
+ * 750G Environment
+ * Block 64 ~ 3072063 (almost 12GB)
+ * Index 0 ~ *(750*2^18 - 1)
+
  * 1T Environment
  * Block 64 ~ 1310783 (16GB)
  * Index 0 ~ (2^28 - 1)
