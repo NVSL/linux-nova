@@ -25,17 +25,17 @@
 #define FINGERPRINT_SIZE 20
 #define MAX_DATAPAGE_PER_WRITEENTRY 32
 /* nova_dedup_queue
-	 queue of entries that needs to be deduplicated
-	 */
+   queue of entries that needs to be deduplicated
+ */
 struct nova_dedup_queue_entry{
-	u64 write_entry_address;
-	u64 target_inode_number;
-	struct list_head list;
+  u64 write_entry_address;
+  u64 target_inode_number;
+  struct list_head list;
 };
 
 struct nova_dedup_queue{
-	struct nova_dedup_queue_entry head;	// head of dqueue
-	struct mutex lock;
+  struct nova_dedup_queue_entry head;	// head of dqueue
+  struct mutex lock;
 };
 
 extern struct nova_dedup_queue dqueue;
@@ -48,21 +48,24 @@ struct sdesc {
 
 /* FACT table entry */
 struct fact_entry{
-	unsigned char fingerprint[FINGERPRINT_SIZE];
-	u64 block_address;
-	u32 count; // 28bit -> reference, 4bit -> update
-	u32 next;
-	u32 delete_target;
+  u64 count; // 32bit reference count, 32bit update count
+  unsigned char fingerprint[FINGERPRINT_SIZE];
+  u64 block_address;
+  u64 next;
+  u64 delete_entry;
+  u32 lock;
+  u64 padding;
 }__attribute((__packed__));
 
 /* For Fingerprint lookup */
 struct fingerprint_lookup_data{
-		unsigned char fingerprint[FINGERPRINT_SIZE]; // fingerprint of entry
-		u32 index; // index of entry
-		u64 block_address; // Actual address of this entry(where the data block is)
+  unsigned char fingerprint[FINGERPRINT_SIZE]; // fingerprint of entry
+  u64 index; // index of entry
+  u64 block_address; // Actual address of this entry(where the data block is)
 };
 
 
+int nova_dedup_FACT_init(struct super_block *sb);
 
 int nova_dedup_test(struct file *);
 int nova_dedup_queue_push(u64,u64);
