@@ -2,8 +2,8 @@
 #include "inode.h"
 #include "dedup.h"
 
-/******************** FACT Free List *****************/
-struct scan_bm *FACT_free_list;
+/******************** FACT DRAM data structure *****************/
+struct DeNOVA_bm *FACT_free_list; // For allocating new  indirect access area 
 
 /******************** DEDUP QUEUE ********************/
 struct nova_dedup_queue dqueue;
@@ -52,7 +52,6 @@ u64 nova_dedup_queue_get_next_entry(u64 *target_inode_number){
 }
 
 /******************** SHA1 ********************/
-
 static struct sdesc *init_sdesc(struct crypto_shash *alg)
 {
 	struct sdesc *sdesc;
@@ -98,8 +97,7 @@ int nova_dedup_fingerprint(unsigned char* datapage, unsigned char * ret_fingerpr
 	return ret;
 }
 
-/******************** OTHER ********************/
-
+/******************** Check Integrity of Inode, Write Entry, Data page ********************/
 // Cross check if 'Inode', 'WriteEntry', 'Datapage' was invalidated
 // Return 1 if Inode-writeentry-datapage is all valid
 int nova_dedup_crosscheck(struct nova_file_write_entry *entry
@@ -123,6 +121,7 @@ int nova_dedup_crosscheck(struct nova_file_write_entry *entry
 /******************** FACT ********************/
 // TODO Range Lock in FACT table
 
+// Clear FACT, set FACT_free_table, FACT locks
 int nova_dedup_FACT_init(struct super_block *sb){
 	unsigned long i;
 	unsigned long start = FACT_TABLE_START;
@@ -134,7 +133,7 @@ int nova_dedup_FACT_init(struct super_block *sb){
 	unsigned char fill[64];
 	memset(fill,0,64);
 
-	FACT_free_list = kzalloc(sizeof(struct scan_bm),GFP_KERNEL);
+	FACT_free_list = kzalloc(sizeof(struct DeNOVA_bm),GFP_KERNEL);
 	FACT_free_list->bitmap_size = FACT_TABLE_INDEX_MAX;
 	FACT_free_list->bitmap = kvzalloc(FACT_TABLE_INDEX_MAX,GFP_KERNEL);
 
@@ -151,10 +150,10 @@ int nova_dedup_FACT_init(struct super_block *sb){
 	return 1;
 }
 
-// Check FACT entry with index(of FACT)
+// Check FACT index range(of FACT)
 int nova_dedup_FACT_index_check(u64 index){
 	if(index > FACT_TABLE_INDEX_MAX){
-		printk("Index Out of Range: %llu\n",index);
+		printk("FACT Index Out of Range: %llu(maximum %llu)\n",index,FACT_TABLE_INDEX_MAX);
 		return 1;
 	}
 	return 0;
@@ -199,27 +198,28 @@ int nova_dedup_FACT_update_count(struct super_block *sb, u64 index){
 	return 0;
 }
 
-// For debugging
+// Reading a specific FACT entry by index, mainly for debugging
 int nova_dedup_FACT_read(struct super_block *sb, u64 index){
 	int r_count,u_count;
 	u64 block_address;
-	u64 next;
+	u64 next,prev;
 	struct fact_entry* target;
 	u64 target_index;
 
-	// Check index range
 	if(nova_dedup_FACT_index_check(index))
 		return 1;
 
 	target_index = NOVA_DEF_BLOCK_SIZE_4K * FACT_TABLE_START + index * NOVA_FACT_ENTRY_SIZE;
 	target = (struct fact_entry*)nova_get_block(sb,target_index);
+
 	r_count = target->count>>32;
 	u_count = target->count;
 	block_address = target->block_address;
 	next = target->next;
+	prev = target->prev;
 
-	printk("index:%lld, ref_count:%d, up_count: %d, next:%lld, block_address: %lld\n",
-			index,r_count,u_count,next,block_address);
+	printk("index:%lld, ref_count:%d, up_count:%d, prev:%lld, next:%lld, block_address: %lld\n",
+			index,r_count,u_count,prev,next,block_address);
 	return 0;
 }
 
@@ -279,14 +279,13 @@ int nova_dedup_FACT_insert(struct super_block *sb, struct fingerprint_lookup_dat
 		else{ // Needs new index from FACT_free_list
 			prev_index = index;
 			index = find_next_zero_bit(FACT_free_list->bitmap,FACT_free_list->bitmap_size,FACT_TABLE_INDIRECT_AREA_START_INDEX);
-			printk("New Index is %lld\n",index);
+			printk("New Index from FACT free list is %lld\n",index);
 		}
-	}
-	while(1);
+	}while(1);
 
 	if(ret){ // duplicate data page detected
 		te.count++; // Increase Update Count
-		printk("Duplicate Page detected,  ref_count, Up_Count is %lld  %lld\n",te.count>>32, te.count);
+		printk("Duplicate Page detected on index %lld, ref_count:%lld\n",index,te.count>>32);
 	}
 	else{ // new entry should be written
 		strncpy(te.fingerprint,lookup->fingerprint,FINGERPRINT_SIZE);
@@ -298,19 +297,19 @@ int nova_dedup_FACT_insert(struct super_block *sb, struct fingerprint_lookup_dat
 
 	// copy target_entry to pmem
 	nova_memunlock_range(sb,pmem_te, NOVA_FACT_ENTRY_SIZE, &irq_flags);
-	memcpy_to_pmem_nocache(pmem_te, &te, NOVA_FACT_ENTRY_SIZE - 16); // don't write delete, lock, pdding
+	memcpy_to_pmem_nocache(pmem_te, &te, NOVA_FACT_ENTRY_SIZE - 12); // don't write delete, pdding
 	nova_memlock_range(sb, pmem_te, NOVA_FACT_ENTRY_SIZE, &irq_flags);
 
 	// update lookup data(used in deduplication process)
 	lookup->index = index;
 	lookup->block_address = te.block_address;
-
-	// Check range
-	if(nova_dedup_FACT_index_check(te.block_address))
-		return 2;
-
+	
 	// Add 'delete entry'
 	if(ret == 0){
+		// Check range
+		if(nova_dedup_FACT_index_check(te.block_address))
+			return 2;
+
 		target_index = NOVA_DEF_BLOCK_SIZE_4K * FACT_TABLE_START + te.block_address * NOVA_FACT_ENTRY_SIZE;
 		pmem_te = (struct fact_entry*)nova_get_block(sb,target_index);
 
@@ -340,6 +339,8 @@ int nova_dedup_TWE_update(struct super_block *sb,struct nova_inode_info_header *
 	nova_memunlock_range(sb,entry,CACHELINE_SIZE,&irq_flags);
 	entry->dedup_flag = IN_PROCESS;
 	nova_flush_buffer(&entry->dedup_flag,CACHELINE_SIZE,1);
+	nova_memlock_range(sb,entry,CACHELINE_SIZE,&irq_flags);
+	
 	// Update unique FACT entry counts
 	num = entry->num_pages;
 	start_index = entry->block >> PAGE_SHIFT;
@@ -353,6 +354,7 @@ int nova_dedup_TWE_update(struct super_block *sb,struct nova_inode_info_header *
 	nova_memunlock_range(sb,entry,CACHELINE_SIZE,&irq_flags);
 	entry->dedup_flag = DEDUP_DONE;
 	nova_flush_buffer(&entry->dedup_flag,CACHELINE_SIZE,1);
+	nova_memlock_range(sb,entry,CACHELINE_SIZE,&irq_flags);
 
 	return 0;
 }
@@ -431,9 +433,7 @@ int nova_dedup_is_duplicate(struct super_block *sb, unsigned long blocknr, bool 
 	pmem_te = (struct fact_entry*)nova_get_block(sb,target_index);
 	__copy_to_user(&te,pmem_te,sizeof(struct fact_entry));
 
-	ret = te.count>>32;
-
-	if(ret <= 0){ // It's not in dedup table, Deleted before Deduplication
+	if((pmem_te->count>>32) <= 0){ // It's not in dedup table, Deleted before Deduplication
 		return 2;
 	}
 	else{ // It's okay to delete, this entry can also be deleted
@@ -444,10 +444,7 @@ int nova_dedup_is_duplicate(struct super_block *sb, unsigned long blocknr, bool 
 			nova_flush_buffer(&pmem_te->count,CACHELINE_SIZE,1);
 			nova_memlock_range(sb, pmem_te, NOVA_FACT_ENTRY_SIZE, &irq_flags);
 		}
-		if(ret == 1){ // Free data page, should delete FACT entry
-			printk("Entry has been deleted\n");
-			// Set bit to 0 in deleted FACT entry
-			clear_bit(index,FACT_free_list->bitmap);// clear the bit of index
+		if((pmem_te->count>>32) == 0){ // Free data page, should delete FACT entry
 			// Set prev->next to next
 			if(te.prev != 0){
 				temp_next =te.next;
@@ -461,6 +458,8 @@ int nova_dedup_is_duplicate(struct super_block *sb, unsigned long blocknr, bool 
 				nova_flush_buffer(&pmem_te->count,CACHELINE_SIZE,1);
 				nova_memlock_range(sb,pmem_te,NOVA_FACT_ENTRY_SIZE,&irq_flags);
 			}
+			// Set bit to 0 in deleted FACT entry
+			clear_bit(index,FACT_free_list->bitmap);// clear the bit of index
 			return 1;
 		}
 		else // Don't free data page
@@ -529,7 +528,7 @@ int nova_dedup_test(struct file * filp){
 		target_inode = nova_iget(sb,target_inode_number);
 		// Inode Could've been deleted
 		if(target_inode == ERR_PTR(-ESTALE)){
-			nova_info("%s: inode %llu does not exist.", __func__,target_inode_number);
+			//nova_info("%s: inode %llu does not exist.", __func__,target_inode_number);
 			continue;
 		}
 
