@@ -153,7 +153,7 @@ int nova_dedup_FACT_init(struct super_block *sb){
 // Check FACT index range(of FACT)
 int nova_dedup_FACT_index_check(u64 index){
 	if(index > FACT_TABLE_INDEX_MAX){
-		printk("FACT Index Out of Range: %llu(maximum %llu)\n",index,FACT_TABLE_INDEX_MAX);
+		printk("FACT Index Out of Range: %llu(maximum %llu)\n",index,(unsigned long long int)FACT_TABLE_INDEX_MAX);
 		return 1;
 	}
 	return 0;
@@ -412,7 +412,6 @@ int nova_dedup_is_duplicate(struct super_block *sb, unsigned long blocknr, bool 
 	u64 index = 0;
 	u64 target_index;
 	u64 temp_next;
-	int ret=0;
 
 	// Check Index Range of delete entry
 	if(nova_dedup_FACT_index_check(blocknr))
@@ -475,6 +474,9 @@ int nova_dedup_test(struct file * filp){
 	struct inode *garbage_inode = mapping->host;
 	struct super_block *sb = garbage_inode->i_sb;
 
+	// How many deduplications are going to be done each time?
+	int dedup_loop_count = 10;
+	
 	// For read phase
 	struct nova_file_write_entry *target_entry;	// Target write entry to deduplicate
 	struct inode *target_inode;		// Inode of target write entry
@@ -683,7 +685,7 @@ out:
 		}
 		else printk("no entry!\n");	
 		printk("----------DEDUP COMPLETE----------\n");
-	}while(0);
+	}while(dedup_loop_count--);
 
 	kfree(buf);
 	kfree(fingerprint);
