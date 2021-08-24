@@ -59,11 +59,11 @@ struct fact_entry{
   u64 prev;
 	u64 next;
   u64 delete_entry;
-  u32 lock;
+  u32 padding;
 }__attribute((__packed__));
 
 /* FACT free list */
-struct scan_bm{
+struct DeNOVA_bm{
 	unsigned long bitmap_size;
 	unsigned long *bitmap;
 };
