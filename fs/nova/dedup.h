@@ -24,6 +24,11 @@
 #define DATABLOCK_SIZE 4096
 #define FINGERPRINT_SIZE 20
 #define MAX_DATAPAGE_PER_WRITEENTRY 32
+
+#define DEDUP_DONE 0
+#define DEDUP_NEEDED 1
+#define IN_PROCESS 2
+
 /* nova_dedup_queue
 	 queue of entries that needs to be deduplicated
 */
@@ -51,11 +56,17 @@ struct fact_entry{
   u64 count; // 32bit reference count, 32bit update count
   unsigned char fingerprint[FINGERPRINT_SIZE];
   u64 block_address;
-  u64 next;
+  u64 prev;
+	u64 next;
   u64 delete_entry;
   u32 lock;
-  u64 padding;
 }__attribute((__packed__));
+
+/* FACT free list */
+struct scan_bm{
+	unsigned long bitmap_size;
+	unsigned long *bitmap;
+};
 
 /* For Fingerprint lookup */
 struct fingerprint_lookup_data{

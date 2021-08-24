@@ -490,8 +490,8 @@ static struct nova_inode *nova_init(struct super_block *sb,
 	/* NOVA DEDUP KHJ */
 	nova_dedup_queue_init();
 	nova_info("NOVA DEDUP KHJ: dedup_queue init\n");
-	//nova_dedup_FACT_init(sb);
-	//nova_info("Initialize FACT\n");
+	nova_dedup_FACT_init(sb);
+	nova_info("Initialize FACT\n");
 	
 	nova_info("NOVA initialization finish\n");
 	return root_i;
