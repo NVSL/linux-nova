@@ -22,6 +22,15 @@
 #include <asm/mman.h>
 #include "nova.h"
 #include "inode.h"
+#include "dedup.h"
+
+
+/* ------ NOVA DEDUP by KHJ --------- */
+static int nova_dedup(struct file *filp){
+	nova_dedup_test(filp);	
+	return 1;
+}
+/* ---------------------------------- */
 
 
 static inline int nova_can_set_blocksize_hint(struct inode *inode,
@@ -511,6 +520,7 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 				goto out;
 		}
 
+		
 		entry = nova_get_write_entry(sb, sih, index);
 		if (unlikely(entry == NULL)) {
 			nova_dbgv("Required extent not found: pgoff %lu, inode size %lld\n",
@@ -541,6 +551,7 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 		}
 
 		nvmm = get_nvmm(sb, sih, entryc, index);
+		printk("READ: Reading pgoff(%lu ~ %lu), from datapage %lu",index,index+(nr/PAGE_SIZE)-1,nvmm);
 		dax_mem = nova_get_block(sb, (nvmm << PAGE_SHIFT));
 
 memcpy:
@@ -650,19 +661,19 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	u64 epoch_id;
 	u32 time;
 	unsigned long irq_flags = 0;
-
+	
 
 	if (len == 0)
 		return 0;
 
 	NOVA_START_TIMING(do_cow_write_t, cow_write_time);
 
+
 	if (!access_ok(buf, len)) {
 		ret = -EFAULT;
 		goto out;
 	}
 	pos = *ppos;
-
 	if (filp->f_flags & O_APPEND)
 		pos = i_size_read(inode);
 
@@ -762,12 +773,14 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 		else
 			file_size = cpu_to_le64(inode->i_size);
 
+		printk("WRTIE(offset: %lu, %d pages)\n",start_blk,allocated);
 		nova_init_file_write_entry(sb, sih, &entry_data, epoch_id,
 					start_blk, allocated, blocknr, time,
 					file_size);
 
 		ret = nova_append_file_write_entry(sb, pi, inode,
 					&entry_data, &update);
+
 		if (ret) {
 			nova_dbg("%s: append inode entry failed\n", __func__);
 			ret = -ENOSPC;
@@ -854,9 +867,8 @@ ssize_t nova_cow_file_write(struct file *filp,
 
 	sb_start_write(inode->i_sb);
 	inode_lock(inode);
-
 	ret = do_nova_cow_file_write(filp, buf, len, ppos);
-
+	
 	inode_unlock(inode);
 	sb_end_write(inode->i_sb);
 
@@ -870,11 +882,13 @@ static ssize_t nova_dax_file_write(struct file *filp, const char __user *buf,
 {
 	struct address_space *mapping = filp->f_mapping;
 	struct inode *inode = mapping->host;
-
-	if (test_opt(inode->i_sb, DATA_COW))
+	
+	if (test_opt(inode->i_sb, DATA_COW)){
 		return nova_cow_file_write(filp, buf, len, ppos);
-	else
+	}
+	else{
 		return nova_inplace_file_write(filp, buf, len, ppos);
+	}
 }
 
 static ssize_t do_nova_dax_file_write(struct file *filp, const char __user *buf,
@@ -914,6 +928,9 @@ static int nova_dax_file_mmap(struct file *file, struct vm_area_struct *vma)
 }
 
 const struct file_operations nova_dax_file_operations = {
+	// NOVA DEDUP KHJ //
+  .dedup = nova_dedup,
+  // ----- //
 	.llseek			= nova_llseek,
 	.read			= nova_dax_file_read,
 	.write			= nova_dax_file_write,
@@ -995,6 +1012,9 @@ err:
 
 /* Wrap read/write_iter for DP, CoW and WP */
 const struct file_operations nova_wrap_file_operations = {
+	// NOVA DEDUP KHJ //
+	.dedup = nova_dedup,
+	// ----- //
 	.llseek			= nova_llseek,
 	.read			= nova_dax_file_read,
 	.write			= nova_dax_file_write,

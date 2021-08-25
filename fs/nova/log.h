@@ -73,7 +73,7 @@ struct nova_file_write_entry {
 	u8	entry_type;
 	u8	reassigned;	/* Data is not latest */
 	u8	updating;	/* Data is being written */
-	u8	padding;
+	u8	dedup_flag; /* NOVA DEDUP KHJ */
 	__le32	num_pages;
 	__le64	block;          /* offset of first block in this write */
 	__le64	pgoff;          /* file offset at the beginning of this write */
@@ -321,6 +321,10 @@ int nova_assign_write_entry(struct super_block *sb,
 	struct nova_file_write_entry *entry,
 	struct nova_file_write_entry *entryc, bool free);
 
+/* NOVA DEDUP KHJ */
+int nova_invalidate_write_entry(struct super_block *sb,
+	struct nova_file_write_entry *entry, int reassign,
+	unsigned int num_free);
 
 void nova_print_curr_log_page(struct super_block *sb, u64 curr);
 void nova_print_nova_log(struct super_block *sb,

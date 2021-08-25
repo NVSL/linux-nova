@@ -19,6 +19,7 @@
 #include "journal.h"
 #include "inode.h"
 #include "log.h"
+#include "dedup.h"
 
 static int nova_execute_invalidate_reassign_logentry(struct super_block *sb,
 	void *entry, enum nova_entry_type type, int reassign,
@@ -102,7 +103,9 @@ int nova_reassign_logentry(struct super_block *sb, void *entry,
 	return nova_invalidate_reassign_logentry(sb, entry, type, 1, 0);
 }
 
-static inline int nova_invalidate_write_entry(struct super_block *sb,
+/* NOVA DEDUP KHJ */
+//static inline int nova_invalidate_write_entry(struct super_block *sb,
+int nova_invalidate_write_entry(struct super_block *sb,
 	struct nova_file_write_entry *entry, int reassign,
 	unsigned int num_free)
 {
@@ -403,6 +406,9 @@ static int nova_append_log_entry(struct super_block *sb,
 	void *entry, *alter_entry;
 	enum nova_entry_type type = entry_info->type;
 	struct nova_inode_update *update = entry_info->update;
+	/* DEDUP NOVA KHJ */
+	struct nova_file_write_entry *target_entry = entry_info->data;
+	/* -------------- */
 	u64 tail, alter_tail;
 	u64 curr_p, alter_curr_p;
 	size_t size;
@@ -421,6 +427,7 @@ static int nova_append_log_entry(struct super_block *sb,
 						MAIN_LOG, 0, &extended);
 	if (curr_p == 0)
 		return -ENOSPC;
+
 
 	nova_dbg_verbose("%s: inode %lu attr change entry @ 0x%llx\n",
 				__func__, sih->ino, curr_p);
@@ -452,6 +459,16 @@ static int nova_append_log_entry(struct super_block *sb,
 	}
 
 	entry_info->curr_p = curr_p;
+
+	/* DEDUP NOVA KHJ */
+  // The Write Entries that are doing deduplication should not be here
+	// Check 'dedup_flag' 
+	if(type == FILE_WRITE){
+		if(target_entry->dedup_flag == 0)
+			nova_dedup_queue_push(curr_p, pi->nova_ino);
+  }
+  /*****************/
+	
 	return 0;
 }
 
