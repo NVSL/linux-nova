@@ -665,6 +665,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	// DEDUP //
 	int i;
 	unsigned char *fingerprint;
+	struct fingerprint_lookup_data *lookup_data;
 
 	fingerprint = kmalloc(FINGERPRINT_SIZE, GFP_KERNEL);
 
