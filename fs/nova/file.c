@@ -668,7 +668,6 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	struct fingerprint_lookup_data *lookup_data;
 
 	fingerprint = kmalloc(FINGERPRINT_SIZE, GFP_KERNEL);
-	lookup_data = kmalloc(total_blocks, sizeof(struct fingerprint_lookup_data), GFP_KERNEL);
 
 	// DEDUP //
 	
@@ -715,9 +714,9 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	}
 
 	// DEDUP // - fingerprinting
-	for (i = 0; i < total_blocks; i++) {
-		nova_dedup_fingerprint(buf, fingerprint);
-	}
+//	for (i = 0; i < total_blocks; i++) {
+//		nova_dedup_fingerprint(buf, fingerprint);
+//	}
 
 	// DEDUP //
 
