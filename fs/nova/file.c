@@ -662,21 +662,30 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	u32 time;
 	unsigned long irq_flags = 0;
 
-	// DEDUP //
-	int i;
-	unsigned char *fingerprint;
-	struct fingerprint_lookup_data *lookup_data;
-
-	fingerprint = kmalloc(FINGERPRINT_SIZE, GFP_KERNEL);
-
-	// DEDUP //
 	
-
 	if (len == 0)
 		return 0;
 
 	NOVA_START_TIMING(do_cow_write_t, cow_write_time);
 
+	// DEDUP //
+	int i, j;
+	int chunk = 0;
+	unsigned char *fingerprint;
+	char *k_buf;
+	struct fingerprint_lookup_data *lookup_data;
+
+	fingerprint = kmalloc(FINGERPRINT_SIZE, GFP_KERNEL);
+	k_buf = kmalloc(DATABLOCK_SIZE, GFP_KERNEL);
+
+	memset(fingerprint, 0, FINGERPRINT_SIZE);
+	memset(k_buf, 0, DATABLOCK_SIZE);
+
+for (i = 0; i < FINGERPRINT_SIZE; i++)
+	printk("%d: %02X \n", i, fingerprint[i]);
+
+printk("len: %lu \n", len);
+	// DEDUP //
 
 	if (!access_ok(buf, len)) {
 		ret = -EFAULT;
@@ -714,10 +723,20 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	}
 
 	// DEDUP // - fingerprinting
-//	for (i = 0; i < total_blocks; i++) {
-//		nova_dedup_fingerprint(buf, fingerprint);
-//	}
+printk("total_blocks: %lu \n", total_blocks);
+	lookup_data = kmalloc(total_blocks * sizeof(struct fingerprint_lookup_data), GFP_KERNEL);
 
+	for (i = 0; i < total_blocks; i++) {
+		if (i == total_blocks - 1)
+			copy_from_user(k_buf, buf + chunk, len - DATABLOCK_SIZE * (total_blocks - 1));
+		else
+			copy_from_user(k_buf, buf + chunk, DATABLOCK_SIZE);
+//		nova_dedup_fingerprint(k_buf, fingerprint);
+		chunk += DATABLOCK_SIZE;
+	}
+
+for(i=0;i<len - DATABLOCK_SIZE * (total_blocks-1);i++)
+	printk("%02X\n",k_buf[i]);
 	// DEDUP //
 
 	/* offset in the actual block size block */
@@ -857,6 +876,12 @@ out:
 
 	NOVA_END_TIMING(do_cow_write_t, cow_write_time);
 	NOVA_STATS_ADD(cow_write_bytes, written);
+
+	// DEDUP //
+	kfree(fingerprint);
+	kfree(k_buf);
+	kfree(lookup_data);
+	// DEDUP //
 
 	if (try_inplace)
 		return do_nova_inplace_file_write(filp, buf, len, ppos);
