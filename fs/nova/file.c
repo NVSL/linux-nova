@@ -661,6 +661,14 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	u64 epoch_id;
 	u32 time;
 	unsigned long irq_flags = 0;
+
+	// DEDUP //
+	int i;
+	unsigned char *fingerprint;
+
+	fingerprint = kmalloc(FINGERPRINT_SIZE, GFP_KERNEL);
+
+	// DEDUP //
 	
 
 	if (len == 0)
@@ -703,6 +711,13 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 		ret = -EACCES;
 		goto out;
 	}
+
+	// DEDUP // - fingerprinting
+	for (i = 0; i < total_blocks; i++) {
+		nova_dedup_fingerprint(buf, fingerprint);
+	}
+
+	// DEDUP //
 
 	/* offset in the actual block size block */
 
