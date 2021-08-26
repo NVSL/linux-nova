@@ -75,14 +75,38 @@ struct fingerprint_lookup_data{
   u64 block_address; // Actual address of this entry(where the data block is)
 };
 
-
-int nova_dedup_FACT_init(struct super_block *sb);
-
-int nova_dedup_test(struct file *);
-int nova_dedup_queue_push(u64,u64);
+// DEDUP QUEUE //
 int nova_dedup_queue_init(void);
+int nova_dedup_queue_push(u64 new_address, u64 target_inode_number);
+u64 nova_dedup_queue_get_next_entry(u64 *target_inode_number);
 
+// Fingerprinting //
+static struct sdesc *init_sdesc(struct crypto_shash *alg);
+static int calc_hash(struct crypto_shash *alg, const unsigned char *data, unsigned int datalen, unsigned char *digest);
+int nova_dedup_fingerprint(unsigned char* datapage, unsigned char * ret_fingerprint);
+
+// Checks integrity of inode, write-entry, data-page //
+int nova_dedup_crosscheck(struct nova_file_write_entry *entry, struct nova_inode_info_header *sih, unsigned long pgoff);
+
+// FACT handling //
+int nova_dedup_FACT_init(struct super_block *sb);
+int nova_dedup_FACT_index_check(u64 index);
+int nova_dedup_FACT_update_count(struct super_block *sb, u64 index);
+int nova_dedup_FACT_read(struct super_block *sb, u64 index);
+int nova_dedup_is_empty(struct fact_entry target);
+int nova_dedup_FACT_insert(struct super_block *sb, struct fingerprint_lookup_data* lookup);
+
+// Updates FACT + dedup_flags in write-entry of TargetWriteEntry //
+int nova_dedup_TWE_update(struct super_block *sb,struct nova_inode_info_header *sih,u64 curr_p, short *duplicate_check);
+// Updates FACT + dedup_flags in write-entry of new write entry //
+int nova_dedup_entry_update(struct super_block *sb, struct nova_inode_info_header *sih, u64 begin_tail);
+// Checks if target block has multiple ReferenceCount & Delete FACT entry //
 int nova_dedup_is_duplicate(struct super_block *sb, unsigned long blocknr, bool check);
+
+
+// Main function //
+int nova_dedup_test(struct file *);
+
 
 
 #endif
