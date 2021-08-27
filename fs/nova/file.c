@@ -725,18 +725,26 @@ printk("len: %lu \n", len);
 	// DEDUP // - fingerprinting
 printk("total_blocks: %lu \n", total_blocks);
 	lookup_data = kmalloc(total_blocks * sizeof(struct fingerprint_lookup_data), GFP_KERNEL);
-
+	// chunk data.
 	for (i = 0; i < total_blocks; i++) {
 		if (i == total_blocks - 1)
 			copy_from_user(k_buf, buf + chunk, len - DATABLOCK_SIZE * (total_blocks - 1));
 		else
 			copy_from_user(k_buf, buf + chunk, DATABLOCK_SIZE);
-//		nova_dedup_fingerprint(k_buf, fingerprint);
+		// fingerprint the chunk.
+		nova_dedup_fingerprint(k_buf, fingerprint);
+		// store FP result in DRAM intermediately.
+		for (j = 0; j < FINGERPRINT_SIZE; j++) {
+			printk("%d: %02X \n", j, fingerprint[j]);
+			lookup_data[i].fingerprint[j] = fingerprint[j];
+		}
 		chunk += DATABLOCK_SIZE;
 	}
 
 for(i=0;i<len - DATABLOCK_SIZE * (total_blocks-1);i++)
-	printk("%02X\n",k_buf[i]);
+	printk("%c\n",k_buf[i]);
+for(j=0;j<FINGERPRINT_SIZE;j++)
+	printk("%d: %02X \n", j, lookup_data[total_blocks-1].fingerprint[j]);
 	// DEDUP //
 
 	/* offset in the actual block size block */
