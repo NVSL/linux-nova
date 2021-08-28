@@ -669,11 +669,14 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	NOVA_START_TIMING(do_cow_write_t, cow_write_time);
 
 	// DEDUP //
+	// (1) Start new write.
 	int i, j;
 	int chunk = 0;
 	unsigned char *fingerprint;
 	char *k_buf;
 	struct fingerprint_lookup_data *lookup_data;
+	short *duplicate_check;
+	int num_new_FACT_entry = 0;
 
 	fingerprint = kmalloc(FINGERPRINT_SIZE, GFP_KERNEL);
 	k_buf = kmalloc(DATABLOCK_SIZE, GFP_KERNEL);
@@ -722,16 +725,18 @@ printk("len: %lu \n", len);
 		goto out;
 	}
 
-	// DEDUP // - fingerprinting
+	// DEDUP //
 printk("total_blocks: %lu \n", total_blocks);
 	lookup_data = kmalloc(total_blocks * sizeof(struct fingerprint_lookup_data), GFP_KERNEL);
-	// chunk data.
+	duplicate_check = kmalloc(total_blocks * sizeof(short), GFP_KERNEL);
+	memset(duplicate_check, 0, total_blocks * sizeof(short));
+	// Make chunks of data.
 	for (i = 0; i < total_blocks; i++) {
 		if (i == total_blocks - 1)
 			copy_from_user(k_buf, buf + chunk, len - DATABLOCK_SIZE * (total_blocks - 1));
 		else
 			copy_from_user(k_buf, buf + chunk, DATABLOCK_SIZE);
-		// fingerprint the chunk.
+		// (2) Fingerprint each data chunk.
 		nova_dedup_fingerprint(k_buf, fingerprint);
 		// store FP result in DRAM intermediately.
 		for (j = 0; j < FINGERPRINT_SIZE; j++) {
@@ -745,6 +750,21 @@ for(i=0;i<len - DATABLOCK_SIZE * (total_blocks-1);i++)
 	printk("%c\n",k_buf[i]);
 for(j=0;j<FINGERPRINT_SIZE;j++)
 	printk("%d: %02X \n", j, lookup_data[total_blocks-1].fingerprint[j]);
+
+	// (3) Update FACT entries of fingerprinted chunks.
+	for (i = 0; i < total_blocks; i++) {
+		duplicate_check[i] = nova_dedup_FACT_insert(sb, &lookup_data[i]);
+		num_new_FACT_entry += duplicate_check[i];
+	}
+	// Testing.
+	for (i = 0; i < total_blocks; i++) {
+		nova_dedup_FACT_read(sb, lookup_data[i].index);
+	}
+//	if (!num_new_FACT_entry) {
+//		printk("All unique data-pages \n");
+		//nova_dedup_TWE_update();
+		//
+//	}
 	// DEDUP //
 
 	/* offset in the actual block size block */
@@ -889,6 +909,7 @@ out:
 	kfree(fingerprint);
 	kfree(k_buf);
 	kfree(lookup_data);
+	kfree(duplicate_check);
 	// DEDUP //
 
 	if (try_inplace)
@@ -1086,3 +1107,231 @@ const struct inode_operations nova_file_inode_operations = {
 	.getattr	= nova_getattr,
 	.get_acl	= NULL,
 };
+
+
+// NVSL-nova original version back up //
+/*
+ * Perform a COW write.   Must hold the inode lock before calling.
+ */
+/*
+static ssize_t do_nova_cow_file_write(struct file *filp,
+	const char __user *buf,	size_t len, loff_t *ppos)
+{
+	struct address_space *mapping = filp->f_mapping;
+	struct inode	*inode = mapping->host;
+	struct nova_inode_info *si = NOVA_I(inode);
+	struct nova_inode_info_header *sih = &si->header;
+	struct super_block *sb = inode->i_sb;
+	struct nova_inode *pi, inode_copy;
+	struct nova_file_write_entry entry_data;
+	struct nova_inode_update update;
+	ssize_t	    written = 0;
+	loff_t pos;
+	size_t count, offset, copied;
+	unsigned long start_blk, num_blocks;
+	unsigned long total_blocks;
+	unsigned long blocknr = 0;
+	unsigned int data_bits;
+	int allocated = 0;
+	void *kmem;
+	u64 file_size;
+	size_t bytes;
+	long status = 0;
+	INIT_TIMING(cow_write_time);
+	INIT_TIMING(memcpy_time);
+	unsigned long step = 0;
+	ssize_t ret;
+	u64 begin_tail = 0;
+	int try_inplace = 0;
+	u64 epoch_id;
+	u32 time;
+	unsigned long irq_flags = 0;
+
+	
+	if (len == 0)
+		return 0;
+
+	NOVA_START_TIMING(do_cow_write_t, cow_write_time);
+
+
+	if (!access_ok(buf, len)) {
+		ret = -EFAULT;
+		goto out;
+	}
+	pos = *ppos;
+	if (filp->f_flags & O_APPEND)
+		pos = i_size_read(inode);
+
+	count = len;
+
+	pi = nova_get_block(sb, sih->pi_addr);
+*/
+	/* nova_inode tail pointer will be updated and we make sure all other
+	 * inode fields are good before checksumming the whole structure
+	 */
+/*	if (nova_check_inode_integrity(sb, sih->ino, sih->pi_addr,
+			sih->alter_pi_addr, &inode_copy, 0) < 0) {
+		ret = -EIO;
+		goto out;
+	}
+
+	offset = pos & (sb->s_blocksize - 1);
+	num_blocks = ((count + offset - 1) >> sb->s_blocksize_bits) + 1;
+	total_blocks = num_blocks;
+	start_blk = pos >> sb->s_blocksize_bits;
+
+	if (nova_check_overlap_vmas(sb, sih, start_blk, num_blocks)) {
+		nova_dbgv("COW write overlaps with vma: inode %lu, pgoff %lu, %lu blocks\n",
+				inode->i_ino, start_blk, num_blocks);
+		NOVA_STATS_ADD(cow_overlap_mmap, 1);
+		try_inplace = 1;
+		ret = -EACCES;
+		goto out;
+	}
+*/
+
+	/* offset in the actual block size block */
+/*
+	ret = file_remove_privs(filp);
+	if (ret)
+		goto out;
+
+	inode->i_ctime = inode->i_mtime = current_time(inode);
+	time = current_time(inode).tv_sec;
+
+	nova_dbgv("%s: inode %lu, offset %lld, count %lu\n",
+			__func__, inode->i_ino,	pos, count);
+
+	epoch_id = nova_get_epoch_id(sb);
+	update.tail = sih->log_tail;
+	update.alter_tail = sih->alter_log_tail;
+	while (num_blocks > 0) {
+		offset = pos & (nova_inode_blk_size(sih) - 1);
+		start_blk = pos >> sb->s_blocksize_bits;
+*/
+		/* don't zero-out the allocated blocks */
+/*		allocated = nova_new_data_blocks(sb, sih, &blocknr, start_blk,
+				 num_blocks, ALLOC_NO_INIT, ANY_CPU,
+				 ALLOC_FROM_HEAD);
+
+		nova_dbg_verbose("%s: alloc %d blocks @ %lu\n", __func__,
+						allocated, blocknr);
+
+		if (allocated <= 0) {
+			nova_dbg("%s alloc blocks failed %d\n", __func__,
+								allocated);
+			ret = allocated;
+			goto out;
+		}
+
+		step++;
+		bytes = sb->s_blocksize * allocated - offset;
+		if (bytes > count)
+			bytes = count;
+
+		kmem = nova_get_block(inode->i_sb,
+			     nova_get_block_off(sb, blocknr, sih->i_blk_type));
+
+		if (offset || ((offset + bytes) & (PAGE_SIZE - 1)) != 0)  {
+			ret = nova_handle_head_tail_blocks(sb, inode, pos,
+							   bytes, kmem);
+			if (ret)
+				goto out;
+		}								*/
+		/* Now copy from user buf */
+		//		nova_dbg("Write: %p\n", kmem);
+/*		NOVA_START_TIMING(memcpy_w_nvmm_t, memcpy_time);
+		nova_memunlock_range(sb, kmem + offset, bytes, &irq_flags);
+		copied = bytes - memcpy_to_pmem_nocache(kmem + offset,
+						buf, bytes);
+		nova_memlock_range(sb, kmem + offset, bytes, &irq_flags);
+		NOVA_END_TIMING(memcpy_w_nvmm_t, memcpy_time);
+
+		if (data_csum > 0 || data_parity > 0) {
+			ret = nova_protect_file_data(sb, inode, pos, bytes,
+							buf, blocknr, false);
+			if (ret)
+				goto out;
+		}
+
+		if (pos + copied > inode->i_size)
+			file_size = cpu_to_le64(pos + copied);
+		else
+			file_size = cpu_to_le64(inode->i_size);
+
+		printk("WRTIE(offset: %lu, %d pages)\n",start_blk,allocated);
+		nova_init_file_write_entry(sb, sih, &entry_data, epoch_id,
+					start_blk, allocated, blocknr, time,
+					file_size);
+
+		ret = nova_append_file_write_entry(sb, pi, inode,
+					&entry_data, &update);
+
+		if (ret) {
+			nova_dbg("%s: append inode entry failed\n", __func__);
+			ret = -ENOSPC;
+			goto out;
+		}
+
+		nova_dbgv("Write: %p, %lu\n", kmem, copied);
+		if (copied > 0) {
+			status = copied;
+			written += copied;
+			pos += copied;
+			buf += copied;
+			count -= copied;
+			num_blocks -= allocated;
+		}
+		if (unlikely(copied != bytes)) {
+			nova_dbg("%s ERROR!: %p, bytes %lu, copied %lu\n",
+				__func__, kmem, bytes, copied);
+			if (status >= 0)
+				status = -EFAULT;
+		}
+		if (status < 0)
+			break;
+
+		if (begin_tail == 0)
+			begin_tail = update.curr_entry;
+	}
+
+	data_bits = blk_type_to_shift[sih->i_blk_type];
+	sih->i_blocks += (total_blocks << (data_bits - sb->s_blocksize_bits));
+
+	nova_memunlock_inode(sb, pi, &irq_flags);
+	nova_update_inode(sb, inode, pi, &update, 1);
+	nova_memlock_inode(sb, pi, &irq_flags);
+*/
+	/* Free the overlap blocks after the write is committed */
+/*	ret = nova_reassign_file_tree(sb, sih, begin_tail);
+	if (ret)
+		goto out;
+
+	inode->i_blocks = sih->i_blocks;
+
+	ret = written;
+	NOVA_STATS_ADD(cow_write_breaks, step);
+	nova_dbgv("blocks: %lu, %lu\n", inode->i_blocks, sih->i_blocks);
+
+	*ppos = pos;
+	if (pos > inode->i_size) {
+		i_size_write(inode, pos);
+		sih->i_size = pos;
+	}
+
+	sih->trans_id++;
+out:
+	if (ret < 0)
+		nova_cleanup_incomplete_write(sb, sih, blocknr, allocated,
+						begin_tail, update.tail);
+
+	NOVA_END_TIMING(do_cow_write_t, cow_write_time);
+	NOVA_STATS_ADD(cow_write_bytes, written);
+
+
+	if (try_inplace)
+		return do_nova_inplace_file_write(filp, buf, len, ppos);
+
+	return ret;
+}
+*/

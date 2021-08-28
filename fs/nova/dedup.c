@@ -302,7 +302,7 @@ int nova_dedup_FACT_insert(struct super_block *sb, struct fingerprint_lookup_dat
 
 	// update lookup data(used in deduplication process)
 	lookup->index = index;
-	lookup->block_address = te.block_address;
+	lookup->block_address = te.block_address;	// [YhC] in duplicate-found case, lookup should be updated!
 	
 	// Add 'delete entry'
 	if(ret == 0){
