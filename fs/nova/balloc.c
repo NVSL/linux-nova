@@ -583,7 +583,7 @@ struct nova_range_node *nova_alloc_blocknode_atomic(struct super_block *sb)
 
 #define PAGES_PER_2MB 512
 #define PAGES_PER_2MB_MASK (512 - 1)
-#define IS_DATABLOCKS_2MB_ALIGNED(numblocks, atype) \
+#define IS_DATABLOCKS_2MB_ALIGNED(num_blocks, atype) \
 		(!(num_blocks & PAGES_PER_2MB_MASK) && (atype == DATA))
 
 /* This method returns the number of blocks allocated. */
