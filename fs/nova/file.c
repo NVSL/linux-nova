@@ -684,9 +684,6 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	memset(fingerprint, 0, FINGERPRINT_SIZE);
 	memset(k_buf, 0, DATABLOCK_SIZE);
 
-for (i = 0; i < FINGERPRINT_SIZE; i++)
-	printk("%d: %02X \n", i, fingerprint[i]);
-
 printk("len: %lu \n", len);
 	// DEDUP //
 
@@ -729,9 +726,10 @@ printk("len: %lu \n", len);
 printk("total_blocks: %lu \n", total_blocks);
 	lookup_data = kmalloc(total_blocks * sizeof(struct fingerprint_lookup_data), GFP_KERNEL);
 	duplicate_check = kmalloc(total_blocks * sizeof(short), GFP_KERNEL);
+	memset(lookup_data, 0, total_blocks * sizeof(short));
 	memset(duplicate_check, 0, total_blocks * sizeof(short));
 	// Make chunks of data.
-	for (i = 0; i < total_blocks; i++) {
+/*	for (i = 0; i < total_blocks; i++) {
 		if (i == total_blocks - 1)
 			copy_from_user(k_buf, buf + chunk, len - DATABLOCK_SIZE * (total_blocks - 1));
 		else
@@ -740,26 +738,28 @@ printk("total_blocks: %lu \n", total_blocks);
 		nova_dedup_fingerprint(k_buf, fingerprint);
 		// store FP result in DRAM intermediately.
 		for (j = 0; j < FINGERPRINT_SIZE; j++) {
-			printk("%d: %02X \n", j, fingerprint[j]);
+			//printk("%d: %02X \n", j, fingerprint[j]);
 			lookup_data[i].fingerprint[j] = fingerprint[j];
 		}
 		chunk += DATABLOCK_SIZE;
-	}
+	}	*/
+// edge block contents.
+//for(i=0;i<len - DATABLOCK_SIZE * (total_blocks-1);i++)
+//	printk("%c\n",k_buf[i]);
 
-for(i=0;i<len - DATABLOCK_SIZE * (total_blocks-1);i++)
-	printk("%c\n",k_buf[i]);
-for(j=0;j<FINGERPRINT_SIZE;j++)
-	printk("%d: %02X \n", j, lookup_data[total_blocks-1].fingerprint[j]);
+// edge block FP.
+//for(j=0;j<FINGERPRINT_SIZE;j++)
+//	printk("%d: %02X \n", j, lookup_data[total_blocks-1].fingerprint[j]);
 
 	// (3) Update FACT entries of fingerprinted chunks.
-	for (i = 0; i < total_blocks; i++) {
+/*	for (i = 0; i < total_blocks; i++) {
 		duplicate_check[i] = nova_dedup_FACT_insert(sb, &lookup_data[i]);
 		num_new_FACT_entry += duplicate_check[i];
 	}
 	// Testing.
 	for (i = 0; i < total_blocks; i++) {
 		nova_dedup_FACT_read(sb, lookup_data[i].index);
-	}
+	}*/
 //	if (!num_new_FACT_entry) {
 //		printk("All unique data-pages \n");
 		//nova_dedup_TWE_update();
@@ -791,6 +791,13 @@ for(j=0;j<FINGERPRINT_SIZE;j++)
 				 num_blocks, ALLOC_NO_INIT, ANY_CPU,
 				 ALLOC_FROM_HEAD);
 
+		// DEDUP //
+		if (offset)
+			allocated = 1;	// if partial head or tail exists, exclude that head block from deduping.
+
+		printk("allocated: %d \n", allocated);
+		// DEDUP //
+
 		nova_dbg_verbose("%s: alloc %d blocks @ %lu\n", __func__,
 						allocated, blocknr);
 
@@ -815,6 +822,43 @@ for(j=0;j<FINGERPRINT_SIZE;j++)
 			if (ret)
 				goto out;
 		}
+
+
+		// DEDUP //
+		if (offset)
+			goto head_edge;
+
+		// Make chunks of data.
+		for (i = 0; i < allocated; i++) {
+			if ( ((offset + bytes) & (PAGE_SIZE - 1)) != 0 || i == allocated - 1 ) {		// if tail edge exists,
+				copy_from_user(k_buf, buf + chunk, bytes - DATABLOCK_SIZE * (allocated - 1));
+				memset(k_buf + (bytes - DATABLOCK_SIZE * (allocated - 1)), 0, DATABLOCK_SIZE * allocated - bytes);
+			}
+			else
+				copy_from_user(k_buf, buf + chunk, DATABLOCK_SIZE);
+			// (2) Fingerprint each data chunk.
+			nova_dedup_fingerprint(k_buf, fingerprint);
+			// store FP result in DRAM intermediately.
+			for (j = 0; j < FINGERPRINT_SIZE; j++) {
+				//printk("%d: %02X \n", j, fingerprint[j]);
+				lookup_data[i].fingerprint[j] = fingerprint[j];
+				lookup_data[i].block_address = blocknr + i;
+			}
+			chunk += DATABLOCK_SIZE;
+		}
+		// (3) Update FACT entries of fingerprinted chunks.
+		for (i = 0; i < allocated; i++) {
+			duplicate_check[i] = nova_dedup_FACT_insert(sb, &lookup_data[i]);
+			num_new_FACT_entry += duplicate_check[i];
+		}
+		// Testing.
+		for (i = 0; i < total_blocks; i++) {
+			nova_dedup_FACT_read(sb, lookup_data[i].index);
+		}
+		// DEDUP //
+
+head_edge:
+
 		/* Now copy from user buf */
 		//		nova_dbg("Write: %p\n", kmem);
 		NOVA_START_TIMING(memcpy_w_nvmm_t, memcpy_time);

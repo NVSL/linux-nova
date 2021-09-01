@@ -124,7 +124,8 @@ int nova_dedup_crosscheck(struct nova_file_write_entry *entry
 // Clear FACT, set FACT_free_table, FACT locks
 int nova_dedup_FACT_init(struct super_block *sb){
 	unsigned long i;
-	unsigned long start = FACT_TABLE_START;
+	//unsigned long start = FACT_TABLE_START;
+	unsigned long start = 0;
 	unsigned long end = FACT_TABLE_INDEX_MAX;
 	unsigned long irq_flags=0;
 	unsigned long target_index;
@@ -142,7 +143,6 @@ int nova_dedup_FACT_init(struct super_block *sb){
 		target_entry = (struct fact_entry*)nova_get_block(sb,target_index);
 
 		nova_memunlock_range(sb,target_entry,64,&irq_flags);
-
 		memcpy_to_pmem_nocache(target_entry, &fill,64);
 		nova_memlock_range(sb,target_entry,64,&irq_flags);
 	}
@@ -218,7 +218,7 @@ int nova_dedup_FACT_read(struct super_block *sb, u64 index){
 	next = target->next;
 	prev = target->prev;
 
-	printk("index:%lld, ref_count:%d, up_count:%d, prev:%lld, next:%lld, block_address: %lld\n",
+	printk("Read FACT an entry - index:%llu, ref_count:%d, up_count:%d, prev:%llu, next:%llu, block_address: %llu\n",
 			index,r_count,u_count,prev,next,block_address);
 	return 0;
 }
@@ -279,13 +279,13 @@ int nova_dedup_FACT_insert(struct super_block *sb, struct fingerprint_lookup_dat
 		else{ // Needs new index from FACT_free_list
 			prev_index = index;
 			index = find_next_zero_bit(FACT_free_list->bitmap,FACT_free_list->bitmap_size,FACT_TABLE_INDIRECT_AREA_START_INDEX);
-			printk("New Index from FACT free list is %lld\n",index);
+			printk("New Index from FACT free list is %llu\n",index);
 		}
 	}while(1);
 
 	if(ret){ // duplicate data page detected
 		te.count++; // Increase Update Count
-		printk("Duplicate Page detected on index %lld, ref_count:%lld\n",index,te.count>>32);
+		printk("Duplicate Page detected on index %llu, ref_count:%llu\n",index,te.count>>32);
 	}
 	else{ // new entry should be written
 		strncpy(te.fingerprint,lookup->fingerprint,FINGERPRINT_SIZE);
@@ -293,6 +293,8 @@ int nova_dedup_FACT_insert(struct super_block *sb, struct fingerprint_lookup_dat
 		te.count=1;
 		te.prev = prev_index;
 		te.next = 0;
+
+		printk("index: %llu, block_address: %llu, count: %llu, prev: %llu, next: %llu \n", index, te.block_address, te.count, te.prev, te.next);
 	}
 
 	// copy target_entry to pmem
