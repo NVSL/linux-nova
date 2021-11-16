@@ -496,7 +496,7 @@ static int nova_rebuild_file_inode_tree(struct super_block *sb,
 	}
 
 	ret = nova_rebuild_inode_finish(sb, pi, sih, reb, curr_p);
-	sih->i_blocks = sih->log_pages + (sih->i_size >> data_bits);
+	sih->i_blocks = sih->i_size >> data_bits;
 
 out:
 //	nova_print_inode_log_page(sb, inode);
@@ -685,7 +685,7 @@ int nova_rebuild_dir_inode_tree(struct super_block *sb,
 	}
 
 	ret = nova_rebuild_inode_finish(sb, pi, sih, reb, curr_p);
-	sih->i_blocks = sih->log_pages;
+	sih->i_blocks = 0;
 
 out:
 //	nova_print_dir_tree(sb, sih, ino);
@@ -844,7 +844,7 @@ int nova_restore_snapshot_table(struct super_block *sb, int just_init)
 	}
 
 	ret = nova_rebuild_inode_finish(sb, pi, sih, reb, curr_p);
-	sih->i_blocks = sih->log_pages + (sih->i_size >> data_bits);
+	sih->i_blocks = sih->i_size >> data_bits;
 
 out:
 //	nova_print_inode_log_page(sb, inode);
