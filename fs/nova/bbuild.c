@@ -206,6 +206,8 @@ static int nova_init_blockmap_from_inode(struct super_block *sb)
 	u64 cpuid;
 	int ret = 0;
 
+	memset(&sih, 0, sizeof(struct nova_info_header));
+
 	/* FIXME: Backup inode for BLOCKNODE */
 	ret = nova_get_head_tail(sb, pi, &sih);
 	if (ret)
