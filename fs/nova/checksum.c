@@ -204,7 +204,7 @@ void nova_update_entry_csum(void *entry)
 
 flush:
 	if (entry_len > 0)
-		nova_flush_buffer(entry, entry_len, 0);
+		nova_flush_buffer(entry, entry_len, 1);
 
 }
 
