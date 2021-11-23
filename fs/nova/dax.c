@@ -760,8 +760,10 @@ ssize_t do_nova_inplace_file_write(struct file *filp,
 			if (status >= 0)
 				status = -EFAULT;
 		}
-		if (status < 0)
+		if (status < 0) {
+			written = status;
 			break;
+		}
 
 		if (hole_fill) {
 			update_log = true;
