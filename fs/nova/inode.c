@@ -410,8 +410,9 @@ static void nova_truncate_file_blocks(struct inode *inode, loff_t start,
 	first_blocknr = (start + (1UL << data_bits) - 1) >> data_bits;
 
 	if (end == 0)
-		return;
-	last_blocknr = (end - 1) >> data_bits;
+		last_blocknr = 0;
+	else
+		last_blocknr = (end - 1) >> data_bits;
 
 	if (first_blocknr > last_blocknr)
 		return;
