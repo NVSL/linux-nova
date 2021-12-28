@@ -101,7 +101,6 @@ static void nova_lite_transaction_for_new_inode(struct super_block *sb,
 
 	pi->valid = 1;
 	nova_update_inode_checksum(pi);
-	PERSISTENT_BARRIER();
 
 	nova_commit_lite_transaction(sb, journal_tail, cpu);
 	nova_memlock_journal(sb, &irq_flags);
