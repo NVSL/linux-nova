@@ -281,6 +281,8 @@ static u64 nova_append_dentry_journal(struct super_block *sb,
 {
 	curr_p = nova_append_entry_journal(sb, curr_p, &dentry->ino);
 	curr_p = nova_append_entry_journal(sb, curr_p, &dentry->csum);
+	curr_p = nova_append_entry_journal(sb, curr_p, &dentry->reassigned);
+	curr_p = nova_append_entry_journal(sb, curr_p, &dentry->invalid);
 	return curr_p;
 }
 
@@ -341,8 +343,8 @@ u64 nova_create_inode_transaction(struct super_block *sb,
 /* Journaled transactions for rename operations */
 u64 nova_create_rename_transaction(struct super_block *sb,
 	struct inode *old_inode, struct inode *old_dir, struct inode *new_inode,
-	struct inode *new_dir, struct nova_dentry *father_entry,
-	int invalidate_new_inode, int cpu)
+	struct inode *new_dir, struct nova_dentry *father_entry, struct nova_dentry *new_dentry,
+	struct nova_dentry *old_dentry, int invalidate_new_inode, int cpu)
 {
 	struct journal_ptr_pair *pair;
 	u64 temp;
@@ -371,6 +373,12 @@ u64 nova_create_rename_transaction(struct super_block *sb,
 
 	if (father_entry)
 		temp = nova_append_dentry_journal(sb, temp, father_entry);
+
+	if (new_dentry)
+		temp = nova_append_dentry_journal(sb, temp, new_dentry);
+
+	if (old_dentry)
+		temp = nova_append_dentry_journal(sb, temp, old_dentry);
 
 	nova_flush_journal_in_batch(sb, pair->journal_head, temp);
 	pair->journal_tail = temp;
