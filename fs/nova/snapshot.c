@@ -866,8 +866,8 @@ int nova_restore_snapshot_entry(struct super_block *sb,
 		goto out;
 	}
 
-	if (epoch_id > sbi->s_epoch_id)
-		sbi->s_epoch_id = epoch_id;
+	if (epoch_id >= sbi->s_epoch_id)
+		sbi->s_epoch_id = epoch_id + 1;
 
 out:
 	nova_clear_nvmm_page(sb, entry, just_init);
@@ -963,7 +963,7 @@ int nova_create_snapshot(struct super_block *sb)
 	nova_set_vmas_readonly(sb);
 
 	sbi->nova_sb->s_wtime = cpu_to_le32(get_seconds());
-	sbi->nova_sb->s_epoch_id = cpu_to_le64(epoch_id);
+	sbi->nova_sb->s_epoch_id = cpu_to_le64(epoch_id + 1);
 	nova_update_super_crc(sb);
 
 	nova_sync_super(sb);
