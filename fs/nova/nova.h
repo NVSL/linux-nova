@@ -1021,7 +1021,7 @@ int nova_append_dir_init_entries(struct super_block *sb,
 int nova_add_dentry(struct dentry *dentry, u64 ino, int inc_link,
 	struct nova_inode_update *update, u64 epoch_id);
 int nova_remove_dentry(struct dentry *dentry, int dec_link,
-	struct nova_inode_update *update, u64 epoch_id);
+	struct nova_inode_update *update, u64 epoch_id, bool rename);
 int nova_invalidate_dentries(struct super_block *sb,
 	struct nova_inode_update *update);
 void nova_print_dir_tree(struct super_block *sb,

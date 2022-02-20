@@ -434,7 +434,7 @@ static int nova_unlink(struct inode *dir, struct dentry *dentry)
 
 	update_dir.tail = 0;
 	update_dir.alter_tail = 0;
-	retval = nova_remove_dentry(dentry, 0, &update_dir, epoch_id);
+	retval = nova_remove_dentry(dentry, 0, &update_dir, epoch_id, false);
 	if (retval)
 		goto out;
 
@@ -616,7 +616,7 @@ static int nova_rmdir(struct inode *dir, struct dentry *dentry)
 
 	update_dir.tail = 0;
 	update_dir.alter_tail = 0;
-	err = nova_remove_dentry(dentry, -1, &update_dir, epoch_id);
+	err = nova_remove_dentry(dentry, -1, &update_dir, epoch_id, false);
 	if (err)
 		goto end_rmdir;
 
@@ -765,7 +765,7 @@ static int nova_rename(struct inode *old_dir,
 	if (new_inode) {
 		/* First remove the old entry in the new directory */
 		err = nova_remove_dentry(new_dentry, 0, &update_dir_new,
-					epoch_id);
+					epoch_id, true);
 		if (err)
 			goto out;
 	}
@@ -787,7 +787,7 @@ static int nova_rename(struct inode *old_dir,
 	}
 
 	err = nova_remove_dentry(old_dentry, dec_link, &update_dir_old,
-					epoch_id);
+					epoch_id, true);
 	if (err)
 		goto out;
 
@@ -823,9 +823,13 @@ static int nova_rename(struct inode *old_dir,
 				new_inode,
 				old_dir != new_dir ? new_dir : NULL,
 				father_entry,
+				new_inode ? update_dir_new.create_dentry : NULL,
+				update_dir_old.create_dentry,
 				invalidate_new_inode,
 				cpu);
-
+	if (new_inode)
+		nova_reassign_logentry(sb, update_dir_new.create_dentry, DIR_LOG);
+	nova_reassign_logentry(sb, update_dir_old.create_dentry, DIR_LOG);
 	nova_update_inode(sb, old_inode, old_pi, &update_old, 0);
 	nova_update_inode(sb, old_dir, old_pidir, &update_dir_old, 0);
 
