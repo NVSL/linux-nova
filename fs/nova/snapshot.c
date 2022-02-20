@@ -132,8 +132,7 @@ static int nova_delete_snapshot_list_entries(struct super_block *sb,
 	while (curr_p != list->tail) {
 		if (goto_next_list_page(sb, curr_p)) {
 			curr_p = next_list_page(curr_p);
-			if (curr_p == list->tail)
-				break;
+			continue;
 		}
 
 		if (curr_p == 0) {
@@ -218,11 +217,8 @@ static int nova_background_clean_snapshot_list(struct super_block *sb,
 					curr_p != list->tail) {
 		if (goto_next_list_page(sb, curr_p)) {
 			curr_p = next_list_page(curr_p);
-			if (curr_p == list->tail)
-				break;
 			curr_page = (struct nova_inode_log_page *)curr_p;
-			if (curr_page->page_tail.epoch_id == epoch_id)
-				break;
+			continue;
 		}
 
 		if (curr_p == 0) {
