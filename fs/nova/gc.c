@@ -201,6 +201,7 @@ static int nova_gc_assign_dentry(struct super_block *sb,
 	if (found == 1 && hash == ret_node->hash) {
 		if (ret_node->direntry == old_dentry)
 			ret_node->direntry = new_dentry;
+			nova_update_range_node_checksum(ret_node);    /* update checksum */
 	}
 
 	return ret;

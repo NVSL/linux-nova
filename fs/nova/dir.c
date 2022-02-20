@@ -62,6 +62,7 @@ int nova_insert_dir_tree(struct super_block *sb,
 
 	node->hash = hash;
 	node->direntry = direntry;
+	nova_update_range_node_checksum(node);     /* update checksum */
 	ret = nova_insert_range_node(&sih->rb_tree, node, NODE_DIR);
 	if (ret) {
 		nova_free_dir_node(node);
