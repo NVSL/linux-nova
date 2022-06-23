@@ -71,7 +71,7 @@ After the OS has booted, you can initialize a NOVA instance with the following c
 The above commands create a NOVA instance on `/dev/pmem0` and mounts it on
 `/mnt/ramdisk`.
 
-Nova support several module command line options:
+Nova supports several module command line options:
 
  * metadata_csum: Enable metadata replication and checksums (default 0)
 
@@ -79,18 +79,18 @@ Nova support several module command line options:
 
  * data_parity: Compute parity for file data. (default: 0)
 
- * inplace_data_updates:  Update data in place rather than with COW (default: 0)
+Nova also supports the following mount options:
+
+ * data_cow: Update data with COW rather than in place.
 
  * wprotect: Make PMEM unwritable and then use CR0.WP to enable writes as
-   needed (default: 0).  You must also install the nd_pmem module as with
-   wprotect =1 (e.g., modprobe nd_pmem readonly=1).
+   needed. You must also install the nd_pmem module as with wprotect = 1 
+   (e.g., modprobe nd_pmem readonly=1).
 
 For instance to enable all Nova's data protection features:
 
-# modprobe nova metadata_csum=1\
-  	       data_csum=1\
-	       data_parity=1\
-	       wprotect=1
+# modprobe nova metadata_csum=1 data_csum=1 data_parity=1
+# mount -t NOVA -o init -o data_cow -o wprotect /dev/pmem0 /mnt/ramdisk
 
 Currently, remounting file systems with different combinations of options may
 not work.
@@ -547,9 +547,9 @@ and 'data_checksum=0').  Without parity, Nova can detect but not recover from
 data corruption.  Without checksums, Nova will still detect and recover from
 media errors, but not scribbles.
 
-Nova also supports in-place file updates (option: inplace_data_updates=1).
-This breaks atomicity for writes, but improve performance, especially for
-sub-page writes, since these require a full page COW in the default mode.
+Nova uses in-place file updates by default. This breaks atomicity for writes, 
+but improve performance, especially for sub-page writes, since these require a 
+full page COW. CoW can be enabled with the mount option 'data_cow'. 
 
 Metadata
 --------
